@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Host } from "../src/core/nodes/host";
+import { NetInterface } from "../src/core/nodes/iface";
 import { singleSubnet } from "../src/core/scenarios/singleSubnet";
 import type { TraceKind } from "../src/core/trace";
 
@@ -62,6 +62,7 @@ describe("단일 서브넷 ping", () => {
     expect(after).toContain("arp.cache.hit");
     expect(after.filter((k) => k === "switch.flood")).toHaveLength(0);
     expect(net.trace.at(-1)?.details?.rtt).toBe(40);
+    expect(net.pendingEvents).toBe(0);
   });
 
   it("없는 호스트로 ping → ARP 타임아웃, 대기 패킷 폐기", () => {
@@ -70,10 +71,13 @@ describe("단일 서브넷 ping", () => {
     net.runToIdle();
     const timeout = net.trace.find((e) => e.kind === "arp.timeout");
     expect(timeout).toBeDefined();
-    expect(timeout!.time).toBe(Host.ARP_TIMEOUT);
-    expect(timeout!.details?.failedPings).toBe(1);
+    expect(timeout!.time).toBe(NetInterface.ARP_TIMEOUT);
+    expect(net.trace.some((e) => e.kind === "icmp.failed")).toBe(true);
     expect(net.getHost("h2").pending.size).toBe(0);
+    expect(net.getHost("h2").pings.at(-1)?.status).toBe("failed");
     expect(net.trace.some((e) => e.kind === "icmp.reply.received")).toBe(false);
+    // ping 타임아웃 타이머는 취소되어 남은 이벤트가 없어야 한다
+    expect(net.pendingEvents).toBe(0);
   });
 
   it("다른 서브넷인데 게이트웨이 없음 → 즉시 폐기, 프레임 송신 없음", () => {

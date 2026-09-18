@@ -13,9 +13,9 @@ export const singleSubnet: Scenario = {
   build() {
     const net = new Network();
     net.addNode(new Switch("sw1", 4));
-    net.addNode(new Host({ id: "h1", mac: "02:00:00:00:00:01", ip: "10.0.0.1", prefix: 24 }));
-    net.addNode(new Host({ id: "h2", mac: "02:00:00:00:00:02", ip: "10.0.0.2", prefix: 24 }));
-    net.addNode(new Host({ id: "h3", mac: "02:00:00:00:00:03", ip: "10.0.0.3", prefix: 24 }));
+    net.addNode(new Host({ id: "h1", mac: "02:00:00:00:00:01", ipMode: "static", ip: "10.0.0.1", prefix: 24 }));
+    net.addNode(new Host({ id: "h2", mac: "02:00:00:00:00:02", ipMode: "static", ip: "10.0.0.2", prefix: 24 }));
+    net.addNode(new Host({ id: "h3", mac: "02:00:00:00:00:03", ipMode: "static", ip: "10.0.0.3", prefix: 24 }));
     net.connect("h1", 0, "sw1", 0);
     net.connect("h2", 0, "sw1", 1);
     net.connect("h3", 0, "sw1", 2);

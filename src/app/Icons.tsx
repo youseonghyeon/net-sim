@@ -1,6 +1,24 @@
 import type { JSX } from "preact";
 
-export type IconName = "pc" | "laptop" | "server" | "switch" | "router" | "cursor" | "cable" | "sun" | "moon" | "plus" | "trash" | "chevron" | "mark";
+export type IconName =
+  | "pc"
+  | "laptop"
+  | "server"
+  | "switch"
+  | "router"
+  | "cursor"
+  | "cable"
+  | "sun"
+  | "moon"
+  | "plus"
+  | "trash"
+  | "chevron"
+  | "mark"
+  | "play"
+  | "pause"
+  | "step"
+  | "refresh"
+  | "send";
 
 const PATHS: Record<IconName, JSX.Element> = {
   pc: (
@@ -61,6 +79,16 @@ const PATHS: Record<IconName, JSX.Element> = {
       <path d="M8 15.5 10.5 8M16 15.5 13.5 8M8.5 17h7" />
     </>
   ),
+  play: <path d="M7 4.5v15l12-7.5z" fill="currentColor" stroke="none" />,
+  pause: <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" stroke="none" />,
+  step: (
+    <>
+      <path d="M5 5v14l10-7z" fill="currentColor" stroke="none" />
+      <path d="M18 5v14" stroke-width="2" />
+    </>
+  ),
+  refresh: <path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5" />,
+  send: <path d="M4 12h15M13 6l6 6-6 6" />,
 };
 
 export function Icon({ name, size = 20, class: cls }: { name: IconName; size?: number; class?: string }) {

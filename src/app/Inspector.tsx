@@ -1,5 +1,10 @@
 import type { ComponentChildren } from "preact";
+import { useRef } from "preact/hooks";
 import { ipToInt, prefixToMask, intToIp } from "../core/addr";
+import { Host } from "../core/nodes/host";
+import type { SnapshotTable as SnapshotTableData } from "../core/nodes/node";
+import { Router } from "../core/nodes/router";
+import { sim, simVersion } from "../model/sim";
 import { removeCable, removeDevice, selectedCable, selectedDevice, topology, updateDevice } from "../model/store";
 import { cableAt, peerOf, specOf, type Cable, type Device, type HostSettings, type RouterSettings } from "../model/topology";
 import { Icon } from "./Icons";
@@ -142,6 +147,7 @@ function DevicePanel({ d }: { d: Device }) {
           <input class="input" value={d.name} onInput={(e) => updateDevice(d.id, (x) => ({ ...x, name: e.currentTarget.value }))} />
         </Field>
       </Section>
+      <StatusSection d={d} />
       <Section title="포트">
         {spec.ports.map((p, i) => {
           const c = cableAt(t, { device: d.id, port: i });
@@ -163,6 +169,8 @@ function DevicePanel({ d }: { d: Device }) {
       </Section>
       {d.host && <HostSection d={d} h={d.host} />}
       {d.router && <RouterSection d={d} r={d.router} />}
+      {d.host && <DiagSection d={d} />}
+      <LiveTables d={d} />
       <Section>
         <button class="btn danger" onClick={() => removeDevice(d.id)}>
           <Icon name="trash" size={16} />
@@ -263,5 +271,139 @@ function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         )}
       </Section>
     </>
+  );
+}
+
+// ---------- 시뮬레이션 상태 ----------
+
+function StatusSection({ d }: { d: Device }) {
+  void simVersion.value;
+  const node = sim.node(d.id);
+  if (!node || node.type === "switch") return null;
+  const snap = node.snapshot();
+  return (
+    <Section title="현재 상태">
+      {snap.info.map(([k, v]) => (
+        <div key={k} class="stat-row">
+          <span>{k}</span>
+          <b class="mono">{v}</b>
+        </div>
+      ))}
+    </Section>
+  );
+}
+
+function LiveTables({ d }: { d: Device }) {
+  void simVersion.value;
+  const node = sim.node(d.id);
+  if (!node) return null;
+  return (
+    <>
+      {node.snapshot().tables.map((t) => (
+        <Section key={t.title} title={t.title}>
+          <SnapshotTable t={t} />
+        </Section>
+      ))}
+    </>
+  );
+}
+
+function SnapshotTable({ t }: { t: SnapshotTableData }) {
+  return (
+    <table class="table">
+      <thead>
+        <tr>
+          {t.columns.map((c) => (
+            <th key={c}>{c}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {t.rows.length === 0 ? (
+          <tr>
+            <td class="empty" colSpan={t.columns.length}>
+              비어 있음
+            </td>
+          </tr>
+        ) : (
+          t.rows.map((r, i) => (
+            <tr key={i}>
+              {r.map((c, j) => (
+                <td key={j} class="mono">
+                  {c}
+                </td>
+              ))}
+            </tr>
+          ))
+        )}
+      </tbody>
+    </table>
+  );
+}
+
+/** ping 과 DHCP 다시 요청 */
+function DiagSection({ d }: { d: Device }) {
+  void simVersion.value;
+  const node = sim.node(d.id);
+  const input = useRef<HTMLInputElement>(null);
+  if (!(node instanceof Host)) return null;
+
+  const targets: { ip: string; name: string }[] = [];
+  for (const other of topology.value.devices) {
+    if (other.id === d.id) continue;
+    const n = sim.node(other.id);
+    const ip = n instanceof Host ? n.ip : n instanceof Router ? n.lan.ip : undefined;
+    if (ip) targets.push({ ip, name: other.name });
+  }
+  const send = () => {
+    const dst = input.current?.value.trim();
+    if (!dst || !validIp(dst)) {
+      input.current?.focus();
+      return;
+    }
+    sim.act({ kind: "ping", nodeId: d.id, dst });
+  };
+  return (
+    <Section title="진단">
+      <div class="ping-row">
+        <input
+          ref={input}
+          class="input mono"
+          list={`targets-${d.id}`}
+          placeholder="ping 보낼 주소"
+          defaultValue={targets[0]?.ip ?? ""}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") send();
+          }}
+        />
+        <datalist id={`targets-${d.id}`}>
+          {targets.map((t) => (
+            <option key={t.ip} value={t.ip}>
+              {t.name}
+            </option>
+          ))}
+        </datalist>
+        <button class="btn" onClick={send}>
+          <Icon name="send" size={14} />
+          ping
+        </button>
+      </div>
+      {node.pings.length > 0 && (
+        <ul class="ping-log">
+          {node.pings.slice(-5).reverse().map((p) => (
+            <li key={p.seq} class={p.status}>
+              <span class="mono">{p.dst}</span>
+              <span>{p.status === "ok" ? `응답 ${p.rtt}ms` : p.status === "failed" ? `실패 · ${p.reason}` : "응답 기다리는 중"}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {node.ipMode === "dhcp" && (
+        <button class="btn wide" onClick={() => sim.act({ kind: "dhcp-renew", nodeId: d.id })} disabled={!node.linkUp}>
+          <Icon name="refresh" size={14} />
+          DHCP 다시 요청
+        </button>
+      )}
+    </Section>
   );
 }

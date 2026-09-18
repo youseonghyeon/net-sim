@@ -1,5 +1,7 @@
 import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
+import { frameCategory, shortLabel } from "../core/packet";
+import { hostStatus, sim, simTime, simVersion } from "../model/sim";
 import { connectDevices, fitRequest, loadExample, moveDevice, selection, tool, topology, viewport } from "../model/store";
 import { freePort, PORT_DEPTH, PORT_WIDTH, portAnchor, snap, specOf, usedPorts, type Cable, type Device, type PortSide } from "../model/topology";
 import { GlyphInSvg } from "./Icons";
@@ -186,16 +188,37 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
               <path d={draftPath} />
             </g>
           )}
+          <PacketLayer byId={byId} cables={t.cables} />
         </g>
       </svg>
       {t.devices.length === 0 && (
         <div class="empty">
           <p>왼쪽 팔레트에서 장치를 끌어다 놓거나, 예제로 시작하세요.</p>
-          <button class="btn" onClick={loadExample}>
+          <button
+            class="btn"
+            onClick={() => {
+              loadExample();
+              sim.reset();
+            }}
+          >
             예제 네트워크 불러오기
           </button>
         </div>
       )}
+      <div class="legend">
+        <span>
+          <i class="arp" />
+          ARP
+        </span>
+        <span>
+          <i class="dhcp" />
+          DHCP
+        </span>
+        <span>
+          <i class="icmp" />
+          ping
+        </span>
+      </div>
       <div class="zoom">{Math.round(v.k * 100)}%</div>
     </div>
   );
@@ -205,7 +228,8 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
   const spec = specOf(d);
   const wide = spec.role !== "host";
   const glyph = wide ? 24 : 28;
-  const addr = addressLabel(d);
+  void simVersion.value; // 시뮬레이션 상태가 바뀌면 다시 읽는다
+  const addr = hostStatus(d.id);
   return (
     <g
       data-device={d.id}
@@ -232,7 +256,7 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
             {d.name}
           </text>
           {addr && (
-            <text class={addr.mono ? "addr" : "status"} x={50} y={35}>
+            <text class={`${addr.mono ? "addr" : "status"} ${addr.tone}`} x={50} y={35}>
               {addr.text}
             </text>
           )}
@@ -243,7 +267,7 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
             {d.name}
           </text>
           {addr && (
-            <text class={addr.mono ? "addr" : "status"} x={spec.width / 2} y={spec.height + 39}>
+            <text class={`${addr.mono ? "addr" : "status"} ${addr.tone}`} x={spec.width / 2} y={spec.height + 39}>
               {addr.text}
             </text>
           )}
@@ -251,16 +275,6 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
       )}
     </g>
   );
-}
-
-/** 타일에 표시할 주소 줄. mono=true 면 실제 주소, false 면 상태 문구 */
-function addressLabel(d: Device): { text: string; mono: boolean } | null {
-  if (d.host) {
-    if (d.host.ip) return { text: `${d.host.ip}/${d.host.prefix}`, mono: true };
-    return { text: d.host.ipMode === "dhcp" ? "IP 없음 · DHCP 대기" : "IP 없음 · 수동 설정 필요", mono: false };
-  }
-  if (d.router) return { text: `${d.router.lanIp}/${d.router.lanPrefix}`, mono: true };
-  return null;
 }
 
 function CableView({ cable, byId, selected }: { cable: Cable; byId: Map<string, Device>; selected: boolean }) {
@@ -279,14 +293,49 @@ function CableView({ cable, byId, selected }: { cable: Cable; byId: Map<string, 
 }
 
 type Anchor = { x: number; y: number; side: PortSide };
+type Curve = { x0: number; y0: number; x1: number; y1: number; x2: number; y2: number; x3: number; y3: number };
 
 /** 포트에서 수직으로 나갔다가 상대 포트로 수직으로 들어가는 베지어 */
-function cablePath(a: Anchor, b: Anchor): string {
+function cableCurve(a: Anchor, b: Anchor): Curve {
   const dist = Math.hypot(b.x - a.x, b.y - a.y);
   const lead = Math.min(90, Math.max(28, dist * 0.45));
   const ay = a.side === "top" ? a.y - lead : a.y + lead;
   const by = b.side === "top" ? b.y - lead : b.y + lead;
-  return `M${a.x},${a.y} C${a.x},${ay} ${b.x},${by} ${b.x},${b.y}`;
+  return { x0: a.x, y0: a.y, x1: a.x, y1: ay, x2: b.x, y2: by, x3: b.x, y3: b.y };
+}
+
+function cablePath(a: Anchor, b: Anchor): string {
+  const c = cableCurve(a, b);
+  return `M${c.x0},${c.y0} C${c.x1},${c.y1} ${c.x2},${c.y2} ${c.x3},${c.y3}`;
+}
+
+function pointOn(c: Curve, t: number): { x: number; y: number } {
+  const u = 1 - t;
+  const w0 = u * u * u, w1 = 3 * u * u * t, w2 = 3 * u * t * t, w3 = t * t * t;
+  return { x: w0 * c.x0 + w1 * c.x1 + w2 * c.x2 + w3 * c.x3, y: w0 * c.y0 + w1 * c.y1 + w2 * c.y2 + w3 * c.y3 };
+}
+
+/** 링크 위를 이동 중인 패킷. 매 프레임 simTime 을 구독한다 */
+function PacketLayer({ byId, cables }: { byId: Map<string, Device>; cables: Cable[] }) {
+  const now = simTime.value;
+  const cableById = new Map(cables.map((c) => [c.id, c]));
+  const items = sim.inFlight().map((tx) => {
+    const cable = cableById.get(tx.linkId);
+    if (!cable) return null;
+    const a = byId.get(cable.a.device);
+    const b = byId.get(cable.b.device);
+    if (!a || !b) return null;
+    const curve = cableCurve(portAnchor(a, cable.a.port), portAnchor(b, cable.b.port));
+    const frac = Math.min(1, Math.max(0, (now - tx.departAt) / (tx.arriveAt - tx.departAt)));
+    const p = pointOn(curve, tx.from.node === cable.a.device ? frac : 1 - frac);
+    return (
+      <g key={tx.id} class={`packet ${frameCategory(tx.frame)}`} transform={`translate(${p.x},${p.y})`}>
+        <circle r={7} />
+        <text y={-13}>{shortLabel(tx.frame)}</text>
+      </g>
+    );
+  });
+  return <g class="packets">{items}</g>;
 }
 
 function draftCablePath(dr: Draft, byId: Map<string, Device>): string | null {

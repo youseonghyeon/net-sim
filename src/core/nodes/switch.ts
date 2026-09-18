@@ -11,15 +11,25 @@ interface MacEntry {
 export class Switch implements SimNode {
   readonly type = "switch" as const;
   readonly macTable = new Map<Mac, MacEntry>();
+  readonly id: string;
+  readonly portCount: number;
+  private readonly portNames: string[];
 
-  constructor(
-    readonly id: string,
-    readonly portCount = 4,
-  ) {}
+  /** ports: 포트 개수(이름은 port N) 또는 포트 이름 목록 */
+  constructor(id: string, ports: number | string[] = 4) {
+    this.id = id;
+    this.portNames = typeof ports === "number" ? Array.from({ length: ports }, (_, i) => `port ${i}`) : ports;
+    this.portCount = this.portNames.length;
+  }
+
+  portName(port: number): string {
+    return this.portNames[port] ?? `port ${port}`;
+  }
 
   receive(port: number, frame: EthernetFrame, ctx: NodeContext): void {
     const label = describeFrame(frame);
-    ctx.trace("frame.receive", "L2", `port ${port} 수신: ${label} [${frame.src} → ${frame.dst}]`, { port, src: frame.src, dst: frame.dst }, frame.id);
+    const pn = this.portName(port);
+    ctx.trace("frame.receive", "L2", `${pn} 수신: ${label} [${frame.src} → ${frame.dst}]`, { port, src: frame.src, dst: frame.dst }, frame.id);
 
     const existing = this.macTable.get(frame.src);
     if (!existing || existing.port !== port) {
@@ -27,9 +37,7 @@ export class Switch implements SimNode {
       ctx.trace(
         "switch.learn",
         "L2",
-        existing
-          ? `MAC 테이블 갱신: ${frame.src} → port ${port} (이전 port ${existing.port})`
-          : `MAC 테이블 학습: ${frame.src} → port ${port}`,
+        existing ? `MAC 테이블 갱신: ${frame.src} → ${pn} (이전 ${this.portName(existing.port)})` : `MAC 테이블 학습: ${frame.src} → ${pn}`,
         { mac: frame.src, port },
         frame.id,
       );
@@ -45,10 +53,10 @@ export class Switch implements SimNode {
       return;
     }
     if (entry.port === port) {
-      ctx.trace("switch.filter", "L2", `목적지 ${frame.dst} 가 수신 port ${port} 와 같음 → 필터링(전달 안 함)`, { port }, frame.id);
+      ctx.trace("switch.filter", "L2", `목적지 ${frame.dst} 가 수신 포트(${pn})와 같음 → 필터링(전달 안 함)`, { port }, frame.id);
       return;
     }
-    ctx.trace("switch.forward", "L2", `MAC 테이블 조회: ${frame.dst} → port ${entry.port} 로 전달`, { dst: frame.dst, port: entry.port }, frame.id);
+    ctx.trace("switch.forward", "L2", `MAC 테이블 조회: ${frame.dst} → ${this.portName(entry.port)} 로 전달`, { dst: frame.dst, port: entry.port }, frame.id);
     ctx.send(entry.port, frame);
   }
 
@@ -57,8 +65,20 @@ export class Switch implements SimNode {
     for (let p = 0; p < this.portCount; p++) {
       if (p !== inPort && ctx.isPortConnected(p)) ports.push(p);
     }
-    ctx.trace("switch.flood", "L2", `${reason} → port ${inPort} 제외 플러딩 [${ports.join(", ")}]`, { inPort, ports, reason }, frame.id);
+    ctx.trace(
+      "switch.flood",
+      "L2",
+      `${reason} → ${this.portName(inPort)} 제외 플러딩 [${ports.map((p) => this.portName(p)).join(", ")}]`,
+      { inPort, ports, reason },
+      frame.id,
+    );
     for (const p of ports) ctx.send(p, frame);
+  }
+
+  onLink(port: number, up: boolean, ctx: NodeContext): void {
+    if (up) return;
+    for (const [mac, e] of this.macTable) if (e.port === port) this.macTable.delete(mac);
+    ctx.trace("link.down", "L1", `${this.portName(port)} 링크 끊김 → 그 포트의 MAC 학습 정보 삭제`, { port });
   }
 
   onTimer(): void {}
@@ -73,7 +93,7 @@ export class Switch implements SimNode {
         {
           title: "MAC 테이블",
           columns: ["MAC", "포트", "학습 시각"],
-          rows: [...this.macTable.entries()].map(([mac, e]) => [mac, String(e.port), `${e.learnedAt}ms`]),
+          rows: [...this.macTable.entries()].map(([mac, e]) => [mac, this.portName(e.port), `${e.learnedAt}ms`]),
         },
       ],
     };

@@ -1,9 +1,11 @@
 import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
-import { clearAll, loadExample, logOpen, removeSelected, theme, toggleTheme, topology } from "../model/store";
+import { running, sim, simTime, speed, togglePlay } from "../model/sim";
+import { clearAll, loadExample, removeSelected, theme, toggleTheme, topology } from "../model/store";
 import { Canvas } from "./Canvas";
 import { Icon } from "./Icons";
 import { Inspector } from "./Inspector";
+import { LogDrawer } from "./LogDrawer";
 import { Palette } from "./Palette";
 
 export function App() {
@@ -23,6 +25,11 @@ export function App() {
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         removeSelected();
+      } else if (e.key === " ") {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.key === "." || e.key === "ArrowRight") {
+        if (!running.value) sim.step();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -30,6 +37,7 @@ export function App() {
   }, []);
 
   const t = topology.value;
+  const isRunning = running.value;
   return (
     <div class="app">
       <header class="topbar">
@@ -38,21 +46,47 @@ export function App() {
           <span>net-sim</span>
         </div>
         <div class="topbar-center">
-          <span class="doc-title">내 네트워크</span>
+          <div class="transport">
+            <button class="icon-btn" onClick={togglePlay} title={isRunning ? "일시정지 (Space)" : "재생 (Space)"}>
+              <Icon name={isRunning ? "pause" : "play"} size={18} />
+            </button>
+            <button class="icon-btn" onClick={() => sim.step()} disabled={isRunning} title="다음 이벤트 (→)">
+              <Icon name="step" size={18} />
+            </button>
+            <select class="speed" value={String(speed.value)} onChange={(e) => (speed.value = Number(e.currentTarget.value))} title="재생 속도">
+              <option value="0.5">0.5×</option>
+              <option value="1">1×</option>
+              <option value="2">2×</option>
+              <option value="4">4×</option>
+            </select>
+            <span class="clock mono" title="시뮬레이션 시각. 패킷이 움직일 때만 흐릅니다">
+              {Math.round(simTime.value).toLocaleString()} ms
+            </span>
+          </div>
+        </div>
+        <div class="topbar-right">
           <span class="doc-meta">
             장치 {t.devices.length} · 케이블 {t.cables.length}
           </span>
-        </div>
-        <div class="topbar-right">
-          <button class="btn ghost" onClick={loadExample}>
+          <span class="vsep" />
+          <button
+            class="btn ghost"
+            onClick={() => {
+              loadExample();
+              sim.reset();
+            }}
+          >
             예제 불러오기
           </button>
-          <button class="btn ghost" onClick={clearAll} disabled={t.devices.length === 0}>
+          <button
+            class="btn ghost"
+            onClick={() => {
+              clearAll();
+              sim.reset();
+            }}
+            disabled={t.devices.length === 0}
+          >
             비우기
-          </button>
-          <span class="vsep" />
-          <button class="btn primary" disabled title="시뮬레이션은 다음 단계에서 켜집니다">
-            실행
           </button>
           <button class="icon-btn" onClick={toggleTheme} title={theme.value === "dark" ? "라이트 테마" : "다크 테마"}>
             <Icon name={theme.value === "dark" ? "sun" : "moon"} size={18} />
@@ -64,18 +98,7 @@ export function App() {
         <Canvas onNotice={showNotice} />
         <Inspector />
       </div>
-      <footer class={`log${logOpen.value ? " open" : ""}`}>
-        <button class="log-head" onClick={() => (logOpen.value = !logOpen.value)}>
-          <Icon name="chevron" size={16} class="chev" />
-          <span>이벤트 로그</span>
-          <span class="count">0</span>
-        </button>
-        {logOpen.value && (
-          <div class="log-body">
-            <p>시뮬레이션을 실행하면 각 장치가 무엇을 보고 어떤 결정을 내렸는지 여기에 순서대로 기록됩니다.</p>
-          </div>
-        )}
-      </footer>
+      <LogDrawer />
       {notice.value && <div class="toast">{notice.value}</div>}
     </div>
   );

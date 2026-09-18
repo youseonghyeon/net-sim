@@ -6,6 +6,7 @@ import {
   exampleTopology,
   freePort,
   newId,
+  normalizeTopology,
   snap,
   type Cable,
   type Device,
@@ -38,7 +39,8 @@ function save(key: string, value: unknown): void {
   }
 }
 
-export const topology = signal<Topology>(load<Topology>(TOPOLOGY_KEY) ?? EMPTY_TOPOLOGY);
+const saved = load<Topology>(TOPOLOGY_KEY);
+export const topology = signal<Topology>(saved ? normalizeTopology(saved) : EMPTY_TOPOLOGY);
 export const selection = signal<Selection>(null);
 export const tool = signal<Tool>("select");
 export const theme = signal<Theme>(load<Theme>(THEME_KEY) ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));

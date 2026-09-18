@@ -65,6 +65,8 @@ export interface Device {
   id: string;
   kind: DeviceKind;
   name: string;
+  /** 장치의 MAC (스위치는 사용하지 않지만 일관되게 부여) */
+  mac: string;
   x: number;
   y: number;
   host?: HostSettings;
@@ -109,9 +111,21 @@ export function nextName(kind: DeviceKind, devices: Device[]): string {
   }
 }
 
+/** 02:00:00:00:XX:YY 형식으로, 기존 장치와 겹치지 않는 다음 MAC */
+export function nextMac(devices: Device[]): string {
+  let max = 0;
+  for (const d of devices) {
+    const m = /^02:00:00:00:([0-9a-f]{2}):([0-9a-f]{2})$/i.exec(d.mac ?? "");
+    if (m) max = Math.max(max, parseInt(m[1]! + m[2]!, 16));
+  }
+  const n = max + 1;
+  const hex = n.toString(16).padStart(4, "0");
+  return `02:00:00:00:${hex.slice(0, 2)}:${hex.slice(2)}`;
+}
+
 export function createDevice(kind: DeviceKind, x: number, y: number, devices: Device[]): Device {
   const spec = DEVICE_SPECS[kind];
-  const device: Device = { id: newId(kind), kind, name: nextName(kind, devices), x, y };
+  const device: Device = { id: newId(kind), kind, name: nextName(kind, devices), mac: nextMac(devices), x, y };
   if (spec.role === "host") device.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" };
   if (spec.role === "router") {
     device.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" } };
@@ -172,6 +186,24 @@ export function peerOf(cable: Cable, deviceId: string): PortRef {
 
 export function snap(v: number, grid = 8): number {
   return Math.round(v / grid) * grid;
+}
+
+/** 저장된 토폴로지의 누락 필드 보정 (이전 버전에서 저장한 데이터) */
+export function normalizeTopology(t: Topology): Topology {
+  const devices: Device[] = [];
+  for (const d of t.devices) {
+    const fixed: Device = { ...d };
+    if (!fixed.mac) fixed.mac = nextMac(devices);
+    const spec = DEVICE_SPECS[fixed.kind];
+    if (spec.role === "host" && !fixed.host) fixed.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" };
+    if (spec.role === "router" && !fixed.router) {
+      fixed.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" } };
+    }
+    devices.push(fixed);
+  }
+  const ids = new Set(devices.map((d) => d.id));
+  const cables = t.cables.filter((c) => ids.has(c.a.device) && ids.has(c.b.device));
+  return { devices, cables };
 }
 
 /** 라우터 + 스위치 + 호스트 3대 예제 */

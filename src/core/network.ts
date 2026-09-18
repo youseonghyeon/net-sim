@@ -3,7 +3,7 @@ import { describeFrame, type EthernetFrame, type Layer } from "./packet";
 import { Scheduler } from "./scheduler";
 import type { TraceEvent, TraceKind } from "./trace";
 import { Host } from "./nodes/host";
-import type { NodeContext, SimNode } from "./nodes/node";
+import type { NodeContext, SimNode, TimerHandle } from "./nodes/node";
 
 export interface Endpoint {
   node: string;
@@ -17,7 +17,7 @@ export interface Link {
   latency: number;
 }
 
-/** 링크 위를 이동 중인(또는 이동했던) 프레임. UI 애니메이션의 근거 */
+/** 링크 위를 이동하는 프레임. UI 애니메이션의 근거 */
 export interface Transmission {
   id: number;
   linkId: string;
@@ -26,10 +26,12 @@ export interface Transmission {
   departAt: number;
   arriveAt: number;
   frame: EthernetFrame;
+  /** 도착 전에 링크가 끊겨 유실됨 */
+  lost?: boolean;
 }
 
-/** 사용자 동작. 재생(rewind)을 위해 직렬화 가능한 형태로 기록한다 */
-export type ActionSpec = { kind: "ping"; nodeId: string; dst: Ip };
+/** 사용자 동작. 직렬화 가능한 형태 */
+export type ActionSpec = { kind: "ping"; nodeId: string; dst: Ip } | { kind: "dhcp-renew"; nodeId: string };
 
 export interface RecordedAction {
   time: number;
@@ -38,12 +40,12 @@ export interface RecordedAction {
 
 type SimEvent =
   | { type: "deliver"; tx: Transmission }
-  | { type: "timer"; nodeId: string; tag: string; data?: unknown }
+  | { type: "timer"; nodeId: string; tag: string; data?: unknown; cancelled: boolean }
   | { type: "action"; action: ActionSpec };
 
 export class Network {
   readonly nodes = new Map<string, SimNode>();
-  readonly links: Link[] = [];
+  readonly links = new Map<string, Link>();
   readonly trace: TraceEvent[] = [];
   readonly transmissions: Transmission[] = [];
   readonly actions: RecordedAction[] = [];
@@ -58,8 +60,9 @@ export class Network {
   private packetSeq = 0;
   private traceSeq = 0;
   private txSeq = 0;
+  private linkSeq = 0;
 
-  // ---------- 구성 ----------
+  // ---------- 구성 (실행 중에도 변경 가능) ----------
 
   addNode<T extends SimNode>(node: T): T {
     if (this.nodes.has(node.id)) throw new Error(`duplicate node id: ${node.id}`);
@@ -67,7 +70,16 @@ export class Network {
     return node;
   }
 
-  connect(aNode: string, aPort: number, bNode: string, bPort: number, latency = 10): Link {
+  removeNode(id: string): void {
+    const node = this.nodes.get(id);
+    if (!node) return;
+    for (const link of [...this.links.values()]) {
+      if (link.a.node === id || link.b.node === id) this.disconnect(link.id);
+    }
+    this.nodes.delete(id);
+  }
+
+  connect(aNode: string, aPort: number, bNode: string, bPort: number, latency = 10, id?: string): Link {
     const a = { node: aNode, port: aPort };
     const b = { node: bNode, port: bPort };
     for (const ep of [a, b]) {
@@ -76,17 +88,45 @@ export class Network {
       if (ep.port < 0 || ep.port >= n.portCount) throw new Error(`${ep.node} has no port ${ep.port}`);
       if (this.portMap.has(epKey(ep))) throw new Error(`${ep.node}:${ep.port} already connected`);
     }
-    const link: Link = { id: `${aNode}:${aPort}-${bNode}:${bPort}`, a, b, latency };
-    this.links.push(link);
+    const link: Link = { id: id ?? `link${++this.linkSeq}`, a, b, latency };
+    this.links.set(link.id, link);
     this.portMap.set(epKey(a), { link, other: b });
     this.portMap.set(epKey(b), { link, other: a });
+    for (const ep of [a, b]) this.nodes.get(ep.node)!.onLink?.(ep.port, true, this.ctx(ep.node));
     return link;
+  }
+
+  disconnect(linkId: string): void {
+    const link = this.links.get(linkId);
+    if (!link) return;
+    this.links.delete(linkId);
+    this.portMap.delete(epKey(link.a));
+    this.portMap.delete(epKey(link.b));
+    for (const tx of this.transmissions) {
+      if (tx.linkId === linkId && !tx.lost && tx.arriveAt > this.now) {
+        tx.lost = true;
+        this.pushTrace(tx.from.node, "link.lost", "L1", `케이블이 빠져 전송 중이던 ${describeFrame(tx.frame)} 유실`, { linkId }, tx.frame.id);
+      }
+    }
+    for (const ep of [link.a, link.b]) {
+      const node = this.nodes.get(ep.node);
+      node?.onLink?.(ep.port, false, this.ctx(ep.node));
+    }
+  }
+
+  hasNode(id: string): boolean {
+    return this.nodes.has(id);
   }
 
   getHost(id: string): Host {
     const n = this.nodes.get(id);
     if (!(n instanceof Host)) throw new Error(`${id} is not a host`);
     return n;
+  }
+
+  /** 노드 설정 변경 등 "지금" 일어나는 일을 위해 현재 시각 컨텍스트를 준다 */
+  contextFor(nodeId: string): NodeContext {
+    return this.ctx(nodeId);
   }
 
   // ---------- 사용자 동작 ----------
@@ -99,30 +139,46 @@ export class Network {
 
   // ---------- 실행 ----------
 
+  /** 취소된 타이머를 건너뛰고 다음 이벤트 시각 */
   peekNextTime(): number | undefined {
-    return this.sched.peek()?.time;
+    for (;;) {
+      const head = this.sched.peek();
+      if (!head) return undefined;
+      if (head.payload.type === "timer" && head.payload.cancelled) {
+        this.sched.pop();
+        continue;
+      }
+      return head.time;
+    }
   }
 
   get pendingEvents(): number {
+    this.peekNextTime();
     return this.sched.size;
   }
 
   /** 이벤트 하나 처리. 처리한 게 없으면 false */
   step(): boolean {
-    const item = this.sched.pop();
-    if (!item) return false;
+    if (this.peekNextTime() === undefined) return false;
+    const item = this.sched.pop()!;
     this.now = item.time;
     this.eventCount++;
     const ev = item.payload;
     switch (ev.type) {
       case "deliver": {
-        const node = this.nodes.get(ev.tx.to.node)!;
+        if (ev.tx.lost) break;
+        const node = this.nodes.get(ev.tx.to.node);
+        if (!node || !this.links.has(ev.tx.linkId)) {
+          ev.tx.lost = true;
+          break;
+        }
         node.receive(ev.tx.to.port, ev.tx.frame, this.ctx(node.id));
         break;
       }
       case "timer": {
-        const node = this.nodes.get(ev.nodeId)!;
-        node.onTimer(ev.tag, ev.data, this.ctx(node.id));
+        if (ev.cancelled) break;
+        const node = this.nodes.get(ev.nodeId);
+        node?.onTimer(ev.tag, ev.data, this.ctx(node.id));
         break;
       }
       case "action":
@@ -135,7 +191,9 @@ export class Network {
   /** time 이하의 이벤트를 모두 처리하고 now 를 time 으로 맞춘다 */
   runUntil(time: number): number {
     let n = 0;
-    while (this.sched.peek() !== undefined && this.sched.peek()!.time <= time) {
+    for (;;) {
+      const next = this.peekNextTime();
+      if (next === undefined || next > time) break;
       this.step();
       n++;
     }
@@ -150,21 +208,33 @@ export class Network {
     return n;
   }
 
-  /** 현재 시각(또는 지정 시각) 기준으로 링크 위에 있는 프레임 */
+  /** 지정 시각에 링크 위에 있는 프레임 */
   inFlight(at = this.now): Transmission[] {
-    return this.transmissions.filter((t) => t.departAt <= at && at < t.arriveAt);
+    return this.transmissions.filter((t) => !t.lost && t.departAt <= at && at < t.arriveAt);
+  }
+
+  /** 오래된 전송 기록 정리 (UI 가 길게 돌아도 메모리가 늘지 않도록) */
+  pruneTransmissions(before: number): void {
+    let i = 0;
+    while (i < this.transmissions.length && this.transmissions[i]!.arriveAt < before) i++;
+    if (i > 0) this.transmissions.splice(0, i);
   }
 
   // ---------- 내부 ----------
 
   private runAction(action: ActionSpec): void {
+    const node = this.nodes.get(action.nodeId);
+    if (!node) return;
     const ctx = this.ctx(action.nodeId);
     switch (action.kind) {
-      case "ping": {
-        ctx.trace("action", "sys", `[사용자] ${action.nodeId} 에서 ping ${action.dst}`, { ...action });
+      case "ping":
+        ctx.trace("action", "sys", `[사용자] ping ${action.dst}`, { ...action });
         this.getHost(action.nodeId).ping(action.dst, ctx);
         break;
-      }
+      case "dhcp-renew":
+        ctx.trace("action", "sys", `[사용자] DHCP 다시 요청`, { ...action });
+        this.getHost(action.nodeId).renewDhcp(ctx);
+        break;
     }
   }
 
@@ -174,8 +244,10 @@ export class Network {
       now,
       send: (port, frame) => this.send(nodeId, port, frame),
       isPortConnected: (port) => this.portMap.has(epKey({ node: nodeId, port })),
-      timer: (delay, tag, data) => {
-        this.sched.push(now + delay, { type: "timer", nodeId, tag, data });
+      timer: (delay, tag, data): TimerHandle => {
+        const ev: SimEvent = { type: "timer", nodeId, tag, data, cancelled: false };
+        this.sched.push(now + delay, ev);
+        return { cancel: () => void ((ev as { cancelled: boolean }).cancelled = true) };
       },
       trace: (kind, layer, summary, details, packetId) => this.pushTrace(nodeId, kind, layer, summary, details, packetId),
       nextPacketId: () => ++this.packetSeq,
@@ -186,7 +258,7 @@ export class Network {
     const from = { node: nodeId, port };
     const conn = this.portMap.get(epKey(from));
     if (!conn) {
-      this.pushTrace(nodeId, "link.unconnected", "L1", `port ${port} 에 연결된 링크 없음 → 송신 실패`, { port }, frame.id);
+      this.pushTrace(nodeId, "link.unconnected", "L1", `port ${port} 에 연결된 케이블 없음 → 송신 실패`, { port }, frame.id);
       return;
     }
     const tx: Transmission = {
