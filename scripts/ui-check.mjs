@@ -144,6 +144,19 @@ await page.keyboard.press("Delete");
 await page.waitForTimeout(200);
 console.log("cables after delete:", await page.locator("[data-cable]").count());
 
+// 7) 라우터 LAN 서브넷 변경 → DHCP 범위가 따라가고, 다시 요청하면 새 서브넷 주소를 받는다
+await page.click(".log-toggle"); // 로그를 닫아 캔버스 아래쪽 장치가 보이게
+await page.waitForTimeout(100);
+await clickDevice("rt-1");
+await page.click(".toggle"); // DHCP 다시 켜기
+const lanInput = page.locator(".inspector input.mono").first();
+await lanInput.fill("192.168.127.1");
+await page.waitForTimeout(100);
+console.log("dhcp range after LAN change:", await page.locator(".inspector input.mono").evaluateAll((els) => els.map((e) => e.value).slice(2, 4)));
+await clickDevice("pc-1");
+await page.click("button:has-text('DHCP 다시 요청')");
+console.log("pc-1 after subnet change →", await waitAddr("pc-1", /^192\.168\.127\.\d+\/24$/));
+
 console.log("ERRORS:", errors.length ? errors : "none");
 await browser.close();
 await server.close();

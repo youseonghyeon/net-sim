@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useRef } from "preact/hooks";
-import { ipToInt, prefixToMask, intToIp } from "../core/addr";
+import { ipToInt, prefixToMask, intToIp, sameSubnet } from "../core/addr";
 import { Host } from "../core/nodes/host";
 import { Internet, KNOWN_SERVERS } from "../core/nodes/internet";
 import type { SnapshotTable as SnapshotTableData } from "../core/nodes/node";
@@ -268,14 +268,37 @@ function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
   );
 }
 
+/** LAN 주소/서브넷이 바뀔 때, 기존 범위가 옛 서브넷 안에 있었다면 호스트 부분을 유지한 채 새 서브넷으로 옮긴다 */
+function remapRange(oldIp: string, oldPrefix: number, newIp: string, newPrefix: number, range: { start: string; end: string }): { start: string; end: string } | null {
+  if (!validIp(oldIp) || !validIp(newIp) || !validIp(range.start) || !validIp(range.end)) return null;
+  if (!sameSubnet(range.start, oldIp, oldPrefix) || !sameSubnet(range.end, oldIp, oldPrefix)) return null;
+  const hostMask = ~prefixToMask(newPrefix) >>> 0;
+  const net = (ipToInt(newIp) & prefixToMask(newPrefix)) >>> 0;
+  const move = (ip: string) => intToIp((net | (ipToInt(ip) & hostMask)) >>> 0);
+  return { start: move(range.start), end: move(range.end) };
+}
+
+function rangeError(r: RouterSettings, which: "start" | "end"): string | undefined {
+  const v = r.dhcp[which];
+  const base = ipError(v, true);
+  if (base) return base;
+  if (validIp(r.lanIp) && !sameSubnet(v, r.lanIp, r.lanPrefix)) return `LAN 서브넷 ${intToIp((ipToInt(r.lanIp) & prefixToMask(r.lanPrefix)) >>> 0)}/${r.lanPrefix} 밖입니다`;
+  if (which === "end" && validIp(r.dhcp.start) && ipToInt(r.dhcp.start) > ipToInt(v)) return "시작 주소보다 앞입니다";
+  return undefined;
+}
+
 function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
   const set = (patch: Partial<RouterSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, ...patch } }));
   const setDhcp = (patch: Partial<RouterSettings["dhcp"]>) => set({ dhcp: { ...r.dhcp, ...patch } });
+  const setLan = (lanIp: string, lanPrefix: number) => {
+    const moved = remapRange(r.lanIp, r.lanPrefix, lanIp, lanPrefix, r.dhcp);
+    set({ lanIp, lanPrefix, dhcp: moved ? { ...r.dhcp, ...moved } : r.dhcp });
+  };
   return (
     <>
       <Section title="LAN 인터페이스">
         <Field label="IP 주소" error={ipError(r.lanIp, true)}>
-          <input class="input mono" value={r.lanIp} onInput={(e) => set({ lanIp: e.currentTarget.value })} />
+          <input class="input mono" value={r.lanIp} onInput={(e) => setLan(e.currentTarget.value, r.lanPrefix)} />
         </Field>
         <Field label="서브넷">
           <div class="prefix">
@@ -286,11 +309,12 @@ function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
               min={0}
               max={32}
               value={r.lanPrefix}
-              onInput={(e) => set({ lanPrefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) })}
+              onInput={(e) => setLan(r.lanIp, Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)))}
             />
             <span class="mono muted">{intToIp(prefixToMask(r.lanPrefix))}</span>
           </div>
         </Field>
+        <p class="note">주소를 바꾸면 DHCP 범위도 같은 서브넷으로 따라갑니다. 이미 주소를 받은 호스트는 "DHCP 다시 요청" 을 해야 새 주소를 받습니다.</p>
       </Section>
       <Section title="DHCP 서비스">
         <label class="toggle-row">
@@ -302,10 +326,10 @@ function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         </label>
         {r.dhcp.enabled ? (
           <>
-            <Field label="시작 주소" error={ipError(r.dhcp.start, true)}>
+            <Field label="시작 주소" error={rangeError(r, "start")}>
               <input class="input mono" value={r.dhcp.start} onInput={(e) => setDhcp({ start: e.currentTarget.value })} />
             </Field>
-            <Field label="끝 주소" error={ipError(r.dhcp.end, true)}>
+            <Field label="끝 주소" error={rangeError(r, "end")}>
               <input class="input mono" value={r.dhcp.end} onInput={(e) => setDhcp({ end: e.currentTarget.value })} />
             </Field>
             <p class="note">자동(DHCP) 로 설정된 호스트가 연결되면 이 범위에서 주소를 빌려줍니다. 게이트웨이는 LAN 주소로 안내합니다. 이미 실패한 호스트는 그 호스트의 진단에서 "DHCP 다시 요청" 을 누르세요.</p>

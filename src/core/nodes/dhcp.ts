@@ -1,5 +1,5 @@
 // DHCP 클라이언트/서버. 호스트(클라이언트), 라우터(LAN 서버 + WAN 클라이언트), 인터넷(서버)이 공유한다.
-import { intToIp, ipToInt, prefixToMask, type Ip, type Mac } from "../addr";
+import { intToIp, ipToInt, prefixToMask, sameSubnet, type Ip, type Mac } from "../addr";
 import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, LIMITED_BROADCAST_IP, UNSPECIFIED_IP, type DhcpMessage, type Ipv4Packet } from "../packet";
 import type { Emit, NetInterface } from "./iface";
 import type { NodeContext, TimerHandle } from "./node";
@@ -191,12 +191,73 @@ export class DhcpServer {
     private readonly iface: NetInterface,
   ) {}
 
+  /** 범위 변경: 새 범위 밖의 임대·제안은 버린다 */
+  setConfig(cfg: DhcpServerConfig, ctx: NodeContext): void {
+    this.config = { ...cfg };
+    this.dropInvalid(ctx, "DHCP 범위 변경");
+  }
+
+  /** 인터페이스 주소가 바뀌면 그 서브넷 밖의 임대·제안은 무효 */
+  onInterfaceChanged(ctx: NodeContext): void {
+    this.dropInvalid(ctx, "인터페이스 주소 변경");
+  }
+
+  /** 범위가 인터페이스 서브넷 안에 있는지. 아니면 사유를 돌려준다 */
+  rangeProblem(): string | undefined {
+    const ip = this.iface.ip;
+    if (!ip) return "인터페이스에 주소가 없음";
+    try {
+      const start = ipToInt(this.config.start);
+      const end = ipToInt(this.config.end);
+      if (start > end) return `시작 주소 ${this.config.start} 가 끝 주소 ${this.config.end} 보다 큼`;
+      if (!sameSubnet(this.config.start, ip, this.iface.prefix) || !sameSubnet(this.config.end, ip, this.iface.prefix)) {
+        return `범위 ${this.config.start} ~ ${this.config.end} 가 인터페이스 서브넷(${ip}/${this.iface.prefix}) 밖`;
+      }
+    } catch {
+      return "범위 주소 형식이 잘못됨";
+    }
+    return undefined;
+  }
+
+  private inRange(ip: Ip): boolean {
+    try {
+      const n = ipToInt(ip);
+      return n >= ipToInt(this.config.start) && n <= ipToInt(this.config.end) && !!this.iface.ip && sameSubnet(ip, this.iface.ip, this.iface.prefix);
+    } catch {
+      return false;
+    }
+  }
+
+  private dropInvalid(ctx: NodeContext, why: string): void {
+    const dropped: Ip[] = [];
+    for (const ip of [...this.leases.keys()]) {
+      if (!this.inRange(ip)) {
+        this.leases.delete(ip);
+        dropped.push(ip);
+      }
+    }
+    for (const [mac, ip] of [...this.offers]) if (!this.inRange(ip)) this.offers.delete(mac);
+    if (dropped.length > 0) {
+      ctx.trace(
+        "dhcp.lease",
+        "app",
+        `${why} → 범위 밖 임대 ${dropped.length}개 무효화 (${dropped.join(", ")}). 해당 호스트는 "DHCP 다시 요청" 을 하면 새 주소를 받는다`,
+        { dropped },
+      );
+    }
+  }
+
   handle(msg: DhcpMessage, frameId: number, ctx: NodeContext, emit: Emit): void {
     const me = this.iface.ip!;
     if (msg.op === "discover") {
       ctx.trace("dhcp.discover.received", "app", `DHCP Discover 수신 (클라이언트 ${msg.clientMac})`, { ...msg }, frameId);
       if (!this.config.enabled) {
         ctx.trace("dhcp.disabled", "app", `DHCP 서비스가 꺼져 있음 → 응답하지 않음 (클라이언트는 타임아웃 후 실패)`, {}, frameId);
+        return;
+      }
+      const problem = this.rangeProblem();
+      if (problem) {
+        ctx.trace("dhcp.misconfigured", "app", `DHCP 설정 오류: ${problem} → 응답하지 않음. 범위를 서브넷 안으로 고치세요`, { problem }, frameId);
         return;
       }
       const ip = this.pickAddress(msg.clientMac);
@@ -262,11 +323,16 @@ export class DhcpServer {
     return { kind: "ipv4", src: this.iface.ip!, dst, ttl: 64, payload: { kind: "udp", srcPort: DHCP_SERVER_PORT, dstPort: DHCP_CLIENT_PORT, payload: msg } };
   }
 
-  /** 기존 임대 → 기존 제안 → 범위 안의 첫 빈 주소 */
+  /** 기존 임대 → 기존 제안 → 범위 안의 첫 빈 주소 (기존 것이 현재 범위 밖이면 버린다) */
   private pickAddress(mac: Mac): Ip | undefined {
-    for (const [ip, lease] of this.leases) if (lease.mac === mac) return ip;
+    for (const [ip, lease] of this.leases) {
+      if (lease.mac !== mac) continue;
+      if (this.inRange(ip)) return ip;
+      this.leases.delete(ip);
+    }
     const offered = this.offers.get(mac);
-    if (offered) return offered;
+    if (offered && this.inRange(offered)) return offered;
+    this.offers.delete(mac);
     let start: number, end: number;
     try {
       start = ipToInt(this.config.start);

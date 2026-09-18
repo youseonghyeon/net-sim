@@ -138,3 +138,36 @@ describe("DHCP", () => {
     expect(net.nodes.has("pc1")).toBe(false);
   });
 });
+
+describe("DHCP 서브넷 변경", () => {
+  it("LAN 주소를 바꾸면 옛 임대는 무효화되고 다시 요청 시 새 서브넷 주소를 받는다", () => {
+    const net = buildHomeLan();
+    net.connect("pc1", 0, "sw", 1);
+    net.runToIdle();
+    expect(net.getHost("pc1").ip).toBe("192.168.0.100");
+
+    const rt = net.nodes.get("rt") as Router;
+    rt.configure(
+      { lanIp: "192.168.127.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.127.100", end: "192.168.127.101" }, wan: { mode: "dhcp" } },
+      net.contextFor("rt"),
+    );
+    expect(rt.leases.size).toBe(0);
+    expect(net.trace.some((e) => e.kind === "dhcp.lease" && e.summary.includes("무효화"))).toBe(true);
+
+    net.scheduleAction(net.now, { kind: "dhcp-renew", nodeId: "pc1" });
+    net.runToIdle();
+    const pc1 = net.getHost("pc1");
+    expect(pc1.ip).toBe("192.168.127.100");
+    expect(pc1.iface.gateway).toBe("192.168.127.1");
+  });
+
+  it("LAN 주소만 바뀌고 범위가 옛 서브넷에 남아 있으면 설정 오류로 응답하지 않는다", () => {
+    const net = buildHomeLan();
+    const rt = net.nodes.get("rt") as Router;
+    rt.configure({ lanIp: "192.168.127.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.101" }, wan: { mode: "dhcp" } }, net.contextFor("rt"));
+    net.connect("pc1", 0, "sw", 1);
+    net.runToIdle();
+    expect(net.getHost("pc1").ip).toBeUndefined();
+    expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "dhcp.misconfigured")).toBe(true);
+  });
+});

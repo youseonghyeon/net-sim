@@ -103,7 +103,9 @@ export class Router implements SimNode {
   configure(cfg: { lanIp: Ip; lanPrefix: number; dhcp: DhcpServerConfig; wan: WanConfig }, ctx: NodeContext): void {
     if (cfg.lanIp !== this.lan.ip || cfg.lanPrefix !== this.lan.prefix) {
       this.lan.configure(cfg.lanIp, cfg.lanPrefix, undefined);
-      ctx.trace("ip.config", "sys", `LAN 인터페이스 주소 변경: ${cfg.lanIp}/${cfg.lanPrefix}`, { ...cfg });
+      this.lan.arpCache.clear();
+      ctx.trace("ip.config", "sys", `LAN 인터페이스 주소 변경: ${cfg.lanIp}/${cfg.lanPrefix} (ARP 캐시 비움)`, { ...cfg });
+      this.dhcpServer.onInterfaceChanged(ctx);
     }
     const d = this.dhcpServer.config;
     if (cfg.dhcp.enabled !== d.enabled) {
@@ -116,7 +118,7 @@ export class Router implements SimNode {
     } else if (cfg.dhcp.start !== d.start || cfg.dhcp.end !== d.end) {
       ctx.trace("ip.config", "sys", `DHCP 범위 변경: ${cfg.dhcp.start} ~ ${cfg.dhcp.end}`, { ...cfg.dhcp });
     }
-    this.dhcpServer.config = { ...cfg.dhcp };
+    if (cfg.dhcp.start !== d.start || cfg.dhcp.end !== d.end || cfg.dhcp.enabled !== d.enabled) this.dhcpServer.setConfig(cfg.dhcp, ctx);
 
     const w = cfg.wan;
     const wanChanged =

@@ -60,6 +60,7 @@ export type TraceKind =
   | "dhcp.ignore"
   | "dhcp.disabled"
   | "dhcp.pool.exhausted"
+  | "dhcp.misconfigured"
   | "dhcp.lease"
   | "tcp.connect"
   | "tcp.received"
@@ -122,4 +123,5 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "dhcp.nak.received",
   "dhcp.disabled",
   "dhcp.pool.exhausted",
+  "dhcp.misconfigured",
 ]);
