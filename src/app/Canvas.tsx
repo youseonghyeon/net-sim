@@ -305,12 +305,21 @@ function CableView({ cable, byId, selected }: { cable: Cable; byId: Map<string, 
 type Anchor = { x: number; y: number; side: PortSide };
 type Curve = { x0: number; y0: number; x1: number; y1: number; x2: number; y2: number; x3: number; y3: number };
 
-/** 포트에서 수직으로 나갔다가 상대 포트로 수직으로 들어가는 베지어 */
+/**
+ * 포트에서 수직으로 나갔다가 상대 포트로 수직으로 들어가는 베지어.
+ * 상대가 포트 방향의 반대편(예: 아래쪽 포트인데 상대가 위)에 있으면 짧게만 나갔다가 굽는다 — 스위치 아래 포트에서 위의 라우터로 가는 케이블.
+ */
 function cableCurve(a: Anchor, b: Anchor): Curve {
   const dist = Math.hypot(b.x - a.x, b.y - a.y);
   const lead = Math.min(90, Math.max(28, dist * 0.45));
-  const ay = a.side === "top" ? a.y - lead : a.y + lead;
-  const by = b.side === "top" ? b.y - lead : b.y + lead;
+  const leadFor = (from: Anchor, to: Anchor) => {
+    const towardPort = from.side === "top" ? to.y < from.y : to.y > from.y;
+    return towardPort ? lead : 8;
+  };
+  const la = leadFor(a, b);
+  const lb = leadFor(b, a);
+  const ay = a.side === "top" ? a.y - la : a.y + la;
+  const by = b.side === "top" ? b.y - lb : b.y + lb;
   return { x0: a.x, y0: a.y, x1: a.x, y1: ay, x2: b.x, y2: by, x3: b.x, y3: b.y };
 }
 

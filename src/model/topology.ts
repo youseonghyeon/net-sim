@@ -32,7 +32,8 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
     role: "switch",
     width: 152,
     height: 44,
-    ports: [{ name: "uplink", side: "top" }, ...lanPorts(8, "bottom", "eth", 1)],
+    // 실물처럼 포트는 아래쪽 한 줄. 라우터/게이트웨이도 이 줄에 꽂는다
+    ports: lanPorts(8, "bottom", "eth", 1),
     namePrefix: "sw",
   },
   router: {
@@ -322,6 +323,9 @@ export function normalizeTopology(t: Topology): Topology {
   const cables: Cable[] = [];
   for (const c of t.cables) {
     if (!ids.has(c.a.device) || !ids.has(c.b.device)) continue;
+    const da = devices.find((d) => d.id === c.a.device)!;
+    const db = devices.find((d) => d.id === c.b.device)!;
+    if (c.a.port >= DEVICE_SPECS[da.kind].ports.length || c.b.port >= DEVICE_SPECS[db.kind].ports.length) continue; // 예전 스펙의 포트
     const ka = `${c.a.device}:${c.a.port}`;
     const kb = `${c.b.device}:${c.b.port}`;
     if (usedPort.has(ka) || usedPort.has(kb) || ka === kb) continue; // 같은 포트에 두 케이블: 앞의 것만 남긴다
@@ -404,7 +408,7 @@ export function exampleTopology(): Topology {
   const srv = add("server", 576, 440);
   const cables: Cable[] = [
     { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: rt.id, port: 0 } }, // isp ↔ wan
-    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 0 } }, // lan1 ↔ uplink
+    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 0 } }, // lan1 ↔ eth1
     { id: newId("cable"), a: { device: sw.id, port: 2 }, b: { device: pc.id, port: 0 } }, // eth2
     { id: newId("cable"), a: { device: sw.id, port: 4 }, b: { device: laptop.id, port: 0 } }, // eth4
     { id: newId("cable"), a: { device: sw.id, port: 6 }, b: { device: srv.id, port: 0 } }, // eth6
