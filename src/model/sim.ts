@@ -4,11 +4,12 @@ import { ipToInt } from "../core/addr";
 import { Network, type ActionSpec, type Transmission } from "../core/network";
 import { DHCP_MAX_ATTEMPTS, DHCP_STATE_LABEL, Host } from "../core/nodes/host";
 import { Internet } from "../core/nodes/internet";
+import { L3Node } from "../core/nodes/l3";
 import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { Switch } from "../core/nodes/switch";
 import { topology } from "./store";
-import { DEFAULT_WAN, DEVICE_SPECS, type Device, type Topology } from "./topology";
+import { DEFAULT_DHCP_SERVER, DEFAULT_WAN, DEVICE_SPECS, defaultL3, type Device, type Topology } from "./topology";
 
 /** 1x 재생 속도에서 실제 1초당 흐르는 시뮬레이션 시간(ms). 링크 10ms 가 0.4초 */
 const BASE_RATE = 25;
@@ -84,7 +85,7 @@ class SimController {
       }
     }
     for (const d of t.devices) {
-      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify(d.host?.services ?? []) };
+      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d) }) };
       const prev = this.syncedConfig.get(d.id);
       if (prev === undefined) {
         settle();
@@ -97,7 +98,11 @@ class SimController {
         if (prev.services !== key.services) {
           settle();
           const node = net.nodes.get(d.id);
-          if (node instanceof Host) node.setServices(d.host?.services ?? [], net.contextFor(d.id));
+          if (node instanceof Host) {
+            node.setServices(d.host?.services ?? [], net.contextFor(d.id));
+            const dhcp = effectiveDhcpServer(d);
+            if (dhcp) node.setDhcpServer(dhcp, net.contextFor(d.id));
+          }
         }
       }
       if (prev === undefined || prev.net !== key.net || prev.services !== key.services) this.syncedConfig.set(d.id, key);
@@ -245,9 +250,35 @@ function wanMacOf(mac: string): string {
   return mac.replace(/^02:00:00:00/, "02:00:00:01");
 }
 
+/** 게이트웨이/NAT 의 i 번째 인터페이스 MAC: 4번째 옥텟을 1i 로 */
+function l3MacOf(mac: string, i: number): string {
+  return mac.replace(/^02:00:00:00/, `02:00:00:${(0x10 + i).toString(16)}`);
+}
+
+function effectiveDhcpServer(d: Device) {
+  if (!d.host) return undefined;
+  const c = d.host.dhcpServer ?? DEFAULT_DHCP_SERVER;
+  return { enabled: c.enabled, start: validIp(c.start) ?? "", end: validIp(c.end) ?? "", router: validIp(c.router) };
+}
+
+function effectiveL3(d: Device) {
+  const spec = DEVICE_SPECS[d.kind];
+  const l3 = d.l3 ?? defaultL3(d.kind);
+  return {
+    interfaces: spec.ports.map((p, i) => {
+      const c = l3.interfaces[i] ?? { ipMode: "static" as const, ip: "", prefix: 24, gateway: "" };
+      return c.ipMode === "dhcp"
+        ? { mode: "dhcp" as const }
+        : { mode: "static" as const, ip: validIp(c.ip), prefix: c.prefix, gateway: validIp(c.gateway) };
+    }),
+    routes: (l3.routes ?? []).filter((r) => validIp(r.dest) && validIp(r.via) && r.prefix >= 0 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix, via: r.via })),
+  };
+}
+
 function configKey(d: Device): string {
   if (d.host) return JSON.stringify({ mac: d.mac, host: effectiveHost(d) });
   if (d.router) return JSON.stringify({ mac: d.mac, router: effectiveRouter(d) });
+  if (DEVICE_SPECS[d.kind].role === "l3") return JSON.stringify({ mac: d.mac, l3: effectiveL3(d) });
   return d.mac;
 }
 
@@ -256,13 +287,28 @@ function makeNode(d: Device): SimNode {
   if (spec.role === "switch") return new Switch(d.id, spec.ports.map((p) => p.name));
   if (spec.role === "router") return new Router({ id: d.id, mac: d.mac, wanMac: wanMacOf(d.mac), ...effectiveRouter(d) });
   if (spec.role === "internet") return new Internet({ id: d.id, mac: d.mac });
-  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [] });
+  if (spec.role === "l3") {
+    const cfg = effectiveL3(d);
+    return new L3Node({
+      id: d.id,
+      kind: d.kind === "nat" ? "nat" : "gateway",
+      outside: 0,
+      interfaces: cfg.interfaces.map((c, i) => ({ name: spec.ports[i]!.name, mac: l3MacOf(d.mac, i), ...c })),
+      routes: cfg.routes,
+    });
+  }
+  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d) });
 }
 
 function applyConfig(net: Network, d: Device): void {
   const node = net.nodes.get(d.id);
   if (node instanceof Host && d.host) node.configure(effectiveHost(d), net.contextFor(d.id));
   else if (node instanceof Router && d.router) node.configure(effectiveRouter(d, node), net.contextFor(d.id));
+  else if (node instanceof L3Node) {
+    const cfg = effectiveL3(d);
+    node.configure(cfg.interfaces, net.contextFor(d.id));
+    node.setRoutes(cfg.routes, net.contextFor(d.id));
+  }
 }
 
 export const sim = new SimController();
@@ -290,12 +336,25 @@ export function hostStatus(id: string): { text: string; tone: "ok" | "warn" | "m
   }
   if (node instanceof Router) return { text: `${node.lan.ip}/${node.lan.prefix}`, tone: "ok", mono: true };
   if (node instanceof Internet) return { text: `ISP ${node.iface.ip}/${node.iface.prefix}`, tone: "ok", mono: true };
+  if (node instanceof L3Node) {
+    // 아래쪽(안쪽) 인터페이스들 요약
+    const inside = node.ifaces.slice(1).map((i, k) => (i.ip ? i.ip : `${node.names[k + 1]} 없음`));
+    return { text: inside.join(" · "), tone: node.ifaces.slice(1).every((i) => i.ip) ? "ok" : "warn", mono: true };
+  }
   return null;
 }
 
 /** 라우터 타일의 WAN 줄 */
 export function wanStatus(id: string): { text: string; tone: "ok" | "warn" | "muted"; mono: boolean } | null {
   const node = sim.node(id);
+  if (node instanceof L3Node) {
+    const name = node.names[0]!;
+    const up = node.ifaces[0]!;
+    if (up.ip) return { text: `${name} ${up.ip}`, tone: "ok", mono: true };
+    if (!node.linkUp[0]) return { text: `${name} 연결 없음`, tone: "muted", mono: false };
+    if (!node.clients[0]) return { text: `${name} 주소 수동 입력 필요`, tone: "warn", mono: false };
+    return { text: `${name} ${DHCP_STATE_LABEL[node.clients[0].state]}`, tone: node.clients[0].state === "failed" ? "warn" : "muted", mono: false };
+  }
   if (!(node instanceof Router)) return null;
   if (node.wan.ip) return { text: `WAN ${node.wan.ip}`, tone: "ok", mono: true };
   if (!node.wanLinkUp) return { text: "WAN 연결 없음", tone: "muted", mono: false };

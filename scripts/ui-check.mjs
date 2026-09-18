@@ -157,6 +157,29 @@ await clickDevice("pc-1");
 await page.click("button:has-text('DHCP 다시 요청')");
 console.log("pc-1 after subnet change →", await waitAddr("pc-1", /^192\.168\.127\.\d+\/24$/));
 
+// 8) 기능 단위 예제: NAT 박스 + 게이트웨이 + DHCP 서버 호스트
+await page.selectOption("select.example", "parts");
+await page.waitForTimeout(300);
+console.log("parts example devices:", await page.locator("[data-device]").count());
+console.log("pc-1 (DHCP from dhcp-srv) →", await waitAddr("pc-1", /^192\.168\.1\.\d+\/24$/));
+for (let i = 0; i < 100 && !/outside 203\.0\.113\./.test((await device("nat-1").locator("text").nth(2).textContent()) ?? ""); i++) await page.waitForTimeout(100);
+console.log("nat-1 outside →", await device("nat-1").locator("text").nth(2).textContent());
+await clickDevice("pc-1");
+await page.fill(".ping-row .input", "192.168.2.10");
+await page.click(".ping-row .btn");
+await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+console.log("ping across gateway:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+await page.fill(".ping-row .input", "8.8.8.8");
+await page.click(".ping-row .btn");
+await page.waitForFunction(() => /8\.8\.8\.8/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+console.log("ping via NAT box:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+await clickDevice("nat-1");
+await page.waitForTimeout(100);
+await page.screenshot({ path: `${OUT}/15-parts-nat.png` });
+await clickDevice("gw-1");
+await page.waitForTimeout(100);
+await page.screenshot({ path: `${OUT}/16-parts-gateway.png` });
+
 console.log("ERRORS:", errors.length ? errors : "none");
 await browser.close();
 await server.close();

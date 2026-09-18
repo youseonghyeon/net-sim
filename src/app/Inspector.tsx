@@ -3,11 +3,26 @@ import { useRef } from "preact/hooks";
 import { ipToInt, prefixToMask, intToIp, sameSubnet } from "../core/addr";
 import { Host } from "../core/nodes/host";
 import { Internet, KNOWN_SERVERS } from "../core/nodes/internet";
+import { L3Node } from "../core/nodes/l3";
 import type { SnapshotTable as SnapshotTableData } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { sim, simVersion } from "../model/sim";
 import { removeCable, removeDevice, selectedCable, selectedDevice, topology, updateCable, updateDevice } from "../model/store";
-import { cableAt, DEFAULT_WAN, peerOf, specOf, type Cable, type Device, type HostSettings, type RouterSettings, type WanSettings } from "../model/topology";
+import {
+  cableAt,
+  DEFAULT_DHCP_SERVER,
+  DEFAULT_WAN,
+  defaultL3,
+  peerOf,
+  specOf,
+  type Cable,
+  type Device,
+  type HostSettings,
+  type IfaceSettings,
+  type L3Settings,
+  type RouterSettings,
+  type WanSettings,
+} from "../model/topology";
 import { Icon } from "./Icons";
 
 export function Inspector() {
@@ -185,6 +200,7 @@ function DevicePanel({ d }: { d: Device }) {
       {d.host && <HostSection d={d} h={d.host} />}
       {d.host && <ServiceSection d={d} h={d.host} />}
       {d.router && <RouterSection d={d} r={d.router} />}
+      {spec.role === "l3" && <L3Section d={d} l3={d.l3 ?? defaultL3(d.kind)} />}
       {d.host && <DiagSection d={d} />}
       <LiveTables d={d} />
       <Section>
@@ -240,30 +256,161 @@ function HostSection({ d, h }: { d: Device; h: HostSettings }) {
   );
 }
 
+function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <span
+      class={`toggle${on ? " on" : ""}`}
+      role="switch"
+      aria-checked={on}
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+    />
+  );
+}
+
+/** 인터페이스 하나의 IP 설정 (자동/수동 + 주소·서브넷·게이트웨이). 호스트·WAN·게이트웨이가 공유 */
+function IfaceFields({ value, onChange, gatewayLabel = "게이트웨이", dhcpNote }: { value: IfaceSettings; onChange: (patch: Partial<IfaceSettings>) => void; gatewayLabel?: string; dhcpNote: string }) {
+  const isStatic = value.ipMode === "static";
+  return (
+    <>
+      <div class="segmented" role="radiogroup">
+        <button class={!isStatic ? "on" : ""} onClick={() => onChange({ ipMode: "dhcp" })}>
+          자동 (DHCP)
+        </button>
+        <button class={isStatic ? "on" : ""} onClick={() => onChange({ ipMode: "static" })}>
+          수동
+        </button>
+      </div>
+      {isStatic ? (
+        <>
+          <Field label="IP 주소" error={ipError(value.ip, true)}>
+            <input class="input mono" value={value.ip} placeholder="192.168.0.1" onInput={(e) => onChange({ ip: e.currentTarget.value })} />
+          </Field>
+          <Field label="서브넷">
+            <div class="prefix">
+              <span class="mono">/</span>
+              <input
+                class="input mono"
+                type="number"
+                min={0}
+                max={32}
+                value={value.prefix}
+                onInput={(e) => onChange({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) })}
+              />
+              <span class="mono muted">{intToIp(prefixToMask(value.prefix))}</span>
+            </div>
+          </Field>
+          <Field label={gatewayLabel} error={ipError(value.gateway, false)}>
+            <input class="input mono" value={value.gateway} placeholder="비우면 없음" onInput={(e) => onChange({ gateway: e.currentTarget.value })} />
+          </Field>
+        </>
+      ) : (
+        <p class="note">{dhcpNote}</p>
+      )}
+    </>
+  );
+}
+
+function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
+  const spec = specOf(d);
+  const isNat = d.kind === "nat";
+  const setIface = (i: number, patch: Partial<IfaceSettings>) =>
+    updateDevice(d.id, (x) => {
+      const cur = x.l3 ?? defaultL3(x.kind);
+      const interfaces = cur.interfaces.map((f, k) => (k === i ? { ...f, ...patch } : f));
+      return { ...x, l3: { ...cur, interfaces } };
+    });
+  const setRoutes = (routes: L3Settings["routes"]) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), routes } }));
+  return (
+    <>
+      {spec.ports.map((p, i) => {
+        const v = l3.interfaces[i] ?? { ipMode: "static" as const, ip: "", prefix: 24, gateway: "" };
+        const isUp = p.side === "top";
+        const title = isNat ? (i === 0 ? "outside 인터페이스 (공인 쪽)" : "inside 인터페이스 (사설 쪽)") : `${p.name} 인터페이스${isUp ? " (업링크)" : ""}`;
+        return (
+          <Section key={p.name} title={title}>
+            <IfaceFields
+              value={v}
+              onChange={(patch) => setIface(i, patch)}
+              gatewayLabel={isUp ? "기본 경로" : "게이트웨이"}
+              dhcpNote={isUp ? "위쪽에 연결된 장치(인터넷 또는 다른 라우터)에서 주소와 기본 경로를 받습니다." : "이 인터페이스가 DHCP 로 주소를 받습니다. 보통 안쪽 인터페이스는 수동으로 고정합니다."}
+            />
+            {!isUp && v.ipMode === "static" && <p class="note">이 서브넷의 호스트들은 게이트웨이를 {v.ip || "이 주소"} 로 두어야 다른 네트워크로 나갈 수 있습니다.</p>}
+          </Section>
+        );
+      })}
+      <Section title="정적 경로">
+        {l3.routes.length === 0 && <p class="note">연결된 서브넷과 기본 경로 외에 알아야 할 경로가 있으면 추가합니다. {isNat ? "안쪽에 라우터가 또 있으면 그 뒤 서브넷(예: 192.168.0.0/16)을 안쪽 라우터로 보내는 경로가 필요합니다." : ""}</p>}
+        {l3.routes.map((r, i) => (
+          <div key={i} class="route-row">
+            <span class="muted">목적지</span>
+            <input class="input mono" value={r.dest} placeholder="192.168.0.0" title="목적지 네트워크" onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, dest: e.currentTarget.value } : x)))} />
+            <span class="mono">/</span>
+            <input class="input mono prefix-in" type="number" min={0} max={32} value={r.prefix} onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) } : x)))} />
+            <span class="muted">다음 홉</span>
+            <input class="input mono via" value={r.via} placeholder="연결된 서브넷 안의 주소" title="다음 홉 주소 (연결된 서브넷 안)" onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, via: e.currentTarget.value } : x)))} />
+            <button class="icon-btn" title="경로 삭제" onClick={() => setRoutes(l3.routes.filter((_, k) => k !== i))}>
+              <Icon name="trash" size={15} />
+            </button>
+          </div>
+        ))}
+        <button class="btn wide" onClick={() => setRoutes([...l3.routes, { dest: "", prefix: 24, via: "" }])}>
+          <Icon name="plus" size={14} />
+          경로 추가
+        </button>
+      </Section>
+    </>
+  );
+}
+
 function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
   const on = (h.services ?? []).includes(80);
   const toggle = () => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, services: on ? (x.host!.services ?? []).filter((p) => p !== 80) : [...(x.host!.services ?? []), 80] } }));
+  const ds = h.dhcpServer ?? DEFAULT_DHCP_SERVER;
+  const setDs = (patch: Partial<typeof ds>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, dhcpServer: { ...(x.host!.dhcpServer ?? DEFAULT_DHCP_SERVER), ...patch } } }));
+  const staticIp = h.ipMode === "static" && validIp(h.ip) ? h.ip : undefined;
+  const rangeErr = (v: string) => {
+    const base = ipError(v, true);
+    if (base) return base;
+    if (staticIp && !sameSubnet(v, staticIp, h.prefix)) return `내 서브넷(${staticIp}/${h.prefix}) 밖입니다`;
+    return undefined;
+  };
   return (
     <Section title="서비스">
       <label class="toggle-row">
         <span>
           웹 서버 <span class="mono muted">TCP 80</span>
         </span>
-        <span
-          class={`toggle${on ? " on" : ""}`}
-          role="switch"
-          aria-checked={on}
-          tabIndex={0}
-          onClick={toggle}
-          onKeyDown={(e) => {
-            if (e.key === " " || e.key === "Enter") {
-              e.preventDefault();
-              toggle();
-            }
-          }}
-        />
+        <Toggle on={on} onToggle={toggle} />
       </label>
       <p class="note">{on ? "포트 80 으로 오는 연결 요청(SYN)에 응답합니다. 다른 호스트에서 이 장치로 연결해 보세요." : "꺼져 있으면 연결 요청에 RST 로 거부합니다."}</p>
+      <label class="toggle-row">
+        <span>
+          DHCP 서버 <span class="mono muted">UDP 67</span>
+        </span>
+        <Toggle on={ds.enabled} onToggle={() => setDs({ enabled: !ds.enabled })} />
+      </label>
+      {ds.enabled && (
+        <>
+          {!staticIp && <p class="note error-note">DHCP 서버는 자기 주소가 고정돼 있어야 합니다. 위의 IP 설정을 수동으로 바꾸세요.</p>}
+          <Field label="시작 주소" error={rangeErr(ds.start)}>
+            <input class="input mono" value={ds.start} onInput={(e) => setDs({ start: e.currentTarget.value })} />
+          </Field>
+          <Field label="끝 주소" error={rangeErr(ds.end)}>
+            <input class="input mono" value={ds.end} onInput={(e) => setDs({ end: e.currentTarget.value })} />
+          </Field>
+          <Field label="게이트웨이 안내" error={ipError(ds.router, false)}>
+            <input class="input mono" value={ds.router} placeholder="비우면 안내 없음" onInput={(e) => setDs({ router: e.currentTarget.value })} />
+          </Field>
+          <p class="note">클라이언트에게 이 범위의 주소와 함께 게이트웨이를 알려줍니다. 게이트웨이를 비우면 클라이언트는 같은 서브넷 밖으로 나갈 수 없습니다.</p>
+        </>
+      )}
     </Section>
   );
 }
@@ -471,6 +618,7 @@ function DiagSection({ d }: { d: Device }) {
     if (n instanceof Internet) hasInternet = true;
     const ip = n instanceof Host ? n.ip : n instanceof Router ? n.lan.ip : undefined;
     if (ip) targets.push({ ip, name: other.name });
+    if (n instanceof L3Node) n.ifaces.forEach((f, k) => f.ip && targets.push({ ip: f.ip, name: `${other.name} ${n.names[k]}` }));
     if (n instanceof Host && ip && n.tcp.listening.size > 0) servers.push({ ip, name: other.name });
   }
   if (hasInternet) {

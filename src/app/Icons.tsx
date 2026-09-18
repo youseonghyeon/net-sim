@@ -6,6 +6,8 @@ export type IconName =
   | "server"
   | "switch"
   | "router"
+  | "gateway"
+  | "nat"
   | "internet"
   | "cursor"
   | "cable"
@@ -52,6 +54,19 @@ const PATHS: Record<IconName, JSX.Element> = {
     <>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M8 9.5h8l-2.2-2.2M16 9.5l-2.2 2.2M16 14.5H8l2.2-2.2M8 14.5l2.2 2.2" />
+    </>
+  ),
+  gateway: (
+    <>
+      <rect x="3" y="9.5" width="18" height="5" rx="1.5" />
+      <path d="M12 9.5V4M9.5 6.5 12 4l2.5 2.5M7 14.5V20M4.5 17.5 7 20l2.5-2.5M17 14.5V20M14.5 17.5 17 20l2.5-2.5" />
+    </>
+  ),
+  nat: (
+    <>
+      <rect x="2.5" y="6.5" width="7.5" height="11" rx="1.5" />
+      <rect x="14" y="6.5" width="7.5" height="11" rx="1.5" />
+      <path d="M10 10h4l-1.5-1.5M14 14h-4l1.5 1.5" />
     </>
   ),
   internet: <path d="M7 18.5a4 4 0 0 1-.6-7.95A5.5 5.5 0 0 1 17 9.5a3.5 3.5 0 0 1 .5 6.96V18.5z" />,

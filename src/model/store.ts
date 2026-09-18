@@ -3,6 +3,7 @@ import {
   createDevice,
   DEVICE_SPECS,
   EMPTY_TOPOLOGY,
+  examplePartsTopology,
   exampleTopology,
   freePort,
   newId,
@@ -154,8 +155,10 @@ export function removeSelected(): void {
   else removeCable(s.id);
 }
 
-export function loadExample(): void {
-  topology.value = exampleTopology();
+export type ExampleId = "router" | "parts";
+
+export function loadExample(which: ExampleId = "router"): void {
+  topology.value = which === "parts" ? examplePartsTopology() : exampleTopology();
   selection.value = null;
   requestFit();
 }

@@ -83,15 +83,22 @@ export function App() {
             장치 {t.devices.length} · 케이블 {t.cables.length}
           </span>
           <span class="vsep" />
-          <button
-            class="btn ghost"
-            onClick={() => {
-              loadExample();
+          <select
+            class="btn ghost example"
+            value=""
+            onChange={(e) => {
+              const v = e.currentTarget.value as "" | "router" | "parts";
+              e.currentTarget.value = "";
+              if (!v) return;
+              loadExample(v);
               sim.reset();
             }}
+            title="예제 네트워크 불러오기"
           >
-            예제 불러오기
-          </button>
+            <option value="">예제 불러오기</option>
+            <option value="router">공유기 하나로 (라우터)</option>
+            <option value="parts">기능 단위로 (NAT + 게이트웨이 + DHCP 서버)</option>
+          </select>
           <button
             class="btn ghost"
             onClick={() => {

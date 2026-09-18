@@ -1,7 +1,7 @@
 // 편집 가능한 토폴로지 모델. 시뮬레이션 코어(src/core)와 분리되어 있고, 실행 시 코어 Network 로 변환된다.
 
-export type DeviceKind = "pc" | "laptop" | "server" | "switch" | "router" | "internet";
-export type Role = "host" | "switch" | "router" | "internet";
+export type DeviceKind = "pc" | "laptop" | "server" | "switch" | "router" | "gateway" | "nat" | "internet";
+export type Role = "host" | "switch" | "router" | "l3" | "internet";
 export type PortSide = "top" | "bottom";
 
 export interface PortSpec {
@@ -44,6 +44,31 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
     ports: [{ name: "wan", side: "top" }, ...lanPorts(4, "bottom", "lan", 1)],
     namePrefix: "rt",
   },
+  gateway: {
+    kind: "gateway",
+    label: "게이트웨이",
+    role: "l3",
+    width: 152,
+    height: 62,
+    ports: [
+      { name: "if0", side: "top" },
+      { name: "if1", side: "bottom" },
+      { name: "if2", side: "bottom" },
+    ],
+    namePrefix: "gw",
+  },
+  nat: {
+    kind: "nat",
+    label: "NAT",
+    role: "l3",
+    width: 152,
+    height: 62,
+    ports: [
+      { name: "outside", side: "top" },
+      { name: "inside", side: "bottom" },
+    ],
+    namePrefix: "nat",
+  },
   internet: {
     kind: "internet",
     label: "인터넷",
@@ -55,7 +80,15 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
   },
 };
 
-export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "server", "switch", "router", "internet"];
+export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "server", "switch", "router", "gateway", "nat", "internet"];
+
+export interface DhcpServerSettings {
+  enabled: boolean;
+  start: string;
+  end: string;
+  /** 클라이언트에게 안내할 게이트웨이 (비우면 안내 없음) */
+  router: string;
+}
 
 export interface HostSettings {
   ipMode: "dhcp" | "static";
@@ -64,6 +97,29 @@ export interface HostSettings {
   gateway: string;
   /** 듣는 TCP 포트 (웹 서버 = 80) */
   services: number[];
+  /** 이 호스트가 DHCP 서버 역할을 할 때 */
+  dhcpServer: DhcpServerSettings;
+}
+
+export const DEFAULT_DHCP_SERVER: DhcpServerSettings = { enabled: false, start: "192.168.0.100", end: "192.168.0.199", router: "192.168.0.1" };
+
+/** 게이트웨이/NAT 의 인터페이스 하나 */
+export interface IfaceSettings {
+  ipMode: "dhcp" | "static";
+  ip: string;
+  prefix: number;
+  gateway: string;
+}
+
+export interface StaticRouteSettings {
+  dest: string;
+  prefix: number;
+  via: string;
+}
+
+export interface L3Settings {
+  interfaces: IfaceSettings[];
+  routes: StaticRouteSettings[];
 }
 
 export interface WanSettings {
@@ -92,6 +148,7 @@ export interface Device {
   y: number;
   host?: HostSettings;
   router?: RouterSettings;
+  l3?: L3Settings;
 }
 
 export interface PortRef {
@@ -149,11 +206,32 @@ export function nextMac(devices: Device[]): string {
 export function createDevice(kind: DeviceKind, x: number, y: number, devices: Device[]): Device {
   const spec = DEVICE_SPECS[kind];
   const device: Device = { id: newId(kind), kind, name: nextName(kind, devices), mac: nextMac(devices), x, y };
-  if (spec.role === "host") device.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: kind === "server" ? [80] : [] };
+  if (spec.role === "host") device.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: kind === "server" ? [80] : [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   if (spec.role === "router") {
     device.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" }, wan: { ...DEFAULT_WAN } };
   }
+  if (spec.role === "l3") device.l3 = defaultL3(kind);
   return device;
+}
+
+export function defaultL3(kind: DeviceKind): L3Settings {
+  if (kind === "nat") {
+    return {
+      interfaces: [
+        { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" },
+        { ipMode: "static", ip: "192.168.0.1", prefix: 24, gateway: "" },
+      ],
+      routes: [],
+    };
+  }
+  return {
+    interfaces: [
+      { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" },
+      { ipMode: "static", ip: "192.168.1.1", prefix: 24, gateway: "" },
+      { ipMode: "static", ip: "192.168.2.1", prefix: 24, gateway: "" },
+    ],
+    routes: [],
+  };
 }
 
 /** 포트가 타일 가장자리에서 튀어나온 위치 (케이블이 붙는 점) */
@@ -219,8 +297,19 @@ export function normalizeTopology(t: Topology): Topology {
     if (!fixed.mac) fixed.mac = nextMac(devices);
     const spec = DEVICE_SPECS[fixed.kind];
     if (spec.role === "host") {
-      if (!fixed.host) fixed.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: fixed.kind === "server" ? [80] : [] };
-      else if (!fixed.host.services) fixed.host = { ...fixed.host, services: fixed.kind === "server" ? [80] : [] };
+      if (!fixed.host) fixed.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: fixed.kind === "server" ? [80] : [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+      else {
+        fixed.host = {
+          ...fixed.host,
+          services: fixed.host.services ?? (fixed.kind === "server" ? [80] : []),
+          dhcpServer: fixed.host.dhcpServer ?? { ...DEFAULT_DHCP_SERVER },
+        };
+      }
+    }
+    if (spec.role === "l3") {
+      const def = defaultL3(fixed.kind);
+      if (!fixed.l3) fixed.l3 = def;
+      else fixed.l3 = { interfaces: def.interfaces.map((d, i) => fixed.l3!.interfaces[i] ?? d), routes: fixed.l3.routes ?? [] };
     }
     if (spec.role === "router") {
       if (!fixed.router) fixed.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" }, wan: { ...DEFAULT_WAN } };
@@ -243,7 +332,63 @@ export function normalizeTopology(t: Topology): Topology {
   return { devices, cables };
 }
 
-/** 인터넷 + 라우터 + 스위치 + 호스트 3대 예제 */
+/** 기능 단위 구성 예제: 인터넷 → NAT 박스 → 게이트웨이 → 스위치 2대(서브넷 2개) + DHCP 서버 호스트 */
+export function examplePartsTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const inet = add("internet", 344, -232);
+  const nat = add("nat", 344, -80);
+  nat.l3 = {
+    interfaces: [
+      { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" },
+      { ipMode: "static", ip: "10.0.0.1", prefix: 24, gateway: "" },
+    ],
+    routes: [{ dest: "192.168.0.0", prefix: 16, via: "10.0.0.2" }],
+  };
+  const gw = add("gateway", 344, 80);
+  gw.l3 = {
+    interfaces: [
+      { ipMode: "static", ip: "10.0.0.2", prefix: 24, gateway: "10.0.0.1" },
+      { ipMode: "static", ip: "192.168.1.1", prefix: 24, gateway: "" },
+      { ipMode: "static", ip: "192.168.2.1", prefix: 24, gateway: "" },
+    ],
+    routes: [],
+  };
+  const sw1 = add("switch", 120, 256);
+  const sw2 = add("switch", 568, 256);
+  const dhcp = add("server", 24, 424);
+  dhcp.name = "dhcp-srv";
+  dhcp.host = {
+    ipMode: "static",
+    ip: "192.168.1.2",
+    prefix: 24,
+    gateway: "192.168.1.1",
+    services: [],
+    dhcpServer: { enabled: true, start: "192.168.1.100", end: "192.168.1.199", router: "192.168.1.1" },
+  };
+  const pc1 = add("pc", 200, 424);
+  const laptop = add("laptop", 520, 424);
+  laptop.host = { ipMode: "static", ip: "192.168.2.10", prefix: 24, gateway: "192.168.2.1", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const web = add("server", 700, 424);
+  web.host = { ipMode: "static", ip: "192.168.2.20", prefix: 24, gateway: "192.168.2.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const cables: Cable[] = [
+    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: nat.id, port: 0 } },
+    { id: newId("cable"), a: { device: nat.id, port: 1 }, b: { device: gw.id, port: 0 } },
+    { id: newId("cable"), a: { device: gw.id, port: 1 }, b: { device: sw1.id, port: 0 } },
+    { id: newId("cable"), a: { device: gw.id, port: 2 }, b: { device: sw2.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw1.id, port: 2 }, b: { device: dhcp.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw1.id, port: 5 }, b: { device: pc1.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw2.id, port: 3 }, b: { device: laptop.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw2.id, port: 6 }, b: { device: web.id, port: 0 } },
+  ];
+  return { devices, cables };
+}
+
+/** 인터넷 + 공유기(라우터) + 스위치 + 호스트 3대 예제 */
 export function exampleTopology(): Topology {
   const devices: Device[] = [];
   const add = (kind: DeviceKind, x: number, y: number) => {
