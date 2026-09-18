@@ -54,13 +54,19 @@ class SimController {
 
   // ---------- 토폴로지 → 네트워크 동기화 ----------
 
+  /** 위치 이동처럼 시뮬레이션과 무관한 변경은 건드리지 않는다 (패널 재렌더 방지) */
   private sync(t: Topology): void {
     const net = this.net;
-    net.runUntil(this.settleTime());
+    let changed = false;
+    const settle = () => {
+      if (!changed) net.runUntil(this.settleTime());
+      changed = true;
+    };
 
     const cableIds = new Set(t.cables.map((c) => c.id));
     for (const id of [...this.syncedCables.keys()]) {
       if (!cableIds.has(id)) {
+        settle();
         net.disconnect(id);
         this.syncedCables.delete(id);
       }
@@ -68,6 +74,7 @@ class SimController {
     const deviceIds = new Set(t.devices.map((d) => d.id));
     for (const id of [...this.syncedConfig.keys()]) {
       if (!deviceIds.has(id)) {
+        settle();
         net.removeNode(id);
         this.syncedConfig.delete(id);
       }
@@ -76,20 +83,26 @@ class SimController {
       const key: SyncedDevice = { net: configKey(d), services: JSON.stringify(d.host?.services ?? []) };
       const prev = this.syncedConfig.get(d.id);
       if (prev === undefined) {
+        settle();
         net.addNode(makeNode(d));
       } else {
-        if (prev.net !== key.net) applyConfig(net, d);
+        if (prev.net !== key.net) {
+          settle();
+          applyConfig(net, d);
+        }
         if (prev.services !== key.services) {
+          settle();
           const node = net.nodes.get(d.id);
           if (node instanceof Host) node.setServices(d.host?.services ?? [], net.contextFor(d.id));
         }
       }
-      this.syncedConfig.set(d.id, key);
+      if (prev === undefined || prev.net !== key.net || prev.services !== key.services) this.syncedConfig.set(d.id, key);
     }
     for (const c of t.cables) {
       const loss = c.loss ?? 0;
       const prevLoss = this.syncedCables.get(c.id);
       if (prevLoss === undefined) {
+        settle();
         try {
           net.connect(c.a.device, c.a.port, c.b.device, c.b.port, 10, c.id);
           net.setLinkLoss(c.id, loss);
@@ -98,11 +111,12 @@ class SimController {
           console.warn("cable sync failed", c, e);
         }
       } else if (prevLoss !== loss) {
+        settle();
         net.setLinkLoss(c.id, loss);
         this.syncedCables.set(c.id, loss);
       }
     }
-    this.bump();
+    if (changed) this.bump();
   }
 
   // ---------- 시계 ----------

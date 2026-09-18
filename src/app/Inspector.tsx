@@ -308,7 +308,7 @@ function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
             <Field label="끝 주소" error={ipError(r.dhcp.end, true)}>
               <input class="input mono" value={r.dhcp.end} onInput={(e) => setDhcp({ end: e.currentTarget.value })} />
             </Field>
-            <p class="note">자동(DHCP) 로 설정된 호스트가 연결되면 이 범위에서 주소를 빌려줍니다. 게이트웨이는 LAN 주소로 안내합니다.</p>
+            <p class="note">자동(DHCP) 로 설정된 호스트가 연결되면 이 범위에서 주소를 빌려줍니다. 게이트웨이는 LAN 주소로 안내합니다. 이미 실패한 호스트는 그 호스트의 진단에서 "DHCP 다시 요청" 을 누르세요.</p>
           </>
         ) : (
           <p class="note">꺼져 있으면 호스트는 주소를 받지 못합니다. 각 호스트에서 IP 를 수동으로 설정해야 통신할 수 있습니다.</p>

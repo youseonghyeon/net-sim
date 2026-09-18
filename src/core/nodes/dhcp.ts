@@ -150,7 +150,7 @@ export class DhcpClient {
     ctx.trace(
       "dhcp.failed",
       "app",
-      this.tag(`DHCP 실패: 서버 응답 없음 (${DHCP_MAX_ATTEMPTS}회 시도) → 주소 없음. DHCP 서비스를 켜거나 IP 를 수동 설정하세요`),
+      this.tag(`DHCP 실패: 서버 응답 없음 (${DHCP_MAX_ATTEMPTS}회 시도) → 주소 없음. DHCP 서비스를 켠 뒤 "DHCP 다시 요청" 을 누르거나, IP 를 수동 설정하세요`),
       {},
     );
   }
