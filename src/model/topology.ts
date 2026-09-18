@@ -229,7 +229,17 @@ export function normalizeTopology(t: Topology): Topology {
     devices.push(fixed);
   }
   const ids = new Set(devices.map((d) => d.id));
-  const cables = t.cables.filter((c) => ids.has(c.a.device) && ids.has(c.b.device));
+  const usedPort = new Set<string>();
+  const cables: Cable[] = [];
+  for (const c of t.cables) {
+    if (!ids.has(c.a.device) || !ids.has(c.b.device)) continue;
+    const ka = `${c.a.device}:${c.a.port}`;
+    const kb = `${c.b.device}:${c.b.port}`;
+    if (usedPort.has(ka) || usedPort.has(kb) || ka === kb) continue; // 같은 포트에 두 케이블: 앞의 것만 남긴다
+    usedPort.add(ka);
+    usedPort.add(kb);
+    cables.push(c);
+  }
   return { devices, cables };
 }
 

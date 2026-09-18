@@ -20,6 +20,10 @@ export const running = signal(true);
 export const speed = signal(1);
 /** 트레이스나 노드 상태가 바뀔 때마다 증가 → 패널이 다시 읽는다 */
 export const simVersion = signal(0);
+/** 사용자에게 보여줄 시뮬레이션 알림 (폭주 정지, 내부 오류) */
+export const simNotice = signal<string | null>(null);
+/** 한 화면 프레임에 처리할 수 있는 이벤트 상한. 넘으면 폭주로 보고 일시정지 */
+const EVENT_BURST_LIMIT = 4000;
 
 interface SyncedDevice {
   net: string;
@@ -106,10 +110,10 @@ class SimController {
         try {
           net.connect(c.a.device, c.a.port, c.b.device, c.b.port, 10, c.id);
           net.setLinkLoss(c.id, loss);
-          this.syncedCables.set(c.id, loss);
         } catch (e) {
           console.warn("cable sync failed", c, e);
         }
+        this.syncedCables.set(c.id, loss); // 실패해도 기록해 매 변경마다 재시도하지 않는다
       } else if (prevLoss !== loss) {
         settle();
         net.setLinkLoss(c.id, loss);
@@ -124,7 +128,15 @@ class SimController {
   private readonly frame = (ts: number): void => {
     const dt = this.lastFrame ? Math.min(100, ts - this.lastFrame) : 0;
     this.lastFrame = ts;
-    if (running.value) this.advance(dt);
+    if (running.value) {
+      try {
+        this.advance(dt);
+      } catch (e) {
+        console.error("simulation error", e);
+        running.value = false;
+        simNotice.value = `시뮬레이션 내부 오류로 일시정지했습니다: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
     requestAnimationFrame(this.frame);
   };
 
@@ -134,6 +146,7 @@ class SimController {
     if (net.peekNextTime() === undefined && net.inFlight(t).length === 0) return; // 조용함: 시계 정지
     t += (dtMs * BASE_RATE * speed.peek()) / 1000;
     let changed = false;
+    let processed = 0;
     for (;;) {
       const next = net.peekNextTime();
       if (next === undefined) break;
@@ -143,6 +156,12 @@ class SimController {
       }
       net.step();
       changed = true;
+      if (++processed > EVENT_BURST_LIMIT) {
+        running.value = false;
+        simNotice.value = `이벤트가 폭주해 일시정지했습니다 (한 번에 ${EVENT_BURST_LIMIT}개 초과). 케이블이 두 경로로 이어진 L2 루프가 있는지 확인하세요`;
+        t = net.now;
+        break;
+      }
     }
     simTime.value = t;
     if (changed) this.bump();

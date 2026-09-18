@@ -1,5 +1,5 @@
 import { isBroadcastMac, type Mac } from "../addr";
-import { describeFrame, type EthernetFrame } from "../packet";
+import { describeFrame, MAX_L2_HOPS, type EthernetFrame } from "../packet";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 
 interface MacEntry {
@@ -14,6 +14,8 @@ export class Switch implements SimNode {
   readonly id: string;
   readonly portCount: number;
   private readonly portNames: string[];
+  /** 최근 본 프레임 id → 수신 포트. 같은 프레임이 다시 오면 L2 루프 */
+  private readonly seen = new Map<number, number>();
 
   /** ports: 포트 개수(이름은 port N) 또는 포트 이름 목록 */
   constructor(id: string, ports: number | string[] = 4) {
@@ -30,6 +32,8 @@ export class Switch implements SimNode {
     const label = describeFrame(frame);
     const pn = this.portName(port);
     ctx.trace("frame.receive", "L2", `${pn} 수신: ${label} [${frame.src} → ${frame.dst}]`, { port, src: frame.src, dst: frame.dst }, frame.id);
+    if (!guardLoop(this.seen, port, frame, ctx, pn)) return;
+    frame = { ...frame, hops: (frame.hops ?? 0) + 1 };
 
     const existing = this.macTable.get(frame.src);
     if (!existing || existing.port !== port) {
@@ -98,4 +102,26 @@ export class Switch implements SimNode {
       ],
     };
   }
+}
+
+/**
+ * L2 루프 안전장치. 같은 프레임을 두 번째 보거나 홉 수가 한도를 넘으면 버린다.
+ * 실제 이더넷에는 이런 장치가 없어서(TTL 없음) STP 로 루프를 미리 끊어야 한다 — 그 점을 로그로 알려준다.
+ */
+export function guardLoop(seen: Map<number, number>, port: number, frame: EthernetFrame, ctx: NodeContext, portName: string): boolean {
+  if ((frame.hops ?? 0) >= MAX_L2_HOPS) {
+    ctx.trace("switch.loop", "L2", `프레임이 스위치 ${MAX_L2_HOPS}개를 넘게 돌았음 → L2 루프로 판단해 폐기. 실제 이더넷엔 TTL 이 없어 STP 가 없으면 브로드캐스트 폭주가 난다`, { port }, frame.id);
+    return false;
+  }
+  const prev = seen.get(frame.id);
+  if (prev !== undefined) {
+    ctx.trace("switch.loop", "L2", `같은 프레임을 ${portName} 에서 다시 받음 (처음은 다른 포트) → L2 루프 감지, 폐기. 케이블이 두 경로로 이어져 있음`, { port, first: prev }, frame.id);
+    return false;
+  }
+  seen.set(frame.id, port);
+  if (seen.size > 512) {
+    const oldest = seen.keys().next().value;
+    if (oldest !== undefined) seen.delete(oldest);
+  }
+  return true;
 }

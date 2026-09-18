@@ -7,7 +7,12 @@ export interface EthernetFrame {
   src: Mac;
   dst: Mac;
   payload: ArpPacket | Ipv4Packet;
+  /** 스위치를 거친 횟수. 실제 이더넷엔 없지만 L2 루프 폭주를 막기 위한 안전장치 */
+  hops?: number;
 }
+
+/** 이 횟수를 넘긴 프레임은 루프로 간주해 버린다 */
+export const MAX_L2_HOPS = 16;
 
 export interface ArpPacket {
   kind: "arp";
@@ -56,7 +61,7 @@ export interface UdpPacket {
   payload: DhcpMessage;
 }
 
-export type DhcpOp = "discover" | "offer" | "request" | "ack" | "nak";
+export type DhcpOp = "discover" | "offer" | "request" | "ack" | "nak" | "release";
 
 export interface DhcpMessage {
   kind: "dhcp";
@@ -81,7 +86,7 @@ export type Layer = "L1" | "L2" | "L3" | "L4" | "app" | "sys";
 
 export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp";
 
-const DHCP_LABEL: Record<DhcpOp, string> = { discover: "Discover", offer: "Offer", request: "Request", ack: "Ack", nak: "Nak" };
+const DHCP_LABEL: Record<DhcpOp, string> = { discover: "Discover", offer: "Offer", request: "Request", ack: "Ack", nak: "Nak", release: "Release" };
 
 /** UI 라벨/로그용 짧은 설명 */
 export function describeFrame(frame: EthernetFrame): string {

@@ -20,6 +20,8 @@ export type Emit = (frame: EthernetFrame) => void;
  */
 export class NetInterface {
   static readonly ARP_TIMEOUT = 1000;
+  /** 이 시간이 지난 ARP 항목은 다시 물어본다 */
+  static readonly ARP_TTL = 60_000;
 
   readonly mac: Mac;
   ip: Ip | undefined;
@@ -79,10 +81,14 @@ export class NetInterface {
     if (!nextHop) return;
 
     const entry = this.arpCache.get(nextHop);
-    if (entry) {
+    if (entry && ctx.now - entry.learnedAt <= NetInterface.ARP_TTL) {
       ctx.trace("arp.cache.hit", "L2", `ARP 캐시 적중: ${nextHop} → ${entry.mac}`, { ip: nextHop, mac: entry.mac });
       this.transmit(entry.mac, pkt, ctx, emit);
       return;
+    }
+    if (entry) {
+      this.arpCache.delete(nextHop);
+      ctx.trace("arp.cache.miss", "L2", `ARP 캐시 항목 ${nextHop} 이 오래됨 (${NetInterface.ARP_TTL / 1000}초 초과) → 다시 물어봄`, { ip: nextHop });
     }
 
     const queue = this.pending.get(nextHop) ?? [];
@@ -133,6 +139,18 @@ export class NetInterface {
     emit(frame);
   }
 
+  /**
+   * Gratuitous ARP: 주소를 새로 얻었을 때 "이 IP 는 이제 내 MAC" 이라고 알린다.
+   * 같은 IP 를 옛 MAC 으로 기억하던 이웃이 캐시를 고친다.
+   */
+  announce(ctx: NodeContext, emit: Emit): void {
+    if (!this.ip) return;
+    const arp: ArpPacket = { kind: "arp", op: "request", senderMac: this.mac, senderIp: this.ip, targetMac: ZERO_MAC, targetIp: this.ip };
+    const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: this.mac, dst: BROADCAST_MAC, payload: arp };
+    ctx.trace("arp.request.sent", "L2", `Gratuitous ARP 브로드캐스트: "${this.ip} 는 이제 ${this.mac}" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록`, { ip: this.ip }, frame.id);
+    emit(frame);
+  }
+
   // ---------- 수신 ----------
 
   handleArp(arp: ArpPacket, frameId: number, ctx: NodeContext, emit: Emit): void {
@@ -142,6 +160,20 @@ export class NetInterface {
     }
     const isTarget = arp.targetIp === this.ip;
 
+    if (arp.op === "request" && arp.senderIp === arp.targetIp) {
+      if (arp.senderIp === this.ip && arp.senderMac !== this.mac) {
+        ctx.trace("arp.request.received", "L2", `주소 충돌: ${arp.senderMac} 도 내 IP ${this.ip} 를 쓴다고 알림 — 같은 서브넷에 IP 가 겹침`, { ...arp }, frameId);
+        return;
+      }
+      const known = this.arpCache.get(arp.senderIp);
+      if (known && known.mac !== arp.senderMac) {
+        this.arpCache.set(arp.senderIp, { mac: arp.senderMac, learnedAt: ctx.now });
+        ctx.trace("arp.cache.update", "L2", `Gratuitous ARP 수신 → ARP 캐시 갱신: ${arp.senderIp} 는 이제 ${arp.senderMac} (이전 ${known.mac})`, { ip: arp.senderIp, mac: arp.senderMac }, frameId);
+      } else {
+        ctx.trace("arp.request.received", "L2", `Gratuitous ARP 수신: ${arp.senderIp} 는 ${arp.senderMac} (내 캐시엔 ${known ? "이미 같은 값" : "없음"} → 변경 없음)`, { ...arp }, frameId);
+      }
+      return;
+    }
     if (arp.op === "request") {
       ctx.trace("arp.request.received", "L2", `ARP 요청 수신: "${arp.targetIp} 의 MAC은?" (보낸이 ${arp.senderIp} / ${arp.senderMac})`, { ...arp }, frameId);
     } else {

@@ -5,10 +5,11 @@ import { Host } from "../src/core/nodes/host";
 import { Switch } from "../src/core/nodes/switch";
 import type { EthernetFrame } from "../src/core/packet";
 
+let seq = 0;
 function frame(src: string, dst: string): EthernetFrame {
   return {
     kind: "ethernet",
-    id: 1,
+    id: ++seq,
     src,
     dst,
     payload: { kind: "arp", op: "request", senderMac: src, senderIp: "10.0.0.1", targetMac: "00:00:00:00:00:00", targetIp: "10.0.0.2" },

@@ -23,6 +23,7 @@ export type TraceKind =
   | "switch.flood"
   | "switch.forward"
   | "switch.filter"
+  | "switch.loop"
   | "ip.route"
   | "ip.no-route"
   | "ip.no-address"
@@ -115,6 +116,7 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "link.unconnected",
   "link.lost",
   "link.loss",
+  "switch.loop",
   "dhcp.timeout",
   "dhcp.failed",
   "icmp.timeout",

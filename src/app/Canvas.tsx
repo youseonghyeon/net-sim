@@ -117,7 +117,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
       maxY = Math.max(maxY, d.y + s.height + (s.role === "host" ? 44 : 12));
     }
     const pad = 80;
-    const k = Math.min(1, (rect.width - pad * 2) / (maxX - minX), (rect.height - pad * 2) / (maxY - minY));
+    const k = Math.max(0.25, Math.min(1, (rect.width - pad * 2) / (maxX - minX), (rect.height - pad * 2) / (maxY - minY)));
     viewport.value = {
       k,
       x: (rect.width - (maxX - minX) * k) / 2 - minX * k,

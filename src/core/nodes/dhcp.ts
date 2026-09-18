@@ -26,6 +26,7 @@ export class DhcpClient {
   private xidSeq = 0;
   private offered?: { ip: Ip; serverId?: Ip; prefix: number; router?: Ip };
   private timer: TimerHandle | undefined;
+  private serverId: Ip | undefined;
 
   constructor(
     private readonly iface: NetInterface,
@@ -54,6 +55,22 @@ export class DhcpClient {
     this.state = "idle";
     this.attempts = 0;
     this.offered = undefined;
+  }
+
+  /** 정상 종료(장치 제거)에 앞서 서버에게 임대를 돌려준다 */
+  release(ctx: NodeContext, emit: Emit): void {
+    if (this.state !== "bound" || !this.iface.ip) return;
+    const msg: DhcpMessage = { kind: "dhcp", op: "release", xid: this.xid, clientMac: this.iface.mac, requestedIp: this.iface.ip, serverId: this.serverId };
+    ctx.trace("dhcp.release", "app", this.tag(`DHCP Release: ${this.iface.ip} 를 서버 ${this.serverId ?? "?"} 에게 반납`), { ...msg });
+    const pkt: Ipv4Packet = {
+      kind: "ipv4",
+      src: this.iface.ip,
+      dst: this.serverId ?? LIMITED_BROADCAST_IP,
+      ttl: 64,
+      payload: { kind: "udp", srcPort: DHCP_CLIENT_PORT, dstPort: DHCP_SERVER_PORT, payload: msg },
+    };
+    // ARP 를 기다릴 틈이 없는 마지막 메시지라 L2 브로드캐스트로 보낸다
+    this.iface.sendBroadcast(pkt, ctx, emit);
   }
 
   private sendDiscover(ctx: NodeContext, emit: Emit): void {
@@ -114,6 +131,7 @@ export class DhcpClient {
         const router = msg.options?.router ?? this.offered?.router;
         this.iface.configure(msg.yiaddr, prefix, router);
         this.state = "bound";
+        this.serverId = msg.serverId;
         this.timer?.cancel();
         this.timer = undefined;
         ctx.trace("dhcp.ack.received", "app", this.tag(`DHCP Ack 수신: 서버 ${msg.serverId} 가 ${msg.yiaddr} 확정`), { ...msg }, frameId);
@@ -123,6 +141,7 @@ export class DhcpClient {
           this.tag(`IP 획득: ${msg.yiaddr}/${prefix} (서브넷 마스크 ${intToIp(prefixToMask(prefix))}), 게이트웨이 ${router ?? "없음"}`),
           { ip: msg.yiaddr, prefix, router },
         );
+        this.iface.announce(ctx, emit);
         return;
       }
       case "nak":
@@ -325,6 +344,17 @@ export class DhcpServer {
       ctx.trace("dhcp.lease", "app", `임대 등록: ${ip} → ${msg.clientMac}`, { ip, mac: msg.clientMac });
       ctx.trace("dhcp.ack.sent", "app", `DHCP Ack: ${msg.clientMac} 에게 ${ip}/${this.iface.prefix} 확정 (게이트웨이 ${gw ?? "안내 없음"})`, { ...ack });
       this.iface.sendToMac(msg.clientMac, this.packet(ack, ip), ctx, emit);
+      return;
+    }
+    if (msg.op === "release") {
+      const ip = msg.requestedIp;
+      const lease = ip ? this.leases.get(ip) : undefined;
+      if (ip && lease && lease.mac === msg.clientMac) {
+        this.leases.delete(ip);
+        ctx.trace("dhcp.lease", "app", `DHCP Release 수신: ${ip} 임대 해제 (${msg.clientMac}) → 다른 클라이언트에게 줄 수 있음`, { ip, mac: msg.clientMac }, frameId);
+      } else {
+        ctx.trace("dhcp.ignore", "app", `DHCP Release 수신했지만 ${ip ?? "?"} 는 ${msg.clientMac} 의 임대가 아님 → 무시`, {}, frameId);
+      }
       return;
     }
     ctx.trace("dhcp.ignore", "app", `서버가 처리하지 않는 DHCP ${msg.op} → 무시`, {}, frameId);

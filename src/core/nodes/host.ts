@@ -107,11 +107,18 @@ export class Host implements SimNode {
 
   configure(cfg: { ipMode: IpMode; ip?: Ip; prefix?: number; gateway?: Ip }, ctx: NodeContext): void {
     this.ipMode = cfg.ipMode;
+    const before = this.iface.ip;
     if (cfg.ipMode === "static") {
       this.dhcp.stop();
       const addrChanged = cfg.ip !== this.iface.ip || (cfg.prefix ?? 24) !== this.iface.prefix;
       this.iface.configure(cfg.ip || undefined, cfg.prefix ?? 24, cfg.gateway || undefined);
-      if (addrChanged) this.dhcpServer.onInterfaceChanged(ctx);
+      if (addrChanged) {
+        this.dhcpServer.onInterfaceChanged(ctx);
+        this.iface.arpCache.clear();
+        this.iface.clearPending();
+        this.tcp.abortAll("주소 변경", ctx);
+        if (this.linkUp && this.iface.ip) this.iface.announce(ctx, this.emit(ctx));
+      }
       ctx.trace(
         "ip.config",
         "sys",
@@ -122,9 +129,16 @@ export class Host implements SimNode {
     }
     this.iface.clearAddress();
     this.iface.prefix = 24;
+    this.iface.arpCache.clear();
+    this.iface.clearPending();
+    if (before) this.tcp.abortAll("주소 변경", ctx);
     ctx.trace("ip.config", "sys", `자동(DHCP) 로 전환 → 기존 주소 지움`, { ...cfg });
     if (this.linkUp) this.dhcp.start(ctx, this.emit(ctx));
     else this.dhcp.stop();
+  }
+
+  onRemove(ctx: NodeContext): void {
+    if (this.linkUp) this.dhcp.release(ctx, this.emit(ctx));
   }
 
   onLink(_port: number, up: boolean, ctx: NodeContext): void {
@@ -132,6 +146,7 @@ export class Host implements SimNode {
     if (up) {
       ctx.trace("link.up", "L1", `링크 연결됨`);
       if (this.ipMode === "dhcp") this.dhcp.start(ctx, this.emit(ctx));
+      else if (this.iface.ip) this.iface.announce(ctx, this.emit(ctx));
       return;
     }
     ctx.trace("link.down", "L1", `링크 끊김`);
@@ -157,6 +172,12 @@ export class Host implements SimNode {
       ctx.trace("ip.no-address", "L3", `ping ${dst} 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)`, { dst });
       return;
     }
+    if (dst === this.iface.ip || dst === "127.0.0.1") {
+      rec.status = "ok";
+      rec.rtt = 0;
+      ctx.trace("icmp.reply.received", "app", `ping ${dst}: 내 주소(루프백) → 네트워크로 나가지 않고 즉시 응답`, { dst });
+      return;
+    }
     const pkt: Ipv4Packet = {
       kind: "ipv4",
       src: this.iface.ip,
@@ -180,7 +201,8 @@ export class Host implements SimNode {
   /** TCP 연결 시작 (클라이언트) */
   connect(dst: Ip, port: number, ctx: NodeContext): void {
     if (!this.iface.ip) {
-      ctx.trace("ip.no-address", "L3", `${dst}:${port} 연결 실패: 내 IP 주소가 없음`, { dst, port });
+      ctx.trace("ip.no-address", "L3", `${dst}:${port} 연결 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)`, { dst, port });
+      this.tcp.recordFailure("0.0.0.0", dst, port, "IP 주소 없음", ctx);
       return;
     }
     this.tcp.connect(this.iface.ip, dst, port, ctx);

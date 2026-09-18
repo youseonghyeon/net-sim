@@ -107,6 +107,7 @@ export class TcpStack {
       createdAt: ctx.now,
     };
     this.conns.set(conn.id, conn);
+    this.prune();
     ctx.trace("tcp.connect", "L4", `TCP 연결 시작: ${endpoint(localIp, localPort)} → ${endpoint(remoteIp, remotePort)} (초기 seq ${conn.iss})`, { conn: conn.id });
     this.transmit(conn, { syn: true }, ctx, `SYN 전송: "연결하자" seq=${conn.iss}`, "tcp.syn.sent");
     return conn;
@@ -116,8 +117,13 @@ export class TcpStack {
 
   handle(pkt: Ipv4Packet, seg: TcpSegment, ctx: NodeContext): void {
     const key = connKey(pkt.dst, seg.dstPort, pkt.src, seg.srcPort);
-    const conn = this.conns.get(key);
+    let conn = this.conns.get(key);
     const flags = tcpFlags(seg);
+    // 끝난 연결과 같은 4-tuple 로 새 SYN 이 오면 옛 기록을 치우고 새로 받는다
+    if (conn && (conn.state === "CLOSED" || conn.state === "FAILED") && seg.syn && !seg.ackFlag) {
+      this.conns.delete(key);
+      conn = undefined;
+    }
     if (!conn) {
       if (seg.syn && !seg.ackFlag) {
         this.accept(pkt, seg, ctx);
@@ -176,6 +182,11 @@ export class TcpStack {
           conn.state = "ESTABLISHED";
           ctx.trace("tcp.established", "L4", `ACK 수신 → 3-way handshake 완료, 연결 성립 ${endpoint(conn.localIp, conn.localPort)} ↔ ${endpoint(conn.remoteIp, conn.remotePort)}`, { conn: conn.id });
           if (seg.len > 0) this.receiveData(conn, seg, ctx);
+        } else if (seg.syn && !seg.ackFlag) {
+          // 클라이언트가 SYN 을 다시 보냄 (내 SYN·ACK 이 유실됨) → SYN·ACK 재전송
+          const u = conn.unacked.find((x) => x.seg.syn);
+          ctx.trace("tcp.retransmit", "L4", `SYN 이 다시 옴 → 내 SYN·ACK 이 유실된 것으로 보고 즉시 재전송`, { conn: conn.id });
+          if (u) this.host.send(this.packet(conn.localIp, conn.remoteIp, u.seg), ctx);
         } else {
           ctx.trace("tcp.ignore", "L4", `SYN_RCVD 상태에서 기대하지 않은 ${flags} → 무시`, { conn: conn.id });
         }
@@ -197,9 +208,53 @@ export class TcpStack {
         }
         return;
 
+      case "CLOSED":
+        // 내 마지막 ACK 이 유실되어 상대가 FIN 을 다시 보낸 경우: 다시 ACK 해 준다 (TIME_WAIT 의 역할)
+        if (seg.fin || seg.len > 0) {
+          ctx.trace("tcp.ack.sent", "L4", `종료된 연결로 ${flags} 가 다시 옴 → 내 마지막 ACK 이 유실된 듯, ACK 재전송 (ack=${conn.rcvNxt})`, { conn: conn.id });
+          this.host.send(this.packet(conn.localIp, conn.remoteIp, { srcPort: conn.localPort, dstPort: conn.remotePort, seq: conn.sndNxt, ack: conn.rcvNxt, ackFlag: true, len: 0 }), ctx);
+          return;
+        }
+        ctx.trace("tcp.ignore", "L4", `종료된 연결로 온 ${flags} → 무시`, { conn: conn.id });
+        return;
+
       default:
         ctx.trace("tcp.ignore", "L4", `${TCP_STATE_LABEL[conn.state]} 상태에서 ${flags} → 무시`, { conn: conn.id });
     }
+  }
+
+  /** IP 가 없는 등 시작조차 못 한 연결을 기록에 남긴다 (인스펙터 표시용) */
+  recordFailure(localIp: Ip, remoteIp: Ip, remotePort: number, reason: string, ctx: NodeContext): void {
+    const localPort = this.nextPort++;
+    this.conns.set(connKey(localIp, localPort, remoteIp, remotePort), {
+      id: connKey(localIp, localPort, remoteIp, remotePort),
+      role: "client",
+      localIp,
+      localPort,
+      remoteIp,
+      remotePort,
+      state: "FAILED",
+      iss: 0,
+      sndNxt: 0,
+      sndUna: 0,
+      rcvNxt: 0,
+      unacked: [],
+      retransmits: 0,
+      bytesSent: 0,
+      bytesReceived: 0,
+      responseSegments: 0,
+      finReceived: false,
+      createdAt: ctx.now,
+      closedAt: ctx.now,
+      reason,
+    });
+    this.prune();
+  }
+
+  /** 끝난 연결이 너무 많이 쌓이지 않게 오래된 것부터 정리 */
+  private prune(): void {
+    const done = [...this.conns.values()].filter((c) => c.state === "CLOSED" || c.state === "FAILED");
+    for (const c of done.slice(0, Math.max(0, done.length - 12))) this.conns.delete(c.id);
   }
 
   private accept(pkt: Ipv4Packet, seg: TcpSegment, ctx: NodeContext): void {
@@ -229,6 +284,7 @@ export class TcpStack {
       createdAt: ctx.now,
     };
     this.conns.set(conn.id, conn);
+    this.prune();
     ctx.trace("tcp.syn.received", "L4", `SYN 수신: ${endpoint(pkt.src, seg.srcPort)} 가 포트 ${seg.dstPort} 로 연결 요청 (seq ${seg.seq}) → 듣는 서비스 있음`, { conn: conn.id });
     this.transmit(conn, { syn: true, ackFlag: true }, ctx, `SYN·ACK 전송: "좋다, 내 초기 seq 는 ${conn.iss}" (ack=${conn.rcvNxt})`, "tcp.synack.sent");
   }

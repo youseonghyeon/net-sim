@@ -1,6 +1,6 @@
 import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
-import { running, sim, simTime, speed, togglePlay } from "../model/sim";
+import { running, sim, simNotice, simTime, speed, togglePlay } from "../model/sim";
 import { clearAll, loadExample, removeSelected, theme, toggleTheme, topology } from "../model/store";
 import { Canvas } from "./Canvas";
 import { Icon } from "./Icons";
@@ -17,6 +17,20 @@ export function App() {
     clearTimeout(timer.current);
     timer.current = window.setTimeout(() => (notice.value = null), 2600);
   }
+
+  useEffect(() => {
+    // 시뮬레이션 쪽 알림은 토스트로 (자동으로 사라지지 않게 길게)
+    return simNotice.subscribe((msg) => {
+      if (msg) {
+        notice.value = msg;
+        clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => {
+          notice.value = null;
+          simNotice.value = null;
+        }, 8000);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -104,12 +104,19 @@ export class L3Node implements SimNode {
     });
   }
 
+  onRemove(ctx: NodeContext): void {
+    this.clients.forEach((c, i) => {
+      if (c && this.linkUp[i]) c.release(ctx, this.emit(i, ctx));
+    });
+  }
+
   onLink(port: number, up: boolean, ctx: NodeContext): void {
     const name = this.names[port]!;
     this.linkUp[port] = up;
     if (up) {
       ctx.trace("link.up", "L1", `${name} 링크 연결됨`, { port });
-      this.clients[port]?.start(ctx, this.emit(port, ctx));
+      if (this.clients[port]) this.clients[port]!.start(ctx, this.emit(port, ctx));
+      else if (this.ifaces[port]!.ip) this.ifaces[port]!.announce(ctx, this.emit(port, ctx));
       return;
     }
     ctx.trace("link.down", "L1", `${name} 링크 끊김`, { port });
@@ -226,6 +233,10 @@ export class L3Node implements SimNode {
   }
 
   private forward(pkt: Ipv4Packet, inPort: number, frameId: number, ctx: NodeContext): void {
+    if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
+      ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 폐기`, { dst: pkt.dst }, frameId);
+      return;
+    }
     if (pkt.ttl <= 1) {
       ctx.trace("ip.ttl-expired", "L3", `TTL 이 0 이 되어 폐기 (루프 방지)`, { dst: pkt.dst }, frameId);
       return;

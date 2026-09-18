@@ -34,6 +34,8 @@ export interface Transmission {
   lost?: boolean;
   /** 유실된 경우 화면에서 사라지는 시각 */
   lostAt?: number;
+  /** 장치 제거 직전에 보낸 프레임: 케이블이 빠져도 배달 (정상 종료 메시지) */
+  graceful?: boolean;
 }
 
 /** 사용자 동작. 직렬화 가능한 형태 */
@@ -83,6 +85,9 @@ export class Network {
   removeNode(id: string): void {
     const node = this.nodes.get(id);
     if (!node) return;
+    const before = this.transmissions.length;
+    node.onRemove?.(this.ctx(id));
+    for (const tx of this.transmissions.slice(before)) if (tx.from.node === id) tx.graceful = true;
     for (const link of [...this.links.values()]) {
       if (link.a.node === id || link.b.node === id) this.disconnect(link.id);
     }
@@ -113,7 +118,7 @@ export class Network {
     this.portMap.delete(epKey(link.a));
     this.portMap.delete(epKey(link.b));
     for (const tx of this.transmissions) {
-      if (tx.linkId === linkId && !tx.lost && tx.arriveAt > this.now) {
+      if (tx.linkId === linkId && !tx.lost && !tx.graceful && tx.arriveAt > this.now) {
         tx.lost = true;
         tx.lostAt = this.now;
         this.pushTrace(tx.from.node, "link.lost", "L1", `케이블이 빠져 전송 중이던 ${describeFrame(tx.frame)} 유실`, { linkId }, tx.frame.id);
@@ -171,12 +176,17 @@ export class Network {
 
   // ---------- 실행 ----------
 
-  /** 취소된 타이머를 건너뛰고 다음 이벤트 시각 */
+  /** 취소됐거나 주인이 사라진 타이머를 건너뛰고 다음 이벤트 시각 */
   peekNextTime(): number | undefined {
     for (;;) {
       const head = this.sched.peek();
       if (!head) return undefined;
-      if (head.payload.type === "timer" && head.payload.cancelled) {
+      const p = head.payload;
+      if (p.type === "timer" && (p.cancelled || !this.nodes.has(p.nodeId))) {
+        this.sched.pop();
+        continue;
+      }
+      if (p.type === "deliver" && p.tx.lost) {
         this.sched.pop();
         continue;
       }
@@ -184,9 +194,14 @@ export class Network {
     }
   }
 
+  /** 실제로 처리될 이벤트 수 (취소·고아 타이머, 유실 배달 제외) */
   get pendingEvents(): number {
     this.peekNextTime();
-    return this.sched.size;
+    return this.sched.count((p) => {
+      if (p.type === "timer") return !p.cancelled && this.nodes.has(p.nodeId);
+      if (p.type === "deliver") return !p.tx.lost;
+      return true;
+    });
   }
 
   /** 이벤트 하나 처리. 처리한 게 없으면 false */
@@ -200,7 +215,7 @@ export class Network {
       case "deliver": {
         if (ev.tx.lost) break;
         const node = this.nodes.get(ev.tx.to.node);
-        if (!node || !this.links.has(ev.tx.linkId)) {
+        if (!node || (!this.links.has(ev.tx.linkId) && !ev.tx.graceful)) {
           ev.tx.lost = true;
           break;
         }

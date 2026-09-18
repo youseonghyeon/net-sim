@@ -3,14 +3,22 @@ import { NetInterface } from "../src/core/nodes/iface";
 import { singleSubnet } from "../src/core/scenarios/singleSubnet";
 import type { TraceKind } from "../src/core/trace";
 
-function kinds(net: ReturnType<typeof singleSubnet.build>, filter?: (k: TraceKind) => boolean): string[] {
-  return net.trace.filter((e) => !filter || filter(e.kind)).map((e) => `${e.nodeId}:${e.kind}`);
+function kinds(net: ReturnType<typeof singleSubnet.build>, filter?: (k: TraceKind) => boolean, from = 0): string[] {
+  return net.trace.slice(from).filter((e) => !filter || filter(e.kind)).map((e) => `${e.nodeId}:${e.kind}`);
+}
+
+/** 케이블 연결 직후의 Gratuitous ARP 가 끝난 뒤의 네트워크 */
+function settled() {
+  const net = singleSubnet.build();
+  net.runToIdle();
+  return net;
 }
 
 describe("단일 서브넷 ping", () => {
   it("첫 ping: ARP 요청/응답 후 ICMP 왕복, 캐시와 MAC 테이블이 채워진다", () => {
-    const net = singleSubnet.build();
-    net.scheduleAction(0, { kind: "ping", nodeId: "h1", dst: "10.0.0.2" });
+    const net = settled();
+    const from = net.trace.length;
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "h1", dst: "10.0.0.2" });
     net.runToIdle();
 
     const h1 = net.getHost("h1");
@@ -21,10 +29,11 @@ describe("단일 서브넷 ping", () => {
     expect(h3.arpCache.size).toBe(0); // 자기 IP 아닌 ARP 요청은 학습하지 않음
     expect(h1.pending.size).toBe(0);
 
+    // 케이블 연결 시 Gratuitous ARP 로 세 호스트 모두 MAC 테이블에 학습돼 있다
     const sw = net.nodes.get("sw1")!.snapshot();
-    expect(sw.tables[0]!.rows.map((r) => r[0]).sort()).toEqual(["02:00:00:00:00:01", "02:00:00:00:00:02"]);
+    expect(sw.tables[0]!.rows.map((r) => r[0]).sort()).toEqual(["02:00:00:00:00:01", "02:00:00:00:00:02", "02:00:00:00:00:03"]);
 
-    const key = kinds(net, (k) => k.startsWith("arp.") || k.startsWith("icmp.") || k === "switch.flood" || k === "switch.forward");
+    const key = kinds(net, (k) => k.startsWith("arp.") || k.startsWith("icmp.") || k === "switch.flood" || k === "switch.forward", from);
     expect(key).toEqual([
       "h1:icmp.echo.sent",
       "h1:arp.cache.miss",
@@ -81,11 +90,12 @@ describe("단일 서브넷 ping", () => {
   });
 
   it("다른 서브넷인데 게이트웨이 없음 → 즉시 폐기, 프레임 송신 없음", () => {
-    const net = singleSubnet.build();
-    net.scheduleAction(0, { kind: "ping", nodeId: "h1", dst: "8.8.8.8" });
+    const net = settled();
+    const before = net.transmissions.length;
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "h1", dst: "8.8.8.8" });
     net.runToIdle();
     expect(net.trace.some((e) => e.kind === "ip.no-route")).toBe(true);
-    expect(net.transmissions).toHaveLength(0);
+    expect(net.transmissions).toHaveLength(before);
   });
 
   it("같은 동작을 같은 시각에 다시 넣으면 결정론적으로 같은 트레이스가 나온다", () => {

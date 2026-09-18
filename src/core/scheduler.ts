@@ -15,6 +15,13 @@ export class Scheduler<T> {
     return this.heap.length;
   }
 
+  /** 조건을 만족하는 항목 수 (취소된 타이머 등을 빼고 세기 위해) */
+  count(pred: (payload: T) => boolean): number {
+    let n = 0;
+    for (const item of this.heap) if (pred(item.payload)) n++;
+    return n;
+  }
+
   push(time: number, payload: T, priority = 0): Scheduled<T> {
     const item: Scheduled<T> = { time, priority, seq: this.seq++, payload };
     this.heap.push(item);

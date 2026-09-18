@@ -5,6 +5,7 @@ import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
 import { NAT_ID_START, NatTable } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
+import { guardLoop } from "./switch";
 
 export type { DhcpServerConfig } from "./dhcp";
 export type { NatEntry } from "./nat";
@@ -51,6 +52,7 @@ export class Router implements SimNode {
   wanLinkUp = false;
   readonly macTable = new Map<Mac, MacEntry>();
   readonly nat = new NatTable();
+  private readonly seen = new Map<number, number>();
 
   constructor(cfg: RouterConfig) {
     this.id = cfg.id;
@@ -126,6 +128,10 @@ export class Router implements SimNode {
     }
   }
 
+  onRemove(ctx: NodeContext): void {
+    if (this.wanLinkUp) this.wanClient.release(ctx, this.emitWan(ctx));
+  }
+
   onLink(port: number, up: boolean, ctx: NodeContext): void {
     if (port === Router.WAN_PORT) {
       this.wanLinkUp = up;
@@ -167,6 +173,8 @@ export class Router implements SimNode {
     }
 
     ctx.trace("frame.receive", "L2", `lan${port} 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === BROADCAST_MAC ? "브로드캐스트" : frame.dst}]`, { port, src: frame.src, dst: frame.dst }, frame.id);
+    if (!guardLoop(this.seen, port, frame, ctx, `lan${port}`)) return;
+    frame = { ...frame, hops: (frame.hops ?? 0) + 1 };
     const existing = this.macTable.get(frame.src);
     if (!existing || existing.port !== port) {
       this.macTable.set(frame.src, { port, learnedAt: ctx.now });
@@ -215,12 +223,17 @@ export class Router implements SimNode {
       else ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frame.id);
       return;
     }
-    if (pkt.dst === this.lan.ip) {
+    if (pkt.dst === this.lan.ip || (this.wan.ip && pkt.dst === this.wan.ip)) {
       if (pkt.payload.kind === "tcp") {
         ctx.trace("ip.drop", "L4", `라우터 자신에게 온 TCP ${pkt.payload.dstPort} 포트 → 듣는 서비스 없음, 폐기`, { port: pkt.payload.dstPort }, frame.id);
         return;
       }
-      this.handleIcmp(pkt, pkt.payload, frame.id, ctx, this.lan, emit);
+      // LAN 에서 내 WAN 주소로 온 ping 도 내 것: 응답은 WAN 주소를 출발지로 LAN 쪽으로 돌려준다
+      this.handleIcmp(pkt, pkt.payload, frame.id, ctx, this.lan, emit, pkt.dst);
+      return;
+    }
+    if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
+      ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 폐기`, { dst: pkt.dst }, frame.id);
       return;
     }
     this.forwardToWan(pkt, frame.id, ctx);
@@ -271,13 +284,13 @@ export class Router implements SimNode {
     this.wan.sendIp(translated, ctx, this.emitWan(ctx));
   }
 
-  private handleIcmp(pkt: Ipv4Packet, icmp: IcmpPacket, frameId: number, ctx: NodeContext, iface: NetInterface, emit: Emit): void {
+  private handleIcmp(pkt: Ipv4Packet, icmp: IcmpPacket, frameId: number, ctx: NodeContext, iface: NetInterface, emit: Emit, replySrc?: Ip): void {
     if (icmp.type !== "echo-request") {
       ctx.trace("ip.drop", "L3", `요청한 적 없는 Echo 응답 → 무시`, {}, frameId);
       return;
     }
     ctx.trace("icmp.echo.received", "app", `ICMP Echo 요청 수신 (from ${pkt.src}, seq=${icmp.seq})`, { from: pkt.src, seq: icmp.seq }, frameId);
-    const reply: Ipv4Packet = { kind: "ipv4", src: iface.ip!, dst: pkt.src, ttl: 64, payload: { kind: "icmp", type: "echo-reply", id: icmp.id, seq: icmp.seq } };
+    const reply: Ipv4Packet = { kind: "ipv4", src: replySrc ?? iface.ip!, dst: pkt.src, ttl: 64, payload: { kind: "icmp", type: "echo-reply", id: icmp.id, seq: icmp.seq } };
     ctx.trace("icmp.reply.sent", "app", `ICMP Echo 응답 생성 → ${pkt.src} (seq=${icmp.seq})`, { to: pkt.src, seq: icmp.seq });
     iface.sendIp(reply, ctx, emit);
   }

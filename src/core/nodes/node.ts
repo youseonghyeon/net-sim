@@ -42,5 +42,7 @@ export interface SimNode {
   onTimer(tag: string, data: unknown, ctx: NodeContext): void;
   /** 포트에 케이블이 꽂히거나(up) 빠질 때(down) */
   onLink?(port: number, up: boolean, ctx: NodeContext): void;
+  /** 장치가 제거되기 직전 (정상 종료: DHCP Release 등). 이때 보낸 프레임은 케이블이 빠져도 배달된다 */
+  onRemove?(ctx: NodeContext): void;
   snapshot(): NodeSnapshot;
 }

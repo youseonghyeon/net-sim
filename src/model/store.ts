@@ -118,6 +118,9 @@ export function connectDevices(aId: string, bId: string): { cable?: Cable; error
   const a = t.devices.find((d) => d.id === aId);
   const b = t.devices.find((d) => d.id === bId);
   if (!a || !b) return { error: "장치를 찾을 수 없습니다" };
+  if (t.cables.some((c) => (c.a.device === aId && c.b.device === bId) || (c.a.device === bId && c.b.device === aId))) {
+    return { error: `${a.name} 와 ${b.name} 는 이미 연결되어 있습니다. 두 번째 케이블은 L2 루프(브로드캐스트 폭주)를 만듭니다` };
+  }
   const pa = freePort(t, aId, b.y);
   const pb = freePort(t, bId, a.y);
   if (pa === undefined) return { error: `${a.name} 에 빈 포트가 없습니다` };
