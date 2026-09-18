@@ -21,10 +21,15 @@ export const speed = signal(1);
 /** 트레이스나 노드 상태가 바뀔 때마다 증가 → 패널이 다시 읽는다 */
 export const simVersion = signal(0);
 
+interface SyncedDevice {
+  net: string;
+  services: string;
+}
+
 class SimController {
   net = new Network();
-  private syncedConfig = new Map<string, string>();
-  private syncedCables = new Set<string>();
+  private syncedConfig = new Map<string, SyncedDevice>();
+  private syncedCables = new Map<string, number>();
   private lastFrame = 0;
 
   constructor() {
@@ -36,9 +41,15 @@ class SimController {
   reset(): void {
     this.net = new Network();
     this.syncedConfig = new Map();
-    this.syncedCables = new Set();
+    this.syncedCables = new Map();
     simTime.value = 0;
     this.sync(topology.peek());
+  }
+
+  /** 케이블에서 다음 프레임 1개를 유실시킨다 (실험) */
+  dropNext(cableId: string): void {
+    this.net.dropNextOn(cableId);
+    this.bump();
   }
 
   // ---------- 토폴로지 → 네트워크 동기화 ----------
@@ -48,7 +59,7 @@ class SimController {
     net.runUntil(this.settleTime());
 
     const cableIds = new Set(t.cables.map((c) => c.id));
-    for (const id of [...this.syncedCables]) {
+    for (const id of [...this.syncedCables.keys()]) {
       if (!cableIds.has(id)) {
         net.disconnect(id);
         this.syncedCables.delete(id);
@@ -62,23 +73,33 @@ class SimController {
       }
     }
     for (const d of t.devices) {
-      const key = configKey(d);
+      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify(d.host?.services ?? []) };
       const prev = this.syncedConfig.get(d.id);
       if (prev === undefined) {
         net.addNode(makeNode(d));
-        this.syncedConfig.set(d.id, key);
-      } else if (prev !== key) {
-        applyConfig(net, d);
-        this.syncedConfig.set(d.id, key);
+      } else {
+        if (prev.net !== key.net) applyConfig(net, d);
+        if (prev.services !== key.services) {
+          const node = net.nodes.get(d.id);
+          if (node instanceof Host) node.setServices(d.host?.services ?? [], net.contextFor(d.id));
+        }
       }
+      this.syncedConfig.set(d.id, key);
     }
     for (const c of t.cables) {
-      if (this.syncedCables.has(c.id)) continue;
-      try {
-        net.connect(c.a.device, c.a.port, c.b.device, c.b.port, 10, c.id);
-        this.syncedCables.add(c.id);
-      } catch (e) {
-        console.warn("cable sync failed", c, e);
+      const loss = c.loss ?? 0;
+      const prevLoss = this.syncedCables.get(c.id);
+      if (prevLoss === undefined) {
+        try {
+          net.connect(c.a.device, c.a.port, c.b.device, c.b.port, 10, c.id);
+          net.setLinkLoss(c.id, loss);
+          this.syncedCables.set(c.id, loss);
+        } catch (e) {
+          console.warn("cable sync failed", c, e);
+        }
+      } else if (prevLoss !== loss) {
+        net.setLinkLoss(c.id, loss);
+        this.syncedCables.set(c.id, loss);
       }
     }
     this.bump();
@@ -202,7 +223,7 @@ function makeNode(d: Device): SimNode {
   if (spec.role === "switch") return new Switch(d.id, spec.ports.map((p) => p.name));
   if (spec.role === "router") return new Router({ id: d.id, mac: d.mac, wanMac: wanMacOf(d.mac), ...effectiveRouter(d) });
   if (spec.role === "internet") return new Internet({ id: d.id, mac: d.mac });
-  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d) });
+  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [] });
 }
 
 function applyConfig(net: Network, d: Device): void {

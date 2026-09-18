@@ -218,6 +218,10 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
           <i class="icmp" />
           ping
         </span>
+        <span>
+          <i class="tcp" />
+          TCP
+        </span>
       </div>
       <div class="zoom">{Math.round(v.k * 100)}%</div>
     </div>
@@ -334,10 +338,13 @@ function PacketLayer({ byId, cables }: { byId: Map<string, Device>; cables: Cabl
     const curve = cableCurve(portAnchor(a, cable.a.port), portAnchor(b, cable.b.port));
     const frac = Math.min(1, Math.max(0, (now - tx.departAt) / (tx.arriveAt - tx.departAt)));
     const p = pointOn(curve, tx.from.node === cable.a.device ? frac : 1 - frac);
+    const lost = tx.lost && tx.lostAt !== undefined;
+    const fade = lost ? Math.max(0.15, 1 - (now - tx.departAt) / (tx.lostAt! - tx.departAt)) : 1;
     return (
-      <g key={tx.id} class={`packet ${frameCategory(tx.frame)}`} transform={`translate(${p.x},${p.y})`}>
+      <g key={tx.id} class={`packet ${frameCategory(tx.frame)}${lost ? " lost" : ""}`} transform={`translate(${p.x},${p.y})`} opacity={fade}>
         <circle r={7} />
-        <text y={-13}>{shortLabel(tx.frame)}</text>
+        {lost && <path d="M-3.5,-3.5 L3.5,3.5 M3.5,-3.5 L-3.5,3.5" />}
+        <text y={-13}>{lost ? `${shortLabel(tx.frame)} 유실` : shortLabel(tx.frame)}</text>
       </g>
     );
   });

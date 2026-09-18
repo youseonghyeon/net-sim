@@ -15,6 +15,10 @@ export interface Link {
   a: Endpoint;
   b: Endpoint;
   latency: number;
+  /** 0~1. 프레임마다 이 확률로 유실 (결정론적 난수) */
+  lossRate: number;
+  /** 다음 프레임 1개를 유실시킨다 (사용자 실험용) */
+  dropNext: boolean;
 }
 
 /** 링크 위를 이동하는 프레임. UI 애니메이션의 근거 */
@@ -26,12 +30,17 @@ export interface Transmission {
   departAt: number;
   arriveAt: number;
   frame: EthernetFrame;
-  /** 도착 전에 링크가 끊겨 유실됨 */
+  /** 도착 전에 링크가 끊기거나 손실로 유실됨 */
   lost?: boolean;
+  /** 유실된 경우 화면에서 사라지는 시각 */
+  lostAt?: number;
 }
 
 /** 사용자 동작. 직렬화 가능한 형태 */
-export type ActionSpec = { kind: "ping"; nodeId: string; dst: Ip } | { kind: "dhcp-renew"; nodeId: string };
+export type ActionSpec =
+  | { kind: "ping"; nodeId: string; dst: Ip }
+  | { kind: "dhcp-renew"; nodeId: string }
+  | { kind: "tcp-connect"; nodeId: string; dst: Ip; port: number };
 
 export interface RecordedAction {
   time: number;
@@ -61,6 +70,7 @@ export class Network {
   private traceSeq = 0;
   private txSeq = 0;
   private linkSeq = 0;
+  private rng = 0x2545f491;
 
   // ---------- 구성 (실행 중에도 변경 가능) ----------
 
@@ -88,7 +98,7 @@ export class Network {
       if (ep.port < 0 || ep.port >= n.portCount) throw new Error(`${ep.node} has no port ${ep.port}`);
       if (this.portMap.has(epKey(ep))) throw new Error(`${ep.node}:${ep.port} already connected`);
     }
-    const link: Link = { id: id ?? `link${++this.linkSeq}`, a, b, latency };
+    const link: Link = { id: id ?? `link${++this.linkSeq}`, a, b, latency, lossRate: 0, dropNext: false };
     this.links.set(link.id, link);
     this.portMap.set(epKey(a), { link, other: b });
     this.portMap.set(epKey(b), { link, other: a });
@@ -105,6 +115,7 @@ export class Network {
     for (const tx of this.transmissions) {
       if (tx.linkId === linkId && !tx.lost && tx.arriveAt > this.now) {
         tx.lost = true;
+        tx.lostAt = this.now;
         this.pushTrace(tx.from.node, "link.lost", "L1", `케이블이 빠져 전송 중이던 ${describeFrame(tx.frame)} 유실`, { linkId }, tx.frame.id);
       }
     }
@@ -116,6 +127,27 @@ export class Network {
 
   hasNode(id: string): boolean {
     return this.nodes.has(id);
+  }
+
+  setLinkLoss(linkId: string, lossRate: number): void {
+    const link = this.links.get(linkId);
+    if (link) link.lossRate = Math.min(1, Math.max(0, lossRate));
+  }
+
+  /** 다음에 이 링크를 지나는 프레임 1개를 유실시킨다 */
+  dropNextOn(linkId: string): void {
+    const link = this.links.get(linkId);
+    if (link) link.dropNext = true;
+  }
+
+  /** 결정론적 [0,1) 난수 (xorshift) */
+  private random(): number {
+    let x = this.rng;
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    this.rng = x >>> 0;
+    return this.rng / 0x100000000;
   }
 
   getHost(id: string): Host {
@@ -208,9 +240,9 @@ export class Network {
     return n;
   }
 
-  /** 지정 시각에 링크 위에 있는 프레임 */
+  /** 지정 시각에 링크 위에 있는 프레임 (유실 중인 것은 사라지는 시각까지 포함) */
   inFlight(at = this.now): Transmission[] {
-    return this.transmissions.filter((t) => !t.lost && t.departAt <= at && at < t.arriveAt);
+    return this.transmissions.filter((t) => t.departAt <= at && at < (t.lost ? (t.lostAt ?? t.departAt) : t.arriveAt));
   }
 
   /** 오래된 전송 기록 정리 (UI 가 길게 돌아도 메모리가 늘지 않도록) */
@@ -234,6 +266,10 @@ export class Network {
       case "dhcp-renew":
         ctx.trace("action", "sys", `[사용자] DHCP 다시 요청`, { ...action });
         this.getHost(action.nodeId).renewDhcp(ctx);
+        break;
+      case "tcp-connect":
+        ctx.trace("action", "sys", `[사용자] ${action.dst}:${action.port} 에 TCP 연결`, { ...action });
+        this.getHost(action.nodeId).connect(action.dst, action.port, ctx);
         break;
     }
   }
@@ -279,6 +315,15 @@ export class Network {
       { linkId: conn.link.id, arriveAt: tx.arriveAt },
       frame.id,
     );
+    const link = conn.link;
+    if (link.dropNext || (link.lossRate > 0 && this.random() < link.lossRate)) {
+      const why = link.dropNext ? "사용자가 유실시킴" : `손실률 ${Math.round(link.lossRate * 100)}%`;
+      link.dropNext = false;
+      tx.lost = true;
+      tx.lostAt = this.now + link.latency * 0.55;
+      this.pushTrace(nodeId, "link.loss", "L1", `케이블에서 ${describeFrame(frame)} 유실 (${why}) — 상대는 받지 못한다`, { linkId: link.id }, frame.id);
+      return;
+    }
     this.sched.push(tx.arriveAt, { type: "deliver", tx });
   }
 

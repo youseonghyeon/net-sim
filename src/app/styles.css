@@ -347,6 +347,9 @@ ul {
 .legend .icmp {
   background: var(--pkt-icmp);
 }
+.legend .tcp {
+  background: var(--pkt-tcp);
+}
 .zoom {
   position: absolute;
   right: 12px;
@@ -484,6 +487,14 @@ ul {
 }
 .packet.icmp circle {
   fill: var(--pkt-icmp);
+}
+.packet.tcp circle {
+  fill: var(--pkt-tcp);
+}
+.packet.lost path {
+  stroke: #fff;
+  stroke-width: 2;
+  stroke-linecap: round;
 }
 .packet text {
   font-family: var(--font);
@@ -657,6 +668,17 @@ ul {
 .ping-row .input {
   flex: 1;
   min-width: 0;
+}
+.ping-row .input.port {
+  flex: 0 0 60px;
+  padding: 0 6px;
+}
+.tcp-row {
+  margin-top: 8px;
+}
+.ping-row .btn {
+  padding: 0 10px;
+  flex-shrink: 0;
 }
 .ping-log {
   list-style: none;
@@ -866,6 +888,9 @@ ul {
 }
 .row .cat.icmp {
   background: var(--pkt-icmp);
+}
+.row .cat.tcp {
+  background: var(--pkt-tcp);
 }
 .row .details {
   grid-column: 1 / -1;

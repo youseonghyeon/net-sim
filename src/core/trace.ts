@@ -60,7 +60,30 @@ export type TraceKind =
   | "dhcp.ignore"
   | "dhcp.disabled"
   | "dhcp.pool.exhausted"
-  | "dhcp.lease";
+  | "dhcp.lease"
+  | "tcp.connect"
+  | "tcp.received"
+  | "tcp.syn.sent"
+  | "tcp.syn.received"
+  | "tcp.synack.sent"
+  | "tcp.synack.received"
+  | "tcp.ack.sent"
+  | "tcp.ack.received"
+  | "tcp.established"
+  | "tcp.data.sent"
+  | "tcp.data.received"
+  | "tcp.dup"
+  | "tcp.out-of-order"
+  | "tcp.retransmit"
+  | "tcp.failed"
+  | "tcp.fin.sent"
+  | "tcp.fin.received"
+  | "tcp.closed"
+  | "tcp.rst.sent"
+  | "tcp.rst.received"
+  | "tcp.refused"
+  | "tcp.ignore"
+  | "link.loss";
 
 export interface TraceEvent {
   seq: number;
@@ -81,9 +104,16 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "ip.no-address",
   "ip.ttl-expired",
   "nat.miss",
+  "tcp.retransmit",
+  "tcp.failed",
+  "tcp.rst.sent",
+  "tcp.rst.received",
+  "tcp.refused",
+  "tcp.out-of-order",
   "arp.timeout",
   "link.unconnected",
   "link.lost",
+  "link.loss",
   "dhcp.timeout",
   "dhcp.failed",
   "icmp.timeout",

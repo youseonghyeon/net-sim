@@ -4,7 +4,7 @@ import { Internet } from "../nodes/internet";
 import { Router } from "../nodes/router";
 import { Switch } from "../nodes/switch";
 
-/** 테스트용: 라우터(DHCP) + 스위치 + DHCP 호스트 3대 + 인터넷. 호스트 케이블은 호출자가 꽂는다 */
+/** 테스트용: 라우터(DHCP) + 스위치 + DHCP 호스트 3대 + 웹 서버(수동 IP, 포트 80) + 인터넷. 호스트 케이블은 호출자가 꽂는다 */
 export function buildHomeLan(dhcpEnabled = true, withInternet = false): Network {
   const net = new Network();
   net.addNode(
@@ -25,6 +25,7 @@ export function buildHomeLan(dhcpEnabled = true, withInternet = false): Network 
   net.addNode(new Host({ id: "pc1", mac: "02:00:00:00:00:01", ipMode: "dhcp" }));
   net.addNode(new Host({ id: "pc2", mac: "02:00:00:00:00:02", ipMode: "dhcp" }));
   net.addNode(new Host({ id: "pc3", mac: "02:00:00:00:00:03", ipMode: "dhcp" }));
+  net.addNode(new Host({ id: "srv", mac: "02:00:00:00:00:04", ipMode: "static", ip: "192.168.0.50", prefix: 24, gateway: "192.168.0.1", services: [80] }));
   net.connect("rt", 1, "sw", 0, 10, "rt-sw");
   return net;
 }

@@ -23,7 +23,23 @@ export interface Ipv4Packet {
   src: Ip;
   dst: Ip;
   ttl: number;
-  payload: IcmpPacket | UdpPacket;
+  payload: IcmpPacket | UdpPacket | TcpSegment;
+}
+
+export interface TcpSegment {
+  kind: "tcp";
+  srcPort: number;
+  dstPort: number;
+  seq: number;
+  ack: number;
+  syn?: boolean;
+  ackFlag?: boolean;
+  fin?: boolean;
+  rst?: boolean;
+  /** 데이터 길이(바이트). SYN/FIN 은 seq 를 1 소비하지만 len 에는 넣지 않는다 */
+  len: number;
+  /** 데이터 내용 요약 (예: "GET /", "HTTP 200 (1/3)") */
+  data?: string;
 }
 
 export interface IcmpPacket {
@@ -63,7 +79,7 @@ export const LIMITED_BROADCAST_IP: Ip = "255.255.255.255";
 
 export type Layer = "L1" | "L2" | "L3" | "L4" | "app" | "sys";
 
-export type FrameCategory = "arp" | "icmp" | "dhcp";
+export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp";
 
 const DHCP_LABEL: Record<DhcpOp, string> = { discover: "Discover", offer: "Offer", request: "Request", ack: "Ack", nak: "Nak" };
 
@@ -77,8 +93,18 @@ export function describeFrame(frame: EthernetFrame): string {
   if (inner.kind === "icmp") {
     return inner.type === "echo-request" ? `ICMP Echo 요청 seq=${inner.seq}` : `ICMP Echo 응답 seq=${inner.seq}`;
   }
+  if (inner.kind === "tcp") return `TCP ${tcpFlags(inner)} seq=${inner.seq} ack=${inner.ack}${inner.len ? ` len=${inner.len}` : ""}`;
   const d = inner.payload;
   return `DHCP ${DHCP_LABEL[d.op]}${d.yiaddr ? ` (${d.yiaddr})` : ""}`;
+}
+
+/** 세그먼트 플래그를 사람이 읽는 형태로: SYN, SYN·ACK, ACK, FIN·ACK, RST, DATA */
+export function tcpFlags(t: TcpSegment): string {
+  if (t.rst) return "RST";
+  if (t.syn) return t.ackFlag ? "SYN·ACK" : "SYN";
+  if (t.fin) return t.ackFlag ? "FIN·ACK" : "FIN";
+  if (t.len > 0) return "DATA";
+  return "ACK";
 }
 
 /** 캔버스 위 패킷에 붙는 짧은 라벨 */
@@ -87,6 +113,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (p.kind === "arp") return p.op === "request" ? "ARP 요청" : "ARP 응답";
   const inner = p.payload;
   if (inner.kind === "icmp") return inner.type === "echo-request" ? "ping 요청" : "ping 응답";
+  if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
   return `DHCP ${DHCP_LABEL[inner.payload.op]}`;
 }
 
@@ -94,5 +121,7 @@ export function shortLabel(frame: EthernetFrame): string {
 export function frameCategory(frame: EthernetFrame): FrameCategory {
   const p = frame.payload;
   if (p.kind === "arp") return "arp";
-  return p.payload.kind === "icmp" ? "icmp" : "dhcp";
+  if (p.payload.kind === "icmp") return "icmp";
+  if (p.payload.kind === "tcp") return "tcp";
+  return "dhcp";
 }

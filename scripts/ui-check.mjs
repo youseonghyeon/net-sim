@@ -97,6 +97,33 @@ await page.click(".ping-row .btn");
 await page.waitForFunction(() => /응답 \d+ms/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 20000 });
 console.log("ping after static:", await page.locator(".ping-log li").first().innerText());
 
+// 3b) TCP: pc-1 → srv-1 (웹 서버) 연결, 완료까지 대기
+await clickDevice("pc-1");
+const srvIp = await addrOf("srv-1");
+await page.fill(".tcp-row .input:not(.port)", srvIp.split("/")[0]);
+await page.click(".tcp-row .btn");
+await page.waitForTimeout(600);
+await page.screenshot({ path: `${OUT}/12b-tcp-in-flight.png` });
+await page.waitForFunction(() => [...document.querySelectorAll(".inspector .table td")].some((td) => /종료됨/.test(td.textContent ?? "")), null, { timeout: 40000 });
+console.log("tcp to srv-1:", await page.locator(".inspector .table tbody tr").first().innerText());
+
+// 3c) 케이블 손실 실험: srv-1 케이블 다음 패킷 유실 → 재전송으로 복구
+const srvCable = page.locator("[data-cable]").nth(4);
+await srvCable.locator(".hit").click({ force: true });
+await page.waitForTimeout(100);
+await page.click("text=다음 패킷 1개 유실시키기");
+await clickDevice("pc-1");
+await page.click(".tcp-row .btn");
+await page.waitForFunction(() => document.querySelectorAll(".inspector .table tbody tr").length >= 2 && /종료됨/.test(document.querySelector(".inspector .table tbody tr")?.textContent ?? ""), null, { timeout: 60000 });
+console.log("tcp after loss:", await page.locator(".inspector .table tbody tr").first().innerText());
+console.log("retransmit logged:", await page.evaluate(() => document.body.textContent.includes("재전송")));
+
+// 3d) NAT 를 거쳐 example.com:80
+await page.fill(".tcp-row .input:not(.port)", "93.184.216.34");
+await page.click(".tcp-row .btn");
+await page.waitForFunction(() => /93\.184\.216\.34/.test(document.querySelector(".inspector .table tbody tr")?.textContent ?? "") && /종료됨/.test(document.querySelector(".inspector .table tbody tr")?.textContent ?? ""), null, { timeout: 60000 });
+console.log("tcp to example.com:", await page.locator(".inspector .table tbody tr").first().innerText());
+
 // 4) 로그 열고 스크린샷
 await page.click(".log-toggle");
 await page.waitForTimeout(200);

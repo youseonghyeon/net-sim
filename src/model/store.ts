@@ -133,6 +133,11 @@ export function addCable(a: PortRef, b: PortRef): Cable {
   return cable;
 }
 
+export function updateCable(id: string, patch: (c: Cable) => Cable): void {
+  const t = topology.value;
+  topology.value = { ...t, cables: t.cables.map((c) => (c.id === id ? patch(c) : c)) };
+}
+
 export function removeCable(id: string): void {
   const t = topology.value;
   topology.value = { ...t, cables: t.cables.filter((c) => c.id !== id) };

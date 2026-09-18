@@ -20,10 +20,11 @@ const MAX_ROWS = 400;
 const enabledLayers = signal<Set<Layer>>(new Set<Layer>(["L2", "L3", "L4", "app", "sys"]));
 const expanded = signal<Set<number>>(new Set());
 
-function categoryOf(e: TraceEvent): "arp" | "dhcp" | "icmp" | "" {
+function categoryOf(e: TraceEvent): "arp" | "dhcp" | "icmp" | "tcp" | "" {
   if (e.kind.startsWith("arp.")) return "arp";
   if (e.kind.startsWith("dhcp.")) return "dhcp";
   if (e.kind.startsWith("icmp.")) return "icmp";
+  if (e.kind.startsWith("tcp.")) return "tcp";
   return "";
 }
 

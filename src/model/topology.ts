@@ -62,6 +62,8 @@ export interface HostSettings {
   ip: string;
   prefix: number;
   gateway: string;
+  /** 듣는 TCP 포트 (웹 서버 = 80) */
+  services: number[];
 }
 
 export interface WanSettings {
@@ -101,6 +103,8 @@ export interface Cable {
   id: string;
   a: PortRef;
   b: PortRef;
+  /** 0~1 프레임 손실률 (실험용) */
+  loss?: number;
 }
 
 export interface Topology {
@@ -145,7 +149,7 @@ export function nextMac(devices: Device[]): string {
 export function createDevice(kind: DeviceKind, x: number, y: number, devices: Device[]): Device {
   const spec = DEVICE_SPECS[kind];
   const device: Device = { id: newId(kind), kind, name: nextName(kind, devices), mac: nextMac(devices), x, y };
-  if (spec.role === "host") device.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" };
+  if (spec.role === "host") device.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: kind === "server" ? [80] : [] };
   if (spec.role === "router") {
     device.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" }, wan: { ...DEFAULT_WAN } };
   }
@@ -214,7 +218,10 @@ export function normalizeTopology(t: Topology): Topology {
     const fixed: Device = { ...d };
     if (!fixed.mac) fixed.mac = nextMac(devices);
     const spec = DEVICE_SPECS[fixed.kind];
-    if (spec.role === "host" && !fixed.host) fixed.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" };
+    if (spec.role === "host") {
+      if (!fixed.host) fixed.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: fixed.kind === "server" ? [80] : [] };
+      else if (!fixed.host.services) fixed.host = { ...fixed.host, services: fixed.kind === "server" ? [80] : [] };
+    }
     if (spec.role === "router") {
       if (!fixed.router) fixed.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" }, wan: { ...DEFAULT_WAN } };
       else if (!fixed.router.wan) fixed.router = { ...fixed.router, wan: { ...DEFAULT_WAN } };

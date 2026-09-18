@@ -6,7 +6,7 @@ import { Internet, KNOWN_SERVERS } from "../core/nodes/internet";
 import type { SnapshotTable as SnapshotTableData } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { sim, simVersion } from "../model/sim";
-import { removeCable, removeDevice, selectedCable, selectedDevice, topology, updateDevice } from "../model/store";
+import { removeCable, removeDevice, selectedCable, selectedDevice, topology, updateCable, updateDevice } from "../model/store";
 import { cableAt, DEFAULT_WAN, peerOf, specOf, type Cable, type Device, type HostSettings, type RouterSettings, type WanSettings } from "../model/topology";
 import { Icon } from "./Icons";
 
@@ -121,6 +121,20 @@ function CablePanel({ c }: { c: Cable }) {
           <b class="mono">{portName(c.b.device, c.b.port)}</b>
         </div>
       </Section>
+      <Section title="실험: 패킷 유실">
+        <Field label="손실률">
+          <select class="input" value={String(Math.round((c.loss ?? 0) * 100))} onChange={(e) => updateCable(c.id, (x) => ({ ...x, loss: Number(e.currentTarget.value) / 100 }))}>
+            <option value="0">없음</option>
+            <option value="10">10%</option>
+            <option value="30">30%</option>
+            <option value="50">50%</option>
+          </select>
+        </Field>
+        <button class="btn wide" onClick={() => sim.dropNext(c.id)}>
+          다음 패킷 1개 유실시키기
+        </button>
+        <p class="note">유실된 패킷은 케이블 중간에서 사라집니다. TCP 는 ACK 가 안 오면 재전송하고, ping 은 시간 초과로 실패합니다.</p>
+      </Section>
       <Section>
         <button class="btn danger" onClick={() => removeCable(c.id)}>
           <Icon name="trash" size={16} />
@@ -169,6 +183,7 @@ function DevicePanel({ d }: { d: Device }) {
         })}
       </Section>
       {d.host && <HostSection d={d} h={d.host} />}
+      {d.host && <ServiceSection d={d} h={d.host} />}
       {d.router && <RouterSection d={d} r={d.router} />}
       {d.host && <DiagSection d={d} />}
       <LiveTables d={d} />
@@ -221,6 +236,34 @@ function HostSection({ d, h }: { d: Device; h: HostSettings }) {
       ) : (
         <p class="note">연결된 네트워크의 DHCP 서버에서 IP 주소, 서브넷, 게이트웨이를 받습니다. DHCP 가 없으면 주소 없이 남습니다.</p>
       )}
+    </Section>
+  );
+}
+
+function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
+  const on = (h.services ?? []).includes(80);
+  const toggle = () => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, services: on ? (x.host!.services ?? []).filter((p) => p !== 80) : [...(x.host!.services ?? []), 80] } }));
+  return (
+    <Section title="서비스">
+      <label class="toggle-row">
+        <span>
+          웹 서버 <span class="mono muted">TCP 80</span>
+        </span>
+        <span
+          class={`toggle${on ? " on" : ""}`}
+          role="switch"
+          aria-checked={on}
+          tabIndex={0}
+          onClick={toggle}
+          onKeyDown={(e) => {
+            if (e.key === " " || e.key === "Enter") {
+              e.preventDefault();
+              toggle();
+            }
+          }}
+        />
+      </label>
+      <p class="note">{on ? "포트 80 으로 오는 연결 요청(SYN)에 응답합니다. 다른 호스트에서 이 장치로 연결해 보세요." : "꺼져 있으면 연결 요청에 RST 로 거부합니다."}</p>
     </Section>
   );
 }
@@ -386,14 +429,17 @@ function SnapshotTable({ t }: { t: SnapshotTableData }) {
   );
 }
 
-/** ping 과 DHCP 다시 요청 */
+/** ping, TCP 연결, DHCP 다시 요청 */
 function DiagSection({ d }: { d: Device }) {
   void simVersion.value;
   const node = sim.node(d.id);
   const input = useRef<HTMLInputElement>(null);
+  const tcpInput = useRef<HTMLInputElement>(null);
+  const portInput = useRef<HTMLInputElement>(null);
   if (!(node instanceof Host)) return null;
 
   const targets: { ip: string; name: string }[] = [];
+  const servers: { ip: string; name: string }[] = [];
   let hasInternet = false;
   for (const other of topology.value.devices) {
     if (other.id === d.id) continue;
@@ -401,8 +447,14 @@ function DiagSection({ d }: { d: Device }) {
     if (n instanceof Internet) hasInternet = true;
     const ip = n instanceof Host ? n.ip : n instanceof Router ? n.lan.ip : undefined;
     if (ip) targets.push({ ip, name: other.name });
+    if (n instanceof Host && ip && n.tcp.listening.size > 0) servers.push({ ip, name: other.name });
   }
-  if (hasInternet) for (const [ip, name] of Object.entries(KNOWN_SERVERS)) targets.push({ ip, name });
+  if (hasInternet) {
+    for (const [ip, name] of Object.entries(KNOWN_SERVERS)) {
+      targets.push({ ip, name });
+      servers.push({ ip, name });
+    }
+  }
   const send = () => {
     const dst = input.current?.value.trim();
     if (!dst || !validIp(dst)) {
@@ -410,6 +462,15 @@ function DiagSection({ d }: { d: Device }) {
       return;
     }
     sim.act({ kind: "ping", nodeId: d.id, dst });
+  };
+  const connect = () => {
+    const dst = tcpInput.current?.value.trim();
+    const port = Number(portInput.current?.value) || 80;
+    if (!dst || !validIp(dst)) {
+      tcpInput.current?.focus();
+      return;
+    }
+    sim.act({ kind: "tcp-connect", nodeId: d.id, dst, port });
   };
   return (
     <Section title="진단">
@@ -446,6 +507,31 @@ function DiagSection({ d }: { d: Device }) {
           ))}
         </ul>
       )}
+      <div class="ping-row tcp-row">
+        <input
+          ref={tcpInput}
+          class="input mono"
+          list={`servers-${d.id}`}
+          placeholder="연결할 서버 주소"
+          defaultValue={servers[0]?.ip ?? ""}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") connect();
+          }}
+        />
+        <datalist id={`servers-${d.id}`}>
+          {servers.map((t) => (
+            <option key={t.ip} value={t.ip}>
+              {t.name}
+            </option>
+          ))}
+        </datalist>
+        <input ref={portInput} class="input mono port" type="number" min={1} max={65535} defaultValue="80" title="포트" />
+        <button class="btn" onClick={connect} title="TCP 연결 (3-way handshake → 요청 → 응답 → 종료)">
+          <Icon name="send" size={14} />
+          연결
+        </button>
+      </div>
+      <p class="note">TCP 연결은 3-way handshake 뒤 "GET /" 요청을 보내고, 서버 응답 3세그먼트를 받은 다음 FIN 으로 닫습니다. 결과는 아래 TCP 연결 표와 로그에서 봅니다.</p>
       {node.ipMode === "dhcp" && (
         <button class="btn wide" onClick={() => sim.act({ kind: "dhcp-renew", nodeId: d.id })} disabled={!node.linkUp}>
           <Icon name="refresh" size={14} />

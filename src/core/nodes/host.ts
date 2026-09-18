@@ -3,6 +3,7 @@ import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, type EthernetFrame, 
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient } from "./dhcp";
 import { NetInterface } from "./iface";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
+import { TCP_TIMER_TAG, TcpStack } from "./tcp";
 
 export type IpMode = "dhcp" | "static";
 
@@ -13,6 +14,8 @@ export interface HostConfig {
   ip?: Ip;
   prefix?: number;
   gateway?: Ip;
+  /** 듣고 있는 TCP 포트 (예: 80) */
+  services?: number[];
 }
 
 export interface PingRecord {
@@ -35,6 +38,7 @@ export class Host implements SimNode {
   readonly id: string;
   readonly iface: NetInterface;
   readonly dhcp: DhcpClient;
+  readonly tcp: TcpStack;
   ipMode: IpMode;
   linkUp = false;
   readonly pings: PingRecord[] = [];
@@ -50,6 +54,25 @@ export class Host implements SimNode {
     this.iface = new NetInterface(cfg.mac, this.ipMode === "static" ? { ip: cfg.ip, prefix: cfg.prefix, gateway: cfg.gateway } : { prefix: cfg.prefix });
     this.icmpId = 0x1000 + (Math.abs(hashCode(cfg.id)) % 0x1000);
     this.dhcp = new DhcpClient(this.iface, hashCode(cfg.id));
+    this.tcp = new TcpStack({ send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)) });
+    for (const p of cfg.services ?? []) this.tcp.listening.add(p);
+  }
+
+  /** 듣는 포트 목록 교체 */
+  setServices(ports: number[], ctx: NodeContext): void {
+    const next = new Set(ports);
+    for (const p of [...this.tcp.listening]) {
+      if (!next.has(p)) {
+        this.tcp.listening.delete(p);
+        ctx.trace("ip.config", "sys", `TCP 포트 ${p} 서비스 중지`, { port: p });
+      }
+    }
+    for (const p of next) {
+      if (!this.tcp.listening.has(p)) {
+        this.tcp.listening.add(p);
+        ctx.trace("ip.config", "sys", `TCP 포트 ${p} 에서 연결 받기 시작 (listen)`, { port: p });
+      }
+    }
   }
 
   get mac(): Mac {
@@ -96,6 +119,7 @@ export class Host implements SimNode {
     }
     ctx.trace("link.down", "L1", `링크 끊김`);
     this.iface.clearPending();
+    this.tcp.abortAll("링크 끊김", ctx);
     if (this.ipMode === "dhcp") {
       const had = this.iface.ip;
       this.iface.clearAddress();
@@ -134,6 +158,15 @@ export class Host implements SimNode {
     if (extra.reason) rec.reason = extra.reason;
     this.pingTimers.get(rec.seq)?.cancel();
     this.pingTimers.delete(rec.seq);
+  }
+
+  /** TCP 연결 시작 (클라이언트) */
+  connect(dst: Ip, port: number, ctx: NodeContext): void {
+    if (!this.iface.ip) {
+      ctx.trace("ip.no-address", "L3", `${dst}:${port} 연결 실패: 내 IP 주소가 없음`, { dst, port });
+      return;
+    }
+    this.tcp.connect(this.iface.ip, dst, port, ctx);
   }
 
   /** ipconfig /renew 에 해당 */
@@ -177,6 +210,10 @@ export class Host implements SimNode {
     }
     if (pkt.dst !== this.iface.ip) {
       ctx.trace("ip.drop", "L3", `목적지 IP ${pkt.dst} 가 내 IP(${this.iface.ip ?? "없음"}) 아님 → 폐기 (호스트는 포워딩 안 함)`, { dst: pkt.dst }, frameId);
+      return;
+    }
+    if (pkt.payload.kind === "tcp") {
+      this.tcp.handle(pkt, pkt.payload, ctx);
       return;
     }
     this.handleIcmp(pkt, pkt.payload, frameId, ctx);
@@ -232,6 +269,9 @@ export class Host implements SimNode {
       case DHCP_TIMER_TAG:
         this.dhcp.onTimeout(data, ctx, this.emit(ctx));
         return;
+      case TCP_TIMER_TAG:
+        this.tcp.onTimer(data, ctx);
+        return;
     }
   }
 
@@ -249,8 +289,12 @@ export class Host implements SimNode {
         ["게이트웨이", i.gateway ?? "없음"],
         ["링크", this.linkUp ? "연결됨" : "끊김"],
         ["IP 설정", this.ipMode === "dhcp" ? `자동 (DHCP: ${DHCP_STATE_LABEL[this.dhcp.state]})` : "수동"],
+        ["TCP 서비스", this.tcp.listening.size ? [...this.tcp.listening].map((p) => `포트 ${p}`).join(", ") : "없음"],
       ],
-      tables: [{ title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: i.arpRows() }],
+      tables: [
+        { title: "TCP 연결", columns: ["상대", "상태", "보냄 / 받음"], rows: this.tcp.rows() },
+        { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: i.arpRows() },
+      ],
     };
   }
 }
