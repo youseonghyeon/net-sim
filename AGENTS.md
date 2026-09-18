@@ -34,7 +34,8 @@ npm run ui-check    # Playwright 스모크 (개발 서버 자동 기동, .shots/
 ## 시뮬레이션 연결 방식
 - `src/model/sim.ts` 의 `SimController` 가 토폴로지 signal 을 구독해 `Network` 에 diff 로 반영한다(장치 추가/삭제, 케이블 connect/disconnect, 설정 변경 → `node.configure`).
 - 시계: 패킷이 링크 위에 있을 때만 흐르고, 대기 이벤트만 있으면 그 시각으로 점프, 아무것도 없으면 정지. 사용자 개입 시각은 정수 ms 로 올림.
-- 노드 클래스: `Host`(DhcpClient + 선택적 DhcpServer + ping + TcpStack), `Switch`, `Router`(LAN 브리지 + DhcpServer + WAN DhcpClient + NatTable), `L3Node`(게이트웨이/NAT 박스: 인터페이스 N개, 직접 연결 → 정적 경로 → 기본 경로, NAT 는 outside 에서), `Internet`(ISP DhcpServer + 공인 서버 대역 ping 응답 + 포트 80 TcpStack). DHCP 는 `nodes/dhcp.ts`, TCP 는 `nodes/tcp.ts`, NAT 는 `nodes/nat.ts` 공용.
+- 노드 클래스: `Host`(DhcpClient + 선택적 DhcpServer/DnsServer + DnsResolver + ping + TcpStack), `Switch`, `Hub`(학습 없이 전부 반복), `Router`(LAN 브리지 + DhcpServer + DNS 포워더 + WAN DhcpClient + NatTable/포트 포워딩), `L3Node`(게이트웨이/NAT 박스: 인터페이스 N개, 직접 연결 → 정적 경로 → 기본 경로, DHCP 릴레이, NAT 는 outside 에서 + 포트 포워딩), `Internet`(ISP DhcpServer + 공인 DNS 8.8.8.8/1.1.1.1 + 공인 서버 대역 ping/TCP 응답 + 외부 클라이언트 198.51.100.7). 공용 모듈: `nodes/dhcp.ts`, `nodes/dns.ts`, `nodes/tcp.ts`, `nodes/nat.ts`.
+- 이름 해석: `ActionSpec.dst` 는 IP 또는 이름. 호스트가 `looksLikeName` 이면 리졸버로 먼저 해석(캐시 → 설정된 DNS → 실패 사유). DNS 서버 설정은 `NetInterface.dns`(수동 또는 DHCP 옵션).
 - 안전장치: L2 루프는 스위치가 같은 프레임 재수신/홉 16 초과 시 폐기(`switch.loop`), 같은 두 장치 사이 두 번째 케이블은 UI 가 거부, 한 프레임에 이벤트 4000 초과 시 일시정지. 장치 제거 시 `onRemove` 로 DHCP Release 를 보내고 그 프레임은 케이블이 빠져도 배달(`Transmission.graceful`).
 - 주소 변경 시 정합성: 호스트/라우터/L3 모두 주소가 바뀌면 ARP 캐시·대기열을 비우고 TCP 연결을 정리하며 Gratuitous ARP 를 보낸다. DHCP 서버는 인터페이스/범위 변경 시 범위 밖 임대를 무효화한다.
 - TCP 는 학습용 축소판: 누적 ACK, 타임아웃 재전송(RTO 400ms, 3회), 순서 어긋난 세그먼트는 버리고 중복 ACK. 슬라이딩 윈도우·빠른 재전송 없음. 앱은 "GET / 100B → 응답 1000B×3 → 서버 FIN".
@@ -46,4 +47,5 @@ npm run ui-check    # Playwright 스모크 (개발 서버 자동 기동, .shots/
 3. ✅ 인터넷 노드 + 라우터 WAN(DHCP) + NAT(ICMP id 기반)
 4. ✅ TCP + 케이블 손실 실험 + NAT 포트 변환
 5. ✅ 기능 단위 장치(게이트웨이·NAT 박스·호스트 DHCP 서버) + 정적 경로 + DHCP 릴레이/서브넷별 풀 + 서비스 배지 + 기능 단위 예제
-6. 이후 후보는 `docs/ROADMAP.md` (DNS → 포트 포워딩 → 허브 순 추천)
+6. ✅ DNS + 포트 포워딩 + 허브 (에이전트 2개 병렬: 파일 경계를 나누고 공용 타입을 먼저 넣은 뒤 진행)
+7. 이후 후보는 `docs/ROADMAP.md`

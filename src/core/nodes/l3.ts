@@ -4,7 +4,7 @@ import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, LIMITED_BROADCAST_IP
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient } from "./dhcp";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
-import { NatTable } from "./nat";
+import { NatTable, type PortForward } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 
 export interface L3IfaceConfig {
@@ -31,6 +31,8 @@ export interface L3Config {
   /** NAT 박스: 이 인덱스의 인터페이스가 바깥(공인) 쪽 */
   outside?: number;
   routes?: StaticRoute[];
+  /** NAT 박스 전용: 포트 포워딩 규칙 (TCP). kind 가 "gateway" 면 무시 */
+  forwards?: PortForward[];
 }
 
 interface Route {
@@ -67,6 +69,7 @@ export class L3Node implements SimNode {
     this.nat = cfg.kind === "nat" ? new NatTable() : undefined;
     this.routes = [...(cfg.routes ?? [])];
     this.relays = cfg.interfaces.map((i) => i.relay);
+    if (this.nat && cfg.forwards) this.nat.setForwards(cfg.forwards);
   }
 
   setRoutes(routes: StaticRoute[], ctx: NodeContext): void {
@@ -76,6 +79,15 @@ export class L3Node implements SimNode {
     for (const r of routes) if (!before.has(key(r))) ctx.trace("ip.config", "sys", `정적 경로 추가: ${key(r)}`, { ...r });
     for (const r of this.routes) if (!after.has(key(r))) ctx.trace("ip.config", "sys", `정적 경로 삭제: ${key(r)}`, { ...r });
     this.routes = [...routes];
+  }
+
+  /** 포트 포워딩 규칙 교체 (NAT 박스만). 바뀐 경우에만 트레이스 */
+  setForwards(rules: PortForward[], ctx: NodeContext): void {
+    if (!this.nat) return;
+    const key = (rs: PortForward[]) => rs.map((r) => `${r.publicPort}>${r.lanIp}:${r.lanPort}`).join(",");
+    if (key(rules) === key(this.nat.forwards)) return;
+    this.nat.setForwards(rules);
+    ctx.trace("ip.config", "sys", `포트 포워딩 규칙 변경: ${rules.length}개`, { forwards: rules.map((r) => ({ ...r })) });
   }
 
   private emit(port: number, ctx: NodeContext): Emit {
@@ -368,7 +380,11 @@ export class L3Node implements SimNode {
     const def = this.route("0.0.0.1");
     if (def && def.kind === "default") routes.push(["0.0.0.0/0", this.names[def.out]!, `via ${def.nextHop}`]);
     const tables: NodeSnapshot["tables"] = [{ title: "라우팅 테이블", columns: ["목적지", "인터페이스", "다음 홉"], rows: routes }];
-    if (this.nat) tables.push({ title: "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(this.ifaces[this.outside!]!.ip) });
+    if (this.nat) {
+      const publicIp = this.ifaces[this.outside!]!.ip;
+      tables.push({ title: "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(publicIp) });
+      tables.push({ title: "포트 포워딩", columns: ["공인 포트", "내부"], rows: this.nat.forwardRows(publicIp) });
+    }
     this.ifaces.forEach((iface, i) => tables.push({ title: `ARP 캐시 (${this.names[i]})`, columns: ["IP", "MAC", "학습 시각"], rows: iface.arpRows() }));
     return {
       id: this.id,

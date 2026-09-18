@@ -3,6 +3,7 @@ import { describeFrame, type EthernetFrame, type Layer } from "./packet";
 import { Scheduler } from "./scheduler";
 import type { TraceEvent, TraceKind } from "./trace";
 import { Host } from "./nodes/host";
+import { Internet } from "./nodes/internet";
 import type { NodeContext, SimNode, TimerHandle } from "./nodes/node";
 
 export interface Endpoint {
@@ -42,7 +43,9 @@ export interface Transmission {
 export type ActionSpec =
   | { kind: "ping"; nodeId: string; dst: Ip }
   | { kind: "dhcp-renew"; nodeId: string }
-  | { kind: "tcp-connect"; nodeId: string; dst: Ip; port: number };
+  | { kind: "tcp-connect"; nodeId: string; dst: Ip; port: number }
+  /** 인터넷 노드의 "저편 클라이언트" 가 공인 주소 dst:port 로 TCP 연결 (포트 포워딩 시연) */
+  | { kind: "inet-connect"; nodeId: string; dst: Ip; port: number };
 
 export interface RecordedAction {
   time: number;
@@ -285,6 +288,11 @@ export class Network {
       case "tcp-connect":
         ctx.trace("action", "sys", `[사용자] ${action.dst}:${action.port} 에 TCP 연결`, { ...action });
         this.getHost(action.nodeId).connect(action.dst, action.port, ctx);
+        break;
+      case "inet-connect":
+        if (!(node instanceof Internet)) throw new Error(`${action.nodeId} is not an internet node`);
+        ctx.trace("action", "sys", `[사용자] 인터넷에서 ${action.dst}:${action.port} 로 접속 시도`, { ...action });
+        node.connectFrom(action.dst, action.port, ctx);
         break;
     }
   }

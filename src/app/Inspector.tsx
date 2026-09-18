@@ -8,9 +8,12 @@ import type { SnapshotTable as SnapshotTableData } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { sim, simVersion } from "../model/sim";
 import { removeCable, removeDevice, selectedCable, selectedDevice, topology, updateCable, updateDevice } from "../model/store";
+import { PUBLIC_ZONE } from "../core/nodes/dns";
 import {
   cableAt,
   DEFAULT_DHCP_SERVER,
+  DEFAULT_DNS_SERVER,
+  DEFAULT_ROUTER_DNS,
   DEFAULT_WAN,
   defaultL3,
   peerOf,
@@ -20,6 +23,7 @@ import {
   type HostSettings,
   type IfaceSettings,
   type L3Settings,
+  type PortForwardSettings,
   type RouterSettings,
   type WanSettings,
 } from "../model/topology";
@@ -202,6 +206,7 @@ function DevicePanel({ d }: { d: Device }) {
       {d.router && <RouterSection d={d} r={d.router} />}
       {spec.role === "l3" && <L3Section d={d} l3={d.l3 ?? defaultL3(d.kind)} />}
       {d.host && <DiagSection d={d} />}
+      {spec.role === "internet" && <InternetDiagSection d={d} />}
       <LiveTables d={d} />
       <Section>
         <button class="btn danger" onClick={() => removeDevice(d.id)}>
@@ -248,9 +253,12 @@ function HostSection({ d, h }: { d: Device; h: HostSettings }) {
           <Field label="게이트웨이" error={ipError(h.gateway, false)}>
             <input class="input mono" value={h.gateway} placeholder="192.168.0.1" onInput={(e) => set({ gateway: e.currentTarget.value })} />
           </Field>
+          <Field label="DNS 서버" error={ipError(h.dns ?? "", false)}>
+            <input class="input mono" value={h.dns ?? ""} placeholder="비우면 이름 해석 불가" onInput={(e) => set({ dns: e.currentTarget.value })} />
+          </Field>
         </>
       ) : (
-        <p class="note">연결된 네트워크의 DHCP 서버에서 IP 주소, 서브넷, 게이트웨이를 받습니다. DHCP 가 없으면 주소 없이 남습니다.</p>
+        <p class="note">연결된 네트워크의 DHCP 서버에서 IP 주소, 서브넷, 게이트웨이, DNS 를 받습니다. DHCP 가 없으면 주소 없이 남습니다.</p>
       )}
     </Section>
   );
@@ -397,7 +405,44 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
           경로 추가
         </button>
       </Section>
+      {isNat && (
+        <ForwardSection
+          rules={l3.forwards ?? []}
+          onChange={(forwards) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), forwards } }))}
+          lanHint="안쪽 서버 주소가 다른 라우터 뒤에 있으면 그쪽 정적 경로도 있어야 합니다."
+        />
+      )}
     </>
+  );
+}
+
+/** 포트 포워딩 규칙 편집기 (라우터 / NAT 박스 공용) */
+function ForwardSection({ rules, onChange, lanHint }: { rules: PortForwardSettings[]; onChange: (rules: PortForwardSettings[]) => void; lanHint: string }) {
+  const setRule = (i: number, patch: Partial<PortForwardSettings>) => onChange(rules.map((r, k) => (k === i ? { ...r, ...patch } : r)));
+  const port = (v: string, fallback: number) => Math.min(65535, Math.max(1, Number(v) || fallback));
+  return (
+    <Section title="포트 포워딩">
+      {rules.length === 0 && <p class="note">바깥에서 시작한 연결은 NAT 테이블에 없어 버려집니다. 규칙을 추가하면 공인 포트로 온 연결을 안쪽 서버로 들여보냅니다. {lanHint}</p>}
+      {rules.map((r, i) => (
+        <div key={i} class="fwd-row">
+          <span class="muted">공인 :</span>
+          <input class="input mono port" type="number" min={1} max={65535} value={r.publicPort} onInput={(e) => setRule(i, { publicPort: port(e.currentTarget.value, 80) })} />
+          <span class="muted">→</span>
+          <input class="input mono" value={r.lanIp} placeholder="192.168.0.20" onInput={(e) => setRule(i, { lanIp: e.currentTarget.value })} />
+          <span class="muted">:</span>
+          <input class="input mono port" type="number" min={1} max={65535} value={r.lanPort} onInput={(e) => setRule(i, { lanPort: port(e.currentTarget.value, 80) })} />
+          <button class="icon-btn" title="규칙 삭제" onClick={() => onChange(rules.filter((_, k) => k !== i))}>
+            <Icon name="trash" size={15} />
+          </button>
+          {ipError(r.lanIp, true) && <div class="error fwd-error">{ipError(r.lanIp, true)}</div>}
+        </div>
+      ))}
+      <button class="btn wide" onClick={() => onChange([...rules, { publicPort: 80, lanIp: "", lanPort: 80 }])}>
+        <Icon name="plus" size={14} />
+        규칙 추가
+      </button>
+      {rules.length > 0 && <p class="note">인터넷 노드를 선택해 "외부에서 접속" 으로 실제로 들어오는지 확인해 보세요.</p>}
+    </Section>
   );
 }
 
@@ -440,7 +485,10 @@ function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
           <Field label="게이트웨이 안내" error={ipError(ds.router, false)}>
             <input class="input mono" value={ds.router} placeholder="비우면 안내 없음" onInput={(e) => setDs({ router: e.currentTarget.value })} />
           </Field>
-          <p class="note">클라이언트에게 이 범위의 주소와 함께 게이트웨이를 알려줍니다. 게이트웨이를 비우면 클라이언트는 같은 서브넷 밖으로 나갈 수 없습니다.</p>
+          <Field label="DNS 안내" error={ipError(ds.dns ?? "", false)}>
+            <input class="input mono" value={ds.dns ?? ""} placeholder="비우면 안내 없음" onInput={(e) => setDs({ dns: e.currentTarget.value })} />
+          </Field>
+          <p class="note">클라이언트에게 이 범위의 주소와 함께 게이트웨이·DNS 를 알려줍니다. 게이트웨이를 비우면 서브넷 밖으로 못 나가고, DNS 를 비우면 이름을 못 씁니다.</p>
           <h3 class="sub">다른 서브넷 풀 (릴레이용)</h3>
           {(ds.extraPools ?? []).length === 0 && <p class="note">게이트웨이가 DHCP 릴레이로 보내오는 다른 서브넷의 요청에 줄 범위입니다. giaddr 가 속한 서브넷의 풀을 골라 응답합니다.</p>}
           {(ds.extraPools ?? []).map((p, i) => {
@@ -469,7 +517,50 @@ function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
           </button>
         </>
       )}
+      <DnsServiceSection d={d} h={h} staticIp={staticIp} />
     </Section>
+  );
+}
+
+function DnsServiceSection({ d, h, staticIp }: { d: Device; h: HostSettings; staticIp: string | undefined }) {
+  const ns = h.dnsServer ?? DEFAULT_DNS_SERVER;
+  const setNs = (patch: Partial<typeof ns>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, dnsServer: { ...(x.host!.dnsServer ?? DEFAULT_DNS_SERVER), ...patch } } }));
+  const setRecord = (i: number, patch: Partial<{ name: string; ip: string }>) => setNs({ records: ns.records.map((r, k) => (k === i ? { ...r, ...patch } : r)) });
+  return (
+    <>
+      <label class="toggle-row">
+        <span>
+          DNS 서버 <span class="mono muted">UDP 53</span>
+        </span>
+        <Toggle on={ns.enabled} onToggle={() => setNs({ enabled: !ns.enabled })} />
+      </label>
+      {ns.enabled && (
+        <>
+          {!staticIp && <p class="note error-note">DNS 서버도 자기 주소가 고정돼 있어야 클라이언트가 찾아옵니다. IP 설정을 수동으로 바꾸세요.</p>}
+          <h3 class="sub">레코드 (이름 → 주소)</h3>
+          {ns.records.length === 0 && <p class="note">이 서버가 직접 답할 이름들입니다. 예: web.home → 192.168.0.20</p>}
+          {ns.records.map((r, i) => (
+            <div key={i} class="record-row">
+              <input class="input mono" value={r.name} placeholder="web.home" onInput={(e) => setRecord(i, { name: e.currentTarget.value })} />
+              <span class="muted">→</span>
+              <input class="input mono" value={r.ip} placeholder="192.168.0.20" onInput={(e) => setRecord(i, { ip: e.currentTarget.value })} />
+              <button class="icon-btn" title="레코드 삭제" onClick={() => setNs({ records: ns.records.filter((_, k) => k !== i) })}>
+                <Icon name="trash" size={15} />
+              </button>
+              {(r.name.trim() === "" || ipError(r.ip, true)) && <div class="error record-error">{r.name.trim() === "" ? "이름이 필요합니다" : ipError(r.ip, true)}</div>}
+            </div>
+          ))}
+          <button class="btn wide" onClick={() => setNs({ records: [...ns.records, { name: "", ip: "" }] })}>
+            <Icon name="plus" size={14} />
+            레코드 추가
+          </button>
+          <Field label="상위 DNS" error={ipError(ns.upstream, false)}>
+            <input class="input mono" value={ns.upstream} placeholder="예: 8.8.8.8 (비우면 NXDOMAIN)" onInput={(e) => setNs({ upstream: e.currentTarget.value })} />
+          </Field>
+          <p class="note">레코드에 없는 이름은 상위 DNS 에 대신 물어보고(재귀 질의) 답을 캐시합니다. 인터넷의 8.8.8.8 이나 1.1.1.1 은 google.com, example.com 같은 공개 이름을 압니다.</p>
+        </>
+      )}
+    </>
   );
 }
 
@@ -544,7 +635,32 @@ function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         )}
       </Section>
       <WanSection d={d} w={r.wan ?? DEFAULT_WAN} />
+      <RouterDnsSection d={d} r={r} />
+      <ForwardSection rules={r.forwards ?? []} onChange={(forwards) => set({ forwards })} lanHint="예: 공인 :80 → 192.168.0.20:80 (LAN 의 웹 서버)." />
     </>
+  );
+}
+
+function RouterDnsSection({ d, r }: { d: Device; r: RouterSettings }) {
+  const dns = r.dns ?? DEFAULT_ROUTER_DNS;
+  const set = (patch: Partial<typeof dns>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, dns: { ...(x.router!.dns ?? DEFAULT_ROUTER_DNS), ...patch } } }));
+  return (
+    <Section title="DNS 포워더">
+      <label class="toggle-row">
+        <span>{dns.enabled ? "켜짐" : "꺼짐"}</span>
+        <Toggle on={dns.enabled} onToggle={() => set({ enabled: !dns.enabled })} />
+      </label>
+      {dns.enabled ? (
+        <>
+          <Field label="상위 DNS" error={ipError(dns.upstream, true)}>
+            <input class="input mono" value={dns.upstream} placeholder="8.8.8.8" onInput={(e) => set({ upstream: e.currentTarget.value })} />
+          </Field>
+          <p class="note">DHCP 로 주소를 받는 호스트에게 이 라우터를 DNS 로 안내하고, 호스트의 질의를 상위 DNS 에 대신 물어본 뒤 답을 캐시합니다 (공유기 안의 dnsmasq).</p>
+        </>
+      ) : (
+        <p class="note">꺼져 있으면 호스트가 이름을 못 씁니다. 호스트에 8.8.8.8 같은 DNS 를 직접 주거나 다시 켜세요.</p>
+      )}
+    </Section>
   );
 }
 
@@ -591,6 +707,48 @@ function WanSection({ d, w }: { d: Device; w: WanSettings }) {
   );
 }
 
+/** 인터넷 노드: 바깥의 클라이언트가 우리 공인 주소로 접속을 시도 (포트 포워딩 실험) */
+function InternetDiagSection({ d }: { d: Device }) {
+  void simVersion.value;
+  const target = useRef<HTMLInputElement>(null);
+  const port = useRef<HTMLInputElement>(null);
+  const publics: { ip: string; name: string }[] = [];
+  for (const other of topology.value.devices) {
+    const n = sim.node(other.id);
+    if (n instanceof Router && n.wan.ip) publics.push({ ip: n.wan.ip, name: `${other.name} WAN` });
+    if (n instanceof L3Node && n.nat && n.ifaces[0]?.ip) publics.push({ ip: n.ifaces[0].ip, name: `${other.name} outside` });
+  }
+  const go = () => {
+    const dst = target.current?.value.trim();
+    const p = Number(port.current?.value) || 80;
+    if (!dst || !validIp(dst)) {
+      target.current?.focus();
+      return;
+    }
+    sim.act({ kind: "inet-connect", nodeId: d.id, dst, port: p });
+  };
+  return (
+    <Section title="외부에서 접속">
+      <p class="note">인터넷 저편의 클라이언트(198.51.100.7)가 우리 공인 주소로 TCP 연결을 시도합니다. 포트 포워딩 규칙이 없으면 NAT 에서 버려집니다.</p>
+      <div class="ping-row tcp-row">
+        <input ref={target} class="input mono" list={`publics-${d.id}`} placeholder="공인 주소" defaultValue={publics[0]?.ip ?? ""} onKeyDown={(e) => e.key === "Enter" && go()} />
+        <datalist id={`publics-${d.id}`}>
+          {publics.map((p) => (
+            <option key={p.ip} value={p.ip}>
+              {p.name}
+            </option>
+          ))}
+        </datalist>
+        <input ref={port} class="input mono port" type="number" min={1} max={65535} defaultValue="80" title="포트" />
+        <button class="btn" onClick={go} title="바깥에서 TCP 연결 시도">
+          <Icon name="send" size={14} />
+          접속
+        </button>
+      </div>
+    </Section>
+  );
+}
+
 // ---------- 시뮬레이션 상태 ----------
 
 function StatusSection({ d }: { d: Device }) {
@@ -599,7 +757,7 @@ function StatusSection({ d }: { d: Device }) {
   if (!node || node.type === "switch") return null;
   const snap = node.snapshot();
   return (
-    <Section title="현재 상태">
+    <Section title={node.type === "hub" ? "허브" : "현재 상태"}>
       {snap.info.map(([k, v]) => (
         <div key={k} class="stat-row">
           <span>{k}</span>
@@ -685,9 +843,17 @@ function DiagSection({ d }: { d: Device }) {
       servers.push({ ip, name });
     }
   }
+  // 이름 후보: LAN 의 DNS 서버 레코드 + 인터넷이 있으면 공개 이름
+  const names: { ip: string; name: string }[] = [];
+  for (const other of topology.value.devices) {
+    const n = sim.node(other.id);
+    if (n instanceof Host && n.dnsServer.config.enabled) for (const r of n.dnsServer.config.records) names.push({ ip: r.ip, name: r.name });
+  }
+  if (hasInternet) for (const r of PUBLIC_ZONE) names.push({ ip: r.ip, name: r.name });
+  const okTarget = (v: string) => validIp(v) || /^[a-z0-9.-]+$/i.test(v);
   const send = () => {
     const dst = input.current?.value.trim();
-    if (!dst || !validIp(dst)) {
+    if (!dst || !okTarget(dst)) {
       input.current?.focus();
       return;
     }
@@ -696,7 +862,7 @@ function DiagSection({ d }: { d: Device }) {
   const connect = () => {
     const dst = tcpInput.current?.value.trim();
     const port = Number(portInput.current?.value) || 80;
-    if (!dst || !validIp(dst)) {
+    if (!dst || !okTarget(dst)) {
       tcpInput.current?.focus();
       return;
     }
@@ -709,7 +875,7 @@ function DiagSection({ d }: { d: Device }) {
           ref={input}
           class="input mono"
           list={`targets-${d.id}`}
-          placeholder="ping 보낼 주소"
+          placeholder="ping 보낼 주소 또는 이름"
           defaultValue={targets[0]?.ip ?? ""}
           onKeyDown={(e) => {
             if (e.key === "Enter") send();
@@ -719,6 +885,11 @@ function DiagSection({ d }: { d: Device }) {
           {targets.map((t) => (
             <option key={t.ip} value={t.ip}>
               {t.name}
+            </option>
+          ))}
+          {names.map((t) => (
+            <option key={`n-${t.name}`} value={t.name}>
+              {t.ip}
             </option>
           ))}
         </datalist>
@@ -731,7 +902,7 @@ function DiagSection({ d }: { d: Device }) {
         <ul class="ping-log">
           {node.pings.slice(-5).reverse().map((p) => (
             <li key={p.seq} class={p.status}>
-              <span class="mono">{p.dst}</span>
+              <span class="mono">{p.resolved ? `${p.dst} (${p.resolved})` : p.dst}</span>
               <span>{p.status === "ok" ? `응답 ${p.rtt}ms` : p.status === "failed" ? `실패 · ${p.reason}` : "응답 기다리는 중"}</span>
             </li>
           ))}
@@ -742,7 +913,7 @@ function DiagSection({ d }: { d: Device }) {
           ref={tcpInput}
           class="input mono"
           list={`servers-${d.id}`}
-          placeholder="연결할 서버 주소"
+          placeholder="서버 주소 또는 이름"
           defaultValue={servers[0]?.ip ?? ""}
           onKeyDown={(e) => {
             if (e.key === "Enter") connect();
@@ -752,6 +923,11 @@ function DiagSection({ d }: { d: Device }) {
           {servers.map((t) => (
             <option key={t.ip} value={t.ip}>
               {t.name}
+            </option>
+          ))}
+          {names.map((t) => (
+            <option key={`n-${t.name}`} value={t.name}>
+              {t.ip}
             </option>
           ))}
         </datalist>

@@ -3,13 +3,14 @@ import { effect, signal } from "@preact/signals";
 import { ipToInt } from "../core/addr";
 import { Network, type ActionSpec, type Transmission } from "../core/network";
 import { DHCP_MAX_ATTEMPTS, DHCP_STATE_LABEL, Host } from "../core/nodes/host";
+import { Hub } from "../core/nodes/hub";
 import { Internet } from "../core/nodes/internet";
 import { L3Node } from "../core/nodes/l3";
 import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { Switch } from "../core/nodes/switch";
 import { topology } from "./store";
-import { DEFAULT_DHCP_SERVER, DEFAULT_WAN, DEVICE_SPECS, defaultL3, type Device, type Topology } from "./topology";
+import { DEFAULT_DHCP_SERVER, DEFAULT_DNS_SERVER, DEFAULT_ROUTER_DNS, DEFAULT_WAN, DEVICE_SPECS, defaultL3, type Device, type Topology } from "./topology";
 
 /** 1x 재생 속도에서 실제 1초당 흐르는 시뮬레이션 시간(ms). 링크 10ms 가 0.4초 */
 const BASE_RATE = 25;
@@ -86,7 +87,7 @@ class SimController {
       }
     }
     for (const d of t.devices) {
-      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d) }) };
+      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d) }) };
       const prev = this.syncedConfig.get(d.id);
       if (prev === undefined) {
         settle();
@@ -103,6 +104,8 @@ class SimController {
             node.setServices(d.host?.services ?? [], net.contextFor(d.id));
             const dhcp = effectiveDhcpServer(d, node);
             if (dhcp) node.setDhcpServer(dhcp, net.contextFor(d.id));
+            const dns = effectiveDnsServer(d);
+            if (dns) node.setDnsServer(dns, net.contextFor(d.id));
           }
         }
       }
@@ -232,17 +235,42 @@ function validIp(s: string | undefined): string | undefined {
 /** 입력 중인 불완전한 주소는 "없음" 으로 취급해 시뮬레이션에 넘긴다 */
 function effectiveHost(d: Device) {
   const h = d.host!;
-  return { ipMode: h.ipMode, ip: h.ipMode === "static" ? validIp(h.ip) : undefined, prefix: h.prefix, gateway: h.ipMode === "static" ? validIp(h.gateway) : undefined };
+  return {
+    ipMode: h.ipMode,
+    ip: h.ipMode === "static" ? validIp(h.ip) : undefined,
+    prefix: h.prefix,
+    gateway: h.ipMode === "static" ? validIp(h.gateway) : undefined,
+    dns: h.ipMode === "static" ? validIp(h.dns) : undefined,
+  };
+}
+
+function effectiveDnsServer(d: Device) {
+  if (!d.host) return undefined;
+  const c = d.host.dnsServer ?? DEFAULT_DNS_SERVER;
+  return {
+    enabled: c.enabled,
+    records: c.records.filter((r) => r.name.trim() && validIp(r.ip)).map((r) => ({ name: r.name.trim().toLowerCase(), ip: r.ip })),
+    upstream: validIp(c.upstream),
+  };
+}
+
+function effectiveForwards(rules: { publicPort: number; lanIp: string; lanPort: number }[] | undefined) {
+  return (rules ?? [])
+    .filter((f) => validIp(f.lanIp) && f.publicPort >= 1 && f.publicPort <= 65535 && f.lanPort >= 1 && f.lanPort <= 65535)
+    .map((f) => ({ publicPort: f.publicPort, lanIp: f.lanIp, lanPort: f.lanPort }));
 }
 
 function effectiveRouter(d: Device, current?: Router) {
   const r = d.router!;
   const w = r.wan ?? DEFAULT_WAN;
+  const dns = r.dns ?? DEFAULT_ROUTER_DNS;
   return {
     lanIp: validIp(r.lanIp) ?? current?.lan.ip ?? "192.168.0.1",
     lanPrefix: r.lanPrefix,
     dhcp: { enabled: r.dhcp.enabled, start: validIp(r.dhcp.start) ?? current?.dhcp.start ?? r.dhcp.start, end: validIp(r.dhcp.end) ?? current?.dhcp.end ?? r.dhcp.end },
     wan: w.ipMode === "static" ? { mode: "static" as const, ip: validIp(w.ip), prefix: w.prefix, gateway: validIp(w.gateway) } : { mode: "dhcp" as const },
+    dns: { enabled: dns.enabled, records: [], upstream: validIp(dns.upstream) ?? current?.dnsForwarder.config.upstream },
+    forwards: effectiveForwards(r.forwards),
   };
 }
 
@@ -265,9 +293,10 @@ function effectiveDhcpServer(d: Device, current?: Host) {
     start: validIp(c.start) ?? cur?.start ?? "",
     end: validIp(c.end) ?? cur?.end ?? "",
     router: validIp(c.router),
+    dns: validIp(c.dns),
     extraPools: (c.extraPools ?? [])
       .filter((p) => validIp(p.start) && validIp(p.end) && p.prefix >= 1 && p.prefix <= 32)
-      .map((p) => ({ start: p.start, end: p.end, prefix: p.prefix, router: validIp(p.router) })),
+      .map((p) => ({ start: p.start, end: p.end, prefix: p.prefix, router: validIp(p.router), dns: validIp(p.dns) })),
   };
 }
 
@@ -283,6 +312,7 @@ function effectiveL3(d: Device) {
         : { mode: "static" as const, ip: validIp(c.ip), prefix: c.prefix, gateway: validIp(c.gateway), relay };
     }),
     routes: (l3.routes ?? []).filter((r) => validIp(r.dest) && validIp(r.via) && r.prefix >= 1 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix, via: r.via })),
+    forwards: effectiveForwards(l3.forwards),
   };
 }
 
@@ -296,6 +326,7 @@ function configKey(d: Device): string {
 function makeNode(d: Device): SimNode {
   const spec = DEVICE_SPECS[d.kind];
   if (spec.role === "switch") return new Switch(d.id, spec.ports.map((p) => p.name));
+  if (spec.role === "hub") return new Hub(d.id, spec.ports.map((p) => p.name));
   if (spec.role === "router") return new Router({ id: d.id, mac: d.mac, wanMac: wanMacOf(d.mac), ...effectiveRouter(d) });
   if (spec.role === "internet") return new Internet({ id: d.id, mac: d.mac });
   if (spec.role === "l3") {
@@ -306,9 +337,10 @@ function makeNode(d: Device): SimNode {
       outside: 0,
       interfaces: cfg.interfaces.map((c, i) => ({ name: spec.ports[i]!.name, mac: l3MacOf(d.mac, i), ...c })),
       routes: cfg.routes,
+      forwards: cfg.forwards,
     });
   }
-  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d) });
+  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d) });
 }
 
 function applyConfig(net: Network, d: Device): void {
@@ -319,6 +351,7 @@ function applyConfig(net: Network, d: Device): void {
     const cfg = effectiveL3(d);
     node.configure(cfg.interfaces, net.contextFor(d.id));
     node.setRoutes(cfg.routes, net.contextFor(d.id));
+    node.setForwards(cfg.forwards, net.contextFor(d.id));
   }
 }
 
@@ -361,15 +394,17 @@ export function serviceBadges(id: string): string[] {
   const out: string[] = [];
   if (node instanceof Host) {
     if (node.dhcpServer.config.enabled) out.push("DHCP");
+    if (node.dnsServer.config.enabled) out.push("DNS");
     if (node.tcp.listening.has(80)) out.push("웹");
   } else if (node instanceof Router) {
     if (node.dhcp.enabled) out.push("DHCP");
-    out.push("NAT");
+    if (node.dnsForwarder.config.enabled) out.push("DNS");
+    out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
   } else if (node instanceof L3Node) {
     if (node.relays.some(Boolean)) out.push("DHCP 릴레이");
-    if (node.nat) out.push("NAT");
+    if (node.nat) out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
   } else if (node instanceof Internet) {
-    out.push("ISP DHCP", "웹");
+    out.push("ISP DHCP", "DNS", "웹");
   }
   return out;
 }

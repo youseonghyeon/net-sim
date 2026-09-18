@@ -12,7 +12,7 @@ const LAYER_HINT: Record<Layer, string> = {
   L2: "이더넷 · ARP · 스위칭",
   L3: "IP · 라우팅",
   L4: "UDP · TCP",
-  app: "DHCP · ping",
+  app: "DHCP · DNS · ping",
   sys: "설정 · 사용자 동작",
 };
 const MAX_ROWS = 400;
@@ -20,11 +20,12 @@ const MAX_ROWS = 400;
 const enabledLayers = signal<Set<Layer>>(new Set<Layer>(["L2", "L3", "L4", "app", "sys"]));
 const expanded = signal<Set<number>>(new Set());
 
-function categoryOf(e: TraceEvent): "arp" | "dhcp" | "icmp" | "tcp" | "" {
+function categoryOf(e: TraceEvent): "arp" | "dhcp" | "icmp" | "tcp" | "dns" | "" {
   if (e.kind.startsWith("arp.")) return "arp";
   if (e.kind.startsWith("dhcp.")) return "dhcp";
   if (e.kind.startsWith("icmp.")) return "icmp";
   if (e.kind.startsWith("tcp.")) return "tcp";
+  if (e.kind.startsWith("dns.")) return "dns";
   return "";
 }
 

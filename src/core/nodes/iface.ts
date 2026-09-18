@@ -27,27 +27,32 @@ export class NetInterface {
   ip: Ip | undefined;
   prefix: number;
   gateway: Ip | undefined;
+  /** 이 인터페이스가 쓸 DNS 서버 (수동 설정 또는 DHCP 옵션) */
+  dns: Ip | undefined;
   readonly arpCache = new Map<Ip, ArpEntry>();
   /** nextHop IP → ARP 해석을 기다리는 패킷들 */
   readonly pending = new Map<Ip, PendingPacket[]>();
   private readonly arpTimers = new Map<Ip, TimerHandle>();
 
-  constructor(mac: Mac, cfg: { ip?: Ip; prefix?: number; gateway?: Ip } = {}) {
+  constructor(mac: Mac, cfg: { ip?: Ip; prefix?: number; gateway?: Ip; dns?: Ip } = {}) {
     this.mac = mac;
     this.ip = cfg.ip;
     this.prefix = cfg.prefix ?? 24;
     this.gateway = cfg.gateway;
+    this.dns = cfg.dns;
   }
 
-  configure(ip: Ip | undefined, prefix: number, gateway: Ip | undefined): void {
+  configure(ip: Ip | undefined, prefix: number, gateway: Ip | undefined, dns?: Ip): void {
     this.ip = ip;
     this.prefix = prefix;
     this.gateway = gateway;
+    this.dns = dns;
   }
 
   clearAddress(): void {
     this.ip = undefined;
     this.gateway = undefined;
+    this.dns = undefined;
   }
 
   /** 대기열과 타이머를 모두 비운다 (링크 끊김 등) */

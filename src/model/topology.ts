@@ -1,7 +1,7 @@
 // 편집 가능한 토폴로지 모델. 시뮬레이션 코어(src/core)와 분리되어 있고, 실행 시 코어 Network 로 변환된다.
 
-export type DeviceKind = "pc" | "laptop" | "server" | "switch" | "router" | "gateway" | "nat" | "internet";
-export type Role = "host" | "switch" | "router" | "l3" | "internet";
+export type DeviceKind = "pc" | "laptop" | "server" | "switch" | "hub" | "router" | "gateway" | "nat" | "internet";
+export type Role = "host" | "switch" | "hub" | "router" | "l3" | "internet";
 export type PortSide = "top" | "bottom";
 
 export interface PortSpec {
@@ -35,6 +35,15 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
     // 실물처럼 포트는 아래쪽 한 줄. 라우터/게이트웨이도 이 줄에 꽂는다
     ports: lanPorts(8, "bottom", "eth", 1),
     namePrefix: "sw",
+  },
+  hub: {
+    kind: "hub",
+    label: "허브",
+    role: "hub",
+    width: 120,
+    height: 44,
+    ports: lanPorts(4, "bottom", "port", 1),
+    namePrefix: "hub",
   },
   router: {
     kind: "router",
@@ -81,13 +90,14 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
   },
 };
 
-export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "server", "switch", "router", "gateway", "nat", "internet"];
+export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "server", "hub", "switch", "router", "gateway", "nat", "internet"];
 
 export interface DhcpPoolSettings {
   start: string;
   end: string;
   prefix: number;
   router: string;
+  dns?: string;
 }
 
 export interface DhcpServerSettings {
@@ -96,19 +106,39 @@ export interface DhcpServerSettings {
   end: string;
   /** 클라이언트에게 안내할 게이트웨이 (비우면 안내 없음) */
   router: string;
+  /** 클라이언트에게 안내할 DNS (비우면 안내 없음) */
+  dns?: string;
   /** 릴레이를 거쳐 오는 다른 서브넷용 풀 */
   extraPools?: DhcpPoolSettings[];
 }
+
+export interface DnsRecordSettings {
+  name: string;
+  ip: string;
+}
+
+export interface DnsServerSettings {
+  enabled: boolean;
+  records: DnsRecordSettings[];
+  /** 모르는 이름을 물어볼 상위 DNS */
+  upstream: string;
+}
+
+export const DEFAULT_DNS_SERVER: DnsServerSettings = { enabled: false, records: [], upstream: "" };
 
 export interface HostSettings {
   ipMode: "dhcp" | "static";
   ip: string;
   prefix: number;
   gateway: string;
+  /** 수동 설정일 때 DNS 서버 */
+  dns?: string;
   /** 듣는 TCP 포트 (웹 서버 = 80) */
   services: number[];
   /** 이 호스트가 DHCP 서버 역할을 할 때 */
   dhcpServer: DhcpServerSettings;
+  /** 이 호스트가 DNS 서버 역할을 할 때 */
+  dnsServer?: DnsServerSettings;
 }
 
 export const DEFAULT_DHCP_SERVER: DhcpServerSettings = { enabled: false, start: "192.168.0.100", end: "192.168.0.199", router: "192.168.0.1" };
@@ -132,6 +162,8 @@ export interface StaticRouteSettings {
 export interface L3Settings {
   interfaces: IfaceSettings[];
   routes: StaticRouteSettings[];
+  /** NAT 박스의 포트 포워딩 규칙 */
+  forwards?: PortForwardSettings[];
 }
 
 export interface WanSettings {
@@ -141,12 +173,24 @@ export interface WanSettings {
   gateway: string;
 }
 
+export interface PortForwardSettings {
+  publicPort: number;
+  lanIp: string;
+  lanPort: number;
+}
+
 export interface RouterSettings {
   lanIp: string;
   lanPrefix: number;
   dhcp: { enabled: boolean; start: string; end: string };
   wan: WanSettings;
+  /** DNS 포워더 (공유기 안의 dnsmasq) */
+  dns?: { enabled: boolean; upstream: string };
+  /** 포트 포워딩 규칙 */
+  forwards?: PortForwardSettings[];
 }
+
+export const DEFAULT_ROUTER_DNS = { enabled: true, upstream: "8.8.8.8" };
 
 export const DEFAULT_WAN: WanSettings = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" };
 
@@ -363,6 +407,8 @@ export function examplePartsTopology(): Topology {
       { ipMode: "static", ip: "10.0.0.1", prefix: 24, gateway: "" },
     ],
     routes: [{ dest: "192.168.0.0", prefix: 16, via: "10.0.0.2" }],
+    // 바깥에서 공인 :80 으로 오면 오른쪽 서브넷의 웹 서버로
+    forwards: [{ publicPort: 80, lanIp: "192.168.2.20", lanPort: 80 }],
   };
   const gw = add("gateway", 344, 80);
   gw.l3 = {
@@ -383,19 +429,23 @@ export function examplePartsTopology(): Topology {
     ip: "192.168.1.2",
     prefix: 24,
     gateway: "192.168.1.1",
+    dns: "192.168.1.2",
     services: [],
     dhcpServer: {
       enabled: true,
       start: "192.168.1.100",
       end: "192.168.1.199",
       router: "192.168.1.1",
-      extraPools: [{ start: "192.168.2.100", end: "192.168.2.199", prefix: 24, router: "192.168.2.1" }],
+      dns: "192.168.1.2",
+      extraPools: [{ start: "192.168.2.100", end: "192.168.2.199", prefix: 24, router: "192.168.2.1", dns: "192.168.1.2" }],
     },
+    // 같은 서버가 DNS 도 맡는다: 내부 이름은 레코드로, 공개 이름은 8.8.8.8 에 재귀 질의
+    dnsServer: { enabled: true, records: [{ name: "web.home", ip: "192.168.2.20" }], upstream: "8.8.8.8" },
   };
   const pc1 = add("pc", 200, 424);
   const laptop = add("laptop", 520, 424); // 릴레이를 거쳐 dhcp-srv 에서 주소를 받는다
   const web = add("server", 700, 424);
-  web.host = { ipMode: "static", ip: "192.168.2.20", prefix: 24, gateway: "192.168.2.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  web.host = { ipMode: "static", ip: "192.168.2.20", prefix: 24, gateway: "192.168.2.1", dns: "192.168.1.2", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   const cables: Cable[] = [
     { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: nat.id, port: 0 } },
     { id: newId("cable"), a: { device: nat.id, port: 1 }, b: { device: gw.id, port: 0 } },
@@ -423,6 +473,9 @@ export function exampleTopology(): Topology {
   const pc = add("pc", 200, 440);
   const laptop = add("laptop", 388, 440);
   const srv = add("server", 576, 440);
+  // 웹 서버는 고정 주소로 두고 라우터가 공인 :80 을 여기로 포워딩한다
+  srv.host = { ipMode: "static", ip: "192.168.0.20", prefix: 24, gateway: "192.168.0.1", dns: "192.168.0.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  rt.router = { ...rt.router!, forwards: [{ publicPort: 80, lanIp: "192.168.0.20", lanPort: 80 }] };
   const cables: Cable[] = [
     { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: rt.id, port: 0 } }, // isp ↔ wan
     { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 0 } }, // lan1 ↔ eth1

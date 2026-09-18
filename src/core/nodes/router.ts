@@ -1,14 +1,15 @@
 import { BROADCAST_MAC, sameSubnet, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
+import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
+import { DNS_UPSTREAM_TIMER_TAG, DnsServer, type DnsServerConfig } from "./dns";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
-import { NAT_ID_START, NatTable } from "./nat";
+import { NAT_ID_START, NatTable, type PortForward } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { guardLoop } from "./switch";
 
 export type { DhcpServerConfig } from "./dhcp";
-export type { NatEntry } from "./nat";
+export type { NatEntry, PortForward } from "./nat";
 
 export interface WanConfig {
   mode: "dhcp" | "static";
@@ -25,6 +26,10 @@ export interface RouterConfig {
   lanPrefix?: number;
   dhcp: DhcpServerConfig;
   wan?: WanConfig;
+  /** DNS 포워더 (공유기 안의 dnsmasq): LAN 의 질의를 상위 DNS 로 대신 물어봄 */
+  dns?: DnsServerConfig;
+  /** 포트 포워딩 규칙 (TCP): 공인 포트로 들어온 연결을 LAN 호스트로 */
+  forwards?: PortForward[];
 }
 
 interface MacEntry {
@@ -48,6 +53,7 @@ export class Router implements SimNode {
   readonly wan: NetInterface;
   readonly dhcpServer: DhcpServer;
   readonly wanClient: DhcpClient;
+  readonly dnsForwarder: DnsServer;
   wanMode: "dhcp" | "static";
   wanLinkUp = false;
   readonly macTable = new Map<Mac, MacEntry>();
@@ -62,6 +68,11 @@ export class Router implements SimNode {
     this.wanMode = wan.mode;
     this.wan = new NetInterface(cfg.wanMac, wan.mode === "static" ? { ip: wan.ip, prefix: wan.prefix ?? 24, gateway: wan.gateway } : {});
     this.wanClient = new DhcpClient(this.wan, hashCode(cfg.id) + 7, "wan");
+    this.dnsForwarder = new DnsServer(cfg.dns ?? { enabled: true, records: [], upstream: "8.8.8.8" }, this.lan, "DNS 포워더", {
+      srcIp: () => this.wan.ip,
+      send: (pkt, ctx) => this.wan.sendIp(pkt, ctx, this.emitWan(ctx)),
+    });
+    if (cfg.forwards) this.nat.setForwards(cfg.forwards);
   }
 
   get dhcp(): DhcpServerConfig {
@@ -90,7 +101,7 @@ export class Router implements SimNode {
 
   // ---------- 설정 변경 ----------
 
-  configure(cfg: { lanIp: Ip; lanPrefix: number; dhcp: DhcpServerConfig; wan: WanConfig }, ctx: NodeContext): void {
+  configure(cfg: { lanIp: Ip; lanPrefix: number; dhcp: DhcpServerConfig; wan: WanConfig; dns?: DnsServerConfig; forwards?: PortForward[] }, ctx: NodeContext): void {
     if (cfg.lanIp !== this.lan.ip || cfg.lanPrefix !== this.lan.prefix) {
       this.lan.configure(cfg.lanIp, cfg.lanPrefix, undefined);
       this.lan.arpCache.clear();
@@ -124,6 +135,19 @@ export class Router implements SimNode {
         ctx.trace("ip.config", "sys", `[wan] 자동(DHCP) 로 전환 → ISP 에서 공인 주소를 받는다`, { ...w });
         if (this.wanLinkUp) this.wanClient.start(ctx, this.emitWan(ctx));
         else this.wanClient.stop();
+      }
+    }
+
+    if (cfg.forwards && forwardsKey(cfg.forwards) !== forwardsKey(this.nat.forwards)) {
+      this.nat.setForwards(cfg.forwards);
+      ctx.trace("ip.config", "sys", `포트 포워딩 규칙 변경: ${cfg.forwards.length}개`, { forwards: cfg.forwards.map((f) => ({ ...f })) });
+    }
+
+    if (cfg.dns) {
+      const cur = this.dnsForwarder.config;
+      if (cfg.dns.enabled !== cur.enabled || cfg.dns.upstream !== cur.upstream) {
+        ctx.trace("ip.config", "sys", cfg.dns.enabled ? `DNS 포워더 켜짐 (상위 DNS ${cfg.dns.upstream ?? "없음"}) — LAN 호스트에게 내 주소를 DNS 로 안내` : `DNS 포워더 꺼짐`, { ...cfg.dns });
+        this.dnsForwarder.config = { ...cfg.dns, records: [] };
       }
     }
   }
@@ -222,7 +246,10 @@ export class Router implements SimNode {
       if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) this.dhcpServer.handle(m, frame.id, ctx, emit);
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `LAN 쪽 DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frame.id);
       else if (m.kind === "dhcp") ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frame.id);
-      else if (pkt.dst === this.lan.ip) ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frame.id);
+      else if (pkt.dst === this.lan.ip && m.kind === "dns" && udp.dstPort === DNS_PORT) {
+        if (this.dnsForwarder.config.enabled) this.dnsForwarder.handle(pkt, udp.srcPort, m, frame.id, ctx, emit);
+        else ctx.trace("dns.nxdomain", "app", `DNS 포워더가 꺼져 있음 → 질의에 응답하지 않음 (라우터 설정에서 켜거나 호스트 DNS 를 바꾸세요)`, {}, frame.id);
+      } else if (pkt.dst === this.lan.ip) ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frame.id);
       else this.forwardToWan(pkt, frame.id, ctx);
       return;
     }
@@ -254,6 +281,11 @@ export class Router implements SimNode {
     }
     if (pkt.dst !== this.wan.ip) {
       ctx.trace("ip.drop", "L3", `[wan] 목적지 ${pkt.dst} 는 내 공인 주소(${this.wan.ip ?? "없음"}) 아님 → 폐기`, { dst: pkt.dst }, frameId);
+      return;
+    }
+    if (pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dns" && pkt.payload.dstPort === DNS_PORT) {
+      // 내가 상위 DNS 에 물어본 답 → 포워더가 LAN 클라이언트에게 전달
+      this.dnsForwarder.handle(pkt, pkt.payload.srcPort, pkt.payload.payload, frameId, ctx, this.emitLan(ctx));
       return;
     }
     const p = pkt.payload;
@@ -308,6 +340,7 @@ export class Router implements SimNode {
       return;
     }
     if (tag === DHCP_TIMER_TAG && this.wanClient.ownsTimer(data)) this.wanClient.onTimeout(data, ctx, this.emitWan(ctx));
+    if (tag === DNS_UPSTREAM_TIMER_TAG) this.dnsForwarder.onTimeout(data, ctx, this.emitLan(ctx));
   }
 
   // ---------- 스냅샷 ----------
@@ -330,10 +363,13 @@ export class Router implements SimNode {
         ["WAN IP", wanState],
         ["WAN 게이트웨이", this.wan.gateway ?? "없음"],
         ["DHCP 서비스", this.dhcp.enabled ? `켜짐 · ${this.dhcp.start} ~ ${this.dhcp.end}` : "꺼짐"],
+        ["DNS 포워더", this.dnsForwarder.config.enabled ? `켜짐 · 상위 ${this.dnsForwarder.config.upstream ?? "없음"}` : "꺼짐"],
       ],
       tables: [
         { title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
+        ...(this.dnsForwarder.cache.size > 0 ? [{ title: "DNS 캐시", columns: ["이름", "IP", "출처"], rows: this.dnsForwarder.rows() }] : []),
         { title: "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(this.wan.ip) },
+        { title: "포트 포워딩", columns: ["공인 포트", "내부"], rows: this.nat.forwardRows(this.wan.ip) },
         {
           title: "내부 스위치 MAC 테이블",
           columns: ["MAC", "포트", "학습 시각"],
@@ -344,4 +380,9 @@ export class Router implements SimNode {
       ],
     };
   }
+}
+
+/** 규칙 목록 비교용 키 (순서 포함) */
+function forwardsKey(rules: PortForward[]): string {
+  return rules.map((r) => `${r.publicPort}>${r.lanIp}:${r.lanPort}`).join(",");
 }

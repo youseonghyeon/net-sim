@@ -222,6 +222,10 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
           <i class="tcp" />
           TCP
         </span>
+        <span>
+          <i class="dns" />
+          DNS
+        </span>
       </div>
       <div class="zoom">{Math.round(v.k * 100)}%</div>
     </div>

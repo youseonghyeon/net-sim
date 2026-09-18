@@ -1,7 +1,7 @@
 import type { EthernetFrame, Layer } from "../packet";
 import type { TraceKind } from "../trace";
 
-export type NodeType = "host" | "switch" | "router" | "internet" | "gateway" | "nat";
+export type NodeType = "host" | "switch" | "hub" | "router" | "internet" | "gateway" | "nat";
 
 export interface TimerHandle {
   cancel(): void;

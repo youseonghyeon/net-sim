@@ -15,6 +15,13 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, dev
 const errors = [];
 page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
+process.on("unhandledRejection", async (e) => {
+  console.log("CRASH:", e?.message?.split("\n")[0]);
+  console.log("toast:", await page.locator(".toast").allInnerTexts().catch(() => []));
+  console.log("ERRORS:", errors.length ? errors : "none");
+  await page.screenshot({ path: `${OUT}/crash.png` }).catch(() => {});
+  process.exit(1);
+});
 
 const device = (name) => page.locator("[data-device]", { hasText: name });
 async function clickDevice(name) {
@@ -49,8 +56,19 @@ await page.waitForTimeout(500);
 await page.screenshot({ path: `${OUT}/10-dhcp-in-progress.png` });
 console.log("packets visible during DHCP:", await page.locator(".packet").count());
 for (const n of ["pc-1", "laptop-1", "srv-1"]) console.log(n, "→", await waitAddr(n, /^192\.168\.0\.\d+\/24$/));
+// 1a) 이름으로 ping: pc-1 → google.com (라우터 DNS 포워더 → 8.8.8.8)
+await clickDevice("pc-1");
+await page.fill(".ping-row .input", "google.com");
+await page.click(".ping-row .btn");
+await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 40000 });
+console.log("ping google.com:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+// 1a2) 바깥에서 공인 :80 접속 → 포트 포워딩으로 srv-1 에 닿는다
+await clickDevice("internet-1");
+await page.click("button:has-text('접속')");
+await page.waitForFunction(() => { const sec = [...document.querySelectorAll(".inspector .section")].find((s) => s.textContent.includes("웹 서버 연결")); return /종료됨|실패/.test(sec?.querySelector("tbody tr")?.textContent ?? ""); }, null, { timeout: 40000 });
+console.log("inbound via port forward:", await page.locator(".inspector .section", { hasText: "웹 서버 연결" }).locator("tbody tr").first().innerText());
 async function wanOf() {
-  return (await device("rt-1").locator("text").nth(2).textContent()) ?? "";
+  return (await device("rt-1").locator("text.addr, text.status").nth(1).textContent()) ?? "";
 }
 for (let i = 0; i < 100 && !/WAN 203\.0\.113\./.test(await wanOf()); i++) await page.waitForTimeout(100);
 console.log("rt-1 wan →", await wanOf());
@@ -113,8 +131,9 @@ await page.fill(".tcp-row .input:not(.port)", srvIp.split("/")[0]);
 await page.click(".tcp-row .btn");
 await page.waitForTimeout(600);
 await page.screenshot({ path: `${OUT}/12b-tcp-in-flight.png` });
-await page.waitForFunction(() => [...document.querySelectorAll(".inspector .table td")].some((td) => /종료됨/.test(td.textContent ?? "")), null, { timeout: 40000 });
-console.log("tcp to srv-1:", await page.locator(".inspector .table tbody tr").first().innerText());
+const tcpRows = () => page.locator(".inspector .section", { has: page.locator("h3", { hasText: /^TCP 연결$/ }) }).locator("tbody tr");
+await page.waitForFunction(() => { const sec = [...document.querySelectorAll(".inspector .section")].find((s) => s.querySelector("h3")?.textContent === "TCP 연결"); return /종료됨/.test(sec?.querySelector("tbody tr")?.textContent ?? ""); }, null, { timeout: 40000 });
+console.log("tcp to srv-1:", await tcpRows().first().innerText());
 
 // 3c) 케이블 손실 실험: srv-1 케이블 다음 패킷 유실 → 재전송으로 복구
 const srvCable = page.locator("[data-cable]").nth(4);
@@ -123,15 +142,15 @@ await page.waitForTimeout(100);
 await page.click("text=다음 패킷 1개 유실시키기");
 await clickDevice("pc-1");
 await page.click(".tcp-row .btn");
-await page.waitForFunction(() => document.querySelectorAll(".inspector .table tbody tr").length >= 2 && /종료됨/.test(document.querySelector(".inspector .table tbody tr")?.textContent ?? ""), null, { timeout: 60000 });
-console.log("tcp after loss:", await page.locator(".inspector .table tbody tr").first().innerText());
+await page.waitForFunction(() => { const sec = [...document.querySelectorAll(".inspector .section")].find((s) => s.querySelector("h3")?.textContent === "TCP 연결"); const rows = sec?.querySelectorAll("tbody tr") ?? []; return rows.length >= 2 && /종료됨/.test(rows[0]?.textContent ?? ""); }, null, { timeout: 60000 });
+console.log("tcp after loss:", await tcpRows().first().innerText());
 console.log("retransmit logged:", await page.evaluate(() => document.body.textContent.includes("재전송")));
 
 // 3d) NAT 를 거쳐 example.com:80
 await page.fill(".tcp-row .input:not(.port)", "93.184.216.34");
 await page.click(".tcp-row .btn");
-await page.waitForFunction(() => /93\.184\.216\.34/.test(document.querySelector(".inspector .table tbody tr")?.textContent ?? "") && /종료됨/.test(document.querySelector(".inspector .table tbody tr")?.textContent ?? ""), null, { timeout: 60000 });
-console.log("tcp to example.com:", await page.locator(".inspector .table tbody tr").first().innerText());
+await page.waitForFunction(() => { const sec = [...document.querySelectorAll(".inspector .section")].find((s) => s.querySelector("h3")?.textContent === "TCP 연결"); const t = sec?.querySelector("tbody tr")?.textContent ?? ""; return /93\.184\.216\.34/.test(t) && /종료됨/.test(t); }, null, { timeout: 60000 });
+console.log("tcp to example.com:", await tcpRows().first().innerText());
 
 // 4) 로그 열고 스크린샷
 await page.click(".log-toggle");
@@ -154,6 +173,12 @@ await page.waitForTimeout(200);
 console.log("cables after delete:", await page.locator("[data-cable]").count());
 
 // 7) 라우터 LAN 서브넷 변경 → DHCP 범위가 따라가고, 다시 요청하면 새 서브넷 주소를 받는다
+{
+  // 레이아웃 회귀 확인: 로그가 열려 있어도 캔버스가 푸터를 덮지 않아야 한다
+  const body = await page.locator(".body").boundingBox();
+  const canvas = await page.locator("#canvas-svg").boundingBox();
+  console.log("layout ok:", Math.abs(body.height - canvas.height) < 1 ? "yes" : `NO (body ${Math.round(body.height)} vs canvas ${Math.round(canvas.height)})`);
+}
 await page.click(".log-toggle"); // 로그를 닫아 캔버스 아래쪽 장치가 보이게
 await page.waitForTimeout(100);
 await clickDevice("rt-1");
@@ -185,6 +210,10 @@ await page.fill(".ping-row .input", "8.8.8.8");
 await page.click(".ping-row .btn");
 await page.waitForFunction(() => /8\.8\.8\.8/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
 console.log("ping via NAT box:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+await page.fill(".ping-row .input", "web.home");
+await page.click(".ping-row .btn");
+await page.waitForFunction(() => /web\.home/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+console.log("ping web.home (LAN DNS record):", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
 await clickDevice("nat-1");
 await page.waitForTimeout(100);
 await page.screenshot({ path: `${OUT}/15-parts-nat.png` });

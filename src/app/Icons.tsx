@@ -5,6 +5,7 @@ export type IconName =
   | "laptop"
   | "server"
   | "switch"
+  | "hub"
   | "router"
   | "gateway"
   | "nat"
@@ -48,6 +49,12 @@ const PATHS: Record<IconName, JSX.Element> = {
     <>
       <rect x="2.5" y="8" width="19" height="8" rx="2" />
       <path d="M6.5 10.5h5l-1.6-1.6M11.5 10.5 9.9 12.1M17.5 13.5h-5l1.6-1.6M12.5 13.5l1.6 1.6" />
+    </>
+  ),
+  hub: (
+    <>
+      <rect x="2.5" y="8" width="19" height="8" rx="2" />
+      <path d="M7 12h10M12 9.5v5" />
     </>
   ),
   router: (

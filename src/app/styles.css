@@ -22,6 +22,7 @@
   --pkt-dhcp: #2ba84a;
   --pkt-icmp: #2b8fd6;
   --pkt-tcp: #8b5cf6;
+  --pkt-dns: #14b8a6;
 
   --font: "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -243,11 +244,14 @@ select.btn.example {
 .palette {
   background: var(--surface);
   border-right: 1px solid var(--line);
-  padding: 8px 8px;
+  padding: 6px 8px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   user-select: none;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
 }
 .palette-group {
   display: flex;
@@ -256,15 +260,16 @@ select.btn.example {
 }
 .palette-sep {
   height: 1px;
+  flex-shrink: 0;
   background: var(--line);
-  margin: 6px 4px;
+  margin: 4px 4px;
 }
 .tool {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 8px 0 6px;
+  gap: 2px;
+  padding: 6px 0 5px;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
@@ -354,6 +359,9 @@ select.btn.example {
 }
 .legend .tcp {
   background: var(--pkt-tcp);
+}
+.legend .dns {
+  background: var(--pkt-dns);
 }
 .zoom {
   position: absolute;
@@ -510,6 +518,9 @@ select.btn.example {
 }
 .packet.tcp circle {
   fill: var(--pkt-tcp);
+}
+.packet.dns circle {
+  fill: var(--pkt-dns);
 }
 .packet.lost path {
   stroke: #fff;
@@ -730,6 +741,32 @@ select.btn.example {
   width: 64px;
 }
 .pool-row .pool-error {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+.fwd-row {
+  display: grid;
+  grid-template-columns: auto 64px auto minmax(0, 1fr) auto 64px 30px;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.fwd-row .port {
+  padding: 0 6px;
+}
+.fwd-row .fwd-error {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+.record-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) 30px;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.record-row .record-error {
   grid-column: 1 / -1;
   margin-top: 0;
 }
@@ -959,6 +996,9 @@ select.btn.example {
 }
 .row .cat.tcp {
   background: var(--pkt-tcp);
+}
+.row .cat.dns {
+  background: var(--pkt-dns);
 }
 .row .details {
   grid-column: 1 / -1;

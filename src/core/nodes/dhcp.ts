@@ -129,7 +129,7 @@ export class DhcpClient {
         }
         const prefix = msg.options?.prefix ?? this.offered?.prefix ?? 24;
         const router = msg.options?.router ?? this.offered?.router;
-        this.iface.configure(msg.yiaddr, prefix, router);
+        this.iface.configure(msg.yiaddr, prefix, router, msg.options?.dns);
         this.state = "bound";
         this.serverId = msg.serverId;
         this.timer?.cancel();
@@ -138,8 +138,8 @@ export class DhcpClient {
         ctx.trace(
           "dhcp.bound",
           "app",
-          this.tag(`IP 획득: ${msg.yiaddr}/${prefix} (서브넷 마스크 ${intToIp(prefixToMask(prefix))}), 게이트웨이 ${router ?? "없음"}`),
-          { ip: msg.yiaddr, prefix, router },
+          this.tag(`IP 획득: ${msg.yiaddr}/${prefix} (서브넷 마스크 ${intToIp(prefixToMask(prefix))}), 게이트웨이 ${router ?? "없음"}, DNS ${msg.options?.dns ?? "없음"}`),
+          { ip: msg.yiaddr, prefix, router, dns: msg.options?.dns },
         );
         this.iface.announce(ctx, emit);
         return;
@@ -193,6 +193,8 @@ export interface DhcpPool {
   prefix: number;
   /** 이 서브넷 클라이언트에게 안내할 게이트웨이 */
   router?: Ip;
+  /** 안내할 DNS 서버 */
+  dns?: Ip;
 }
 
 export interface DhcpServerConfig {
@@ -202,6 +204,8 @@ export interface DhcpServerConfig {
   end: Ip;
   /** 클라이언트에게 안내할 게이트웨이. 비우면 서버 자신의 주소(라우터) 또는 없음(호스트 서버) */
   router?: Ip;
+  /** 안내할 DNS 서버. 비우면 라우터는 자기 주소(DNS 포워더), 호스트 서버는 없음 */
+  dns?: Ip;
   /** 릴레이를 거쳐 오는 다른 서브넷용 풀 */
   extraPools?: DhcpPool[];
 }
@@ -230,6 +234,11 @@ export class DhcpServer {
     return this.config.router || (this.selfIsRouter ? this.iface.ip : undefined);
   }
 
+  /** 안내할 DNS */
+  private advertisedDns(): Ip | undefined {
+    return this.config.dns || (this.selfIsRouter ? this.iface.ip : undefined);
+  }
+
   /** 범위 변경: 새 범위 밖의 임대·제안은 버린다 */
   setConfig(cfg: DhcpServerConfig, ctx: NodeContext): void {
     this.config = { ...cfg };
@@ -243,7 +252,7 @@ export class DhcpServer {
 
   /** 내 서브넷 풀 + 다른 서브넷 풀 */
   private pools(): DhcpPool[] {
-    const local: DhcpPool = { start: this.config.start, end: this.config.end, prefix: this.iface.prefix, router: this.advertisedRouter() };
+    const local: DhcpPool = { start: this.config.start, end: this.config.end, prefix: this.iface.prefix, router: this.advertisedRouter(), dns: this.advertisedDns() };
     return [local, ...(this.config.extraPools ?? [])];
   }
 
@@ -342,7 +351,7 @@ export class DhcpServer {
         yiaddr: ip,
         serverId: me,
         giaddr: msg.giaddr,
-        options: { prefix: pool.prefix, router: pool.router, leaseTime: LEASE_TIME },
+        options: { prefix: pool.prefix, router: pool.router, dns: pool.dns, leaseTime: LEASE_TIME },
       };
       ctx.trace(
         "dhcp.offer.sent",
@@ -385,10 +394,10 @@ export class DhcpServer {
         yiaddr: ip,
         serverId: me,
         giaddr: msg.giaddr,
-        options: { prefix: pool.prefix, router: pool.router, leaseTime: LEASE_TIME },
+        options: { prefix: pool.prefix, router: pool.router, dns: pool.dns, leaseTime: LEASE_TIME },
       };
       ctx.trace("dhcp.lease", "app", `임대 등록: ${ip} → ${msg.clientMac}`, { ip, mac: msg.clientMac });
-      ctx.trace("dhcp.ack.sent", "app", `DHCP Ack: ${msg.clientMac} 에게 ${ip}/${pool.prefix} 확정 (게이트웨이 ${pool.router ?? "안내 없음"})${msg.giaddr ? ` → 릴레이 ${msg.giaddr} 로` : ""}`, { ...ack });
+      ctx.trace("dhcp.ack.sent", "app", `DHCP Ack: ${msg.clientMac} 에게 ${ip}/${pool.prefix} 확정 (게이트웨이 ${pool.router ?? "안내 없음"}, DNS ${pool.dns ?? "안내 없음"})${msg.giaddr ? ` → 릴레이 ${msg.giaddr} 로` : ""}`, { ...ack });
       this.reply(ack, ip, msg, ctx, emit);
       return;
     }
