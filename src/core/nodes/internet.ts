@@ -70,8 +70,9 @@ export class Internet implements SimNode {
     const emit = this.emit(ctx);
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
-      if (udp.dstPort === DHCP_SERVER_PORT) this.dhcpServer.handle(udp.payload, frameId, ctx, emit);
-      else if (udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frameId);
+      const m = udp.payload;
+      if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) this.dhcpServer.handle(m, frameId, ctx, emit);
+      else if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frameId);
       else ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frameId);
       return;
     }

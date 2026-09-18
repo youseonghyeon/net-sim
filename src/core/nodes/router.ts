@@ -1,5 +1,5 @@
 import { BROADCAST_MAC, sameSubnet, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
+import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
@@ -218,9 +218,12 @@ export class Router implements SimNode {
     const pkt = frame.payload;
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
-      if (udp.dstPort === DHCP_SERVER_PORT) this.dhcpServer.handle(udp.payload, frame.id, ctx, emit);
-      else if (udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `LAN 쪽 DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frame.id);
-      else ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frame.id);
+      const m = udp.payload;
+      if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) this.dhcpServer.handle(m, frame.id, ctx, emit);
+      else if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `LAN 쪽 DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frame.id);
+      else if (m.kind === "dhcp") ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frame.id);
+      else if (pkt.dst === this.lan.ip) ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frame.id);
+      else this.forwardToWan(pkt, frame.id, ctx);
       return;
     }
     if (pkt.dst === this.lan.ip || (this.wan.ip && pkt.dst === this.wan.ip)) {
@@ -241,10 +244,11 @@ export class Router implements SimNode {
 
   private handleWanIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
     const emit = this.emitWan(ctx);
-    if (pkt.payload.kind === "udp") {
+    if (pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dhcp") {
       const udp = pkt.payload;
-      if (udp.dstPort === DHCP_CLIENT_PORT) this.wanClient.handle(udp.payload, frameId, ctx, emit);
-      else if (udp.dstPort === DHCP_SERVER_PORT) ctx.trace("dhcp.ignore", "app", `[wan] 다른 장치의 DHCP ${udp.payload.op} → 무시`, {}, frameId);
+      const m = udp.payload as DhcpMessage;
+      if (udp.dstPort === DHCP_CLIENT_PORT) this.wanClient.handle(m, frameId, ctx, emit);
+      else if (udp.dstPort === DHCP_SERVER_PORT) ctx.trace("dhcp.ignore", "app", `[wan] 다른 장치의 DHCP ${m.op} → 무시`, {}, frameId);
       else ctx.trace("ip.drop", "L4", `[wan] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frameId);
       return;
     }

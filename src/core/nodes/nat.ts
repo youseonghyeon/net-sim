@@ -4,7 +4,7 @@ import type { Ipv4Packet } from "../packet";
 import type { NodeContext } from "./node";
 
 export interface NatEntry {
-  proto: "icmp" | "tcp";
+  proto: "icmp" | "tcp" | "udp";
   lanIp: Ip;
   /** ICMP id 또는 내부 호스트의 TCP 포트 */
   innerId: number;
@@ -15,6 +15,13 @@ export interface NatEntry {
 }
 
 export const NAT_ID_START = 40000;
+
+/** 포트 포워딩 규칙: 공인 쪽 TCP 포트로 들어온 연결을 내부 호스트로 */
+export interface PortForward {
+  publicPort: number;
+  lanIp: Ip;
+  lanPort: number;
+}
 
 export class NatTable {
   /** "proto:공인id" → 매핑 */
@@ -30,14 +37,10 @@ export class NatTable {
     return [...this.entries.values()];
   }
 
-  /** 안 → 밖: 출발지를 공인 주소로 바꾼다. UDP 는 지원하지 않아 undefined */
+  /** 안 → 밖: 출발지를 공인 주소로 바꾼다 (ICMP 는 id, TCP/UDP 는 출발 포트) */
   translate(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
-    if (p.kind === "udp") {
-      ctx.trace("ip.drop", "L3", `UDP 는 아직 NAT 하지 않음 → 폐기`, {}, frameId);
-      return undefined;
-    }
-    const proto = p.kind === "icmp" ? "icmp" : "tcp";
+    const proto = p.kind;
     const innerId = p.kind === "icmp" ? p.id : p.srcPort;
     const key = `${proto}:${pkt.src}:${innerId}`;
     let natKey = this.byInner.get(key);
@@ -49,7 +52,7 @@ export class NatTable {
     }
     const entry = this.entries.get(natKey)!;
     entry.lastUsed = ctx.now;
-    const unit = proto === "icmp" ? "ICMP id" : "TCP 포트";
+    const unit = proto === "icmp" ? "ICMP id" : `${proto.toUpperCase()} 포트`;
     ctx.trace(
       "nat.translate",
       "L3",
@@ -63,13 +66,9 @@ export class NatTable {
   /** 밖 → 안: 테이블에 있으면 목적지를 내부 호스트로 되돌린다 */
   restore(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
-    if (p.kind === "udp") {
-      ctx.trace("nat.miss", "L3", `NAT 테이블에 없는 UDP → 폐기`, {}, frameId);
-      return undefined;
-    }
-    const proto = p.kind === "icmp" ? "icmp" : "tcp";
+    const proto = p.kind;
     const publicId = p.kind === "icmp" ? p.id : p.dstPort;
-    const what = p.kind === "icmp" ? `ICMP id ${publicId}` : `TCP 포트 ${publicId}`;
+    const what = p.kind === "icmp" ? `ICMP id ${publicId}` : `${proto.toUpperCase()} 포트 ${publicId}`;
     const entry = this.entries.get(`${proto}:${publicId}`);
     if (!entry) {
       ctx.trace("nat.miss", "L3", `NAT 테이블에 없는 ${what} → 폐기. 내부에서 시작하지 않은 통신은 들어올 수 없음`, { proto, publicId }, frameId);

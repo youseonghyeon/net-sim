@@ -58,8 +58,21 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage;
+  payload: DhcpMessage | DnsMessage;
 }
+
+export interface DnsMessage {
+  kind: "dns";
+  id: number;
+  op: "query" | "response";
+  /** 질의 이름 (예: example.com) */
+  name: string;
+  /** 응답: 찾은 주소. 없으면 rcode */
+  answer?: Ip;
+  rcode?: "NXDOMAIN" | "SERVFAIL";
+}
+
+export const DNS_PORT = 53;
 
 export type DhcpOp = "discover" | "offer" | "request" | "ack" | "nak" | "release";
 
@@ -86,7 +99,7 @@ export const LIMITED_BROADCAST_IP: Ip = "255.255.255.255";
 
 export type Layer = "L1" | "L2" | "L3" | "L4" | "app" | "sys";
 
-export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp";
+export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns";
 
 const DHCP_LABEL: Record<DhcpOp, string> = { discover: "Discover", offer: "Offer", request: "Request", ack: "Ack", nak: "Nak", release: "Release" };
 
@@ -102,6 +115,7 @@ export function describeFrame(frame: EthernetFrame): string {
   }
   if (inner.kind === "tcp") return `TCP ${tcpFlags(inner)} seq=${inner.seq} ack=${inner.ack}${inner.len ? ` len=${inner.len}` : ""}`;
   const d = inner.payload;
+  if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}?)` : `DNS 응답 (${d.name} = ${d.answer ?? d.rcode})`;
   return `DHCP ${DHCP_LABEL[d.op]}${d.yiaddr ? ` (${d.yiaddr})` : ""}`;
 }
 
@@ -121,6 +135,7 @@ export function shortLabel(frame: EthernetFrame): string {
   const inner = p.payload;
   if (inner.kind === "icmp") return inner.type === "echo-request" ? "ping 요청" : "ping 응답";
   if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
+  if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   return `DHCP ${DHCP_LABEL[inner.payload.op]}`;
 }
 
@@ -130,5 +145,5 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.kind === "arp") return "arp";
   if (p.payload.kind === "icmp") return "icmp";
   if (p.payload.kind === "tcp") return "tcp";
-  return "dhcp";
+  return p.payload.payload.kind === "dns" ? "dns" : "dhcp";
 }

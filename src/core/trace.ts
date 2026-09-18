@@ -88,7 +88,20 @@ export type TraceKind =
   | "tcp.rst.received"
   | "tcp.refused"
   | "tcp.ignore"
-  | "link.loss";
+  | "link.loss"
+  | "hub.repeat"
+  | "nat.forward.rule"
+  | "nat.forward.reply"
+  | "dns.query.sent"
+  | "dns.query.received"
+  | "dns.response.sent"
+  | "dns.response.received"
+  | "dns.cache.hit"
+  | "dns.forward"
+  | "dns.timeout"
+  | "dns.nxdomain"
+  | "dns.no-server"
+  | "dns.resolved";
 
 export interface TraceEvent {
   seq: number;
@@ -130,4 +143,7 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "dhcp.pool.exhausted",
   "dhcp.misconfigured",
   "dhcp.relay.miss",
+  "dns.timeout",
+  "dns.nxdomain",
+  "dns.no-server",
 ]);
