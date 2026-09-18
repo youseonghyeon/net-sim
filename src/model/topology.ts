@@ -83,12 +83,21 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
 
 export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "server", "switch", "router", "gateway", "nat", "internet"];
 
+export interface DhcpPoolSettings {
+  start: string;
+  end: string;
+  prefix: number;
+  router: string;
+}
+
 export interface DhcpServerSettings {
   enabled: boolean;
   start: string;
   end: string;
   /** 클라이언트에게 안내할 게이트웨이 (비우면 안내 없음) */
   router: string;
+  /** 릴레이를 거쳐 오는 다른 서브넷용 풀 */
+  extraPools?: DhcpPoolSettings[];
 }
 
 export interface HostSettings {
@@ -110,6 +119,8 @@ export interface IfaceSettings {
   ip: string;
   prefix: number;
   gateway: string;
+  /** DHCP 릴레이 대상 서버 주소 (비우면 릴레이 없음) */
+  relay?: string;
 }
 
 export interface StaticRouteSettings {
@@ -358,7 +369,8 @@ export function examplePartsTopology(): Topology {
     interfaces: [
       { ipMode: "static", ip: "10.0.0.2", prefix: 24, gateway: "10.0.0.1" },
       { ipMode: "static", ip: "192.168.1.1", prefix: 24, gateway: "" },
-      { ipMode: "static", ip: "192.168.2.1", prefix: 24, gateway: "" },
+      // 오른쪽 서브넷엔 DHCP 서버가 없어 왼쪽의 dhcp-srv 로 릴레이한다
+      { ipMode: "static", ip: "192.168.2.1", prefix: 24, gateway: "", relay: "192.168.1.2" },
     ],
     routes: [],
   };
@@ -372,11 +384,16 @@ export function examplePartsTopology(): Topology {
     prefix: 24,
     gateway: "192.168.1.1",
     services: [],
-    dhcpServer: { enabled: true, start: "192.168.1.100", end: "192.168.1.199", router: "192.168.1.1" },
+    dhcpServer: {
+      enabled: true,
+      start: "192.168.1.100",
+      end: "192.168.1.199",
+      router: "192.168.1.1",
+      extraPools: [{ start: "192.168.2.100", end: "192.168.2.199", prefix: 24, router: "192.168.2.1" }],
+    },
   };
   const pc1 = add("pc", 200, 424);
-  const laptop = add("laptop", 520, 424);
-  laptop.host = { ipMode: "static", ip: "192.168.2.10", prefix: 24, gateway: "192.168.2.1", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const laptop = add("laptop", 520, 424); // 릴레이를 거쳐 dhcp-srv 에서 주소를 받는다
   const web = add("server", 700, 424);
   web.host = { ipMode: "static", ip: "192.168.2.20", prefix: 24, gateway: "192.168.2.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   const cables: Cable[] = [

@@ -1,7 +1,7 @@
 import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
 import { frameCategory, shortLabel } from "../core/packet";
-import { hostStatus, sim, simTime, simVersion, wanStatus } from "../model/sim";
+import { hostStatus, serviceBadges, sim, simTime, simVersion, wanStatus } from "../model/sim";
 import { connectDevices, fitRequest, loadExample, moveDevice, selection, tool, topology, viewport } from "../model/store";
 import { freePort, PORT_DEPTH, PORT_WIDTH, portAnchor, snap, specOf, usedPorts, type Cable, type Device, type PortSide } from "../model/topology";
 import { GlyphInSvg } from "./Icons";
@@ -235,6 +235,7 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
   void simVersion.value; // 시뮬레이션 상태가 바뀌면 다시 읽는다
   const addr = hostStatus(d.id);
   const wan = wanStatus(d.id);
+  const badges = serviceBadges(d.id);
   return (
     <g
       data-device={d.id}
@@ -245,6 +246,7 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
       <g class="glyph">
         <GlyphInSvg name={d.kind} x={wide ? 14 : (spec.width - glyph) / 2} y={(spec.height - glyph) / 2} size={glyph} />
       </g>
+      {badges.length > 0 && <ServiceBadges badges={badges} width={spec.width} below={wide ? undefined : spec.height + 46} />}
       {spec.ports.map((p, i) => {
         const a = portAnchor(d, i);
         const lx = a.x - d.x - PORT_WIDTH / 2;
@@ -285,6 +287,39 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
       )}
     </g>
   );
+}
+
+/**
+ * 서비스 배지. 넓은 타일은 오른쪽 위 모서리에 걸치고(오른쪽 정렬),
+ * 호스트 타일은 위쪽 포트·케이블과 겹치지 않게 주소 줄 아래에 가운데 정렬로 둔다.
+ */
+function ServiceBadges({ badges, width, below }: { badges: string[]; width: number; below?: number }) {
+  const h = 16;
+  const pad = 6;
+  const widths = badges.map((b) => Math.round(textWidth(b)) + pad * 2);
+  const total = widths.reduce((a, w) => a + w, 0) + (badges.length - 1) * 4;
+  let x = below !== undefined ? (width - total) / 2 : width + 4 - total;
+  const y = below !== undefined ? below : -h / 2 - 2;
+  const items = badges.map((b, i) => {
+    const w = widths[i]!;
+    const el = (
+      <g key={b} class="badge" transform={`translate(${x},${y})`}>
+        <rect width={w} height={h} rx={h / 2} />
+        <text x={w / 2} y={h / 2 + 3.5}>
+          {b}
+        </text>
+      </g>
+    );
+    x += w + 4;
+    return el;
+  });
+  return <g>{items}</g>;
+}
+
+function textWidth(s: string): number {
+  let w = 0;
+  for (const ch of s) w += ch.charCodeAt(0) > 0x2e80 ? 10.5 : ch === " " ? 3.2 : 6.4;
+  return w;
 }
 
 function CableView({ cable, byId, selected }: { cable: Cable; byId: Map<string, Device>; selected: boolean }) {

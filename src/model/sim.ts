@@ -260,7 +260,15 @@ function effectiveDhcpServer(d: Device, current?: Host) {
   if (!d.host) return undefined;
   const c = d.host.dhcpServer ?? DEFAULT_DHCP_SERVER;
   const cur = current?.dhcpServer.config;
-  return { enabled: c.enabled, start: validIp(c.start) ?? cur?.start ?? "", end: validIp(c.end) ?? cur?.end ?? "", router: validIp(c.router) };
+  return {
+    enabled: c.enabled,
+    start: validIp(c.start) ?? cur?.start ?? "",
+    end: validIp(c.end) ?? cur?.end ?? "",
+    router: validIp(c.router),
+    extraPools: (c.extraPools ?? [])
+      .filter((p) => validIp(p.start) && validIp(p.end) && p.prefix >= 1 && p.prefix <= 32)
+      .map((p) => ({ start: p.start, end: p.end, prefix: p.prefix, router: validIp(p.router) })),
+  };
 }
 
 function effectiveL3(d: Device) {
@@ -269,9 +277,10 @@ function effectiveL3(d: Device) {
   return {
     interfaces: spec.ports.map((p, i) => {
       const c = l3.interfaces[i] ?? { ipMode: "static" as const, ip: "", prefix: 24, gateway: "" };
+      const relay = validIp(c.relay);
       return c.ipMode === "dhcp"
-        ? { mode: "dhcp" as const }
-        : { mode: "static" as const, ip: validIp(c.ip), prefix: c.prefix, gateway: validIp(c.gateway) };
+        ? { mode: "dhcp" as const, relay }
+        : { mode: "static" as const, ip: validIp(c.ip), prefix: c.prefix, gateway: validIp(c.gateway), relay };
     }),
     routes: (l3.routes ?? []).filter((r) => validIp(r.dest) && validIp(r.via) && r.prefix >= 1 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix, via: r.via })),
   };
@@ -344,6 +353,25 @@ export function hostStatus(id: string): { text: string; tone: "ok" | "warn" | "m
     return { text: inside.join(" · "), tone: node.ifaces.slice(1).every((i) => i.ip) ? "ok" : "warn", mono: true };
   }
   return null;
+}
+
+/** 타일에 붙는 서비스 배지: 어느 상자에서 어떤 소프트웨어가 도는지 */
+export function serviceBadges(id: string): string[] {
+  const node = sim.node(id);
+  const out: string[] = [];
+  if (node instanceof Host) {
+    if (node.dhcpServer.config.enabled) out.push("DHCP");
+    if (node.tcp.listening.has(80)) out.push("웹");
+  } else if (node instanceof Router) {
+    if (node.dhcp.enabled) out.push("DHCP");
+    out.push("NAT");
+  } else if (node instanceof L3Node) {
+    if (node.relays.some(Boolean)) out.push("DHCP 릴레이");
+    if (node.nat) out.push("NAT");
+  } else if (node instanceof Internet) {
+    out.push("ISP DHCP", "웹");
+  }
+  return out;
 }
 
 /** 라우터 타일의 WAN 줄 */

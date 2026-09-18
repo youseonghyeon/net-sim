@@ -448,6 +448,21 @@ select.btn.example {
   text-anchor: start;
 }
 
+/* 서비스 배지 */
+.badge rect {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+.badge text {
+  font-family: var(--font);
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--ink-2);
+  text-anchor: middle;
+  pointer-events: none;
+}
+
 /* 케이블 */
 .cable .hit {
   fill: none;
@@ -696,6 +711,27 @@ select.btn.example {
 }
 .error-note {
   color: var(--danger);
+}
+.section h3.sub {
+  margin-top: 12px;
+}
+.pool-row {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr) auto minmax(0, 1fr) 30px;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.pool-row .prefix-in {
+  grid-column: 2 / 3;
+  width: 64px;
+}
+.pool-row .pool-error {
+  grid-column: 1 / -1;
+  margin-top: 0;
 }
 .ping-row .input {
   flex: 1;

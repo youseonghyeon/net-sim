@@ -187,12 +187,23 @@ function clientPacket(msg: DhcpMessage): Ipv4Packet {
 
 // ---------- 서버 ----------
 
+export interface DhcpPool {
+  start: Ip;
+  end: Ip;
+  prefix: number;
+  /** 이 서브넷 클라이언트에게 안내할 게이트웨이 */
+  router?: Ip;
+}
+
 export interface DhcpServerConfig {
   enabled: boolean;
+  /** 서버 자신이 속한 서브넷의 풀 */
   start: Ip;
   end: Ip;
   /** 클라이언트에게 안내할 게이트웨이. 비우면 서버 자신의 주소(라우터) 또는 없음(호스트 서버) */
   router?: Ip;
+  /** 릴레이를 거쳐 오는 다른 서브넷용 풀 */
+  extraPools?: DhcpPool[];
 }
 
 export interface Lease {
@@ -230,6 +241,24 @@ export class DhcpServer {
     this.dropInvalid(ctx, "인터페이스 주소 변경");
   }
 
+  /** 내 서브넷 풀 + 다른 서브넷 풀 */
+  private pools(): DhcpPool[] {
+    const local: DhcpPool = { start: this.config.start, end: this.config.end, prefix: this.iface.prefix, router: this.advertisedRouter() };
+    return [local, ...(this.config.extraPools ?? [])];
+  }
+
+  /** 요청이 온 서브넷(giaddr 기준)에 맞는 풀. 릴레이 없이 직접 오면 내 서브넷 풀 */
+  private poolFor(giaddr: Ip | undefined): DhcpPool | undefined {
+    if (!giaddr) return this.pools()[0];
+    return (this.config.extraPools ?? []).find((p) => {
+      try {
+        return sameSubnet(giaddr, p.start, p.prefix);
+      } catch {
+        return false;
+      }
+    }) ?? (this.iface.ip && sameSubnet(giaddr, this.iface.ip, this.iface.prefix) ? this.pools()[0] : undefined);
+  }
+
   /** 범위가 인터페이스 서브넷 안에 있는지. 아니면 사유를 돌려준다 */
   rangeProblem(): string | undefined {
     const ip = this.iface.ip;
@@ -247,13 +276,18 @@ export class DhcpServer {
     return undefined;
   }
 
-  private inRange(ip: Ip): boolean {
+  private inPool(ip: Ip, p: DhcpPool): boolean {
     try {
       const n = ipToInt(ip);
-      return n >= ipToInt(this.config.start) && n <= ipToInt(this.config.end) && !!this.iface.ip && sameSubnet(ip, this.iface.ip, this.iface.prefix);
+      return n >= ipToInt(p.start) && n <= ipToInt(p.end) && sameSubnet(ip, p.start, p.prefix);
     } catch {
       return false;
     }
+  }
+
+  private inRange(ip: Ip): boolean {
+    if (!this.iface.ip) return false;
+    return this.pools().some((p) => this.inPool(ip, p));
   }
 
   private dropInvalid(ctx: NodeContext, why: string): void {
@@ -277,8 +311,9 @@ export class DhcpServer {
 
   handle(msg: DhcpMessage, frameId: number, ctx: NodeContext, emit: Emit): void {
     const me = this.iface.ip!;
+    const via = msg.giaddr ? ` (릴레이 ${msg.giaddr} 경유)` : "";
     if (msg.op === "discover") {
-      ctx.trace("dhcp.discover.received", "app", `DHCP Discover 수신 (클라이언트 ${msg.clientMac})`, { ...msg }, frameId);
+      ctx.trace("dhcp.discover.received", "app", `DHCP Discover 수신 (클라이언트 ${msg.clientMac})${via}`, { ...msg }, frameId);
       if (!this.config.enabled) {
         ctx.trace("dhcp.disabled", "app", `DHCP 서비스가 꺼져 있음 → 응답하지 않음 (클라이언트는 타임아웃 후 실패)`, {}, frameId);
         return;
@@ -288,13 +323,17 @@ export class DhcpServer {
         ctx.trace("dhcp.misconfigured", "app", `DHCP 설정 오류: ${problem} → 응답하지 않음`, { problem }, frameId);
         return;
       }
-      const ip = this.pickAddress(msg.clientMac);
+      const pool = this.poolFor(msg.giaddr);
+      if (!pool) {
+        ctx.trace("dhcp.misconfigured", "app", `릴레이 ${msg.giaddr} 의 서브넷에 해당하는 풀이 없음 → 응답하지 않음. "다른 서브넷 풀" 에 그 서브넷 범위를 추가하세요`, { giaddr: msg.giaddr }, frameId);
+        return;
+      }
+      const ip = this.pickAddress(msg.clientMac, pool);
       if (!ip) {
-        ctx.trace("dhcp.pool.exhausted", "app", `빌려줄 주소가 없음 (범위 ${this.config.start} ~ ${this.config.end} 모두 사용 중) → 응답 안 함`, {}, frameId);
+        ctx.trace("dhcp.pool.exhausted", "app", `빌려줄 주소가 없음 (범위 ${pool.start} ~ ${pool.end} 모두 사용 중) → 응답 안 함`, {}, frameId);
         return;
       }
       this.offers.set(msg.clientMac, ip);
-      const gw = this.advertisedRouter();
       const offer: DhcpMessage = {
         kind: "dhcp",
         op: "offer",
@@ -302,14 +341,20 @@ export class DhcpServer {
         clientMac: msg.clientMac,
         yiaddr: ip,
         serverId: me,
-        options: { prefix: this.iface.prefix, router: gw, leaseTime: LEASE_TIME },
+        giaddr: msg.giaddr,
+        options: { prefix: pool.prefix, router: pool.router, leaseTime: LEASE_TIME },
       };
-      ctx.trace("dhcp.offer.sent", "app", `DHCP Offer: ${msg.clientMac} 에게 ${ip}/${this.iface.prefix} 제안 (게이트웨이 ${gw ?? "안내 없음"}) → 클라이언트 MAC 으로 유니캐스트`, { ...offer });
-      this.iface.sendToMac(msg.clientMac, this.packet(offer, ip), ctx, emit);
+      ctx.trace(
+        "dhcp.offer.sent",
+        "app",
+        `DHCP Offer: ${msg.clientMac} 에게 ${ip}/${pool.prefix} 제안 (게이트웨이 ${pool.router ?? "안내 없음"}) → ${msg.giaddr ? `릴레이 ${msg.giaddr} 로 유니캐스트` : "클라이언트 MAC 으로 유니캐스트"}`,
+        { ...offer },
+      );
+      this.reply(offer, ip, msg, ctx, emit);
       return;
     }
     if (msg.op === "request") {
-      ctx.trace("dhcp.request.received", "app", `DHCP Request 수신: ${msg.clientMac} 가 ${msg.requestedIp} 요청 (서버 ${msg.serverId})`, { ...msg }, frameId);
+      ctx.trace("dhcp.request.received", "app", `DHCP Request 수신: ${msg.clientMac} 가 ${msg.requestedIp} 요청 (서버 ${msg.serverId})${via}`, { ...msg }, frameId);
       if (!this.config.enabled) {
         ctx.trace("dhcp.disabled", "app", `DHCP 서비스가 꺼져 있음 → 응답하지 않음`, {}, frameId);
         return;
@@ -323,15 +368,15 @@ export class DhcpServer {
       const leased = msg.requestedIp ? this.leases.get(msg.requestedIp) : undefined;
       const ok = msg.requestedIp && ((offered && offered === msg.requestedIp) || (leased && leased.mac === msg.clientMac));
       if (!ok) {
-        const nak: DhcpMessage = { kind: "dhcp", op: "nak", xid: msg.xid, clientMac: msg.clientMac, serverId: me };
+        const nak: DhcpMessage = { kind: "dhcp", op: "nak", xid: msg.xid, clientMac: msg.clientMac, serverId: me, giaddr: msg.giaddr };
         ctx.trace("dhcp.nak.sent", "app", `DHCP Nak: ${msg.requestedIp} 는 ${msg.clientMac} 에게 제안한 주소가 아님 → 거부`, { ...nak });
-        this.iface.sendToMac(msg.clientMac, this.packet(nak, LIMITED_BROADCAST_IP), ctx, emit);
+        this.reply(nak, LIMITED_BROADCAST_IP, msg, ctx, emit);
         return;
       }
       const ip = msg.requestedIp!;
+      const pool = this.pools().find((p) => this.inPool(ip, p)) ?? this.pools()[0]!;
       this.offers.delete(msg.clientMac);
       this.leases.set(ip, { mac: msg.clientMac, at: ctx.now });
-      const gw = this.advertisedRouter();
       const ack: DhcpMessage = {
         kind: "dhcp",
         op: "ack",
@@ -339,11 +384,12 @@ export class DhcpServer {
         clientMac: msg.clientMac,
         yiaddr: ip,
         serverId: me,
-        options: { prefix: this.iface.prefix, router: gw, leaseTime: LEASE_TIME },
+        giaddr: msg.giaddr,
+        options: { prefix: pool.prefix, router: pool.router, leaseTime: LEASE_TIME },
       };
       ctx.trace("dhcp.lease", "app", `임대 등록: ${ip} → ${msg.clientMac}`, { ip, mac: msg.clientMac });
-      ctx.trace("dhcp.ack.sent", "app", `DHCP Ack: ${msg.clientMac} 에게 ${ip}/${this.iface.prefix} 확정 (게이트웨이 ${gw ?? "안내 없음"})`, { ...ack });
-      this.iface.sendToMac(msg.clientMac, this.packet(ack, ip), ctx, emit);
+      ctx.trace("dhcp.ack.sent", "app", `DHCP Ack: ${msg.clientMac} 에게 ${ip}/${pool.prefix} 확정 (게이트웨이 ${pool.router ?? "안내 없음"})${msg.giaddr ? ` → 릴레이 ${msg.giaddr} 로` : ""}`, { ...ack });
+      this.reply(ack, ip, msg, ctx, emit);
       return;
     }
     if (msg.op === "release") {
@@ -364,20 +410,30 @@ export class DhcpServer {
     return { kind: "ipv4", src: this.iface.ip!, dst, ttl: 64, payload: { kind: "udp", srcPort: DHCP_SERVER_PORT, dstPort: DHCP_CLIENT_PORT, payload: msg } };
   }
 
-  /** 기존 임대 → 기존 제안 → 범위 안의 첫 빈 주소 (기존 것이 현재 범위 밖이면 버린다) */
-  private pickAddress(mac: Mac): Ip | undefined {
+  /** 응답 전송: 릴레이를 거쳐 왔으면 릴레이 주소(UDP 67)로 라우팅해 보내고, 아니면 클라이언트 MAC 으로 직접 */
+  private reply(msg: DhcpMessage, clientDst: Ip, req: DhcpMessage, ctx: NodeContext, emit: Emit): void {
+    if (req.giaddr) {
+      const pkt: Ipv4Packet = { kind: "ipv4", src: this.iface.ip!, dst: req.giaddr, ttl: 64, payload: { kind: "udp", srcPort: DHCP_SERVER_PORT, dstPort: DHCP_SERVER_PORT, payload: msg } };
+      this.iface.sendIp(pkt, ctx, emit);
+      return;
+    }
+    this.iface.sendToMac(req.clientMac, this.packet(msg, clientDst), ctx, emit);
+  }
+
+  /** 기존 임대 → 기존 제안 → 풀 안의 첫 빈 주소 (기존 것이 그 풀 밖이면 버린다) */
+  private pickAddress(mac: Mac, pool: DhcpPool): Ip | undefined {
     for (const [ip, lease] of this.leases) {
       if (lease.mac !== mac) continue;
-      if (this.inRange(ip)) return ip;
-      this.leases.delete(ip);
+      if (this.inPool(ip, pool)) return ip;
+      if (!this.inRange(ip)) this.leases.delete(ip);
     }
     const offered = this.offers.get(mac);
-    if (offered && this.inRange(offered)) return offered;
+    if (offered && this.inPool(offered, pool)) return offered;
     this.offers.delete(mac);
     let start: number, end: number;
     try {
-      start = ipToInt(this.config.start);
-      end = ipToInt(this.config.end);
+      start = ipToInt(pool.start);
+      end = ipToInt(pool.end);
     } catch {
       return undefined;
     }

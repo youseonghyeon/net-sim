@@ -62,6 +62,9 @@ export type TraceKind =
   | "dhcp.disabled"
   | "dhcp.pool.exhausted"
   | "dhcp.misconfigured"
+  | "dhcp.relay.forward"
+  | "dhcp.relay.return"
+  | "dhcp.relay.miss"
   | "dhcp.lease"
   | "tcp.connect"
   | "tcp.received"
@@ -126,4 +129,5 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "dhcp.disabled",
   "dhcp.pool.exhausted",
   "dhcp.misconfigured",
+  "dhcp.relay.miss",
 ]);

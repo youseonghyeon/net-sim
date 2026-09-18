@@ -158,6 +158,70 @@ describe("게이트웨이 / NAT 박스 / DHCP 서버 호스트", () => {
     expect(net.getHost("a").pings.at(-1)?.status).toBe("failed");
   });
 
+  it("DHCP 릴레이: 다른 서브넷의 호스트가 게이트웨이 릴레이를 거쳐 서버 한 대에서 주소를 받는다", () => {
+    const net = build();
+    const gw = net.nodes.get("gw") as L3Node;
+    gw.configure(
+      [
+        { mode: "static", ip: "10.0.0.2", prefix: 24, gateway: "10.0.0.1" },
+        { mode: "static", ip: "192.168.1.1", prefix: 24 },
+        { mode: "static", ip: "192.168.2.1", prefix: 24, relay: "192.168.1.2" },
+      ],
+      net.contextFor("gw"),
+    );
+    net.getHost("dhcpsrv").setDhcpServer(
+      {
+        enabled: true,
+        start: "192.168.1.100",
+        end: "192.168.1.101",
+        router: "192.168.1.1",
+        extraPools: [{ start: "192.168.2.100", end: "192.168.2.101", prefix: 24, router: "192.168.2.1" }],
+      },
+      net.contextFor("dhcpsrv"),
+    );
+    net.addNode(new Host({ id: "d", mac: "02:00:00:00:00:0e", ipMode: "dhcp" }));
+    net.connect("d", 0, "sw2", 2);
+    net.runToIdle();
+
+    const d = net.getHost("d");
+    expect(d.ip).toBe("192.168.2.100");
+    expect(d.iface.prefix).toBe(24);
+    expect(d.iface.gateway).toBe("192.168.2.1");
+    expect(net.getHost("dhcpsrv").dhcpServer.leases.get("192.168.2.100")?.mac).toBe("02:00:00:00:00:0e");
+
+    const kinds = net.trace.map((e) => `${e.nodeId}:${e.kind}`);
+    const order = ["d:dhcp.discover.sent", "gw:dhcp.relay.forward", "dhcpsrv:dhcp.discover.received", "dhcpsrv:dhcp.offer.sent", "gw:dhcp.relay.return", "d:dhcp.offer.received", "gw:dhcp.relay.forward", "dhcpsrv:dhcp.ack.sent", "gw:dhcp.relay.return", "d:dhcp.bound"];
+    let idx = -1;
+    for (const k of order) {
+      const next = kinds.indexOf(k, idx + 1);
+      expect(next, `expected ${k} after ${idx}`).toBeGreaterThan(idx);
+      idx = next;
+    }
+    // 받은 주소로 다른 서브넷과 통신
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "d", dst: "192.168.1.10" });
+    net.runToIdle();
+    expect(d.pings.at(-1)).toMatchObject({ status: "ok" });
+    expect(net.pendingEvents).toBe(0);
+  });
+
+  it("릴레이는 있는데 서버에 그 서브넷 풀이 없으면 서버가 설정 오류로 응답하지 않는다", () => {
+    const net = build();
+    const gw = net.nodes.get("gw") as L3Node;
+    gw.configure(
+      [
+        { mode: "static", ip: "10.0.0.2", prefix: 24, gateway: "10.0.0.1" },
+        { mode: "static", ip: "192.168.1.1", prefix: 24 },
+        { mode: "static", ip: "192.168.2.1", prefix: 24, relay: "192.168.1.2" },
+      ],
+      net.contextFor("gw"),
+    );
+    net.addNode(new Host({ id: "d", mac: "02:00:00:00:00:0e", ipMode: "dhcp" }));
+    net.connect("d", 0, "sw2", 2);
+    net.runToIdle();
+    expect(net.getHost("d").ip).toBeUndefined();
+    expect(net.trace.some((e) => e.nodeId === "dhcpsrv" && e.kind === "dhcp.misconfigured" && e.summary.includes("풀이 없음"))).toBe(true);
+  });
+
   it("NAT 박스를 거쳐 TCP 로 인터넷 웹 서버와 통신한다", () => {
     const net = build();
     net.scheduleAction(net.now, { kind: "tcp-connect", nodeId: "b", dst: "93.184.216.34", port: 80 });

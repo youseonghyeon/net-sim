@@ -365,6 +365,14 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
             />
             {subnetClash(l3, names, i) && <p class="note error-note">{subnetClash(l3, names, i)} 인터페이스와 서브넷이 겹칩니다. 라우터는 인터페이스마다 다른 서브넷이어야 합니다.</p>}
             {!isUp && v.ipMode === "static" && <p class="note">이 서브넷의 호스트들은 게이트웨이를 {v.ip || "이 주소"} 로 두어야 다른 네트워크로 나갈 수 있습니다.</p>}
+            {!isUp && !isNat && (
+              <Field label="DHCP 릴레이" error={ipError(v.relay ?? "", false)}>
+                <input class="input mono" value={v.relay ?? ""} placeholder="서버 주소 (비우면 없음)" onInput={(e) => setIface(i, { relay: e.currentTarget.value })} />
+              </Field>
+            )}
+            {!isUp && !isNat && v.relay && validIp(v.relay) && (
+              <p class="note">이 인터페이스로 오는 DHCP 브로드캐스트에 giaddr={v.ip || "?"} 를 붙여 {v.relay} 로 유니캐스트 전달합니다. 서버 쪽 "다른 서브넷 풀" 에 이 서브넷 범위가 있어야 합니다.</p>
+            )}
           </Section>
         );
       })}
@@ -433,6 +441,32 @@ function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
             <input class="input mono" value={ds.router} placeholder="비우면 안내 없음" onInput={(e) => setDs({ router: e.currentTarget.value })} />
           </Field>
           <p class="note">클라이언트에게 이 범위의 주소와 함께 게이트웨이를 알려줍니다. 게이트웨이를 비우면 클라이언트는 같은 서브넷 밖으로 나갈 수 없습니다.</p>
+          <h3 class="sub">다른 서브넷 풀 (릴레이용)</h3>
+          {(ds.extraPools ?? []).length === 0 && <p class="note">게이트웨이가 DHCP 릴레이로 보내오는 다른 서브넷의 요청에 줄 범위입니다. giaddr 가 속한 서브넷의 풀을 골라 응답합니다.</p>}
+          {(ds.extraPools ?? []).map((p, i) => {
+            const setPool = (patch: Partial<typeof p>) => setDs({ extraPools: (ds.extraPools ?? []).map((x, k) => (k === i ? { ...x, ...patch } : x)) });
+            const bad = !validIp(p.start) || !validIp(p.end) ? "시작·끝 주소가 필요합니다" : !sameSubnet(p.start, p.end, p.prefix) ? "시작과 끝이 같은 서브넷이 아닙니다" : validIp(p.router) && !sameSubnet(p.router, p.start, p.prefix) ? "게이트웨이가 그 서브넷 밖입니다" : undefined;
+            return (
+              <div key={i} class="pool-row">
+                <span class="muted">범위</span>
+                <input class="input mono" value={p.start} placeholder="192.168.2.100" onInput={(e) => setPool({ start: e.currentTarget.value })} />
+                <span class="muted">~</span>
+                <input class="input mono" value={p.end} placeholder="192.168.2.199" onInput={(e) => setPool({ end: e.currentTarget.value })} />
+                <button class="icon-btn" title="풀 삭제" onClick={() => setDs({ extraPools: (ds.extraPools ?? []).filter((_, k) => k !== i) })}>
+                  <Icon name="trash" size={15} />
+                </button>
+                <span class="muted">/ 프리픽스</span>
+                <input class="input mono prefix-in" type="number" min={1} max={32} value={p.prefix} onInput={(e) => setPool({ prefix: Math.min(32, Math.max(1, Number(e.currentTarget.value) || 24)) })} />
+                <span class="muted">게이트웨이</span>
+                <input class="input mono" value={p.router} placeholder="192.168.2.1" onInput={(e) => setPool({ router: e.currentTarget.value })} />
+                {bad && <div class="error pool-error">{bad}</div>}
+              </div>
+            );
+          })}
+          <button class="btn wide" onClick={() => setDs({ extraPools: [...(ds.extraPools ?? []), { start: "", end: "", prefix: 24, router: "" }] })}>
+            <Icon name="plus" size={14} />
+            서브넷 풀 추가
+          </button>
         </>
       )}
     </Section>

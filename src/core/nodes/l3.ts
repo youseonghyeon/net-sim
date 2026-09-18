@@ -1,6 +1,6 @@
 // 순수 L3 장치: 인터페이스 N개 사이를 라우팅한다. 게이트웨이(NAT 없음)와 NAT 박스(outside 인터페이스에서 변환)가 이 클래스다.
 import { networkOf, sameSubnet, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
+import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, LIMITED_BROADCAST_IP, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient } from "./dhcp";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
@@ -14,6 +14,8 @@ export interface L3IfaceConfig {
   ip?: Ip;
   prefix?: number;
   gateway?: Ip;
+  /** 이 인터페이스로 오는 DHCP 브로드캐스트를 이 서버로 유니캐스트 전달 (DHCP 릴레이, ip helper-address) */
+  relay?: Ip;
 }
 
 export interface StaticRoute {
@@ -49,6 +51,8 @@ export class L3Node implements SimNode {
   readonly nat: NatTable | undefined;
   readonly outside: number | undefined;
   routes: StaticRoute[];
+  /** 인터페이스별 DHCP 릴레이 대상 서버 */
+  readonly relays: (Ip | undefined)[];
 
   constructor(cfg: L3Config) {
     this.id = cfg.id;
@@ -62,6 +66,7 @@ export class L3Node implements SimNode {
     this.outside = cfg.kind === "nat" ? (cfg.outside ?? 0) : undefined;
     this.nat = cfg.kind === "nat" ? new NatTable() : undefined;
     this.routes = [...(cfg.routes ?? [])];
+    this.relays = cfg.interfaces.map((i) => i.relay);
   }
 
   setRoutes(routes: StaticRoute[], ctx: NodeContext): void {
@@ -84,6 +89,10 @@ export class L3Node implements SimNode {
       const iface = this.ifaces[i];
       if (!iface) return;
       const name = this.names[i]!;
+      if ((c.relay || undefined) !== this.relays[i]) {
+        this.relays[i] = c.relay || undefined;
+        ctx.trace("ip.config", "sys", c.relay ? `[${name}] DHCP 릴레이 설정: 이 인터페이스의 DHCP 브로드캐스트를 ${c.relay} 로 전달` : `[${name}] DHCP 릴레이 해제`, { iface: name, relay: c.relay });
+      }
       const changed =
         c.mode !== this.modes[i] || (c.mode === "static" && (c.ip !== iface.ip || (c.prefix ?? 24) !== iface.prefix || c.gateway !== iface.gateway));
       if (!changed) return;
@@ -154,7 +163,7 @@ export class L3Node implements SimNode {
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
       if (udp.dstPort === DHCP_CLIENT_PORT && this.clients[port]) this.clients[port]!.handle(udp.payload, frameId, ctx, this.emit(port, ctx));
-      else if (udp.dstPort === DHCP_SERVER_PORT) ctx.trace("dhcp.ignore", "app", `[${name}] DHCP ${udp.payload.op} 브로드캐스트 — 이 장치는 DHCP 서버가 아니므로 무시`, {}, frameId);
+      else if (udp.dstPort === DHCP_SERVER_PORT) this.handleRelay(port, pkt, udp.payload, frameId, ctx);
       else ctx.trace("ip.drop", "L4", `[${name}] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frameId);
       return;
     }
@@ -184,6 +193,48 @@ export class L3Node implements SimNode {
       inner = restored;
     }
     this.forward(inner, port, frameId, ctx);
+  }
+
+  /** DHCP 릴레이: 클라이언트 → 서버는 giaddr 를 붙여 유니캐스트, 서버 → 클라이언트는 giaddr 인터페이스에서 L2 유니캐스트 */
+  private handleRelay(port: number, pkt: Ipv4Packet, msg: DhcpMessage, frameId: number, ctx: NodeContext): void {
+    const name = this.names[port]!;
+    const fromClient = msg.op === "discover" || msg.op === "request" || msg.op === "release";
+    if (fromClient && !msg.giaddr) {
+      const server = this.relays[port];
+      const iface = this.ifaces[port]!;
+      if (!server) {
+        ctx.trace("dhcp.ignore", "app", `[${name}] DHCP ${msg.op} 브로드캐스트 — 이 장치는 DHCP 서버가 아니고 릴레이도 설정되지 않아 무시`, {}, frameId);
+        return;
+      }
+      if (!iface.ip) {
+        ctx.trace("dhcp.relay.miss", "app", `[${name}] DHCP 릴레이 불가: 이 인터페이스에 주소가 없어 giaddr 를 붙일 수 없음`, {}, frameId);
+        return;
+      }
+      const relayed: DhcpMessage = { ...msg, giaddr: iface.ip };
+      const out: Ipv4Packet = { kind: "ipv4", src: iface.ip, dst: server, ttl: 64, payload: { kind: "udp", srcPort: DHCP_SERVER_PORT, dstPort: DHCP_SERVER_PORT, payload: relayed } };
+      ctx.trace(
+        "dhcp.relay.forward",
+        "app",
+        `[${name}] DHCP 릴레이: 브로드캐스트 ${msg.op} 를 giaddr=${iface.ip} 붙여 서버 ${server} 로 유니캐스트 전달 (브로드캐스트는 서브넷을 못 넘으므로)`,
+        { op: msg.op, giaddr: iface.ip, server },
+        frameId,
+      );
+      this.sendVia(out, ctx, frameId);
+      return;
+    }
+    if (!fromClient && msg.giaddr) {
+      const back = this.ifaces.findIndex((i) => i.ip === msg.giaddr);
+      if (back < 0) {
+        ctx.trace("dhcp.relay.miss", "app", `[${name}] 서버 응답의 giaddr ${msg.giaddr} 가 내 인터페이스가 아님 → 폐기`, { giaddr: msg.giaddr }, frameId);
+        return;
+      }
+      const dst = msg.op === "nak" ? LIMITED_BROADCAST_IP : (msg.yiaddr ?? LIMITED_BROADCAST_IP);
+      const toClient: Ipv4Packet = { kind: "ipv4", src: this.ifaces[back]!.ip!, dst, ttl: 64, payload: { kind: "udp", srcPort: DHCP_SERVER_PORT, dstPort: DHCP_CLIENT_PORT, payload: msg } };
+      ctx.trace("dhcp.relay.return", "app", `[${this.names[back]}] DHCP 릴레이: 서버 ${pkt.src} 의 ${msg.op} 를 클라이언트 ${msg.clientMac} 에게 전달`, { op: msg.op, client: msg.clientMac }, frameId);
+      this.ifaces[back]!.sendToMac(msg.clientMac, toClient, ctx, this.emit(back, ctx));
+      return;
+    }
+    ctx.trace("dhcp.ignore", "app", `[${name}] 처리하지 않는 DHCP ${msg.op}${msg.giaddr ? " (giaddr 있음)" : ""} → 무시`, {}, frameId);
   }
 
   private handleIcmp(port: number, pkt: Ipv4Packet, icmp: IcmpPacket, frameId: number, ctx: NodeContext): void {
@@ -321,7 +372,7 @@ export class L3Node implements SimNode {
       id: this.id,
       type: this.type,
       label: this.id,
-      info: this.ifaces.map((_, i) => [this.names[i]!, this.ifaceStatus(i)] as [string, string]),
+      info: this.ifaces.map((_, i) => [this.names[i]!, this.ifaceStatus(i) + (this.relays[i] ? ` · DHCP 릴레이 → ${this.relays[i]}` : "")] as [string, string]),
       tables,
     };
   }

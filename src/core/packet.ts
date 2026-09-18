@@ -74,6 +74,8 @@ export interface DhcpMessage {
   serverId?: Ip;
   /** 클라이언트가 요청하는 주소 (request) */
   requestedIp?: Ip;
+  /** 릴레이 에이전트(게이트웨이)의 주소. 서버는 이 주소로 어느 서브넷 풀에서 줄지 정하고, 응답도 여기로 보낸다 */
+  giaddr?: Ip;
   options?: { prefix?: number; router?: Ip; leaseTime?: number };
 }
 
