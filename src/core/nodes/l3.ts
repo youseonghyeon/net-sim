@@ -89,11 +89,13 @@ export class L3Node implements SimNode {
       if (!changed) return;
       this.modes[i] = c.mode;
       iface.arpCache.clear();
+      iface.clearPending();
       if (c.mode === "static") {
         this.clients[i]?.stop();
         this.clients[i] = undefined;
         iface.configure(c.ip || undefined, c.prefix ?? 24, c.gateway || undefined);
         ctx.trace("ip.config", "sys", c.ip ? `[${name}] 수동 설정 적용: ${c.ip}/${c.prefix ?? 24}${c.gateway ? `, 게이트웨이 ${c.gateway}` : ""}` : `[${name}] 수동 설정으로 전환 (주소 미입력)`, { iface: name, ...c });
+        if (this.linkUp[i] && iface.ip) iface.announce(ctx, this.emit(i, ctx));
       } else {
         iface.clearAddress();
         const client = new DhcpClient(iface, hashCode(this.id) + i * 13, name);
@@ -158,6 +160,10 @@ export class L3Node implements SimNode {
     }
     const mine = this.ifaces.findIndex((i) => i.ip !== undefined && i.ip === pkt.dst);
     const fromOutside = this.nat !== undefined && port === this.outside;
+    if (fromOutside && mine >= 0 && mine !== this.outside) {
+      ctx.trace("ip.drop", "L3", `[${name}] 바깥에서 안쪽 주소 ${pkt.dst} 로 온 패킷 → 폐기. NAT 뒤의 사설 주소는 바깥에서 닿을 수 없음`, { dst: pkt.dst }, frameId);
+      return;
+    }
     // 바깥에서 공인 주소로 온 패킷: ping 요청만 내가 직접 받고, 나머지(응답·TCP)는 NAT 테이블로 내부 호스트를 찾는다
     if (mine >= 0 && !(fromOutside && !(pkt.payload.kind === "icmp" && pkt.payload.type === "echo-request"))) {
       if (pkt.payload.kind === "tcp") {
@@ -243,7 +249,12 @@ export class L3Node implements SimNode {
     }
     const r = this.route(pkt.dst);
     if (!r) {
-      ctx.trace("ip.no-route", "L3", `${pkt.dst} 로 가는 경로 없음 (연결된 서브넷·정적 경로·기본 경로 모두 해당 없음) → 폐기. 정적 경로를 추가하거나 기본 경로(게이트웨이)를 설정하세요`, { dst: pkt.dst }, frameId);
+      const noAddr = this.ifaces.findIndex((i, k) => !i.ip && (this.clients[k] !== undefined || k === this.outside || k === 0));
+      const hint =
+        noAddr >= 0
+          ? `${this.names[noAddr]} 에 주소가 없음 (케이블과 DHCP, 또는 수동 주소를 확인)`
+          : "정적 경로를 추가하거나 기본 경로(업링크 게이트웨이)를 설정하세요";
+      ctx.trace("ip.no-route", "L3", `${pkt.dst} 로 가는 경로 없음 (연결된 서브넷·정적 경로·기본 경로 모두 해당 없음) → 폐기. ${hint}`, { dst: pkt.dst }, frameId);
       return;
     }
     const outName = this.names[r.out]!;

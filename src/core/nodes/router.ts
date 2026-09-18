@@ -176,7 +176,7 @@ export class Router implements SimNode {
     if (!guardLoop(this.seen, port, frame, ctx, `lan${port}`)) return;
     frame = { ...frame, hops: (frame.hops ?? 0) + 1 };
     const existing = this.macTable.get(frame.src);
-    if (!existing || existing.port !== port) {
+    if ((!existing || existing.port !== port) && ctx.isPortConnected(port)) {
       this.macTable.set(frame.src, { port, learnedAt: ctx.now });
       ctx.trace("switch.learn", "L2", `내부 스위치 MAC 테이블 학습: ${frame.src} → lan${port}`, { mac: frame.src, port }, frame.id);
     }

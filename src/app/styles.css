@@ -687,6 +687,10 @@ select.btn.example {
   grid-row: 1;
   grid-column: 5;
 }
+.route-row .route-error {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
 .route-row .prefix-in {
   padding: 0 6px;
 }

@@ -317,9 +317,31 @@ function IfaceFields({ value, onChange, gatewayLabel = "게이트웨이", dhcpNo
   );
 }
 
+/** 다른 수동 인터페이스와 서브넷이 겹치면 그 인터페이스 이름 */
+function subnetClash(l3: L3Settings, names: string[], i: number): string | undefined {
+  const me = l3.interfaces[i];
+  if (!me || me.ipMode !== "static" || !validIp(me.ip)) return undefined;
+  for (let k = 0; k < l3.interfaces.length; k++) {
+    const o = l3.interfaces[k];
+    if (k === i || !o || o.ipMode !== "static" || !validIp(o.ip)) continue;
+    if (sameSubnet(me.ip, o.ip, Math.min(me.prefix, o.prefix))) return names[k];
+  }
+  return undefined;
+}
+
+function routeError(l3: L3Settings, r: L3Settings["routes"][number]): string | undefined {
+  if (!validIp(r.dest) || !validIp(r.via)) return "목적지와 다음 홉 주소가 필요합니다";
+  if (r.prefix < 1) return "프리픽스는 1 이상 (기본 경로는 업링크의 기본 경로 칸에)";
+  const statics = l3.interfaces.filter((f) => f.ipMode === "static" && validIp(f.ip));
+  if (statics.some((f) => f.ip === r.via)) return "다음 홉이 내 주소입니다";
+  if (statics.length > 0 && !statics.some((f) => sameSubnet(r.via, f.ip, f.prefix))) return "다음 홉이 연결된 서브넷 안에 없습니다";
+  return undefined;
+}
+
 function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
   const spec = specOf(d);
   const isNat = d.kind === "nat";
+  const names = spec.ports.map((p) => p.name);
   const setIface = (i: number, patch: Partial<IfaceSettings>) =>
     updateDevice(d.id, (x) => {
       const cur = x.l3 ?? defaultL3(x.kind);
@@ -341,6 +363,7 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
               gatewayLabel={isUp ? "기본 경로" : "게이트웨이"}
               dhcpNote={isUp ? "위쪽에 연결된 장치(인터넷 또는 다른 라우터)에서 주소와 기본 경로를 받습니다." : "이 인터페이스가 DHCP 로 주소를 받습니다. 보통 안쪽 인터페이스는 수동으로 고정합니다."}
             />
+            {subnetClash(l3, names, i) && <p class="note error-note">{subnetClash(l3, names, i)} 인터페이스와 서브넷이 겹칩니다. 라우터는 인터페이스마다 다른 서브넷이어야 합니다.</p>}
             {!isUp && v.ipMode === "static" && <p class="note">이 서브넷의 호스트들은 게이트웨이를 {v.ip || "이 주소"} 로 두어야 다른 네트워크로 나갈 수 있습니다.</p>}
           </Section>
         );
@@ -358,6 +381,7 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
             <button class="icon-btn" title="경로 삭제" onClick={() => setRoutes(l3.routes.filter((_, k) => k !== i))}>
               <Icon name="trash" size={15} />
             </button>
+            {routeError(l3, r) && <div class="error route-error">{routeError(l3, r)}</div>}
           </div>
         ))}
         <button class="btn wide" onClick={() => setRoutes([...l3.routes, { dest: "", prefix: 24, via: "" }])}>

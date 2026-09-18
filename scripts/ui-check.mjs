@@ -67,6 +67,15 @@ await clickDevice("rt-1");
 await page.waitForTimeout(100);
 await page.screenshot({ path: `${OUT}/11b-router-nat.png` });
 
+// 1c) 장치 삭제 → DHCP Release 로 라우터 임대가 줄어든다
+await clickDevice("laptop-1");
+await page.click("button:has-text('장치 삭제')");
+await page.waitForTimeout(600);
+await clickDevice("rt-1");
+await page.waitForTimeout(100);
+const leaseRows = await page.locator(".inspector .section", { hasText: "DHCP 임대" }).locator("tbody tr").allInnerTexts();
+console.log("router leases after deleting laptop-1:", leaseRows.length, leaseRows.some((r) => /비어/.test(r)) ? "(empty)" : "");
+
 // 2) 라우터 DHCP 끄기 → 새 PC 연결 → 실패
 await clickDevice("rt-1");
 await page.click(".toggle");

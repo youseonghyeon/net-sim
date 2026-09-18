@@ -36,7 +36,7 @@ export class Switch implements SimNode {
     frame = { ...frame, hops: (frame.hops ?? 0) + 1 };
 
     const existing = this.macTable.get(frame.src);
-    if (!existing || existing.port !== port) {
+    if ((!existing || existing.port !== port) && ctx.isPortConnected(port)) {
       this.macTable.set(frame.src, { port, learnedAt: ctx.now });
       ctx.trace(
         "switch.learn",

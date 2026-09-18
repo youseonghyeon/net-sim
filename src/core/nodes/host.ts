@@ -241,8 +241,9 @@ export class Host implements SimNode {
         return;
       }
       if (udp.dstPort === DHCP_SERVER_PORT) {
-        if (this.dhcpServer.config.enabled) this.dhcpServer.handle(udp.payload, frameId, ctx, this.emit(ctx));
-        else ctx.trace("dhcp.ignore", "app", `다른 호스트의 DHCP ${udp.payload.op} 브로드캐스트 — 나는 서버가 아니므로 무시`, {}, frameId);
+        if (!this.dhcpServer.config.enabled) ctx.trace("dhcp.ignore", "app", `다른 호스트의 DHCP ${udp.payload.op} 브로드캐스트 — 나는 서버가 아니므로 무시`, {}, frameId);
+        else if (this.ipMode !== "static") ctx.trace("dhcp.misconfigured", "app", `DHCP 서버가 켜져 있지만 내 주소가 고정이 아님(자동) → 응답하지 않음. IP 설정을 수동으로 바꾸세요`, {}, frameId);
+        else this.dhcpServer.handle(udp.payload, frameId, ctx, this.emit(ctx));
         return;
       }
       ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 프로그램 없음 → 폐기`, { port: udp.dstPort }, frameId);

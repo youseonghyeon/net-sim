@@ -222,7 +222,7 @@ export class DhcpServer {
   /** 범위 변경: 새 범위 밖의 임대·제안은 버린다 */
   setConfig(cfg: DhcpServerConfig, ctx: NodeContext): void {
     this.config = { ...cfg };
-    this.dropInvalid(ctx, "DHCP 범위 변경");
+    if (!this.rangeProblem()) this.dropInvalid(ctx, "DHCP 범위 변경");
   }
 
   /** 인터페이스 주소가 바뀌면 그 서브넷 밖의 임대·제안은 무효 */
@@ -233,7 +233,7 @@ export class DhcpServer {
   /** 범위가 인터페이스 서브넷 안에 있는지. 아니면 사유를 돌려준다 */
   rangeProblem(): string | undefined {
     const ip = this.iface.ip;
-    if (!ip) return "인터페이스에 주소가 없음";
+    if (!ip) return "서버 자신의 IP 주소가 없음 (고정 주소가 필요)";
     try {
       const start = ipToInt(this.config.start);
       const end = ipToInt(this.config.end);
@@ -285,7 +285,7 @@ export class DhcpServer {
       }
       const problem = this.rangeProblem();
       if (problem) {
-        ctx.trace("dhcp.misconfigured", "app", `DHCP 설정 오류: ${problem} → 응답하지 않음. 범위를 서브넷 안으로 고치세요`, { problem }, frameId);
+        ctx.trace("dhcp.misconfigured", "app", `DHCP 설정 오류: ${problem} → 응답하지 않음`, { problem }, frameId);
         return;
       }
       const ip = this.pickAddress(msg.clientMac);

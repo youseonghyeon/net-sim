@@ -68,20 +68,21 @@ class SimController {
       changed = true;
     };
 
-    const cableIds = new Set(t.cables.map((c) => c.id));
-    for (const id of [...this.syncedCables.keys()]) {
-      if (!cableIds.has(id)) {
-        settle();
-        net.disconnect(id);
-        this.syncedCables.delete(id);
-      }
-    }
+    // 장치 제거가 케이블 제거보다 먼저: 케이블이 아직 꽂힌 상태에서 onRemove(DHCP Release)가 나가야 한다
     const deviceIds = new Set(t.devices.map((d) => d.id));
     for (const id of [...this.syncedConfig.keys()]) {
       if (!deviceIds.has(id)) {
         settle();
         net.removeNode(id);
         this.syncedConfig.delete(id);
+      }
+    }
+    const cableIds = new Set(t.cables.map((c) => c.id));
+    for (const id of [...this.syncedCables.keys()]) {
+      if (!cableIds.has(id)) {
+        settle();
+        net.disconnect(id);
+        this.syncedCables.delete(id);
       }
     }
     for (const d of t.devices) {
@@ -100,7 +101,7 @@ class SimController {
           const node = net.nodes.get(d.id);
           if (node instanceof Host) {
             node.setServices(d.host?.services ?? [], net.contextFor(d.id));
-            const dhcp = effectiveDhcpServer(d);
+            const dhcp = effectiveDhcpServer(d, node);
             if (dhcp) node.setDhcpServer(dhcp, net.contextFor(d.id));
           }
         }
@@ -255,10 +256,11 @@ function l3MacOf(mac: string, i: number): string {
   return mac.replace(/^02:00:00:00/, `02:00:00:${(0x10 + i).toString(16)}`);
 }
 
-function effectiveDhcpServer(d: Device) {
+function effectiveDhcpServer(d: Device, current?: Host) {
   if (!d.host) return undefined;
   const c = d.host.dhcpServer ?? DEFAULT_DHCP_SERVER;
-  return { enabled: c.enabled, start: validIp(c.start) ?? "", end: validIp(c.end) ?? "", router: validIp(c.router) };
+  const cur = current?.dhcpServer.config;
+  return { enabled: c.enabled, start: validIp(c.start) ?? cur?.start ?? "", end: validIp(c.end) ?? cur?.end ?? "", router: validIp(c.router) };
 }
 
 function effectiveL3(d: Device) {
@@ -271,7 +273,7 @@ function effectiveL3(d: Device) {
         ? { mode: "dhcp" as const }
         : { mode: "static" as const, ip: validIp(c.ip), prefix: c.prefix, gateway: validIp(c.gateway) };
     }),
-    routes: (l3.routes ?? []).filter((r) => validIp(r.dest) && validIp(r.via) && r.prefix >= 0 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix, via: r.via })),
+    routes: (l3.routes ?? []).filter((r) => validIp(r.dest) && validIp(r.via) && r.prefix >= 1 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix, via: r.via })),
   };
 }
 
