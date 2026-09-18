@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>net-sim</title>
+    <link rel="stylesheet" href="/src/ui/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="toolbar">
+        <div class="group">
+          <strong class="brand">net-sim</strong>
+          <select id="scenario"></select>
+        </div>
+        <div class="group" id="quick-actions"></div>
+        <div class="group controls">
+          <button id="btn-reset" title="리셋 (R)">⏮ 리셋</button>
+          <button id="btn-prev" title="이전 이벤트 (←)">◀ 이전</button>
+          <button id="btn-next" title="다음 이벤트 (→)">다음 ▶</button>
+          <button id="btn-play" title="재생/일시정지 (Space)">▶ 재생</button>
+          <label>속도
+            <select id="speed">
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+            </select>
+          </label>
+          <span id="clock" class="mono"></span>
+        </div>
+      </header>
+      <p id="scenario-desc"></p>
+      <main>
+        <section id="topology-wrap">
+          <svg id="topology" viewBox="0 0 800 440" preserveAspectRatio="xMidYMid meet">
+            <g id="links"></g>
+            <g id="nodes"></g>
+            <g id="packets"></g>
+          </svg>
+          <div id="legend">
+            <span><i class="dot arp"></i>ARP</span>
+            <span><i class="dot icmp"></i>ICMP</span>
+          </div>
+        </section>
+        <aside id="inspector"></aside>
+      </main>
+      <section id="log-wrap">
+        <div id="log-toolbar">
+          <span>이벤트 로그</span>
+          <div id="layer-filters"></div>
+        </div>
+        <ol id="log"></ol>
+      </section>
+    </div>
+    <script type="module" src="/src/ui/main.ts"></script>
+  </body>
+</html>
