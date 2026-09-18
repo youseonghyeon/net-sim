@@ -12,9 +12,14 @@
     "ui-check": "node scripts/ui-check.mjs"
   },
   "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.1"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.11.2",
+    "preact": "^10.29.8"
   }
 }
