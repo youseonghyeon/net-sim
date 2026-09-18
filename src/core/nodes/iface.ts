@@ -62,8 +62,11 @@ export class NetInterface {
 
   // ---------- 송신 ----------
 
-  /** 일반 L3 송신: 라우팅 → ARP 해석 → 프레임 */
-  sendIp(pkt: Ipv4Packet, ctx: NodeContext, emit: Emit): void {
+  /**
+   * 일반 L3 송신: 라우팅 → ARP 해석 → 프레임.
+   * nextHopOverride 가 있으면(라우터가 라우팅 테이블로 이미 정한 다음 홉) 인터페이스 자체 라우팅을 건너뛴다.
+   */
+  sendIp(pkt: Ipv4Packet, ctx: NodeContext, emit: Emit, nextHopOverride?: Ip): void {
     if (!this.ip) {
       ctx.trace("ip.no-address", "L3", `IP 주소가 없어 ${pkt.dst} 로 보낼 수 없음`, { dst: pkt.dst });
       return;
@@ -72,7 +75,7 @@ export class NetInterface {
       this.transmit(BROADCAST_MAC, pkt, ctx, emit);
       return;
     }
-    const nextHop = this.route(pkt.dst, ctx);
+    const nextHop = nextHopOverride ?? this.route(pkt.dst, ctx);
     if (!nextHop) return;
 
     const entry = this.arpCache.get(nextHop);

@@ -1,6 +1,6 @@
 import type { Ip, Mac } from "../addr";
 import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
-import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient } from "./dhcp";
+import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { NetInterface } from "./iface";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { TCP_TIMER_TAG, TcpStack } from "./tcp";
@@ -16,6 +16,8 @@ export interface HostConfig {
   gateway?: Ip;
   /** 듣고 있는 TCP 포트 (예: 80) */
   services?: number[];
+  /** 이 호스트가 DHCP 서버 역할을 할 때 */
+  dhcpServer?: DhcpServerConfig;
 }
 
 export interface PingRecord {
@@ -38,6 +40,7 @@ export class Host implements SimNode {
   readonly id: string;
   readonly iface: NetInterface;
   readonly dhcp: DhcpClient;
+  readonly dhcpServer: DhcpServer;
   readonly tcp: TcpStack;
   ipMode: IpMode;
   linkUp = false;
@@ -56,6 +59,18 @@ export class Host implements SimNode {
     this.dhcp = new DhcpClient(this.iface, hashCode(cfg.id));
     this.tcp = new TcpStack({ send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)) });
     for (const p of cfg.services ?? []) this.tcp.listening.add(p);
+    this.dhcpServer = new DhcpServer(cfg.dhcpServer ?? { enabled: false, start: "", end: "" }, this.iface, false);
+  }
+
+  /** DHCP 서버 서비스 설정 교체 */
+  setDhcpServer(cfg: DhcpServerConfig, ctx: NodeContext): void {
+    const prev = this.dhcpServer.config;
+    if (cfg.enabled !== prev.enabled) {
+      ctx.trace("ip.config", "sys", cfg.enabled ? `DHCP 서버 시작 (범위 ${cfg.start} ~ ${cfg.end}, 게이트웨이 안내 ${cfg.router || "없음"})` : `DHCP 서버 중지`, { ...cfg });
+    } else if (cfg.start !== prev.start || cfg.end !== prev.end || cfg.router !== prev.router) {
+      ctx.trace("ip.config", "sys", `DHCP 서버 설정 변경 (범위 ${cfg.start} ~ ${cfg.end}, 게이트웨이 안내 ${cfg.router || "없음"})`, { ...cfg });
+    }
+    this.dhcpServer.setConfig(cfg, ctx);
   }
 
   /** 듣는 포트 목록 교체 */
@@ -94,7 +109,9 @@ export class Host implements SimNode {
     this.ipMode = cfg.ipMode;
     if (cfg.ipMode === "static") {
       this.dhcp.stop();
+      const addrChanged = cfg.ip !== this.iface.ip || (cfg.prefix ?? 24) !== this.iface.prefix;
       this.iface.configure(cfg.ip || undefined, cfg.prefix ?? 24, cfg.gateway || undefined);
+      if (addrChanged) this.dhcpServer.onInterfaceChanged(ctx);
       ctx.trace(
         "ip.config",
         "sys",
@@ -202,7 +219,8 @@ export class Host implements SimNode {
         return;
       }
       if (udp.dstPort === DHCP_SERVER_PORT) {
-        ctx.trace("dhcp.ignore", "app", `다른 호스트의 DHCP ${udp.payload.op} 브로드캐스트 — 나는 서버가 아니므로 무시`, {}, frameId);
+        if (this.dhcpServer.config.enabled) this.dhcpServer.handle(udp.payload, frameId, ctx, this.emit(ctx));
+        else ctx.trace("dhcp.ignore", "app", `다른 호스트의 DHCP ${udp.payload.op} 브로드캐스트 — 나는 서버가 아니므로 무시`, {}, frameId);
         return;
       }
       ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 프로그램 없음 → 폐기`, { port: udp.dstPort }, frameId);
@@ -290,8 +308,12 @@ export class Host implements SimNode {
         ["링크", this.linkUp ? "연결됨" : "끊김"],
         ["IP 설정", this.ipMode === "dhcp" ? `자동 (DHCP: ${DHCP_STATE_LABEL[this.dhcp.state]})` : "수동"],
         ["TCP 서비스", this.tcp.listening.size ? [...this.tcp.listening].map((p) => `포트 ${p}`).join(", ") : "없음"],
+        ...(this.dhcpServer.config.enabled
+          ? [["DHCP 서버", `켜짐 · ${this.dhcpServer.config.start} ~ ${this.dhcpServer.config.end}`] as [string, string]]
+          : []),
       ],
       tables: [
+        ...(this.dhcpServer.config.enabled ? [{ title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() }] : []),
         { title: "TCP 연결", columns: ["상대", "상태", "보냄 / 받음"], rows: this.tcp.rows() },
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: i.arpRows() },
       ],

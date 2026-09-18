@@ -3,9 +3,11 @@ import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, type EthernetFrame, 
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
+import { NAT_ID_START, NatTable } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 
 export type { DhcpServerConfig } from "./dhcp";
+export type { NatEntry } from "./nat";
 
 export interface WanConfig {
   mode: "dhcp" | "static";
@@ -29,17 +31,6 @@ interface MacEntry {
   learnedAt: number;
 }
 
-export interface NatEntry {
-  proto: "icmp" | "tcp";
-  lanIp: Ip;
-  /** ICMP id 또는 내부 호스트의 TCP 포트 */
-  innerId: number;
-  /** 공인 쪽 ICMP id 또는 포트 */
-  publicId: number;
-  createdAt: number;
-  lastUsed: number;
-}
-
 /**
  * 가정용 라우터. LAN 포트 4개는 내부 스위치로 브리지되고 LAN 인터페이스(MAC/IP) 하나가 붙어 있다.
  * DHCP 서버(LAN), DHCP 클라이언트(WAN), 그리고 LAN ↔ WAN 사이의 NAT 를 한다.
@@ -47,7 +38,7 @@ export interface NatEntry {
 export class Router implements SimNode {
   static readonly WAN_PORT = 0;
   static readonly LAN_PORTS = [1, 2, 3, 4];
-  static readonly NAT_ID_START = 40000;
+  static readonly NAT_ID_START = NAT_ID_START;
 
   readonly type = "router" as const;
   readonly portCount = 5;
@@ -59,10 +50,7 @@ export class Router implements SimNode {
   wanMode: "dhcp" | "static";
   wanLinkUp = false;
   readonly macTable = new Map<Mac, MacEntry>();
-  /** "proto:공인id" → 내부 매핑 */
-  readonly nat = new Map<string, NatEntry>();
-  private readonly natByInner = new Map<string, string>();
-  private natSeq = Router.NAT_ID_START;
+  readonly nat = new NatTable();
 
   constructor(cfg: RouterConfig) {
     this.id = cfg.id;
@@ -257,29 +245,10 @@ export class Router implements SimNode {
       return;
     }
     // 바깥에서 들어온 패킷: NAT 테이블로 내부 호스트를 찾는다
-    const proto = p.kind === "icmp" ? "icmp" : "tcp";
-    const publicId = p.kind === "icmp" ? p.id : p.dstPort;
-    const what = p.kind === "icmp" ? `ICMP id ${publicId}` : `TCP 포트 ${publicId}`;
-    const entry = this.nat.get(`${proto}:${publicId}`);
-    if (!entry) {
-      ctx.trace("nat.miss", "L3", `[wan] NAT 테이블에 없는 ${what} → 폐기. 내부에서 시작하지 않은 통신은 들어올 수 없음`, { proto, publicId }, frameId);
-      return;
-    }
-    entry.lastUsed = ctx.now;
-    const inner: Ipv4Packet = {
-      ...pkt,
-      dst: entry.lanIp,
-      ttl: pkt.ttl - 1,
-      payload: p.kind === "icmp" ? { ...p, id: entry.innerId } : { ...p, dstPort: entry.innerId },
-    };
-    ctx.trace(
-      "nat.restore",
-      "L3",
-      `NAT 역변환: ${this.wan.ip} (${what}) → ${entry.lanIp} (${proto === "icmp" ? "id" : "포트"} ${entry.innerId}) — 테이블에 기록된 내부 호스트로 되돌림`,
-      { proto, publicId, lanIp: entry.lanIp, innerId: entry.innerId },
-      frameId,
-    );
-    ctx.trace("ip.forward", "L3", `라우팅: ${entry.lanIp} 는 LAN 안 → LAN 인터페이스로 전달 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: entry.lanIp }, frameId);
+    const restored = this.nat.restore(pkt, this.wan.ip, ctx, frameId);
+    if (!restored) return;
+    const inner: Ipv4Packet = { ...restored, ttl: pkt.ttl - 1 };
+    ctx.trace("ip.forward", "L3", `라우팅: ${inner.dst} 는 LAN 안 → LAN 인터페이스로 전달 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: inner.dst }, frameId);
     this.lan.sendIp(inner, ctx, this.emitLan(ctx));
   }
 
@@ -296,39 +265,10 @@ export class Router implements SimNode {
       ctx.trace("ip.ttl-expired", "L3", `TTL 이 0 이 되어 폐기 (루프 방지)`, { dst: pkt.dst }, frameId);
       return;
     }
-    const p = pkt.payload;
-    if (p.kind === "udp") {
-      ctx.trace("ip.drop", "L3", `UDP 는 아직 NAT 하지 않음 → 폐기`, {}, frameId);
-      return;
-    }
-    const proto = p.kind === "icmp" ? "icmp" : "tcp";
-    const innerId = p.kind === "icmp" ? p.id : p.srcPort;
-    const key = `${proto}:${pkt.src}:${innerId}`;
-    let natKey = this.natByInner.get(key);
-    if (natKey === undefined) {
-      const publicId = this.natSeq++;
-      natKey = `${proto}:${publicId}`;
-      this.natByInner.set(key, natKey);
-      this.nat.set(natKey, { proto, lanIp: pkt.src, innerId, publicId, createdAt: ctx.now, lastUsed: ctx.now });
-    }
-    const entry = this.nat.get(natKey)!;
-    entry.lastUsed = ctx.now;
-    const out: Ipv4Packet = {
-      ...pkt,
-      src: this.wan.ip,
-      ttl: pkt.ttl - 1,
-      payload: p.kind === "icmp" ? { ...p, id: entry.publicId } : { ...p, srcPort: entry.publicId },
-    };
-    const unit = proto === "icmp" ? "ICMP id" : "TCP 포트";
-    ctx.trace(
-      "nat.translate",
-      "L3",
-      `NAT 변환: ${pkt.src} (${unit} ${innerId}) → ${this.wan.ip} (${unit} ${entry.publicId}) — 사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록`,
-      { proto, lanIp: pkt.src, innerId, publicId: entry.publicId },
-      frameId,
-    );
-    ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 외부 → WAN 인터페이스로 전달 (TTL ${pkt.ttl} → ${out.ttl})`, { dst: pkt.dst }, frameId);
-    this.wan.sendIp(out, ctx, this.emitWan(ctx));
+    const translated = this.nat.translate({ ...pkt, ttl: pkt.ttl - 1 }, this.wan.ip, ctx, frameId);
+    if (!translated) return;
+    ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 외부 → WAN 인터페이스로 전달 (TTL ${pkt.ttl} → ${translated.ttl})`, { dst: pkt.dst }, frameId);
+    this.wan.sendIp(translated, ctx, this.emitWan(ctx));
   }
 
   private handleIcmp(pkt: Ipv4Packet, icmp: IcmpPacket, frameId: number, ctx: NodeContext, iface: NetInterface, emit: Emit): void {
@@ -376,15 +316,7 @@ export class Router implements SimNode {
       ],
       tables: [
         { title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
-        {
-          title: "NAT 테이블",
-          columns: ["내부", "→ 외부", "시각"],
-          rows: [...this.nat.values()].map((e) => [
-            `${e.lanIp} · ${e.proto === "icmp" ? "id" : "포트"} ${e.innerId}`,
-            `${this.wan.ip ?? "?"} · ${e.proto === "icmp" ? "id" : "포트"} ${e.publicId}`,
-            `${e.lastUsed}ms`,
-          ]),
-        },
+        { title: "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(this.wan.ip) },
         {
           title: "내부 스위치 MAC 테이블",
           columns: ["MAC", "포트", "학습 시각"],

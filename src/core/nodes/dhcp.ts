@@ -172,6 +172,8 @@ export interface DhcpServerConfig {
   enabled: boolean;
   start: Ip;
   end: Ip;
+  /** 클라이언트에게 안내할 게이트웨이. 비우면 서버 자신의 주소(라우터) 또는 없음(호스트 서버) */
+  router?: Ip;
 }
 
 export interface Lease {
@@ -189,7 +191,14 @@ export class DhcpServer {
   constructor(
     public config: DhcpServerConfig,
     private readonly iface: NetInterface,
+    /** router 옵션이 비었을 때 자기 주소를 안내할지 */
+    private readonly selfIsRouter = true,
   ) {}
+
+  /** 안내할 게이트웨이 */
+  private advertisedRouter(): Ip | undefined {
+    return this.config.router || (this.selfIsRouter ? this.iface.ip : undefined);
+  }
 
   /** 범위 변경: 새 범위 밖의 임대·제안은 버린다 */
   setConfig(cfg: DhcpServerConfig, ctx: NodeContext): void {
@@ -266,6 +275,7 @@ export class DhcpServer {
         return;
       }
       this.offers.set(msg.clientMac, ip);
+      const gw = this.advertisedRouter();
       const offer: DhcpMessage = {
         kind: "dhcp",
         op: "offer",
@@ -273,9 +283,9 @@ export class DhcpServer {
         clientMac: msg.clientMac,
         yiaddr: ip,
         serverId: me,
-        options: { prefix: this.iface.prefix, router: me, leaseTime: LEASE_TIME },
+        options: { prefix: this.iface.prefix, router: gw, leaseTime: LEASE_TIME },
       };
-      ctx.trace("dhcp.offer.sent", "app", `DHCP Offer: ${msg.clientMac} 에게 ${ip}/${this.iface.prefix} 제안 (게이트웨이 ${me}) → 클라이언트 MAC 으로 유니캐스트`, { ...offer });
+      ctx.trace("dhcp.offer.sent", "app", `DHCP Offer: ${msg.clientMac} 에게 ${ip}/${this.iface.prefix} 제안 (게이트웨이 ${gw ?? "안내 없음"}) → 클라이언트 MAC 으로 유니캐스트`, { ...offer });
       this.iface.sendToMac(msg.clientMac, this.packet(offer, ip), ctx, emit);
       return;
     }
@@ -302,6 +312,7 @@ export class DhcpServer {
       const ip = msg.requestedIp!;
       this.offers.delete(msg.clientMac);
       this.leases.set(ip, { mac: msg.clientMac, at: ctx.now });
+      const gw = this.advertisedRouter();
       const ack: DhcpMessage = {
         kind: "dhcp",
         op: "ack",
@@ -309,10 +320,10 @@ export class DhcpServer {
         clientMac: msg.clientMac,
         yiaddr: ip,
         serverId: me,
-        options: { prefix: this.iface.prefix, router: me, leaseTime: LEASE_TIME },
+        options: { prefix: this.iface.prefix, router: gw, leaseTime: LEASE_TIME },
       };
       ctx.trace("dhcp.lease", "app", `임대 등록: ${ip} → ${msg.clientMac}`, { ip, mac: msg.clientMac });
-      ctx.trace("dhcp.ack.sent", "app", `DHCP Ack: ${msg.clientMac} 에게 ${ip}/${this.iface.prefix} 확정 (게이트웨이 ${me})`, { ...ack });
+      ctx.trace("dhcp.ack.sent", "app", `DHCP Ack: ${msg.clientMac} 에게 ${ip}/${this.iface.prefix} 확정 (게이트웨이 ${gw ?? "안내 없음"})`, { ...ack });
       this.iface.sendToMac(msg.clientMac, this.packet(ack, ip), ctx, emit);
       return;
     }
