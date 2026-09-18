@@ -30,6 +30,13 @@ export type TraceKind =
   | "ip.dequeue"
   | "ip.drop"
   | "ip.config"
+  | "ip.forward"
+  | "ip.ttl-expired"
+  | "nat.translate"
+  | "nat.restore"
+  | "nat.miss"
+  | "inet.forward"
+  | "inet.reply"
   | "icmp.echo.sent"
   | "icmp.echo.received"
   | "icmp.reply.sent"
@@ -72,6 +79,8 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "ip.drop",
   "ip.no-route",
   "ip.no-address",
+  "ip.ttl-expired",
+  "nat.miss",
   "arp.timeout",
   "link.unconnected",
   "link.lost",

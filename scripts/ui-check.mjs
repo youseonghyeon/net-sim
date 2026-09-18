@@ -49,7 +49,23 @@ await page.waitForTimeout(500);
 await page.screenshot({ path: `${OUT}/10-dhcp-in-progress.png` });
 console.log("packets visible during DHCP:", await page.locator(".packet").count());
 for (const n of ["pc-1", "laptop-1", "srv-1"]) console.log(n, "→", await waitAddr(n, /^192\.168\.0\.\d+\/24$/));
+async function wanOf() {
+  return (await device("rt-1").locator("text").nth(2).textContent()) ?? "";
+}
+for (let i = 0; i < 100 && !/WAN 203\.0\.113\./.test(await wanOf()); i++) await page.waitForTimeout(100);
+console.log("rt-1 wan →", await wanOf());
 await page.screenshot({ path: `${OUT}/11-dhcp-done.png` });
+
+// 1b) 외부 ping (NAT)
+await clickDevice("pc-1");
+await page.fill(".ping-row .input", "8.8.8.8");
+await page.click(".ping-row .btn");
+await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+console.log("ping 8.8.8.8 from pc-1:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+const natRows = await page.locator(".inspector").locator("text=NAT 테이블").count();
+await clickDevice("rt-1");
+await page.waitForTimeout(100);
+await page.screenshot({ path: `${OUT}/11b-router-nat.png` });
 
 // 2) 라우터 DHCP 끄기 → 새 PC 연결 → 실패
 await clickDevice("rt-1");

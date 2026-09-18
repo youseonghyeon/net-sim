@@ -28,9 +28,14 @@ npm run ui-check    # Playwright 스모크 (개발 서버 자동 기동, .shots/
 ```
 코어 변경은 `npm test`, UI 변경은 `npm run ui-check` 까지 통과해야 완료.
 
+## 시뮬레이션 연결 방식
+- `src/model/sim.ts` 의 `SimController` 가 토폴로지 signal 을 구독해 `Network` 에 diff 로 반영한다(장치 추가/삭제, 케이블 connect/disconnect, 설정 변경 → `node.configure`).
+- 시계: 패킷이 링크 위에 있을 때만 흐르고, 대기 이벤트만 있으면 그 시각으로 점프, 아무것도 없으면 정지. 사용자 개입 시각은 정수 ms 로 올림.
+- 노드 클래스: `Host`(DhcpClient + ping), `Switch`, `Router`(LAN 브리지 + DhcpServer + WAN DhcpClient + NAT), `Internet`(ISP DhcpServer + 공인 서버 대역 응답). DHCP 는 `nodes/dhcp.ts` 공용.
+
 ## 로드맵
-1. 디자인 시스템 + 캔버스 에디터(팔레트·드래그·케이블·속성 패널) — 완료, 디자인 확인 대기
-2. 라우터 DHCP 켜기/끄기, 호스트 자동/수동 IP, 연결 즉시 DHCP 시도를 시뮬레이션에 연결
-3. ping 등 동작과 패킷 애니메이션·이벤트 로그를 새 UI 에 얹기 (코어 ARP/스위치는 이미 있음)
-4. NAT + 외부망(인터넷 노드), 라우터 WAN 포트
-5. TCP: 3-way handshake, 시퀀스 번호, 드롭/재전송
+1. ✅ 디자인 시스템 + 캔버스 에디터
+2. ✅ DHCP·ping·패킷 애니메이션·이벤트 로그 (라이브 시뮬레이션)
+3. ✅ 인터넷 노드 + 라우터 WAN(DHCP) + NAT(ICMP id 기반)
+4. TCP: 3-way handshake, 시퀀스 번호, 드롭/재전송, NAT 포트 변환
+5. 이후 후보: DNS, 여러 서브넷/정적 라우팅, 되감기

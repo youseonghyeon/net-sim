@@ -1,7 +1,7 @@
 // 편집 가능한 토폴로지 모델. 시뮬레이션 코어(src/core)와 분리되어 있고, 실행 시 코어 Network 로 변환된다.
 
-export type DeviceKind = "pc" | "laptop" | "server" | "switch" | "router";
-export type Role = "host" | "switch" | "router";
+export type DeviceKind = "pc" | "laptop" | "server" | "switch" | "router" | "internet";
+export type Role = "host" | "switch" | "router" | "internet";
 export type PortSide = "top" | "bottom";
 
 export interface PortSpec {
@@ -40,15 +40,31 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
     label: "라우터",
     role: "router",
     width: 152,
-    height: 48,
+    height: 62,
     ports: [{ name: "wan", side: "top" }, ...lanPorts(4, "bottom", "lan", 1)],
     namePrefix: "rt",
   },
+  internet: {
+    kind: "internet",
+    label: "인터넷",
+    role: "internet",
+    width: 152,
+    height: 48,
+    ports: [{ name: "isp", side: "bottom" }],
+    namePrefix: "internet",
+  },
 };
 
-export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "server", "switch", "router"];
+export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "server", "switch", "router", "internet"];
 
 export interface HostSettings {
+  ipMode: "dhcp" | "static";
+  ip: string;
+  prefix: number;
+  gateway: string;
+}
+
+export interface WanSettings {
   ipMode: "dhcp" | "static";
   ip: string;
   prefix: number;
@@ -59,7 +75,10 @@ export interface RouterSettings {
   lanIp: string;
   lanPrefix: number;
   dhcp: { enabled: boolean; start: string; end: string };
+  wan: WanSettings;
 }
+
+export const DEFAULT_WAN: WanSettings = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" };
 
 export interface Device {
   id: string;
@@ -128,7 +147,7 @@ export function createDevice(kind: DeviceKind, x: number, y: number, devices: De
   const device: Device = { id: newId(kind), kind, name: nextName(kind, devices), mac: nextMac(devices), x, y };
   if (spec.role === "host") device.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" };
   if (spec.role === "router") {
-    device.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" } };
+    device.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" }, wan: { ...DEFAULT_WAN } };
   }
   return device;
 }
@@ -196,8 +215,9 @@ export function normalizeTopology(t: Topology): Topology {
     if (!fixed.mac) fixed.mac = nextMac(devices);
     const spec = DEVICE_SPECS[fixed.kind];
     if (spec.role === "host" && !fixed.host) fixed.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" };
-    if (spec.role === "router" && !fixed.router) {
-      fixed.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" } };
+    if (spec.role === "router") {
+      if (!fixed.router) fixed.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" }, wan: { ...DEFAULT_WAN } };
+      else if (!fixed.router.wan) fixed.router = { ...fixed.router, wan: { ...DEFAULT_WAN } };
     }
     devices.push(fixed);
   }
@@ -206,7 +226,7 @@ export function normalizeTopology(t: Topology): Topology {
   return { devices, cables };
 }
 
-/** 라우터 + 스위치 + 호스트 3대 예제 */
+/** 인터넷 + 라우터 + 스위치 + 호스트 3대 예제 */
 export function exampleTopology(): Topology {
   const devices: Device[] = [];
   const add = (kind: DeviceKind, x: number, y: number) => {
@@ -214,12 +234,14 @@ export function exampleTopology(): Topology {
     devices.push(d);
     return d;
   };
+  const inet = add("internet", 344, -40);
   const rt = add("router", 344, 96);
-  const sw = add("switch", 332, 256);
-  const pc = add("pc", 200, 424);
-  const laptop = add("laptop", 368, 424);
-  const srv = add("server", 536, 424);
+  const sw = add("switch", 344, 272);
+  const pc = add("pc", 200, 440);
+  const laptop = add("laptop", 388, 440);
+  const srv = add("server", 576, 440);
   const cables: Cable[] = [
+    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: rt.id, port: 0 } }, // isp ↔ wan
     { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 0 } }, // lan1 ↔ uplink
     { id: newId("cable"), a: { device: sw.id, port: 2 }, b: { device: pc.id, port: 0 } }, // eth2
     { id: newId("cable"), a: { device: sw.id, port: 4 }, b: { device: laptop.id, port: 0 } }, // eth4

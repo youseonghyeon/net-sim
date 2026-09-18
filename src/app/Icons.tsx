@@ -6,6 +6,7 @@ export type IconName =
   | "server"
   | "switch"
   | "router"
+  | "internet"
   | "cursor"
   | "cable"
   | "sun"
@@ -53,6 +54,7 @@ const PATHS: Record<IconName, JSX.Element> = {
       <path d="M8 9.5h8l-2.2-2.2M16 9.5l-2.2 2.2M16 14.5H8l2.2-2.2M8 14.5l2.2 2.2" />
     </>
   ),
+  internet: <path d="M7 18.5a4 4 0 0 1-.6-7.95A5.5 5.5 0 0 1 17 9.5a3.5 3.5 0 0 1 .5 6.96V18.5z" />,
   cursor: <path d="M5.5 3.5 19 10.5l-6 1.5-3 6z" />,
   cable: (
     <>

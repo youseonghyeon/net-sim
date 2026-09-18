@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Host } from "../src/core/nodes/host";
+import { DHCP_MAX_ATTEMPTS, DHCP_TIMEOUT } from "../src/core/nodes/host";
 import { Router } from "../src/core/nodes/router";
 import { buildHomeLan } from "../src/core/scenarios/homeLan";
 
@@ -63,9 +63,9 @@ describe("DHCP", () => {
     const pc1 = net.getHost("pc1");
     expect(pc1.ip).toBeUndefined();
     expect(pc1.dhcp.state).toBe("failed");
-    expect(net.trace.filter((e) => e.kind === "dhcp.discover.sent")).toHaveLength(Host.DHCP_MAX_ATTEMPTS);
-    expect(net.trace.filter((e) => e.kind === "dhcp.disabled")).toHaveLength(Host.DHCP_MAX_ATTEMPTS);
-    expect(net.now).toBe(Host.DHCP_TIMEOUT * Host.DHCP_MAX_ATTEMPTS);
+    expect(net.trace.filter((e) => e.kind === "dhcp.discover.sent")).toHaveLength(DHCP_MAX_ATTEMPTS);
+    expect(net.trace.filter((e) => e.kind === "dhcp.disabled")).toHaveLength(DHCP_MAX_ATTEMPTS);
+    expect(net.now).toBe(DHCP_TIMEOUT * DHCP_MAX_ATTEMPTS);
 
     // IP 없이 ping → 즉시 실패
     net.scheduleAction(net.now, { kind: "ping", nodeId: "pc1", dst: "192.168.0.1" });
@@ -85,7 +85,7 @@ describe("DHCP", () => {
     net.connect("pc1", 0, "sw", 1);
     net.runToIdle();
     const rt = net.nodes.get("rt") as Router;
-    rt.configure({ lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.101" } }, net.contextFor("rt"));
+    rt.configure({ lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.101" }, wan: { mode: "dhcp" } }, net.contextFor("rt"));
     net.scheduleAction(net.now, { kind: "dhcp-renew", nodeId: "pc1" });
     net.runToIdle();
     expect(net.getHost("pc1").ip).toBe("192.168.0.100");

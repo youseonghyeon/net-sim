@@ -1,7 +1,7 @@
 import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
 import { frameCategory, shortLabel } from "../core/packet";
-import { hostStatus, sim, simTime, simVersion } from "../model/sim";
+import { hostStatus, sim, simTime, simVersion, wanStatus } from "../model/sim";
 import { connectDevices, fitRequest, loadExample, moveDevice, selection, tool, topology, viewport } from "../model/store";
 import { freePort, PORT_DEPTH, PORT_WIDTH, portAnchor, snap, specOf, usedPorts, type Cable, type Device, type PortSide } from "../model/topology";
 import { GlyphInSvg } from "./Icons";
@@ -230,6 +230,7 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
   const glyph = wide ? 24 : 28;
   void simVersion.value; // 시뮬레이션 상태가 바뀌면 다시 읽는다
   const addr = hostStatus(d.id);
+  const wan = wanStatus(d.id);
   return (
     <g
       data-device={d.id}
@@ -258,6 +259,11 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
           {addr && (
             <text class={`${addr.mono ? "addr" : "status"} ${addr.tone}`} x={50} y={35}>
               {addr.text}
+            </text>
+          )}
+          {wan && (
+            <text class={`${wan.mono ? "addr" : "status"} ${wan.tone}`} x={50} y={50}>
+              {wan.text}
             </text>
           )}
         </>

@@ -43,3 +43,11 @@ export function sameSubnet(a: Ip, b: Ip, prefix: number): boolean {
 export function isBroadcastMac(mac: Mac): boolean {
   return mac.toLowerCase() === BROADCAST_MAC;
 }
+
+/** 인터넷에서 라우팅되지 않는 주소 (RFC 1918 사설, 링크로컬, 루프백) */
+export function isPrivateIp(ip: Ip): boolean {
+  const n = ipToInt(ip);
+  const a = n >>> 24;
+  const b = (n >>> 16) & 255;
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || a === 127;
+}

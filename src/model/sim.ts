@@ -2,12 +2,13 @@
 import { effect, signal } from "@preact/signals";
 import { ipToInt } from "../core/addr";
 import { Network, type ActionSpec, type Transmission } from "../core/network";
-import { Host } from "../core/nodes/host";
+import { DHCP_MAX_ATTEMPTS, DHCP_STATE_LABEL, Host } from "../core/nodes/host";
+import { Internet } from "../core/nodes/internet";
 import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { Switch } from "../core/nodes/switch";
 import { topology } from "./store";
-import { DEVICE_SPECS, type Device, type Topology } from "./topology";
+import { DEFAULT_WAN, DEVICE_SPECS, type Device, type Topology } from "./topology";
 
 /** 1x 재생 속도에서 실제 1초당 흐르는 시뮬레이션 시간(ms). 링크 10ms 가 0.4초 */
 const BASE_RATE = 25;
@@ -176,11 +177,18 @@ function effectiveHost(d: Device) {
 
 function effectiveRouter(d: Device, current?: Router) {
   const r = d.router!;
+  const w = r.wan ?? DEFAULT_WAN;
   return {
     lanIp: validIp(r.lanIp) ?? current?.lan.ip ?? "192.168.0.1",
     lanPrefix: r.lanPrefix,
     dhcp: { enabled: r.dhcp.enabled, start: validIp(r.dhcp.start) ?? current?.dhcp.start ?? r.dhcp.start, end: validIp(r.dhcp.end) ?? current?.dhcp.end ?? r.dhcp.end },
+    wan: w.ipMode === "static" ? { mode: "static" as const, ip: validIp(w.ip), prefix: w.prefix, gateway: validIp(w.gateway) } : { mode: "dhcp" as const },
   };
+}
+
+/** 라우터 WAN 인터페이스 MAC: LAN MAC 의 4번째 옥텟을 01 로 */
+function wanMacOf(mac: string): string {
+  return mac.replace(/^02:00:00:00/, "02:00:00:01");
 }
 
 function configKey(d: Device): string {
@@ -192,7 +200,8 @@ function configKey(d: Device): string {
 function makeNode(d: Device): SimNode {
   const spec = DEVICE_SPECS[d.kind];
   if (spec.role === "switch") return new Switch(d.id, spec.ports.map((p) => p.name));
-  if (spec.role === "router") return new Router({ id: d.id, mac: d.mac, ...effectiveRouter(d) });
+  if (spec.role === "router") return new Router({ id: d.id, mac: d.mac, wanMac: wanMacOf(d.mac), ...effectiveRouter(d) });
+  if (spec.role === "internet") return new Internet({ id: d.id, mac: d.mac });
   return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d) });
 }
 
@@ -218,7 +227,7 @@ export function hostStatus(id: string): { text: string; tone: "ok" | "warn" | "m
     switch (node.dhcp.state) {
       case "discovering":
       case "requesting":
-        return { text: `DHCP 요청 중 (${node.dhcp.attempts}/${Host.DHCP_MAX_ATTEMPTS})`, tone: "warn", mono: false };
+        return { text: `DHCP 요청 중 (${node.dhcp.attempts}/${DHCP_MAX_ATTEMPTS})`, tone: "warn", mono: false };
       case "failed":
         return { text: "DHCP 실패 · IP 없음", tone: "warn", mono: false };
       default:
@@ -226,5 +235,16 @@ export function hostStatus(id: string): { text: string; tone: "ok" | "warn" | "m
     }
   }
   if (node instanceof Router) return { text: `${node.lan.ip}/${node.lan.prefix}`, tone: "ok", mono: true };
+  if (node instanceof Internet) return { text: `ISP ${node.iface.ip}/${node.iface.prefix}`, tone: "ok", mono: true };
   return null;
+}
+
+/** 라우터 타일의 WAN 줄 */
+export function wanStatus(id: string): { text: string; tone: "ok" | "warn" | "muted"; mono: boolean } | null {
+  const node = sim.node(id);
+  if (!(node instanceof Router)) return null;
+  if (node.wan.ip) return { text: `WAN ${node.wan.ip}`, tone: "ok", mono: true };
+  if (!node.wanLinkUp) return { text: "WAN 연결 없음", tone: "muted", mono: false };
+  if (node.wanMode === "static") return { text: "WAN 주소 수동 입력 필요", tone: "warn", mono: false };
+  return { text: `WAN ${DHCP_STATE_LABEL[node.wanClient.state]}`, tone: node.wanClient.state === "failed" ? "warn" : "muted", mono: false };
 }

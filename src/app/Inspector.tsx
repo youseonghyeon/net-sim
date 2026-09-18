@@ -2,11 +2,12 @@ import type { ComponentChildren } from "preact";
 import { useRef } from "preact/hooks";
 import { ipToInt, prefixToMask, intToIp } from "../core/addr";
 import { Host } from "../core/nodes/host";
+import { Internet, KNOWN_SERVERS } from "../core/nodes/internet";
 import type { SnapshotTable as SnapshotTableData } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { sim, simVersion } from "../model/sim";
 import { removeCable, removeDevice, selectedCable, selectedDevice, topology, updateDevice } from "../model/store";
-import { cableAt, peerOf, specOf, type Cable, type Device, type HostSettings, type RouterSettings } from "../model/topology";
+import { cableAt, DEFAULT_WAN, peerOf, specOf, type Cable, type Device, type HostSettings, type RouterSettings, type WanSettings } from "../model/topology";
 import { Icon } from "./Icons";
 
 export function Inspector() {
@@ -270,7 +271,51 @@ function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
           <p class="note">꺼져 있으면 호스트는 주소를 받지 못합니다. 각 호스트에서 IP 를 수동으로 설정해야 통신할 수 있습니다.</p>
         )}
       </Section>
+      <WanSection d={d} w={r.wan ?? DEFAULT_WAN} />
     </>
+  );
+}
+
+function WanSection({ d, w }: { d: Device; w: WanSettings }) {
+  const set = (patch: Partial<WanSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, wan: { ...(x.router!.wan ?? DEFAULT_WAN), ...patch } } }));
+  const isStatic = w.ipMode === "static";
+  return (
+    <Section title="WAN 인터페이스">
+      <div class="segmented" role="radiogroup">
+        <button class={!isStatic ? "on" : ""} onClick={() => set({ ipMode: "dhcp" })}>
+          자동 (DHCP)
+        </button>
+        <button class={isStatic ? "on" : ""} onClick={() => set({ ipMode: "static" })}>
+          수동
+        </button>
+      </div>
+      {isStatic ? (
+        <>
+          <Field label="공인 IP" error={ipError(w.ip, true)}>
+            <input class="input mono" value={w.ip} placeholder="203.0.113.50" onInput={(e) => set({ ip: e.currentTarget.value })} />
+          </Field>
+          <Field label="서브넷">
+            <div class="prefix">
+              <span class="mono">/</span>
+              <input
+                class="input mono"
+                type="number"
+                min={0}
+                max={32}
+                value={w.prefix}
+                onInput={(e) => set({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) })}
+              />
+              <span class="mono muted">{intToIp(prefixToMask(w.prefix))}</span>
+            </div>
+          </Field>
+          <Field label="게이트웨이" error={ipError(w.gateway, true)}>
+            <input class="input mono" value={w.gateway} placeholder="203.0.113.1" onInput={(e) => set({ gateway: e.currentTarget.value })} />
+          </Field>
+        </>
+      ) : (
+        <p class="note">wan 포트에 인터넷을 연결하면 ISP 에서 공인 주소와 게이트웨이를 받습니다. LAN 의 사설 주소는 이 공인 주소로 NAT 됩니다.</p>
+      )}
+    </Section>
   );
 }
 
@@ -349,12 +394,15 @@ function DiagSection({ d }: { d: Device }) {
   if (!(node instanceof Host)) return null;
 
   const targets: { ip: string; name: string }[] = [];
+  let hasInternet = false;
   for (const other of topology.value.devices) {
     if (other.id === d.id) continue;
     const n = sim.node(other.id);
+    if (n instanceof Internet) hasInternet = true;
     const ip = n instanceof Host ? n.ip : n instanceof Router ? n.lan.ip : undefined;
     if (ip) targets.push({ ip, name: other.name });
   }
+  if (hasInternet) for (const [ip, name] of Object.entries(KNOWN_SERVERS)) targets.push({ ip, name });
   const send = () => {
     const dst = input.current?.value.trim();
     if (!dst || !validIp(dst)) {
