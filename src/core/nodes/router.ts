@@ -30,6 +30,7 @@ export interface RouterConfig {
   /** DNS 포워더 (공유기 안의 dnsmasq): LAN 의 질의를 상위 DNS 로 대신 물어봄 */
   dns?: DnsServerConfig;
   firewall?: FirewallConfig;
+  wifi?: { enabled: boolean; ssid: string };
   /** 포트 포워딩 규칙 (TCP): 공인 포트로 들어온 연결을 LAN 호스트로 */
   forwards?: PortForward[];
 }
@@ -46,10 +47,15 @@ interface MacEntry {
 export class Router implements SimNode {
   static readonly WAN_PORT = 0;
   static readonly LAN_PORTS = [1, 2, 3, 4];
+  /** 무선 단말 슬롯 (공유기의 Wi-Fi). 브리지에서는 LAN 포트와 같게 다루되 전파 송출로 표시한다 */
+  static readonly RADIO_PORTS = [5, 6, 7, 8, 9, 10, 11, 12];
+  static readonly BRIDGE_PORTS = [...Router.LAN_PORTS, ...Router.RADIO_PORTS];
   static readonly NAT_ID_START = NAT_ID_START;
 
   readonly type = "router" as const;
-  readonly portCount = 5;
+  readonly portCount = 13;
+  /** 무선 SSID (켜져 있을 때만 단말이 붙는다) */
+  wifi: { enabled: boolean; ssid: string };
   readonly id: string;
   readonly lan: NetInterface;
   readonly wan: NetInterface;
@@ -72,6 +78,7 @@ export class Router implements SimNode {
     this.wan = new NetInterface(cfg.wanMac, wan.mode === "static" ? { ip: wan.ip, prefix: wan.prefix ?? 24, gateway: wan.gateway } : {});
     this.wanClient = new DhcpClient(this.wan, hashCode(cfg.id) + 7, "wan");
     this.firewall = new Firewall(cfg.firewall);
+    this.wifi = cfg.wifi ?? { enabled: false, ssid: "home" };
     this.dnsForwarder = new DnsServer(cfg.dns ?? { enabled: true, records: [], upstream: "8.8.8.8" }, this.lan, "DNS 포워더", {
       // 상위 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
       srcIp: () => (this.upstreamInLan() ? this.lan.ip : this.wan.ip),
@@ -96,6 +103,12 @@ export class Router implements SimNode {
     return this.dhcpServer.leases;
   }
 
+  static portName(port: number): string {
+    if (port === Router.WAN_PORT) return "wan";
+    if (Router.RADIO_PORTS.includes(port)) return `무선 슬롯 ${port - Router.RADIO_PORTS[0]! + 1}`;
+    return `lan${port}`;
+  }
+
   private emitLan(ctx: NodeContext): Emit {
     return (frame) => {
       if (frame.dst !== BROADCAST_MAC) {
@@ -105,7 +118,7 @@ export class Router implements SimNode {
           return;
         }
       }
-      for (const p of Router.LAN_PORTS) if (ctx.isPortConnected(p)) ctx.send(p, frame);
+      for (const p of Router.BRIDGE_PORTS) if (ctx.isPortConnected(p)) ctx.send(p, frame);
     };
   }
 
@@ -115,8 +128,15 @@ export class Router implements SimNode {
 
   // ---------- 설정 변경 ----------
 
-  configure(cfg: { lanIp: Ip; lanPrefix: number; dhcp: DhcpServerConfig; wan: WanConfig; dns?: DnsServerConfig; forwards?: PortForward[]; firewall?: FirewallConfig }, ctx: NodeContext): void {
+  configure(
+    cfg: { lanIp: Ip; lanPrefix: number; dhcp: DhcpServerConfig; wan: WanConfig; dns?: DnsServerConfig; forwards?: PortForward[]; firewall?: FirewallConfig; wifi?: { enabled: boolean; ssid: string } },
+    ctx: NodeContext,
+  ): void {
     if (cfg.firewall) this.firewall.setConfig(cfg.firewall, ctx, "");
+    if (cfg.wifi && (cfg.wifi.enabled !== this.wifi.enabled || cfg.wifi.ssid !== this.wifi.ssid)) {
+      this.wifi = { ...cfg.wifi };
+      ctx.trace("ip.config", "sys", cfg.wifi.enabled ? `무선 켜짐: SSID "${cfg.wifi.ssid}" 송출` : `무선 꺼짐`, { ...cfg.wifi });
+    }
     if (cfg.lanIp !== this.lan.ip || cfg.lanPrefix !== this.lan.prefix) {
       this.lan.configure(cfg.lanIp, cfg.lanPrefix, undefined);
       this.lan.arpCache.clear();
@@ -189,6 +209,10 @@ export class Router implements SimNode {
       }
       return;
     }
+    if (Router.RADIO_PORTS.includes(port)) {
+      if (!up) for (const [mac, e] of this.macTable) if (e.port === port) this.macTable.delete(mac);
+      return;
+    }
     if (up) {
       ctx.trace("link.up", "L1", `lan${port} 포트 링크 연결됨`, { port });
       return;
@@ -211,13 +235,14 @@ export class Router implements SimNode {
       return;
     }
 
-    ctx.trace("frame.receive", "L2", `lan${port} 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === BROADCAST_MAC ? "브로드캐스트" : frame.dst}]`, { port, src: frame.src, dst: frame.dst }, frame.id);
-    if (!guardLoop(this.seen, port, frame, ctx, `lan${port}`)) return;
+    const pn = Router.portName(port);
+    ctx.trace("frame.receive", "L2", `${pn} 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === BROADCAST_MAC ? "브로드캐스트" : frame.dst}]`, { port, src: frame.src, dst: frame.dst }, frame.id);
+    if (!guardLoop(this.seen, port, frame, ctx, pn)) return;
     frame = { ...frame, hops: (frame.hops ?? 0) + 1 };
     const existing = this.macTable.get(frame.src);
     if ((!existing || existing.port !== port) && ctx.isPortConnected(port)) {
       this.macTable.set(frame.src, { port, learnedAt: ctx.now });
-      ctx.trace("switch.learn", "L2", `내부 스위치 MAC 테이블 학습: ${frame.src} → lan${port}`, { mac: frame.src, port }, frame.id);
+      ctx.trace("switch.learn", "L2", `내부 스위치 MAC 테이블 학습: ${frame.src} → ${pn}`, { mac: frame.src, port }, frame.id);
     }
     if (frame.dst === BROADCAST_MAC) {
       this.floodLan(port, frame, ctx, "브로드캐스트");
@@ -237,14 +262,31 @@ export class Router implements SimNode {
       ctx.trace("switch.filter", "L2", `목적지 ${frame.dst} 가 수신 포트와 같음 → 필터링`, { port }, frame.id);
       return;
     }
-    ctx.trace("switch.forward", "L2", `내부 스위치: ${frame.dst} → lan${entry.port} 로 전달`, { dst: frame.dst, port: entry.port }, frame.id);
+    const radio = Router.RADIO_PORTS.includes(entry.port);
+    ctx.trace(
+      "switch.forward",
+      "L2",
+      radio
+        ? `내부 스위치: ${frame.dst} 는 무선 단말 → 전파로 송출 (SSID ${this.wifi.ssid}; 다른 단말도 전파는 받지만 암호화되어 읽지 못한다)`
+        : `내부 스위치: ${frame.dst} → ${Router.portName(entry.port)} 로 전달`,
+      { dst: frame.dst, port: entry.port },
+      frame.id,
+    );
     ctx.send(entry.port, frame);
   }
 
   private floodLan(inPort: number, frame: EthernetFrame, ctx: NodeContext, reason: string): void {
-    const ports = Router.LAN_PORTS.filter((p) => p !== inPort && ctx.isPortConnected(p));
+    const ports = Router.BRIDGE_PORTS.filter((p) => p !== inPort && ctx.isPortConnected(p));
     if (ports.length === 0) return;
-    ctx.trace("switch.flood", "L2", `${reason} → 다른 LAN 포트로 플러딩 [${ports.map((p) => `lan${p}`).join(", ")}]`, { inPort, ports, reason }, frame.id);
+    const wired = ports.filter((p) => Router.LAN_PORTS.includes(p));
+    const radio = ports.filter((p) => Router.RADIO_PORTS.includes(p));
+    ctx.trace(
+      "switch.flood",
+      "L2",
+      `${reason} → 다른 LAN 포트로 플러딩 [${wired.map((p) => `lan${p}`).join(", ")}]${radio.length ? ` + 전파로 무선 단말 ${radio.length}대` : ""}`,
+      { inPort, ports, reason },
+      frame.id,
+    );
     for (const p of ports) ctx.send(p, frame);
   }
 
@@ -381,6 +423,7 @@ export class Router implements SimNode {
         ["WAN 게이트웨이", this.wan.gateway ?? "없음"],
         ["DHCP 서비스", this.dhcp.enabled ? `켜짐 · ${this.dhcp.start} ~ ${this.dhcp.end}` : "꺼짐"],
         ["DNS 포워더", this.dnsForwarder.config.enabled ? `켜짐 · 상위 ${this.dnsForwarder.config.upstream ?? "없음"}` : "꺼짐"],
+        ["무선", this.wifi.enabled ? `켜짐 · SSID ${this.wifi.ssid}` : "꺼짐"],
         ["방화벽", this.firewall.config.enabled ? `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}` : "꺼짐"],
       ],
       tables: [
@@ -392,7 +435,7 @@ export class Router implements SimNode {
         {
           title: "내부 스위치 MAC 테이블",
           columns: ["MAC", "포트", "학습 시각"],
-          rows: [...this.macTable.entries()].map(([mac, e]) => [mac, `lan${e.port}`, `${e.learnedAt}ms`]),
+          rows: [...this.macTable.entries()].map(([mac, e]) => [mac, Router.portName(e.port), `${e.learnedAt}ms`]),
         },
         { title: "ARP 캐시 (LAN)", columns: ["IP", "MAC", "학습 시각"], rows: this.lan.arpRows() },
         { title: "ARP 캐시 (WAN)", columns: ["IP", "MAC", "학습 시각"], rows: this.wan.arpRows() },

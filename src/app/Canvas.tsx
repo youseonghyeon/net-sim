@@ -1,9 +1,25 @@
+import type * as preact from "preact";
 import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
 import { frameCategory, shortLabel } from "../core/packet";
 import { hostStatus, serviceBadges, sim, simTime, simVersion, wanStatus } from "../model/sim";
 import { connectDevices, fitRequest, loadExample, moveDevice, selection, tool, topology, viewport } from "../model/store";
-import { freePort, PORT_DEPTH, PORT_WIDTH, portAnchor, snap, specOf, usedPorts, type Cable, type Device, type PortSide } from "../model/topology";
+import {
+  baseSsid,
+  freePort,
+  PORT_DEPTH,
+  PORT_WIDTH,
+  portAnchor,
+  snap,
+  specOf,
+  usedPorts,
+  WIFI_RANGE,
+  wirelessLinks,
+  type Cable,
+  type Device,
+  type PortSide,
+  type WirelessLink,
+} from "../model/topology";
 import { GlyphInSvg } from "./Icons";
 
 type Drag =
@@ -147,6 +163,11 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
   const byId = new Map(t.devices.map((d) => [d.id, d]));
   const dr = draft.value;
   const draftPath = dr ? draftCablePath(dr, byId) : null;
+  const wl = wirelessLinks(t);
+  const bases = t.devices.filter((d) => {
+    const b = baseSsid(d);
+    return b !== undefined && b.enabled;
+  });
 
   return (
     <div class={`canvas-wrap tool-${tool.value}`}>
@@ -166,10 +187,21 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
         </defs>
         <rect class="grid-bg" width="100%" height="100%" fill="url(#grid)" />
         <g transform={`translate(${v.x},${v.y}) scale(${v.k})`}>
+          <g class="coverage">
+            {bases.map((b) => {
+              const s = specOf(b);
+              return <circle key={b.id} class="wifi-range" cx={b.x + s.width / 2} cy={b.y + s.height / 2} r={WIFI_RANGE} />;
+            })}
+          </g>
           <g class="cables">
             {t.cables.map((c) => (
               <CableView key={c.id} cable={c} byId={byId} selected={sel?.type === "cable" && sel.id === c.id} />
             ))}
+            {wl.map((l) => {
+              const seg = wirelessSegment(l, byId);
+              if (!seg) return null;
+              return <line key={l.id} class="wifi-link" x1={seg.a.x} y1={seg.a.y} x2={seg.b.x} y2={seg.b.y} />;
+            })}
           </g>
           <g class="devices">
             {t.devices.map((d) => (
@@ -188,11 +220,11 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
               <path d={draftPath} />
             </g>
           )}
-          <PacketLayer byId={byId} cables={t.cables} />
+          <PacketLayer byId={byId} cables={t.cables} wireless={wl} />
         </g>
       </svg>
       {t.devices.length === 0 && (
-        <div class="empty">
+        <div class="canvas-empty">
           <p>왼쪽 팔레트에서 장치를 끌어다 놓거나, 예제로 시작하세요.</p>
           <button
             class="btn"
@@ -252,6 +284,7 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
       </g>
       {badges.length > 0 && <ServiceBadges badges={badges} width={spec.width} below={wide ? undefined : spec.height + 46} />}
       {spec.ports.map((p, i) => {
+        if (p.radio) return null;
         const a = portAnchor(d, i);
         const lx = a.x - d.x - PORT_WIDTH / 2;
         const ly = p.side === "top" ? a.y - d.y : a.y - d.y - PORT_DEPTH;
@@ -300,24 +333,44 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
 function ServiceBadges({ badges, width, below }: { badges: string[]; width: number; below?: number }) {
   const h = 16;
   const pad = 6;
+  const gap = 4;
   const widths = badges.map((b) => Math.round(textWidth(b)) + pad * 2);
-  const total = widths.reduce((a, w) => a + w, 0) + (badges.length - 1) * 4;
-  let x = below !== undefined ? (width - total) / 2 : width + 4 - total;
-  const y = below !== undefined ? below : -h / 2 - 2;
-  const items = badges.map((b, i) => {
-    const w = widths[i]!;
-    const el = (
-      <g key={b} class="badge" transform={`translate(${x},${y})`}>
-        <rect width={w} height={h} rx={h / 2} />
-        <text x={w / 2} y={h / 2 + 3.5}>
-          {b}
-        </text>
-      </g>
-    );
-    x += w + 4;
-    return el;
+  const items: preact.JSX.Element[] = [];
+  if (below !== undefined) {
+    const total = widths.reduce((a, w) => a + w, 0) + (badges.length - 1) * gap;
+    let x = (width - total) / 2;
+    badges.forEach((b, i) => {
+      items.push(badge(b, x, below, widths[i]!, h));
+      x += widths[i]! + gap;
+    });
+    return <g>{items}</g>;
+  }
+  // 넓은 타일: 오른쪽 위 모서리에서 왼쪽으로 채우되, 위쪽 포트(가운데) 영역에 닿으면 한 줄 위로 올린다
+  const limit = width / 2 + 10;
+  let x = width + 4;
+  let y = -h / 2 - 2;
+  [...badges].reverse().forEach((b, k) => {
+    const w = widths[badges.length - 1 - k]!;
+    if (x - w < limit && x !== width + 4) {
+      x = width + 4;
+      y -= h + gap;
+    }
+    x -= w;
+    items.push(badge(b, x, y, w, h));
+    x -= gap;
   });
   return <g>{items}</g>;
+}
+
+function badge(label: string, x: number, y: number, w: number, h: number) {
+  return (
+    <g key={label} class="badge" transform={`translate(${x},${y})`}>
+      <rect width={w} height={h} rx={h / 2} />
+      <text x={w / 2} y={h / 2 + 3.5}>
+        {label}
+      </text>
+    </g>
+  );
 }
 
 function textWidth(s: string): number {
@@ -373,19 +426,39 @@ function pointOn(c: Curve, t: number): { x: number; y: number } {
   return { x: w0 * c.x0 + w1 * c.x1 + w2 * c.x2 + w3 * c.x3, y: w0 * c.y0 + w1 * c.y1 + w2 * c.y2 + w3 * c.y3 };
 }
 
+/** 무선 링크의 양 끝점: 단말 위쪽 안테나 ↔ 기지 타일 중심 */
+function wirelessSegment(l: WirelessLink, byId: Map<string, Device>): { a: { x: number; y: number }; b: { x: number; y: number } } | null {
+  const c = byId.get(l.client);
+  const b = byId.get(l.base);
+  if (!c || !b) return null;
+  const cs = specOf(c);
+  const bs = specOf(b);
+  return { a: { x: c.x + cs.width / 2, y: c.y - PORT_DEPTH }, b: { x: b.x + bs.width / 2, y: b.y + bs.height / 2 } };
+}
+
 /** 링크 위를 이동 중인 패킷. 매 프레임 simTime 을 구독한다 */
-function PacketLayer({ byId, cables }: { byId: Map<string, Device>; cables: Cable[] }) {
+function PacketLayer({ byId, cables, wireless }: { byId: Map<string, Device>; cables: Cable[]; wireless: WirelessLink[] }) {
   const now = simTime.value;
   const cableById = new Map(cables.map((c) => [c.id, c]));
+  const wlById = new Map(wireless.map((l) => [l.id, l]));
   const items = sim.inFlight().map((tx) => {
-    const cable = cableById.get(tx.linkId);
-    if (!cable) return null;
-    const a = byId.get(cable.a.device);
-    const b = byId.get(cable.b.device);
-    if (!a || !b) return null;
-    const curve = cableCurve(portAnchor(a, cable.a.port), portAnchor(b, cable.b.port));
     const frac = Math.min(1, Math.max(0, (now - tx.departAt) / (tx.arriveAt - tx.departAt)));
-    const p = pointOn(curve, tx.from.node === cable.a.device ? frac : 1 - frac);
+    let p: { x: number; y: number };
+    const wlink = wlById.get(tx.linkId);
+    if (wlink) {
+      const seg = wirelessSegment(wlink, byId);
+      if (!seg) return null;
+      const f = tx.from.node === wlink.client ? frac : 1 - frac;
+      p = { x: seg.a.x + (seg.b.x - seg.a.x) * f, y: seg.a.y + (seg.b.y - seg.a.y) * f };
+    } else {
+      const cable = cableById.get(tx.linkId);
+      if (!cable) return null;
+      const a = byId.get(cable.a.device);
+      const b = byId.get(cable.b.device);
+      if (!a || !b) return null;
+      const curve = cableCurve(portAnchor(a, cable.a.port), portAnchor(b, cable.b.port));
+      p = pointOn(curve, tx.from.node === cable.a.device ? frac : 1 - frac);
+    }
     const lost = tx.lost && tx.lostAt !== undefined;
     const fade = lost ? Math.max(0.15, 1 - (now - tx.departAt) / (tx.lostAt! - tx.departAt)) : 1;
     return (

@@ -3,9 +3,11 @@ import type { JSX } from "preact";
 export type IconName =
   | "pc"
   | "laptop"
+  | "phone"
   | "server"
   | "switch"
   | "hub"
+  | "ap"
   | "router"
   | "gateway"
   | "nat"
@@ -35,6 +37,18 @@ const PATHS: Record<IconName, JSX.Element> = {
     <>
       <rect x="4.5" y="5" width="15" height="10" rx="1.5" />
       <path d="M2 18.5h20" />
+    </>
+  ),
+  phone: (
+    <>
+      <rect x="7" y="2.5" width="10" height="19" rx="2" />
+      <path d="M10.5 18.5h3" />
+    </>
+  ),
+  ap: (
+    <>
+      <rect x="3" y="14" width="18" height="6" rx="1.5" />
+      <path d="M12 14V9.5M7.5 8a6.5 6.5 0 0 1 9 0M4.5 5a10.5 10.5 0 0 1 15 0" />
     </>
   ),
   server: (

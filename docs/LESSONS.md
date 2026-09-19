@@ -24,6 +24,7 @@
 |---|---|---|
 | Preact `Cycle detected` 로 앱이 시작조차 안 됨 | `effect` 안에서 `signal.value += 1` (읽고 쓰기) | effect 안에서 쓰는 signal 은 `.peek()` 로 읽는다: `v.value = v.peek() + 1` |
 | 상단바 버튼이 화면 밖으로 날아감 | 팔레트 드래그 고스트 `.ghost` 와 버튼 변형 `.btn.ghost` 클래스 충돌 | 상태 클래스는 컴포넌트 접두어로 구분(`drag-ghost`). 전역 CSS 에서 짧은 단어 클래스는 피한다 |
+| 캔버스 한가운데 "비어 있음" 글자가 떠 있음 (2026-09-19, **같은 실수 두 번째**) | 캔버스 빈 상태 `.empty`(position absolute, inset 0) 와 표의 빈 셀 `td.empty` 충돌 → 표 셀이 화면 전체에 깔림 | `.canvas-empty` 로 개명. **규칙: 전역 CSS 클래스는 반드시 컴포넌트 접두어**(`canvas-`, `fw-`, `pool-`…). 새 CSS 를 추가할 때 같은 이름이 이미 있는지 grep 한다 |
 | 장치 드래그가 버벅임 | 위치 이동마다 시뮬레이션 동기화 + 패널 전체 재렌더 | diff 에서 **실제로 바뀐 게 없으면 bump 하지 않는다** (위치는 시뮬레이션과 무관) |
 | Playwright: SVG 텍스트 `innerText` 오류 | SVG 요소는 HTMLElement 가 아님 | `textContent()` 사용 |
 | Playwright: 장치 클릭이 선택을 안 함 | 라벨은 `pointer-events: none` 이라 클릭이 뒤 캔버스로 감 / 로그 서랍이 열려 아래쪽 장치가 가려짐 | 타일 중심 좌표를 계산해 `mouse.click`, 확인 전에 로그 서랍을 닫는다 |

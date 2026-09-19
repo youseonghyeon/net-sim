@@ -56,6 +56,26 @@ await page.waitForTimeout(500);
 await page.screenshot({ path: `${OUT}/10-dhcp-in-progress.png` });
 console.log("packets visible during DHCP:", await page.locator(".packet").count());
 for (const n of ["pc-1", "laptop-1", "srv-1"]) console.log(n, "→", await waitAddr(n, /^192\.168\.0\.\d+\/24$/));
+// 1w) 스마트폰이 공유기 Wi-Fi 로 주소를 받는다 → 멀리 끌면 끊긴다
+console.log("phone-1 (Wi-Fi) →", await waitAddr("phone-1", /^192\.168\.0\.\d+\/24$/));
+console.log("wifi links:", await page.locator(".wifi-link").count(), "| coverage:", await page.locator(".wifi-range").count());
+{
+  const ph = await device("phone-1").locator(".tile").boundingBox();
+  await page.mouse.move(ph.x + ph.width / 2, ph.y + ph.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(ph.x + ph.width / 2, ph.y + ph.height / 2 + 420, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  console.log("phone-1 far →", await addrOf("phone-1"), "| links:", await page.locator(".wifi-link").count());
+  const ph2 = await device("phone-1").locator(".tile").boundingBox();
+  await page.mouse.move(ph2.x + ph2.width / 2, ph2.y + ph2.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(ph.x + ph.width / 2, ph.y + ph.height / 2, { steps: 12 });
+  await page.mouse.up();
+  console.log("phone-1 back →", await waitAddr("phone-1", /^192\.168\.0\.\d+\/24$/));
+}
+await page.screenshot({ path: `${OUT}/19-wifi.png` });
+
 // 1a) 이름으로 ping: pc-1 → google.com (라우터 DNS 포워더 → 8.8.8.8)
 await clickDevice("pc-1");
 await page.fill(".ping-row .input", "google.com");
@@ -116,7 +136,8 @@ console.log("router leases after deleting laptop-1:", leaseRows.length, leaseRow
 
 // 2) 라우터 DHCP 끄기 → 새 PC 연결 → 실패
 await clickDevice("rt-1");
-await page.click(".toggle");
+const dhcpToggle = () => page.locator(".inspector .section", { has: page.locator("h3", { hasText: /^DHCP 서비스$/ }) }).locator(".toggle");
+await dhcpToggle().click();
 await page.click(".palette .tool.item:has-text('PC')");
 await page.keyboard.press("c");
 const a = await device("pc-2").locator(".tile").boundingBox();
@@ -202,7 +223,7 @@ console.log("cables after delete:", await page.locator("[data-cable]").count());
 await page.click(".log-toggle"); // 로그를 닫아 캔버스 아래쪽 장치가 보이게
 await page.waitForTimeout(100);
 await clickDevice("rt-1");
-await page.click(".toggle"); // DHCP 다시 켜기
+await dhcpToggle().click(); // DHCP 다시 켜기
 const lanInput = page.locator(".inspector input.mono").first();
 await lanInput.fill("192.168.127.1");
 await page.waitForTimeout(100);

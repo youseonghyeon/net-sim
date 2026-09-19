@@ -1,13 +1,19 @@
 // 편집 가능한 토폴로지 모델. 시뮬레이션 코어(src/core)와 분리되어 있고, 실행 시 코어 Network 로 변환된다.
 
-export type DeviceKind = "pc" | "laptop" | "server" | "switch" | "hub" | "router" | "gateway" | "nat" | "internet";
-export type Role = "host" | "switch" | "hub" | "router" | "l3" | "internet";
+export type DeviceKind = "pc" | "laptop" | "phone" | "server" | "switch" | "hub" | "ap" | "router" | "gateway" | "nat" | "internet";
+export type Role = "host" | "switch" | "hub" | "ap" | "router" | "l3" | "internet";
 export type PortSide = "top" | "bottom";
 
 export interface PortSpec {
   name: string;
   side: PortSide;
+  /** 무선 슬롯: 케이블을 꽂을 수 없고 화면에 포트로 그리지 않는다 */
+  radio?: boolean;
 }
+
+/** 무선 전파가 닿는 거리 (캔버스 픽셀). 이 안에 있고 SSID 가 같으면 붙는다 */
+export const WIFI_RANGE = 300;
+const radioSlots = (n: number): PortSpec[] => Array.from({ length: n }, (_, i) => ({ name: `무선 ${i + 1}`, side: "top" as const, radio: true }));
 
 export interface DeviceSpec {
   kind: DeviceKind;
@@ -25,6 +31,7 @@ const lanPorts = (n: number, side: PortSide, prefix = "eth", from = 0): PortSpec
 export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
   pc: { kind: "pc", label: "PC", role: "host", width: 64, height: 64, ports: [{ name: "eth0", side: "top" }], namePrefix: "pc" },
   laptop: { kind: "laptop", label: "노트북", role: "host", width: 64, height: 64, ports: [{ name: "eth0", side: "top" }], namePrefix: "laptop" },
+  phone: { kind: "phone", label: "스마트폰", role: "host", width: 44, height: 64, ports: [{ name: "wlan0", side: "top", radio: true }], namePrefix: "phone" },
   server: { kind: "server", label: "서버", role: "host", width: 64, height: 64, ports: [{ name: "eth0", side: "top" }], namePrefix: "srv" },
   switch: {
     kind: "switch",
@@ -45,13 +52,24 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
     ports: lanPorts(4, "bottom", "port", 1),
     namePrefix: "hub",
   },
+  ap: {
+    kind: "ap",
+    label: "무선 AP",
+    role: "ap",
+    width: 120,
+    height: 44,
+    // eth0 하나 + 무선 슬롯 8개 (코어 AccessPoint 의 포트 배치와 같다)
+    ports: [{ name: "eth0", side: "top" }, ...radioSlots(8)],
+    namePrefix: "ap",
+  },
   router: {
     kind: "router",
     label: "라우터",
     role: "router",
     width: 152,
     height: 62,
-    ports: [{ name: "wan", side: "top" }, ...lanPorts(4, "bottom", "lan", 1)],
+    // wan, lan1~4, 무선 슬롯 8개 (코어 Router.RADIO_PORTS = 5..12)
+    ports: [{ name: "wan", side: "top" }, ...lanPorts(4, "bottom", "lan", 1), ...radioSlots(8)],
     namePrefix: "rt",
   },
   gateway: {
@@ -90,7 +108,7 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
   },
 };
 
-export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "server", "hub", "switch", "router", "gateway", "nat", "internet"];
+export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "phone", "server", "hub", "switch", "ap", "router", "gateway", "nat", "internet"];
 
 export interface DhcpPoolSettings {
   start: string;
@@ -209,9 +227,22 @@ export interface RouterSettings {
   /** 포트 포워딩 규칙 */
   forwards?: PortForwardSettings[];
   firewall?: FirewallSettings;
+  wifi?: WifiBaseSettings;
 }
 
 export const DEFAULT_ROUTER_DNS = { enabled: true, upstream: "8.8.8.8" };
+
+/** 무선 기지(AP·공유기)의 설정 */
+export interface WifiBaseSettings {
+  enabled: boolean;
+  ssid: string;
+}
+/** 무선 단말의 설정 */
+export interface WifiClientSettings {
+  ssid: string;
+}
+export const DEFAULT_WIFI_BASE: WifiBaseSettings = { enabled: true, ssid: "home" };
+export const DEFAULT_ROUTER_WIFI: WifiBaseSettings = { enabled: false, ssid: "home" };
 
 export const DEFAULT_WAN: WanSettings = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" };
 
@@ -226,6 +257,10 @@ export interface Device {
   host?: HostSettings;
   router?: RouterSettings;
   l3?: L3Settings;
+  /** 무선 AP 장치 */
+  ap?: WifiBaseSettings;
+  /** 무선 단말 (스마트폰) */
+  wifi?: WifiClientSettings;
 }
 
 export interface PortRef {
@@ -288,7 +323,90 @@ export function createDevice(kind: DeviceKind, x: number, y: number, devices: De
     device.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" }, wan: { ...DEFAULT_WAN } };
   }
   if (spec.role === "l3") device.l3 = defaultL3(kind);
+  if (spec.role === "ap") device.ap = { ...DEFAULT_WIFI_BASE };
+  if (kind === "phone") device.wifi = { ssid: "home" };
   return device;
+}
+
+// ---------- 무선 연결 (파생 상태) ----------
+
+export interface WirelessLink {
+  /** 케이블처럼 쓰이는 id: wl_<단말 id> */
+  id: string;
+  client: string;
+  base: string;
+  /** 기지의 무선 슬롯 포트 번호 */
+  slot: number;
+  distance: number;
+}
+
+/** 기지별 슬롯 할당. 단말이 떨어졌다 다시 붙어도 같은 슬롯을 주어 다른 단말이 흔들리지 않게 한다 */
+const slotTable = new Map<string, Map<string, number>>();
+
+function radioSlotPorts(d: Device): number[] {
+  return specOf(d).ports.map((p, i) => (p.radio ? i : -1)).filter((i) => i >= 0);
+}
+
+export function baseSsid(d: Device): WifiBaseSettings | undefined {
+  if (d.kind === "ap") return d.ap ?? DEFAULT_WIFI_BASE;
+  if (d.router) return d.router.wifi ?? DEFAULT_ROUTER_WIFI;
+  return undefined;
+}
+
+function center(d: Device): { x: number; y: number } {
+  const s = specOf(d);
+  return { x: d.x + s.width / 2, y: d.y + s.height / 2 };
+}
+
+/** 무선 단말마다 SSID 가 같고 범위 안인 가장 가까운 기지에 붙인다 */
+export function wirelessLinks(t: Topology): WirelessLink[] {
+  const bases = t.devices.filter((d) => {
+    const b = baseSsid(d);
+    return b !== undefined && b.enabled && b.ssid.trim() !== "";
+  });
+  const out: WirelessLink[] = [];
+  const taken = new Map<string, Set<number>>();
+  for (const b of bases) taken.set(b.id, new Set());
+  for (const c of t.devices) {
+    if (!c.wifi) continue;
+    const ssid = c.wifi.ssid.trim();
+    if (!ssid) continue;
+    const cc = center(c);
+    let best: { base: Device; distance: number } | undefined;
+    for (const b of bases) {
+      if (baseSsid(b)!.ssid.trim() !== ssid) continue;
+      const bc = center(b);
+      const distance = Math.hypot(bc.x - cc.x, bc.y - cc.y);
+      if (distance > WIFI_RANGE) continue;
+      if (!best || distance < best.distance) best = { base: b, distance };
+    }
+    if (!best) continue;
+    const slots = radioSlotPorts(best.base);
+    const table = slotTable.get(best.base.id) ?? new Map<string, number>();
+    slotTable.set(best.base.id, table);
+    const used = taken.get(best.base.id)!;
+    let slot = table.get(c.id);
+    if (slot === undefined || used.has(slot) || !slots.includes(slot)) {
+      slot = slots.find((p) => !used.has(p));
+      if (slot === undefined) continue; // 슬롯 부족
+      table.set(c.id, slot);
+    }
+    used.add(slot);
+    out.push({ id: `wl_${c.id}`, client: c.id, base: best.base.id, slot, distance: Math.round(best.distance) });
+  }
+  return out;
+}
+
+/** 단말이 왜 안 붙는지 (인스펙터 안내용) */
+export function wirelessStatus(t: Topology, client: Device): { linked?: WirelessLink; reason?: string } {
+  const link = wirelessLinks(t).find((l) => l.client === client.id);
+  if (link) return { linked: link };
+  const ssid = client.wifi?.ssid.trim() ?? "";
+  if (!ssid) return { reason: "연결할 SSID 를 입력하세요" };
+  const same = t.devices.filter((d) => baseSsid(d)?.ssid.trim() === ssid);
+  if (same.length === 0) return { reason: `SSID "${ssid}" 를 송출하는 AP 나 공유기가 없습니다` };
+  if (!same.some((d) => baseSsid(d)!.enabled)) return { reason: `SSID "${ssid}" 의 무선이 꺼져 있습니다` };
+  return { reason: `SSID "${ssid}" 는 있지만 전파 범위(${WIFI_RANGE}px) 밖입니다. 단말을 AP 쪽으로 옮기세요` };
 }
 
 export function defaultL3(kind: DeviceKind): L3Settings {
@@ -316,7 +434,11 @@ export function portAnchor(device: Device, port: number): { x: number; y: number
   const spec = specOf(device);
   const p = spec.ports[port];
   if (!p) throw new Error(`${device.name} has no port ${port}`);
-  const siblings = spec.ports.filter((q) => q.side === p.side);
+  if (p.radio) {
+    // 무선 슬롯: 타일 위쪽 가운데 (전파 링크가 여기서 나간다)
+    return { x: device.x + spec.width / 2, y: device.y - PORT_DEPTH, side: "top" };
+  }
+  const siblings = spec.ports.filter((q) => q.side === p.side && !q.radio);
   const index = siblings.indexOf(p);
   const gap = 14;
   const x = device.x + spec.width / 2 + (index - (siblings.length - 1) / 2) * gap;
@@ -346,7 +468,10 @@ export function freePort(topology: Topology, deviceId: string, peerY?: number): 
   const used = usedPorts(topology, deviceId);
   const spec = specOf(device);
   const preferred: PortSide = peerY !== undefined && peerY < device.y ? "top" : "bottom";
-  const order = spec.ports.map((_, i) => i).sort((a, b) => Number(spec.ports[b]!.side === preferred) - Number(spec.ports[a]!.side === preferred));
+  const order = spec.ports
+    .map((_, i) => i)
+    .filter((i) => !spec.ports[i]!.radio)
+    .sort((a, b) => Number(spec.ports[b]!.side === preferred) - Number(spec.ports[a]!.side === preferred));
   return order.find((i) => !used.has(i));
 }
 
@@ -383,6 +508,8 @@ export function normalizeTopology(t: Topology): Topology {
         };
       }
     }
+    if (spec.role === "ap" && !fixed.ap) fixed.ap = { ...DEFAULT_WIFI_BASE };
+    if (fixed.kind === "phone" && !fixed.wifi) fixed.wifi = { ssid: "home" };
     if (spec.role === "l3") {
       const def = defaultL3(fixed.kind);
       if (!fixed.l3) fixed.l3 = def;
@@ -496,7 +623,9 @@ export function exampleTopology(): Topology {
   const srv = add("server", 576, 440);
   // 웹 서버는 고정 주소로 두고 라우터가 공인 :80 을 여기로 포워딩한다
   srv.host = { ipMode: "static", ip: "192.168.0.20", prefix: 24, gateway: "192.168.0.1", dns: "192.168.0.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
-  rt.router = { ...rt.router!, forwards: [{ publicPort: 80, lanIp: "192.168.0.20", lanPort: 80 }] };
+  rt.router = { ...rt.router!, forwards: [{ publicPort: 80, lanIp: "192.168.0.20", lanPort: 80 }], wifi: { enabled: true, ssid: "home" } };
+  // 공유기의 Wi-Fi 에 붙는 스마트폰 (케이블 없음, 전파 범위 안)
+  add("phone", 600, 120);
   const cables: Cable[] = [
     { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: rt.id, port: 0 } }, // isp ↔ wan
     { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 0 } }, // lan1 ↔ eth1

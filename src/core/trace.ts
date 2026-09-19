@@ -104,7 +104,11 @@ export type TraceKind =
   | "dns.resolved"
   | "fw.allow"
   | "fw.deny"
-  | "fw.established";
+  | "fw.established"
+  | "wifi.air"
+  | "wifi.associate"
+  | "wifi.disassociate"
+  | "wifi.no-base";
 
 export interface TraceEvent {
   seq: number;
@@ -150,4 +154,6 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "dns.nxdomain",
   "dns.no-server",
   "fw.deny",
+  "wifi.disassociate",
+  "wifi.no-base",
 ]);

@@ -2,6 +2,7 @@
 import { effect, signal } from "@preact/signals";
 import { ipToInt } from "../core/addr";
 import { Network, type ActionSpec, type Transmission } from "../core/network";
+import { AccessPoint } from "../core/nodes/ap";
 import { DHCP_MAX_ATTEMPTS, DHCP_STATE_LABEL, Host } from "../core/nodes/host";
 import { Hub } from "../core/nodes/hub";
 import { Internet } from "../core/nodes/internet";
@@ -11,7 +12,25 @@ import { Router } from "../core/nodes/router";
 import { Switch } from "../core/nodes/switch";
 import { topology } from "./store";
 import { validCidr } from "../core/nodes/firewall";
-import { DEFAULT_DHCP_SERVER, DEFAULT_DNS_SERVER, DEFAULT_FIREWALL_SETTINGS, DEFAULT_ROUTER_DNS, DEFAULT_WAN, DEVICE_SPECS, defaultL3, type Device, type FirewallSettings, type Topology } from "./topology";
+import {
+  DEFAULT_DHCP_SERVER,
+  DEFAULT_DNS_SERVER,
+  DEFAULT_FIREWALL_SETTINGS,
+  DEFAULT_ROUTER_DNS,
+  DEFAULT_ROUTER_WIFI,
+  DEFAULT_WAN,
+  DEFAULT_WIFI_BASE,
+  DEVICE_SPECS,
+  defaultL3,
+  wirelessLinks,
+  type Device,
+  type FirewallSettings,
+  type Topology,
+  type WirelessLink,
+} from "./topology";
+
+/** 무선 링크의 지연 (유선 10ms 보다 느리게) */
+const WIFI_LATENCY = 20;
 
 /** 1x 재생 속도에서 실제 1초당 흐르는 시뮬레이션 시간(ms). 링크 10ms 가 0.4초 */
 const BASE_RATE = 25;
@@ -79,10 +98,20 @@ class SimController {
         this.syncedConfig.delete(id);
       }
     }
-    const cableIds = new Set(t.cables.map((c) => c.id));
+    // 무선 연결은 위치·SSID 에서 파생된 "보이지 않는 케이블" 로 다룬다
+    const wl = wirelessLinks(t);
+    const links: { id: string; a: { device: string; port: number }; b: { device: string; port: number }; loss?: number; latency: number; wireless?: WirelessLink }[] = [
+      ...t.cables.map((c) => ({ ...c, latency: 10 })),
+      ...wl.map((l) => ({ id: l.id, a: { device: l.client, port: 0 }, b: { device: l.base, port: l.slot }, latency: WIFI_LATENCY, wireless: l })),
+    ];
+    const cableIds = new Set(links.map((c) => c.id));
     for (const id of [...this.syncedCables.keys()]) {
       if (!cableIds.has(id)) {
         settle();
+        if (id.startsWith("wl_")) {
+          const client = id.slice(3);
+          if (net.hasNode(client)) net.contextFor(client).trace("wifi.disassociate", "L1", `무선 연결 끊김 (범위 밖이거나 SSID/무선 설정이 바뀜)`, {});
+        }
         net.disconnect(id);
         this.syncedCables.delete(id);
       }
@@ -112,13 +141,17 @@ class SimController {
       }
       if (prev === undefined || prev.net !== key.net || prev.services !== key.services) this.syncedConfig.set(d.id, key);
     }
-    for (const c of t.cables) {
+    for (const c of links) {
       const loss = c.loss ?? 0;
       const prevLoss = this.syncedCables.get(c.id);
       if (prevLoss === undefined) {
         settle();
         try {
-          net.connect(c.a.device, c.a.port, c.b.device, c.b.port, 10, c.id);
+          if (c.wireless) {
+            const baseName = t.devices.find((d) => d.id === c.wireless!.base)?.name ?? c.wireless.base;
+            net.contextFor(c.a.device).trace("wifi.associate", "L1", `무선 연결: ${baseName} 에 붙음 (거리 ${c.wireless.distance}px, 슬롯 ${c.b.port}) → DHCP 시작`, { ...c.wireless });
+          }
+          net.connect(c.a.device, c.a.port, c.b.device, c.b.port, c.latency, c.id);
           net.setLinkLoss(c.id, loss);
         } catch (e) {
           console.warn("cable sync failed", c, e);
@@ -292,6 +325,7 @@ function effectiveRouter(d: Device, current?: Router) {
     dns: { enabled: dns.enabled, records: [], upstream: validIp(dns.upstream) },
     forwards: effectiveForwards(r.forwards),
     firewall: effectiveFirewall(r.firewall),
+    wifi: { ...(r.wifi ?? DEFAULT_ROUTER_WIFI), ssid: (r.wifi ?? DEFAULT_ROUTER_WIFI).ssid.trim() || "home" },
   };
 }
 
@@ -338,7 +372,12 @@ function effectiveL3(d: Device) {
   };
 }
 
+function effectiveApSsid(d: Device): string {
+  return (d.ap ?? DEFAULT_WIFI_BASE).ssid.trim() || "home";
+}
+
 function configKey(d: Device): string {
+  if (d.kind === "ap") return JSON.stringify({ mac: d.mac, ssid: effectiveApSsid(d) });
   if (d.host) return JSON.stringify({ mac: d.mac, host: effectiveHost(d) });
   if (d.router) return JSON.stringify({ mac: d.mac, router: effectiveRouter(d) });
   if (DEVICE_SPECS[d.kind].role === "l3") return JSON.stringify({ mac: d.mac, l3: effectiveL3(d) });
@@ -349,6 +388,7 @@ function makeNode(d: Device): SimNode {
   const spec = DEVICE_SPECS[d.kind];
   if (spec.role === "switch") return new Switch(d.id, spec.ports.map((p) => p.name));
   if (spec.role === "hub") return new Hub(d.id, spec.ports.map((p) => p.name));
+  if (spec.role === "ap") return new AccessPoint(d.id, effectiveApSsid(d));
   if (spec.role === "router") return new Router({ id: d.id, mac: d.mac, wanMac: wanMacOf(d.mac), ...effectiveRouter(d) });
   if (spec.role === "internet") return new Internet({ id: d.id, mac: d.mac });
   if (spec.role === "l3") {
@@ -369,7 +409,10 @@ function makeNode(d: Device): SimNode {
 function applyConfig(net: Network, d: Device): void {
   const node = net.nodes.get(d.id);
   if (node instanceof Host && d.host) node.configure(effectiveHost(d), net.contextFor(d.id));
-  else if (node instanceof Router && d.router) node.configure(effectiveRouter(d, node), net.contextFor(d.id));
+  else if (node instanceof AccessPoint) {
+    node.ssid = effectiveApSsid(d);
+    net.contextFor(d.id).trace("ip.config", "sys", `SSID 변경: "${node.ssid}"`, { ssid: node.ssid });
+  } else if (node instanceof Router && d.router) node.configure(effectiveRouter(d, node), net.contextFor(d.id));
   else if (node instanceof L3Node) {
     const cfg = effectiveL3(d);
     node.configure(cfg.interfaces, net.contextFor(d.id));
@@ -390,7 +433,7 @@ export function hostStatus(id: string): { text: string; tone: "ok" | "warn" | "m
   const node = sim.node(id);
   if (node instanceof Host) {
     if (node.ip) return { text: `${node.ip}/${node.iface.prefix}`, tone: "ok", mono: true };
-    if (!node.linkUp) return { text: "케이블 없음", tone: "muted", mono: false };
+    if (!node.linkUp) return { text: DEVICE_SPECS[topology.peek().devices.find((d) => d.id === id)?.kind ?? "pc"].ports[0]?.radio ? "무선 연결 없음" : "케이블 없음", tone: "muted", mono: false };
     if (node.ipMode === "static") return { text: "IP 없음 · 수동 입력 필요", tone: "warn", mono: false };
     switch (node.dhcp.state) {
       case "discovering":
@@ -404,6 +447,7 @@ export function hostStatus(id: string): { text: string; tone: "ok" | "warn" | "m
   }
   if (node instanceof Router) return { text: `${node.lan.ip}/${node.lan.prefix}`, tone: "ok", mono: true };
   if (node instanceof Internet) return { text: `ISP ${node.iface.ip}/${node.iface.prefix}`, tone: "ok", mono: true };
+  if (node instanceof AccessPoint) return { text: `SSID ${node.ssid} · 단말 ${node.stations.size}대`, tone: "ok", mono: false };
   if (node instanceof L3Node) {
     // 아래쪽(안쪽) 인터페이스들 요약
     const inside = node.ifaces.slice(1).map((i, k) => (i.ip ? i.ip : `${node.names[k + 1]} 없음`));
@@ -425,6 +469,7 @@ export function serviceBadges(id: string): string[] {
     if (node.dnsForwarder.config.enabled) out.push("DNS");
     out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
     if (node.firewall.config.enabled) out.push("방화벽");
+    if (node.wifi.enabled) out.push(`Wi-Fi ${node.wifi.ssid}`);
   } else if (node instanceof L3Node) {
     if (node.relays.some(Boolean)) out.push("DHCP 릴레이");
     if (node.nat) out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");

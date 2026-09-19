@@ -375,7 +375,7 @@ select.btn.example {
   font-family: var(--mono);
   font-size: 11px;
 }
-.empty {
+.canvas-empty {
   position: absolute;
   inset: 0;
   display: grid;
@@ -385,7 +385,7 @@ select.btn.example {
   color: var(--ink-2);
   pointer-events: none;
 }
-.empty .btn {
+.canvas-empty .btn {
   pointer-events: auto;
 }
 
@@ -468,6 +468,25 @@ select.btn.example {
   font-weight: 600;
   fill: var(--ink-2);
   text-anchor: middle;
+  pointer-events: none;
+}
+
+/* 무선 */
+.wifi-range {
+  fill: var(--accent);
+  fill-opacity: 0.035;
+  stroke: var(--accent);
+  stroke-opacity: 0.22;
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+  pointer-events: none;
+}
+.wifi-link {
+  stroke: var(--accent);
+  stroke-opacity: 0.6;
+  stroke-width: 1.5;
+  stroke-dasharray: 2 5;
+  stroke-linecap: round;
   pointer-events: none;
 }
 
@@ -722,6 +741,9 @@ select.btn.example {
 }
 .error-note {
   color: var(--danger);
+}
+.ok-note {
+  color: var(--up);
 }
 .section h3.sub {
   margin-top: 12px;

@@ -16,7 +16,9 @@ import {
   DEFAULT_DNS_SERVER,
   DEFAULT_FIREWALL_SETTINGS,
   DEFAULT_ROUTER_DNS,
+  DEFAULT_ROUTER_WIFI,
   DEFAULT_WAN,
+  DEFAULT_WIFI_BASE,
   defaultL3,
   peerOf,
   specOf,
@@ -30,6 +32,9 @@ import {
   type PortForwardSettings,
   type RouterSettings,
   type WanSettings,
+  WIFI_RANGE,
+  wirelessLinks,
+  wirelessStatus,
 } from "../model/topology";
 import { Icon } from "./Icons";
 
@@ -186,8 +191,11 @@ function DevicePanel({ d }: { d: Device }) {
         </Field>
       </Section>
       <StatusSection d={d} />
+      {d.wifi && <WifiClientSection d={d} />}
+      {spec.ports.some((p) => !p.radio) && (
       <Section title="포트">
         {spec.ports.map((p, i) => {
+          if (p.radio) return null;
           const c = cableAt(t, { device: d.id, port: i });
           const peer = c ? peerOf(c, d.id) : undefined;
           return (
@@ -205,6 +213,8 @@ function DevicePanel({ d }: { d: Device }) {
           );
         })}
       </Section>
+      )}
+      {d.kind === "ap" && <WifiBaseSection d={d} />}
       {d.host && <HostSection d={d} h={d.host} />}
       {d.host && <ServiceSection d={d} h={d.host} />}
       {d.router && <RouterSection d={d} r={d.router} />}
@@ -422,6 +432,71 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
         uplinkName={isNat ? "outside" : "if0"}
       />
     </>
+  );
+}
+
+/** 무선 단말: 어느 SSID 에 붙을지 + 현재 상태 */
+function WifiClientSection({ d }: { d: Device }) {
+  const t = topology.value;
+  const st = wirelessStatus(t, d);
+  const baseName = st.linked ? (t.devices.find((x) => x.id === st.linked!.base)?.name ?? st.linked.base) : undefined;
+  return (
+    <Section title="무선">
+      <Field label="SSID">
+        <input class="input mono" value={d.wifi?.ssid ?? ""} placeholder="연결할 네트워크 이름" onInput={(e) => updateDevice(d.id, (x) => ({ ...x, wifi: { ssid: e.currentTarget.value } }))} />
+      </Field>
+      {st.linked ? (
+        <p class="note ok-note">
+          {baseName} 에 연결됨 · 거리 {st.linked.distance}px (범위 {WIFI_RANGE}px). 단말을 끌어서 멀어지면 끊깁니다.
+        </p>
+      ) : (
+        <p class="note error-note">{st.reason}</p>
+      )}
+    </Section>
+  );
+}
+
+/** 무선 기지(AP·공유기): 켜기/끄기, SSID, 붙은 단말 */
+function WifiBaseSection({ d }: { d: Device }) {
+  const t = topology.value;
+  const isRouter = !!d.router;
+  const cfg = isRouter ? (d.router!.wifi ?? DEFAULT_ROUTER_WIFI) : (d.ap ?? DEFAULT_WIFI_BASE);
+  const set = (patch: Partial<typeof cfg>) =>
+    updateDevice(d.id, (x) =>
+      isRouter ? { ...x, router: { ...x.router!, wifi: { ...(x.router!.wifi ?? DEFAULT_ROUTER_WIFI), ...patch } } } : { ...x, ap: { ...(x.ap ?? DEFAULT_WIFI_BASE), ...patch } },
+    );
+  const clients = wirelessLinks(t).filter((l) => l.base === d.id);
+  return (
+    <Section title={isRouter ? "무선 (Wi-Fi)" : "무선 설정"}>
+      <label class="toggle-row">
+        <span>{cfg.enabled ? "켜짐" : "꺼짐"}</span>
+        <Toggle on={cfg.enabled} onToggle={() => set({ enabled: !cfg.enabled })} />
+      </label>
+      {cfg.enabled && (
+        <>
+          <Field label="SSID">
+            <input class="input mono" value={cfg.ssid} placeholder="home" onInput={(e) => set({ ssid: e.currentTarget.value })} />
+          </Field>
+          <p class="note">
+            전파 범위 {WIFI_RANGE}px 안에서 같은 SSID 를 가진 단말이 붙습니다. {isRouter ? "붙은 단말은 LAN 포트의 유선 호스트와 같은 네트워크입니다." : "AP 는 eth0 으로 스위치/라우터에 꽂아야 단말이 주소를 받습니다."}
+          </p>
+          {clients.length > 0 && (
+            <div class="stat-rows">
+              {clients.map((l) => (
+                <div key={l.id} class="port-row">
+                  <span class="dot up" />
+                  <span class="mono">슬롯 {l.slot}</span>
+                  <span class="peer">
+                    {t.devices.find((x) => x.id === l.client)?.name ?? l.client} <span class="muted">{l.distance}px</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      {!cfg.enabled && <p class="note">꺼져 있으면 단말이 붙지 않습니다.</p>}
+    </Section>
   );
 }
 
@@ -742,6 +817,7 @@ function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         )}
       </Section>
       <WanSection d={d} w={r.wan ?? DEFAULT_WAN} />
+      <WifiBaseSection d={d} />
       <RouterDnsSection d={d} r={r} />
       <ForwardSection rules={r.forwards ?? []} onChange={(forwards) => set({ forwards })} lanHint="예: 공인 :80 → 192.168.0.20:80 (LAN 의 웹 서버)." />
       <FirewallSection value={r.firewall ?? DEFAULT_FIREWALL_SETTINGS} onChange={(firewall) => set({ firewall })} uplinkName="WAN" />

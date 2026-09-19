@@ -119,6 +119,9 @@ export function connectDevices(aId: string, bId: string): { cable?: Cable; error
   const a = t.devices.find((d) => d.id === aId);
   const b = t.devices.find((d) => d.id === bId);
   if (!a || !b) return { error: "장치를 찾을 수 없습니다" };
+  for (const d of [a, b]) {
+    if (DEVICE_SPECS[d.kind].ports.every((p) => p.radio)) return { error: `${d.name} 은(는) 무선 전용이라 케이블을 꽂을 수 없습니다. SSID 를 맞추고 AP 근처로 옮기세요` };
+  }
   if (t.cables.some((c) => (c.a.device === aId && c.b.device === bId) || (c.a.device === bId && c.b.device === aId))) {
     return { error: `${a.name} 와 ${b.name} 는 이미 연결되어 있습니다. 두 번째 케이블은 L2 루프(브로드캐스트 폭주)를 만듭니다` };
   }
