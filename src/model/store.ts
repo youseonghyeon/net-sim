@@ -5,6 +5,7 @@ import {
   EMPTY_TOPOLOGY,
   examplePartsTopology,
   exampleTopology,
+  exampleVlanTopology,
   freePort,
   newId,
   normalizeTopology,
@@ -158,10 +159,10 @@ export function removeSelected(): void {
   else removeCable(s.id);
 }
 
-export type ExampleId = "router" | "parts";
+export type ExampleId = "router" | "parts" | "vlan";
 
 export function loadExample(which: ExampleId = "router"): void {
-  topology.value = which === "parts" ? examplePartsTopology() : exampleTopology();
+  topology.value = which === "parts" ? examplePartsTopology() : which === "vlan" ? exampleVlanTopology() : exampleTopology();
   selection.value = null;
   requestFit();
 }

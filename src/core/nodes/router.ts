@@ -236,6 +236,10 @@ export class Router implements SimNode {
     }
 
     const pn = Router.portName(port);
+    if (frame.vlan !== undefined) {
+      ctx.trace("vlan.drop", "L2", `${pn} 에 VLAN ${frame.vlan} 태그 프레임 → 공유기 LAN 포트는 태그를 이해하지 못해 폐기 (스위치 쪽 포트를 액세스로)`, { port, vlan: frame.vlan }, frame.id);
+      return;
+    }
     ctx.trace("frame.receive", "L2", `${pn} 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === BROADCAST_MAC ? "브로드캐스트" : frame.dst}]`, { port, src: frame.src, dst: frame.dst }, frame.id);
     if (!guardLoop(this.seen, port, frame, ctx, pn)) return;
     frame = { ...frame, hops: (frame.hops ?? 0) + 1 };

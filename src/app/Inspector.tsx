@@ -30,6 +30,8 @@ import {
   type IfaceSettings,
   type L3Settings,
   type PortForwardSettings,
+  type SubIfaceSettings,
+  vlanColor,
   type RouterSettings,
   type WanSettings,
   WIFI_RANGE,
@@ -215,6 +217,7 @@ function DevicePanel({ d }: { d: Device }) {
       </Section>
       )}
       {d.kind === "ap" && <WifiBaseSection d={d} />}
+      {d.kind === "switch" && <VlanSection d={d} />}
       {d.host && <HostSection d={d} h={d.host} />}
       {d.host && <ServiceSection d={d} h={d.host} />}
       {d.router && <RouterSection d={d} r={d.router} />}
@@ -398,6 +401,7 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
           </Section>
         );
       })}
+      {!isNat && <SubIfaceSection d={d} l3={l3} />}
       <Section title="정적 경로">
         {l3.routes.length === 0 && <p class="note">연결된 서브넷과 기본 경로 외에 알아야 할 경로가 있으면 추가합니다. {isNat ? "안쪽에 라우터가 또 있으면 그 뒤 서브넷(예: 192.168.0.0/16)을 안쪽 라우터로 보내는 경로가 필요합니다." : ""}</p>}
         {l3.routes.map((r, i) => (
@@ -432,6 +436,116 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
         uplinkName={isNat ? "outside" : "if0"}
       />
     </>
+  );
+}
+
+/** 스위치 포트별 VLAN (액세스 번호 또는 트렁크) */
+function VlanSection({ d }: { d: Device }) {
+  const spec = specOf(d);
+  const vlans = d.switch?.vlans ?? {};
+  const setPort = (port: number, v: number | "trunk" | undefined) =>
+    updateDevice(d.id, (x) => {
+      const next = { ...(x.switch?.vlans ?? {}) };
+      if (v === undefined || v === 1) delete next[port];
+      else next[port] = v;
+      return { ...x, switch: { vlans: next } };
+    });
+  const used = new Set<number>();
+  for (const v of Object.values(vlans)) if (v !== "trunk") used.add(v);
+  const any = Object.keys(vlans).length > 0;
+  return (
+    <Section title="VLAN">
+      {!any && <p class="note">모든 포트가 VLAN 1 (하나의 브로드캐스트 도메인). 포트에 다른 번호를 주면 그 포트들끼리만 통신하고, 트렁크 포트는 태그를 붙여 여러 VLAN 을 다른 스위치나 게이트웨이로 실어 나릅니다.</p>}
+      <div class="vlan-grid">
+        {spec.ports.map((p, i) => {
+          const v = vlans[i] ?? 1;
+          const isTrunk = v === "trunk";
+          return (
+            <div key={p.name} class="vlan-row">
+              <span class="mono">{p.name}</span>
+              <span class="vlan-swatch" style={isTrunk ? undefined : { background: v === 1 ? "var(--line-strong)" : vlanColor(v) }} title={isTrunk ? "트렁크" : `VLAN ${v}`}>
+                {isTrunk ? "T" : ""}
+              </span>
+              <select class="input" value={isTrunk ? "trunk" : "access"} onChange={(e) => setPort(i, e.currentTarget.value === "trunk" ? "trunk" : 1)}>
+                <option value="access">액세스</option>
+                <option value="trunk">트렁크</option>
+              </select>
+              <input
+                class="input mono port"
+                type="number"
+                min={1}
+                max={4094}
+                value={isTrunk ? "" : v}
+                disabled={isTrunk}
+                placeholder={isTrunk ? "모두" : "1"}
+                onInput={(e) => {
+                  const n = Number(e.currentTarget.value);
+                  if (Number.isInteger(n) && n >= 1 && n <= 4094) setPort(i, n);
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      {any && (
+        <p class="note">
+          VLAN 사이를 잇고 싶으면 트렁크 포트를 게이트웨이에 연결하고, 게이트웨이의 그 인터페이스에 VLAN 마다 서브 인터페이스(주소)를 만드세요 (router-on-a-stick).
+          {used.size > 0 && ` 사용 중: VLAN ${[...used].sort((a, b) => a - b).join(", ")}`}
+        </p>
+      )}
+    </Section>
+  );
+}
+
+/** 게이트웨이 VLAN 서브 인터페이스 편집기 */
+function SubIfaceSection({ d, l3 }: { d: Device; l3: L3Settings }) {
+  const spec = specOf(d);
+  const subs = l3.subinterfaces ?? [];
+  const setSubs = (subinterfaces: SubIfaceSettings[]) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), subinterfaces } }));
+  const setSub = (i: number, patch: Partial<SubIfaceSettings>) => setSubs(subs.map((s, k) => (k === i ? { ...s, ...patch } : s)));
+  const ports = spec.ports.map((p, i) => ({ i, name: p.name })).filter(({ i }) => i > 0 && !spec.ports[i]!.radio);
+  const err = (s: SubIfaceSettings) => {
+    if (!Number.isInteger(s.vlan) || s.vlan < 1 || s.vlan > 4094) return "VLAN 은 1~4094";
+    if (subs.some((o) => o !== s && o.port === s.port && o.vlan === s.vlan)) return "같은 포트에 같은 VLAN 이 두 번";
+    if (!validIp(s.ip)) return "IP 주소가 필요합니다";
+    if (s.relay && !validIp(s.relay)) return "릴레이 주소 형식";
+    return undefined;
+  };
+  return (
+    <Section title="VLAN 서브 인터페이스">
+      {subs.length === 0 && <p class="note">트렁크로 들어오는 VLAN 마다 주소를 하나씩 둡니다 (예: if1.10 = 192.168.10.1). 그 VLAN 의 호스트는 이 주소를 게이트웨이로 씁니다.</p>}
+      {subs.map((sIf, i) => (
+        <div key={i} class="subif-row">
+          <div class="fw-line subif-line">
+            <select class="input" value={sIf.port} onChange={(e) => setSub(i, { port: Number(e.currentTarget.value) })}>
+              {ports.map((p) => (
+                <option key={p.i} value={p.i}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <span class="muted">. VLAN</span>
+            <input class="input mono port" type="number" min={1} max={4094} value={sIf.vlan} onInput={(e) => setSub(i, { vlan: Number(e.currentTarget.value) || 0 })} />
+            <button class="icon-btn" title="삭제" onClick={() => setSubs(subs.filter((_, k) => k !== i))}>
+              <Icon name="trash" size={15} />
+            </button>
+          </div>
+          <div class="fw-line subif-addr">
+            <input class="input mono" value={sIf.ip} placeholder="192.168.10.1" onInput={(e) => setSub(i, { ip: e.currentTarget.value })} />
+            <span class="mono">/</span>
+            <input class="input mono port" type="number" min={1} max={32} value={sIf.prefix} onInput={(e) => setSub(i, { prefix: Math.min(32, Math.max(1, Number(e.currentTarget.value) || 24)) })} />
+          </div>
+          <Field label="DHCP 릴레이" error={undefined}>
+            <input class="input mono" value={sIf.relay} placeholder="서버 주소 (비우면 없음)" onInput={(e) => setSub(i, { relay: e.currentTarget.value })} />
+          </Field>
+          {err(sIf) && <div class="error">{err(sIf)}</div>}
+        </div>
+      ))}
+      <button class="btn wide" onClick={() => setSubs([...subs, { port: ports[0]?.i ?? 1, vlan: subs.length ? Math.max(...subs.map((x) => x.vlan)) + 10 : 10, ip: "", prefix: 24, relay: "" }])}>
+        <Icon name="plus" size={14} />
+        서브 인터페이스 추가
+      </button>
+    </Section>
   );
 }
 

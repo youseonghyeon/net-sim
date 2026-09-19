@@ -262,6 +262,27 @@ await clickDevice("gw-1");
 await page.waitForTimeout(100);
 await page.screenshot({ path: `${OUT}/16-parts-gateway.png` });
 
+// 9) VLAN 예제: 같은 VLAN 은 직접, 다른 VLAN 은 게이트웨이 서브 인터페이스를 거쳐 통신
+await page.selectOption("select.example", "vlan");
+await page.waitForTimeout(400);
+console.log("vlan example devices:", await page.locator("[data-device]").count(), "| trunk ports:", await page.locator(".port.trunk").count(), "| VLAN badge:", (await page.locator(".badge text").allTextContents()).includes("VLAN"));
+await clickDevice("pc-1");
+await page.fill(".ping-row .input", "192.168.10.11");
+await page.click(".ping-row .btn");
+await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+console.log("ping same VLAN:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+await page.fill(".ping-row .input", "192.168.20.20");
+await page.click(".ping-row .btn");
+await page.waitForFunction(() => /192\.168\.20\.20/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+console.log("ping across VLAN via gateway:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+await page.fill(".ping-row .input", "google.com");
+await page.click(".ping-row .btn");
+await page.waitForFunction(() => /google/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 40000 });
+console.log("ping internet from VLAN 10:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+await clickDevice("sw-1");
+await page.waitForTimeout(100);
+await page.screenshot({ path: `${OUT}/20-vlan.png` });
+
 console.log("ERRORS:", errors.length ? errors : "none");
 await browser.close();
 await server.close();

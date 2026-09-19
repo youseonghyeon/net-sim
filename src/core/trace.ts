@@ -108,7 +108,10 @@ export type TraceKind =
   | "wifi.air"
   | "wifi.associate"
   | "wifi.disassociate"
-  | "wifi.no-base";
+  | "wifi.no-base"
+  | "vlan.tag"
+  | "vlan.untag"
+  | "vlan.drop";
 
 export interface TraceEvent {
   seq: number;
@@ -156,4 +159,5 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "fw.deny",
   "wifi.disassociate",
   "wifi.no-base",
+  "vlan.drop",
 ]);

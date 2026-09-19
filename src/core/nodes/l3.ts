@@ -25,10 +25,20 @@ export interface StaticRoute {
   via: Ip;
 }
 
+/** VLAN 서브 인터페이스 (router-on-a-stick): 물리 포트 하나 위에 VLAN 마다 IP 하나 */
+export interface SubIfaceConfig {
+  port: number;
+  vlan: number;
+  ip?: Ip;
+  prefix?: number;
+  relay?: Ip;
+}
+
 export interface L3Config {
   id: string;
   kind: "gateway" | "nat";
   interfaces: L3IfaceConfig[];
+  subinterfaces?: SubIfaceConfig[];
   /** NAT 박스: 이 인덱스의 인터페이스가 바깥(공인) 쪽 */
   outside?: number;
   routes?: StaticRoute[];
@@ -47,17 +57,20 @@ export class L3Node implements SimNode {
   readonly type: "gateway" | "nat";
   readonly id: string;
   readonly portCount: number;
-  readonly ifaces: NetInterface[];
-  readonly names: string[];
-  readonly modes: ("static" | "dhcp")[];
-  readonly clients: (DhcpClient | undefined)[];
-  readonly linkUp: boolean[];
+  ifaces: NetInterface[];
+  names: string[];
+  modes: ("static" | "dhcp")[];
+  clients: (DhcpClient | undefined)[];
+  linkUp: boolean[];
   readonly nat: NatTable | undefined;
   readonly outside: number | undefined;
   routes: StaticRoute[];
   /** 인터페이스별 DHCP 릴레이 대상 서버 */
-  readonly relays: (Ip | undefined)[];
+  relays: (Ip | undefined)[];
   readonly firewall: Firewall;
+  /** 인터페이스 i 가 붙은 물리 포트와 VLAN 태그. 물리 인터페이스는 i === port, 서브 인터페이스는 그 뒤에 붙는다 */
+  meta: { port: number; vlan?: number }[];
+  private readonly macBase: Mac;
 
   constructor(cfg: L3Config) {
     this.id = cfg.id;
@@ -72,8 +85,65 @@ export class L3Node implements SimNode {
     this.nat = cfg.kind === "nat" ? new NatTable() : undefined;
     this.routes = [...(cfg.routes ?? [])];
     this.relays = cfg.interfaces.map((i) => i.relay);
+    this.meta = cfg.interfaces.map((_, i) => ({ port: i }));
+    this.macBase = cfg.interfaces[0]?.mac ?? "02:00:00:10:00:00";
     if (this.nat && cfg.forwards) this.nat.setForwards(cfg.forwards);
     this.firewall = new Firewall(cfg.firewall);
+    if (cfg.subinterfaces) this.setSubinterfaces(cfg.subinterfaces);
+  }
+
+  /** 물리 포트 + VLAN 태그로 인터페이스 인덱스 찾기 */
+  private ifaceIndexFor(port: number, vlan: number | undefined): number {
+    return this.meta.findIndex((m) => m.port === port && m.vlan === vlan);
+  }
+
+  /** 서브 인터페이스 목록 교체. 같은 (포트, VLAN) 은 자리에서 갱신, 나머지는 만들고 지운다 */
+  setSubinterfaces(subs: SubIfaceConfig[], ctx?: NodeContext): void {
+    const physical = this.portCount;
+    const keep: number[] = [];
+    const nextMeta: { port: number; vlan?: number }[] = this.meta.slice(0, physical);
+    const nextIfaces = this.ifaces.slice(0, physical);
+    const nextNames = this.names.slice(0, physical);
+    const nextModes = this.modes.slice(0, physical);
+    const nextClients = this.clients.slice(0, physical);
+    const nextLinkUp = this.linkUp.slice(0, physical);
+    const nextRelays = this.relays.slice(0, physical);
+    for (const sub of subs) {
+      if (sub.port < 0 || sub.port >= physical) continue;
+      const existing = this.meta.findIndex((m, i) => i >= physical && m.port === sub.port && m.vlan === sub.vlan);
+      const name = `${this.names[sub.port]}.${sub.vlan}`;
+      let iface: NetInterface;
+      if (existing >= 0) {
+        iface = this.ifaces[existing]!;
+        if (iface.ip !== sub.ip || iface.prefix !== (sub.prefix ?? 24)) {
+          iface.configure(sub.ip, sub.prefix ?? 24, undefined);
+          iface.arpCache.clear();
+          ctx?.trace("ip.config", "sys", `[${name}] 서브 인터페이스 주소 변경: ${sub.ip ?? "없음"}/${sub.prefix ?? 24}`, { ...sub });
+        }
+        keep.push(existing);
+      } else {
+        const mac = this.macBase.replace(/:[0-9a-f]{2}:[0-9a-f]{2}$/i, `:${(0x20 + sub.port).toString(16)}:${(sub.vlan & 0xff).toString(16).padStart(2, "0")}`);
+        iface = new NetInterface(mac, { ip: sub.ip, prefix: sub.prefix ?? 24 });
+        ctx?.trace("ip.config", "sys", `[${name}] VLAN ${sub.vlan} 서브 인터페이스 생성: ${sub.ip ?? "주소 없음"}/${sub.prefix ?? 24} (${this.names[sub.port]} 로 오가는 프레임에 VLAN ${sub.vlan} 태그)`, { ...sub });
+      }
+      nextMeta.push({ port: sub.port, vlan: sub.vlan });
+      nextIfaces.push(iface);
+      nextNames.push(name);
+      nextModes.push("static");
+      nextClients.push(undefined);
+      nextLinkUp.push(this.linkUp[sub.port] ?? false);
+      nextRelays.push(sub.relay);
+    }
+    for (let i = physical; i < this.meta.length; i++) {
+      if (!keep.includes(i)) ctx?.trace("ip.config", "sys", `[${this.names[i]}] 서브 인터페이스 삭제`, { index: i });
+    }
+    this.meta = nextMeta;
+    this.ifaces = nextIfaces;
+    this.names = nextNames;
+    this.modes = nextModes;
+    this.clients = nextClients;
+    this.linkUp = nextLinkUp;
+    this.relays = nextRelays;
   }
 
   setFirewall(cfg: FirewallConfig, ctx: NodeContext): void {
@@ -106,8 +176,15 @@ export class L3Node implements SimNode {
     ctx.trace("ip.config", "sys", `포트 포워딩 규칙 변경: ${rules.length}개`, { forwards: rules.map((r) => ({ ...r })) });
   }
 
-  private emit(port: number, ctx: NodeContext): Emit {
-    return (f) => ctx.send(port, f);
+  /** 인터페이스 i 로 송신. 서브 인터페이스면 VLAN 태그를 붙여 물리 포트로 */
+  private emit(i: number, ctx: NodeContext): Emit {
+    const m = this.meta[i] ?? { port: i };
+    return (f) => {
+      if (m.vlan !== undefined) {
+        ctx.trace("vlan.tag", "L2", `[${this.names[i]}] 802.1Q 태그 VLAN ${m.vlan} 를 붙여 ${this.names[m.port]} 로 송신`, { vlan: m.vlan, port: m.port }, f.id);
+        ctx.send(m.port, { ...f, vlan: m.vlan });
+      } else ctx.send(m.port, f);
+    };
   }
 
   // ---------- 설정 ----------
@@ -151,39 +228,57 @@ export class L3Node implements SimNode {
 
   onLink(port: number, up: boolean, ctx: NodeContext): void {
     const name = this.names[port]!;
-    this.linkUp[port] = up;
-    if (up) {
-      ctx.trace("link.up", "L1", `${name} 링크 연결됨`, { port });
-      if (this.clients[port]) this.clients[port]!.start(ctx, this.emit(port, ctx));
-      else if (this.ifaces[port]!.ip) this.ifaces[port]!.announce(ctx, this.emit(port, ctx));
-      return;
-    }
-    ctx.trace("link.down", "L1", `${name} 링크 끊김`, { port });
-    const iface = this.ifaces[port]!;
-    iface.clearPending();
-    if (this.clients[port]) {
-      const had = iface.ip;
-      iface.clearAddress();
-      this.clients[port]!.stop();
-      if (had) ctx.trace("dhcp.release", "app", `[${name}] 링크가 끊겨 주소 ${had} 해제`, { ip: had });
-    }
+    if (up) ctx.trace("link.up", "L1", `${name} 링크 연결됨`, { port });
+    else ctx.trace("link.down", "L1", `${name} 링크 끊김`, { port });
+    this.meta.forEach((m, i) => {
+      if (m.port !== port) return;
+      this.linkUp[i] = up;
+      const iface = this.ifaces[i]!;
+      if (up) {
+        if (this.clients[i]) this.clients[i]!.start(ctx, this.emit(i, ctx));
+        else if (iface.ip) iface.announce(ctx, this.emit(i, ctx));
+        return;
+      }
+      iface.clearPending();
+      if (this.clients[i]) {
+        const had = iface.ip;
+        iface.clearAddress();
+        this.clients[i]!.stop();
+        if (had) ctx.trace("dhcp.release", "app", `[${this.names[i]}] 링크가 끊겨 주소 ${had} 해제`, { ip: had });
+      }
+    });
   }
 
   // ---------- 수신 ----------
 
-  receive(port: number, frame: EthernetFrame, ctx: NodeContext): void {
-    const iface = this.ifaces[port]!;
-    const name = this.names[port]!;
+  receive(port: number, rawFrame: EthernetFrame, ctx: NodeContext): void {
+    const i = this.ifaceIndexFor(port, rawFrame.vlan);
+    if (i < 0) {
+      if (rawFrame.vlan !== undefined) {
+        const subs = this.meta.filter((m) => m.port === port && m.vlan !== undefined).map((m) => m.vlan);
+        ctx.trace(
+          "vlan.drop",
+          "L2",
+          `${this.names[port]} 에 VLAN ${rawFrame.vlan} 태그 프레임 → 해당 서브 인터페이스 없음 → 폐기 (${subs.length ? `있는 것: ${subs.join(", ")}` : "이 포트에 VLAN 서브 인터페이스를 추가하세요"})`,
+          { port, vlan: rawFrame.vlan },
+          rawFrame.id,
+        );
+      }
+      return;
+    }
+    const frame = rawFrame.vlan !== undefined ? { ...rawFrame, vlan: undefined } : rawFrame;
+    const iface = this.ifaces[i]!;
+    const name = this.names[i]!;
     if (!iface.accepts(frame)) {
       ctx.trace("frame.drop", "L2", `${name} 수신: 목적지 MAC ${frame.dst} 가 내 MAC 아님 → 폐기`, { dst: frame.dst }, frame.id);
       return;
     }
-    ctx.trace("frame.receive", "L2", `${name} 수신: ${describeFrame(frame)} [${frame.src}]`, { port, src: frame.src }, frame.id);
+    ctx.trace("frame.receive", "L2", `${name} 수신: ${describeFrame(frame)} [${frame.src}]${rawFrame.vlan !== undefined ? ` (VLAN ${rawFrame.vlan} 태그 떼어냄)` : ""}`, { port, src: frame.src, vlan: rawFrame.vlan }, frame.id);
     if (frame.payload.kind === "arp") {
-      iface.handleArp(frame.payload, frame.id, ctx, this.emit(port, ctx));
+      iface.handleArp(frame.payload, frame.id, ctx, this.emit(i, ctx));
       return;
     }
-    this.handleIp(port, frame.payload, frame.id, ctx);
+    this.handleIp(i, frame.payload, frame.id, ctx);
   }
 
   private handleIp(port: number, pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {

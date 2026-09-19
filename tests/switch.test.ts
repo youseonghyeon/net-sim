@@ -38,7 +38,7 @@ describe("Switch", () => {
     const ctx = (net as any).ctx("sw");
     sw.receive(0, frame("aa:aa:aa:aa:aa:aa", BROADCAST_MAC), ctx);
     expect(sentTo(net, "sw").sort()).toEqual(["b", "c"]); // port 3 은 미연결
-    expect(sw.macTable.get("aa:aa:aa:aa:aa:aa")?.port).toBe(0);
+    expect(sw.macTable.get("1:aa:aa:aa:aa:aa:aa")?.port).toBe(0);
   });
 
   it("모르는 유니캐스트는 플러딩, 아는 유니캐스트는 해당 포트로만 전달", () => {

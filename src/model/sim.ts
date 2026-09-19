@@ -9,7 +9,7 @@ import { Internet } from "../core/nodes/internet";
 import { L3Node } from "../core/nodes/l3";
 import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
-import { Switch } from "../core/nodes/switch";
+import { Switch, type PortVlan } from "../core/nodes/switch";
 import { topology } from "./store";
 import { validCidr } from "../core/nodes/firewall";
 import {
@@ -27,6 +27,7 @@ import {
   type FirewallSettings,
   type Topology,
   type WirelessLink,
+  type SwitchSettings,
 } from "./topology";
 
 /** 무선 링크의 지연 (유선 10ms 보다 느리게) */
@@ -355,6 +356,17 @@ function effectiveDhcpServer(d: Device, current?: Host) {
   };
 }
 
+function effectiveSwitchVlans(d: Device): Map<number, PortVlan> {
+  const out = new Map<number, PortVlan>();
+  const v = (d.switch ?? ({ vlans: {} } as SwitchSettings)).vlans;
+  for (const [k, val] of Object.entries(v)) {
+    const port = Number(k);
+    if (val === "trunk") out.set(port, "trunk");
+    else if (Number.isInteger(val) && val >= 1 && val <= 4094) out.set(port, val);
+  }
+  return out;
+}
+
 function effectiveL3(d: Device) {
   const spec = DEVICE_SPECS[d.kind];
   const l3 = d.l3 ?? defaultL3(d.kind);
@@ -369,6 +381,9 @@ function effectiveL3(d: Device) {
     routes: (l3.routes ?? []).filter((r) => validIp(r.dest) && validIp(r.via) && r.prefix >= 1 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix, via: r.via })),
     forwards: effectiveForwards(l3.forwards),
     firewall: effectiveFirewall(l3.firewall),
+    subinterfaces: (l3.subinterfaces ?? [])
+      .filter((s) => Number.isInteger(s.vlan) && s.vlan >= 1 && s.vlan <= 4094 && s.port >= 1 && s.port < spec.ports.length && !spec.ports[s.port]!.radio)
+      .map((s) => ({ port: s.port, vlan: s.vlan, ip: validIp(s.ip), prefix: s.prefix, relay: validIp(s.relay) })),
   };
 }
 
@@ -378,6 +393,7 @@ function effectiveApSsid(d: Device): string {
 
 function configKey(d: Device): string {
   if (d.kind === "ap") return JSON.stringify({ mac: d.mac, ssid: effectiveApSsid(d) });
+  if (d.kind === "switch") return JSON.stringify({ mac: d.mac, vlans: [...effectiveSwitchVlans(d).entries()] });
   if (d.host) return JSON.stringify({ mac: d.mac, host: effectiveHost(d) });
   if (d.router) return JSON.stringify({ mac: d.mac, router: effectiveRouter(d) });
   if (DEVICE_SPECS[d.kind].role === "l3") return JSON.stringify({ mac: d.mac, l3: effectiveL3(d) });
@@ -386,7 +402,12 @@ function configKey(d: Device): string {
 
 function makeNode(d: Device): SimNode {
   const spec = DEVICE_SPECS[d.kind];
-  if (spec.role === "switch") return new Switch(d.id, spec.ports.map((p) => p.name));
+  if (spec.role === "switch") {
+    const sw = new Switch(d.id, spec.ports.map((p) => p.name));
+    const v = effectiveSwitchVlans(d);
+    for (const [p, m] of v) sw.portVlan.set(p, m);
+    return sw;
+  }
   if (spec.role === "hub") return new Hub(d.id, spec.ports.map((p) => p.name));
   if (spec.role === "ap") return new AccessPoint(d.id, effectiveApSsid(d));
   if (spec.role === "router") return new Router({ id: d.id, mac: d.mac, wanMac: wanMacOf(d.mac), ...effectiveRouter(d) });
@@ -401,6 +422,7 @@ function makeNode(d: Device): SimNode {
       routes: cfg.routes,
       forwards: cfg.forwards,
       firewall: cfg.firewall,
+      subinterfaces: cfg.subinterfaces,
     });
   }
   return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d) });
@@ -409,6 +431,7 @@ function makeNode(d: Device): SimNode {
 function applyConfig(net: Network, d: Device): void {
   const node = net.nodes.get(d.id);
   if (node instanceof Host && d.host) node.configure(effectiveHost(d), net.contextFor(d.id));
+  else if (node instanceof Switch) node.setVlans(effectiveSwitchVlans(d), net.contextFor(d.id));
   else if (node instanceof AccessPoint) {
     node.ssid = effectiveApSsid(d);
     net.contextFor(d.id).trace("ip.config", "sys", `SSID 변경: "${node.ssid}"`, { ssid: node.ssid });
@@ -419,6 +442,7 @@ function applyConfig(net: Network, d: Device): void {
     node.setRoutes(cfg.routes, net.contextFor(d.id));
     node.setForwards(cfg.forwards, net.contextFor(d.id));
     node.setFirewall(cfg.firewall, net.contextFor(d.id));
+    node.setSubinterfaces(cfg.subinterfaces, net.contextFor(d.id));
   }
 }
 
@@ -449,9 +473,20 @@ export function hostStatus(id: string): { text: string; tone: "ok" | "warn" | "m
   if (node instanceof Internet) return { text: `ISP ${node.iface.ip}/${node.iface.prefix}`, tone: "ok", mono: true };
   if (node instanceof AccessPoint) return { text: `SSID ${node.ssid} · 단말 ${node.stations.size}대`, tone: "ok", mono: false };
   if (node instanceof L3Node) {
-    // 아래쪽(안쪽) 인터페이스들 요약
-    const inside = node.ifaces.slice(1).map((i, k) => (i.ip ? i.ip : `${node.names[k + 1]} 없음`));
-    return { text: inside.join(" · "), tone: node.ifaces.slice(1).every((i) => i.ip) ? "ok" : "warn", mono: true };
+    // 아래쪽(안쪽) 물리 인터페이스 요약. 서브 인터페이스가 있으면 "if1.10/.20" 처럼 접는다
+    const parts: string[] = [];
+    let ok = true;
+    for (let p = 1; p < node.portCount; p++) {
+      const iface = node.ifaces[p]!;
+      const subs = node.meta.map((m, i) => ({ m, i })).filter(({ m, i }) => i >= node.portCount && m.port === p);
+      if (iface.ip) parts.push(iface.ip);
+      else if (subs.length) parts.push(`${node.names[p]}.${subs.map(({ m }) => m.vlan).join("/")}`);
+      else {
+        parts.push(`${node.names[p]} 없음`);
+        ok = false;
+      }
+    }
+    return { text: parts.join(" · "), tone: ok ? "ok" : "warn", mono: true };
   }
   return null;
 }
@@ -476,6 +511,8 @@ export function serviceBadges(id: string): string[] {
     if (node.firewall.config.enabled) out.push("방화벽");
   } else if (node instanceof Internet) {
     out.push("ISP DHCP", "DNS", "웹");
+  } else if (node instanceof Switch && node.vlanAware) {
+    out.push("VLAN");
   }
   return out;
 }

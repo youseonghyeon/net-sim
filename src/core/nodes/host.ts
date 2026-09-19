@@ -301,6 +301,10 @@ export class Host implements SimNode {
   // ---------- 수신 ----------
 
   receive(_port: number, frame: EthernetFrame, ctx: NodeContext): void {
+    if (frame.vlan !== undefined) {
+      ctx.trace("vlan.drop", "L2", `VLAN ${frame.vlan} 태그가 달린 프레임 → 호스트는 태그를 이해하지 못해 폐기 (스위치 포트를 액세스로 바꾸세요)`, { vlan: frame.vlan }, frame.id);
+      return;
+    }
     if (!this.iface.accepts(frame)) {
       ctx.trace("frame.drop", "L2", `목적지 MAC ${frame.dst} 가 내 MAC(${this.iface.mac}) 아님 → 폐기`, { dst: frame.dst }, frame.id);
       return;

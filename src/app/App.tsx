@@ -87,7 +87,7 @@ export function App() {
             class="btn ghost example"
             value=""
             onChange={(e) => {
-              const v = e.currentTarget.value as "" | "router" | "parts";
+              const v = e.currentTarget.value as "" | "router" | "parts" | "vlan";
               e.currentTarget.value = "";
               if (!v) return;
               loadExample(v);
@@ -98,6 +98,7 @@ export function App() {
             <option value="">예제 불러오기</option>
             <option value="router">공유기 하나로 (라우터 + 포트 포워딩)</option>
             <option value="parts">기능 단위로 (NAT + 게이트웨이 + DHCP/DNS 서버)</option>
+            <option value="vlan">VLAN 으로 나눈 사무실 (트렁크 + 서브 인터페이스)</option>
           </select>
           <button
             class="btn ghost"

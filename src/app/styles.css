@@ -422,6 +422,13 @@ select.btn.example {
   fill: var(--ink);
   stroke: var(--ink);
 }
+.device .port.trunk {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.device .port.trunk.used {
+  fill: var(--accent);
+}
 .device .name {
   font-family: var(--font);
   font-size: 13px;
@@ -825,6 +832,44 @@ select.btn.example {
 }
 .fw-rule .error {
   margin-top: 4px;
+}
+.vlan-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.vlan-row {
+  display: grid;
+  grid-template-columns: 44px 16px minmax(0, 1fr) 64px;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+.vlan-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--accent);
+  border: 1px solid var(--line-strong);
+}
+.vlan-row select.input {
+  padding: 0 6px;
+}
+.subif-row {
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.fw-line.subif-line {
+  grid-template-columns: minmax(0, 1fr) auto 64px 30px;
+}
+.fw-line.subif-addr {
+  grid-template-columns: minmax(0, 1fr) auto 56px;
 }
 .record-row {
   display: grid;

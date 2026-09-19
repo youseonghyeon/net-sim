@@ -9,6 +9,8 @@ export interface EthernetFrame {
   payload: ArpPacket | Ipv4Packet;
   /** 스위치를 거친 횟수. 실제 이더넷엔 없지만 L2 루프 폭주를 막기 위한 안전장치 */
   hops?: number;
+  /** 802.1Q VLAN 태그. 트렁크 링크 위에서만 붙는다 */
+  vlan?: number;
 }
 
 /** 이 횟수를 넘긴 프레임은 루프로 간주해 버린다 */

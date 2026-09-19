@@ -177,12 +177,28 @@ export interface StaticRouteSettings {
   via: string;
 }
 
+export interface SubIfaceSettings {
+  /** 물리 인터페이스 인덱스 (if1 = 1, if2 = 2) */
+  port: number;
+  vlan: number;
+  ip: string;
+  prefix: number;
+  relay: string;
+}
+
 export interface L3Settings {
   interfaces: IfaceSettings[];
   routes: StaticRouteSettings[];
   /** NAT 박스의 포트 포워딩 규칙 */
   forwards?: PortForwardSettings[];
   firewall?: FirewallSettings;
+  /** 게이트웨이의 VLAN 서브 인터페이스 (router-on-a-stick) */
+  subinterfaces?: SubIfaceSettings[];
+}
+
+/** 스위치 포트별 VLAN: 숫자(액세스) 또는 "trunk". 없으면 VLAN 1 */
+export interface SwitchSettings {
+  vlans: Record<number, number | "trunk">;
 }
 
 export interface WanSettings {
@@ -259,6 +275,8 @@ export interface Device {
   l3?: L3Settings;
   /** 무선 AP 장치 */
   ap?: WifiBaseSettings;
+  /** 스위치 VLAN */
+  switch?: SwitchSettings;
   /** 무선 단말 (스마트폰) */
   wifi?: WifiClientSettings;
 }
@@ -323,6 +341,7 @@ export function createDevice(kind: DeviceKind, x: number, y: number, devices: De
     device.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" }, wan: { ...DEFAULT_WAN } };
   }
   if (spec.role === "l3") device.l3 = defaultL3(kind);
+  if (spec.role === "switch") device.switch = { vlans: {} };
   if (spec.role === "ap") device.ap = { ...DEFAULT_WIFI_BASE };
   if (kind === "phone") device.wifi = { ssid: "home" };
   return device;
@@ -509,6 +528,7 @@ export function normalizeTopology(t: Topology): Topology {
       }
     }
     if (spec.role === "ap" && !fixed.ap) fixed.ap = { ...DEFAULT_WIFI_BASE };
+    if (spec.role === "switch" && !fixed.switch) fixed.switch = { vlans: {} };
     if (fixed.kind === "phone" && !fixed.wifi) fixed.wifi = { ssid: "home" };
     if (spec.role === "l3") {
       const def = defaultL3(fixed.kind);
@@ -607,6 +627,62 @@ export function examplePartsTopology(): Topology {
   return { devices, cables };
 }
 
+/** VLAN 예제: 인터넷 → NAT → 게이트웨이(if1 트렁크) → 스위치(VLAN 10: pc 2대, VLAN 20: 웹 서버 + 노트북) */
+export function exampleVlanTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const inet = add("internet", 344, -232);
+  const nat = add("nat", 344, -80);
+  nat.l3 = {
+    interfaces: [
+      { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" },
+      { ipMode: "static", ip: "10.0.0.1", prefix: 24, gateway: "" },
+    ],
+    routes: [{ dest: "192.168.0.0", prefix: 16, via: "10.0.0.2" }],
+  };
+  const gw = add("gateway", 344, 80);
+  gw.l3 = {
+    interfaces: [
+      { ipMode: "static", ip: "10.0.0.2", prefix: 24, gateway: "10.0.0.1" },
+      { ipMode: "static", ip: "", prefix: 24, gateway: "" }, // if1 은 트렁크: 주소 없이 서브 인터페이스만
+      { ipMode: "static", ip: "", prefix: 24, gateway: "" },
+    ],
+    routes: [],
+    // router-on-a-stick: 트렁크 하나 위에 VLAN 마다 게이트웨이 주소
+    subinterfaces: [
+      { port: 1, vlan: 10, ip: "192.168.10.1", prefix: 24, relay: "" },
+      { port: 1, vlan: 20, ip: "192.168.20.1", prefix: 24, relay: "" },
+    ],
+  };
+  const sw = add("switch", 344, 256);
+  sw.switch = { vlans: { 0: "trunk", 1: 10, 2: 10, 5: 20, 6: 20 } };
+  const pc1 = add("pc", 120, 424);
+  const pc2 = add("pc", 260, 424);
+  const laptop = add("laptop", 460, 424);
+  const web = add("server", 600, 424);
+  const staticHost = (d: Device, ip: string, gw: string, services: number[] = []) => {
+    d.host = { ipMode: "static", ip, prefix: 24, gateway: gw, dns: "8.8.8.8", services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  staticHost(pc1, "192.168.10.10", "192.168.10.1");
+  staticHost(pc2, "192.168.10.11", "192.168.10.1");
+  staticHost(laptop, "192.168.20.10", "192.168.20.1");
+  staticHost(web, "192.168.20.20", "192.168.20.1", [80]);
+  const cables: Cable[] = [
+    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: nat.id, port: 0 } },
+    { id: newId("cable"), a: { device: nat.id, port: 1 }, b: { device: gw.id, port: 0 } },
+    { id: newId("cable"), a: { device: gw.id, port: 1 }, b: { device: sw.id, port: 0 } }, // 트렁크
+    { id: newId("cable"), a: { device: sw.id, port: 1 }, b: { device: pc1.id, port: 0 } }, // VLAN 10
+    { id: newId("cable"), a: { device: sw.id, port: 2 }, b: { device: pc2.id, port: 0 } }, // VLAN 10
+    { id: newId("cable"), a: { device: sw.id, port: 5 }, b: { device: laptop.id, port: 0 } }, // VLAN 20
+    { id: newId("cable"), a: { device: sw.id, port: 6 }, b: { device: web.id, port: 0 } }, // VLAN 20
+  ];
+  return { devices, cables };
+}
+
 /** 인터넷 + 공유기(라우터) + 스위치 + 호스트 3대 예제 */
 export function exampleTopology(): Topology {
   const devices: Device[] = [];
@@ -634,4 +710,16 @@ export function exampleTopology(): Topology {
     { id: newId("cable"), a: { device: sw.id, port: 6 }, b: { device: srv.id, port: 0 } }, // eth6
   ];
   return { devices, cables };
+}
+
+/** 장치 포트의 VLAN 모드 (스위치가 아니면 undefined) */
+export function portVlanOf(d: Device, port: number): number | "trunk" | undefined {
+  if (d.kind !== "switch") return undefined;
+  return d.switch?.vlans[port] ?? 1;
+}
+
+/** VLAN 번호 → 캔버스 색 인덱스 (1 은 기본색). 같은 번호는 항상 같은 색 */
+export const VLAN_COLORS = ["#e0a526", "#2ba84a", "#2b8fd6", "#8b5cf6", "#e05a8a", "#14b8a6", "#f97316"];
+export function vlanColor(vlan: number): string {
+  return VLAN_COLORS[(vlan - 1) % VLAN_COLORS.length]!;
 }

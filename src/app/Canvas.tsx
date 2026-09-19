@@ -7,6 +7,8 @@ import { connectDevices, fitRequest, loadExample, moveDevice, selection, tool, t
 import {
   baseSsid,
   freePort,
+  portVlanOf,
+  vlanColor,
   PORT_DEPTH,
   PORT_WIDTH,
   portAnchor,
@@ -288,9 +290,12 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
         const a = portAnchor(d, i);
         const lx = a.x - d.x - PORT_WIDTH / 2;
         const ly = p.side === "top" ? a.y - d.y : a.y - d.y - PORT_DEPTH;
+        const v = portVlanOf(d, i);
+        const vlanStyle = v !== undefined && v !== 1 && v !== "trunk" ? { fill: vlanColor(v), stroke: vlanColor(v) } : undefined;
+        const title = v === undefined ? p.name : v === "trunk" ? `${p.name} · 트렁크` : `${p.name} · VLAN ${v}`;
         return (
-          <rect key={p.name} class={`port${used.has(i) ? " used" : ""}`} x={lx} y={ly} width={PORT_WIDTH} height={PORT_DEPTH} rx={1.5}>
-            <title>{p.name}</title>
+          <rect key={p.name} class={`port${used.has(i) ? " used" : ""}${v === "trunk" ? " trunk" : ""}`} x={lx} y={ly} width={PORT_WIDTH} height={PORT_DEPTH} rx={1.5} style={vlanStyle}>
+            <title>{title}</title>
           </rect>
         );
       })}
