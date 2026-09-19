@@ -29,6 +29,9 @@ describe("방화벽: CIDR", () => {
     expect(validCidr("10.0.0.0/8")).toBe(true);
     expect(validCidr("10.0.0.0/33")).toBe(false);
     expect(validCidr("")).toBe(false);
+    // "x.x.x.x/" 는 prefix 0(모두 일치)로 읽히면 안 된다
+    expect(validCidr("10.0.0.0/")).toBe(false);
+    expect(cidrContains("10.0.0.0/", "1.2.3.4")).toBe(false);
   });
 });
 

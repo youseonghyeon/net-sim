@@ -57,6 +57,8 @@ class SimController {
   net = new Network();
   private syncedConfig = new Map<string, SyncedDevice>();
   private syncedCables = new Map<string, number>();
+  /** 동기화된 무선 링크 id → 단말 id (끊김 트레이스와 재시도용) */
+  private syncedWireless = new Map<string, string>();
   private lastFrame = 0;
 
   constructor() {
@@ -69,6 +71,7 @@ class SimController {
     this.net = new Network();
     this.syncedConfig = new Map();
     this.syncedCables = new Map();
+    this.syncedWireless = new Map();
     simTime.value = 0;
     this.sync(topology.peek());
   }
@@ -109,9 +112,13 @@ class SimController {
     for (const id of [...this.syncedCables.keys()]) {
       if (!cableIds.has(id)) {
         settle();
-        if (id.startsWith("wl_")) {
-          const client = id.slice(3);
-          if (net.hasNode(client)) net.contextFor(client).trace("wifi.disassociate", "L1", `무선 연결 끊김 (범위 밖이거나 SSID/무선 설정이 바뀜)`, {});
+        const wlClient = this.syncedWireless.get(id);
+        if (wlClient !== undefined) {
+          const still = wl.find((l) => l.client === wlClient);
+          if (net.hasNode(wlClient)) {
+            net.contextFor(wlClient).trace("wifi.disassociate", "L1", still ? `무선 연결 변경: 다른 기지/슬롯으로 옮겨 붙음 → 다시 연결` : `무선 연결 끊김 (범위 밖이거나 SSID/무선 설정이 바뀜)`, {});
+          }
+          this.syncedWireless.delete(id);
         }
         net.disconnect(id);
         this.syncedCables.delete(id);
@@ -151,11 +158,18 @@ class SimController {
           if (c.wireless) {
             const baseName = t.devices.find((d) => d.id === c.wireless!.base)?.name ?? c.wireless.base;
             net.contextFor(c.a.device).trace("wifi.associate", "L1", `무선 연결: ${baseName} 에 붙음 (거리 ${c.wireless.distance}px, 슬롯 ${c.b.port}) → DHCP 시작`, { ...c.wireless });
+            this.syncedWireless.set(c.id, c.a.device);
           }
           net.connect(c.a.device, c.a.port, c.b.device, c.b.port, c.latency, c.id);
           net.setLinkLoss(c.id, loss);
         } catch (e) {
           console.warn("cable sync failed", c, e);
+          if (c.wireless) {
+            // 슬롯이 아직 옛 링크에 잡혀 있는 등의 일시적 실패: 다음 동기화에서 다시 시도한다
+            this.syncedWireless.delete(c.id);
+            if (net.hasNode(c.a.device)) net.contextFor(c.a.device).trace("wifi.no-base", "L1", `무선 연결 실패: ${e instanceof Error ? e.message : String(e)} → 다음 변경 때 다시 시도`, {});
+            continue;
+          }
         }
         this.syncedCables.set(c.id, loss); // 실패해도 기록해 매 변경마다 재시도하지 않는다
       } else if (prevLoss !== loss) {

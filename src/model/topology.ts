@@ -350,7 +350,7 @@ export function createDevice(kind: DeviceKind, x: number, y: number, devices: De
 // ---------- 무선 연결 (파생 상태) ----------
 
 export interface WirelessLink {
-  /** 케이블처럼 쓰이는 id: wl_<단말 id> */
+  /** 케이블처럼 쓰이는 id: wl_<단말 id>_<기지 id>_<슬롯>. 기지나 슬롯이 바뀌면 다른 링크로 취급된다 */
   id: string;
   client: string;
   base: string;
@@ -411,7 +411,7 @@ export function wirelessLinks(t: Topology): WirelessLink[] {
       table.set(c.id, slot);
     }
     used.add(slot);
-    out.push({ id: `wl_${c.id}`, client: c.id, base: best.base.id, slot, distance: Math.round(best.distance) });
+    out.push({ id: `wl_${c.id}_${best.base.id}_${slot}`, client: c.id, base: best.base.id, slot, distance: Math.round(best.distance) });
   }
   return out;
 }
@@ -424,8 +424,12 @@ export function wirelessStatus(t: Topology, client: Device): { linked?: Wireless
   if (!ssid) return { reason: "연결할 SSID 를 입력하세요" };
   const same = t.devices.filter((d) => baseSsid(d)?.ssid.trim() === ssid);
   if (same.length === 0) return { reason: `SSID "${ssid}" 를 송출하는 AP 나 공유기가 없습니다` };
-  if (!same.some((d) => baseSsid(d)!.enabled)) return { reason: `SSID "${ssid}" 의 무선이 꺼져 있습니다` };
-  return { reason: `SSID "${ssid}" 는 있지만 전파 범위(${WIFI_RANGE}px) 밖입니다. 단말을 AP 쪽으로 옮기세요` };
+  const on = same.filter((d) => baseSsid(d)!.enabled);
+  if (on.length === 0) return { reason: `SSID "${ssid}" 의 무선이 꺼져 있습니다` };
+  const cc = center(client);
+  const inRange = on.filter((d) => Math.hypot(center(d).x - cc.x, center(d).y - cc.y) <= WIFI_RANGE);
+  if (inRange.length === 0) return { reason: `SSID "${ssid}" 는 있지만 전파 범위(${WIFI_RANGE}px) 밖입니다. 단말을 AP 쪽으로 옮기세요` };
+  return { reason: `범위 안의 기지 ${inRange.map((d) => d.name).join(", ")} 에 빈 무선 슬롯이 없습니다 (기지당 ${radioSlotPorts(inRange[0]!).length}대)` };
 }
 
 export function defaultL3(kind: DeviceKind): L3Settings {
@@ -533,7 +537,7 @@ export function normalizeTopology(t: Topology): Topology {
     if (spec.role === "l3") {
       const def = defaultL3(fixed.kind);
       if (!fixed.l3) fixed.l3 = def;
-      else fixed.l3 = { interfaces: def.interfaces.map((d, i) => fixed.l3!.interfaces[i] ?? d), routes: fixed.l3.routes ?? [] };
+      else fixed.l3 = { ...fixed.l3, interfaces: def.interfaces.map((d, i) => fixed.l3!.interfaces[i] ?? d), routes: fixed.l3.routes ?? [] };
     }
     if (spec.role === "router") {
       if (!fixed.router) fixed.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" }, wan: { ...DEFAULT_WAN } };

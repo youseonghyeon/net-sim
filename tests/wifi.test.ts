@@ -127,6 +127,32 @@ describe("무선 연결 모델 (SSID + 범위)", () => {
     expect(wirelessLinks(t).find((l) => l.client === p1.id)!.slot).toBe(slot1);
   });
 
+  it("로밍(다른 기지로 옮겨 붙음)하면 링크 id 가 바뀐다 — 시뮬레이션 diff 가 재연결을 보게 하기 위해", () => {
+    const devices: Device[] = [];
+    const ap1 = mk("ap", 0, 0, devices);
+    const ap2 = mk("ap", 400, 0, devices);
+    const p = mk("phone", 100, 50, devices);
+    const t = { devices, cables: [] };
+    const before = wirelessLinks(t).find((l) => l.client === p.id)!;
+    expect(before.base).toBe(ap1.id);
+    expect(before.id).toContain(ap1.id);
+    p.x = 300;
+    const after = wirelessLinks(t).find((l) => l.client === p.id)!;
+    expect(after.base).toBe(ap2.id);
+    expect(after.id).not.toBe(before.id);
+  });
+
+  it("범위 안 기지의 슬롯이 다 차면 그 이유를 알려준다", () => {
+    const devices: Device[] = [];
+    mk("ap", 0, 0, devices);
+    const phones = Array.from({ length: 9 }, (_, i) => mk("phone", 50 + i * 5, 80, devices));
+    const t = { devices, cables: [] };
+    const links = wirelessLinks(t);
+    expect(links).toHaveLength(8); // AP_RADIO_SLOTS
+    const left = phones.find((ph) => !links.some((l) => l.client === ph.id))!;
+    expect(wirelessStatus(t, left).reason).toContain("빈 무선 슬롯이 없습니다");
+  });
+
   it("공유기 무선이 꺼져 있으면 붙지 않고, 켜면 붙는다", () => {
     const devices: Device[] = [];
     const rt = mk("router", 0, 0, devices);

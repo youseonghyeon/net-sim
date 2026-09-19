@@ -127,6 +127,47 @@ describe("게이트웨이 서브 인터페이스 (router-on-a-stick)", () => {
     return net;
   }
 
+  it("서브 인터페이스 MAC 은 장치 식별 옥텟을 유지해 게이트웨이 두 대가 같은 VLAN 을 써도 겹치지 않는다", () => {
+    const mkGw = (id: string, tail: string) =>
+      new L3Node({
+        id,
+        kind: "gateway",
+        interfaces: [
+          { name: "if0", mac: `02:00:00:10:00:${tail}`, mode: "static" },
+          { name: "if1", mac: `02:00:00:11:00:${tail}`, mode: "static" },
+        ],
+        subinterfaces: [
+          { port: 1, vlan: 10, ip: "192.168.10.1", prefix: 24 },
+          { port: 1, vlan: 10, ip: "192.168.10.9", prefix: 24 }, // 같은 (포트, VLAN) 중복 → 무시
+          { port: 1, vlan: 300, ip: "192.168.30.1", prefix: 24 },
+        ],
+      });
+    const g1 = mkGw("g1", "02");
+    const g2 = mkGw("g2", "03");
+    expect(g1.names).toEqual(["if0", "if1", "if1.10", "if1.300"]);
+    const macs1 = g1.ifaces.map((i) => i.mac);
+    const macs2 = g2.ifaces.map((i) => i.mac);
+    expect(new Set([...macs1, ...macs2]).size).toBe(8);
+    expect(macs1[2]).not.toBe(macs1[3]); // VLAN 이 다르면 MAC 도 다르다
+    expect(macs1[2]!.endsWith(":00:02")).toBe(true);
+  });
+
+  it("서브 인터페이스 주소를 바꾸면 Gratuitous ARP 를 트렁크로 태그해 보낸다", () => {
+    const net = stick();
+    const gw = net.nodes.get("gw") as L3Node;
+    net.transmissions.length = 0;
+    gw.setSubinterfaces(
+      [
+        { port: 1, vlan: 10, ip: "192.168.10.254", prefix: 24 },
+        { port: 1, vlan: 20, ip: "192.168.20.1", prefix: 24 },
+      ],
+      net.contextFor("gw"),
+    );
+    const garp = net.transmissions.find((t) => t.from.node === "gw" && t.frame.payload.kind === "arp" && t.frame.payload.senderIp === "192.168.10.254");
+    expect(garp?.frame.vlan).toBe(10);
+    expect(gw.names).toEqual(["if0", "if1", "if2", "if1.10", "if1.20"]);
+  });
+
   it("VLAN 10 호스트가 VLAN 20 호스트와 게이트웨이 서브 인터페이스를 거쳐 통신한다", () => {
     const net = stick();
     const gw = net.nodes.get("gw") as L3Node;

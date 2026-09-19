@@ -108,8 +108,12 @@ export class L3Node implements SimNode {
     const nextClients = this.clients.slice(0, physical);
     const nextLinkUp = this.linkUp.slice(0, physical);
     const nextRelays = this.relays.slice(0, physical);
+    const seen = new Set<string>();
     for (const sub of subs) {
       if (sub.port < 0 || sub.port >= physical) continue;
+      const dupKey = `${sub.port}:${sub.vlan}`;
+      if (seen.has(dupKey)) continue; // 같은 (포트, VLAN) 이 두 번 오면 첫 것만
+      seen.add(dupKey);
       const existing = this.meta.findIndex((m, i) => i >= physical && m.port === sub.port && m.vlan === sub.vlan);
       const name = `${this.names[sub.port]}.${sub.vlan}`;
       let iface: NetInterface;
@@ -118,11 +122,14 @@ export class L3Node implements SimNode {
         if (iface.ip !== sub.ip || iface.prefix !== (sub.prefix ?? 24)) {
           iface.configure(sub.ip, sub.prefix ?? 24, undefined);
           iface.arpCache.clear();
+          iface.clearPending();
           ctx?.trace("ip.config", "sys", `[${name}] 서브 인터페이스 주소 변경: ${sub.ip ?? "없음"}/${sub.prefix ?? 24}`, { ...sub });
+          if (ctx && iface.ip && this.linkUp[sub.port]) iface.announce(ctx, this.emit(existing, ctx));
         }
         keep.push(existing);
       } else {
-        const mac = this.macBase.replace(/:[0-9a-f]{2}:[0-9a-f]{2}$/i, `:${(0x20 + sub.port).toString(16)}:${(sub.vlan & 0xff).toString(16).padStart(2, "0")}`);
+        // 장치 식별 옥텟(XX:YY)은 그대로 두고 앞 세 옥텟에 포트·VLAN 을 넣어 장치 간 충돌을 막는다
+        const mac = this.macBase.replace(/^[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}/i, `06:${((sub.vlan >> 8) & 0xff).toString(16).padStart(2, "0")}:${(sub.vlan & 0xff).toString(16).padStart(2, "0")}:${(0x20 + sub.port).toString(16).padStart(2, "0")}`);
         iface = new NetInterface(mac, { ip: sub.ip, prefix: sub.prefix ?? 24 });
         ctx?.trace("ip.config", "sys", `[${name}] VLAN ${sub.vlan} 서브 인터페이스 생성: ${sub.ip ?? "주소 없음"}/${sub.prefix ?? 24} (${this.names[sub.port]} 로 오가는 프레임에 VLAN ${sub.vlan} 태그)`, { ...sub });
       }

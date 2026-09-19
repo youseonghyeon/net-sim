@@ -39,7 +39,7 @@ export const DIRECTION_LABEL: Record<FwDirection, string> = { in: "들어오는"
 /** "a.b.c.d" 또는 "a.b.c.d/n" 이 ip 를 포함하는지. 형식이 틀리면 false */
 export function cidrContains(cidr: string, ip: Ip): boolean {
   const [base, prefixStr] = cidr.trim().split("/");
-  if (!base) return false;
+  if (!base || prefixStr === "") return false;
   const prefix = prefixStr === undefined ? 32 : Number(prefixStr);
   if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
   try {
@@ -52,7 +52,7 @@ export function cidrContains(cidr: string, ip: Ip): boolean {
 
 export function validCidr(cidr: string): boolean {
   const [base, prefixStr] = cidr.trim().split("/");
-  if (!base) return false;
+  if (!base || prefixStr === "") return false;
   if (prefixStr !== undefined) {
     const p = Number(prefixStr);
     if (!Number.isInteger(p) || p < 0 || p > 32) return false;
