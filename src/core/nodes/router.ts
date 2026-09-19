@@ -69,10 +69,20 @@ export class Router implements SimNode {
     this.wan = new NetInterface(cfg.wanMac, wan.mode === "static" ? { ip: wan.ip, prefix: wan.prefix ?? 24, gateway: wan.gateway } : {});
     this.wanClient = new DhcpClient(this.wan, hashCode(cfg.id) + 7, "wan");
     this.dnsForwarder = new DnsServer(cfg.dns ?? { enabled: true, records: [], upstream: "8.8.8.8" }, this.lan, "DNS 포워더", {
-      srcIp: () => this.wan.ip,
-      send: (pkt, ctx) => this.wan.sendIp(pkt, ctx, this.emitWan(ctx)),
+      // 상위 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
+      srcIp: () => (this.upstreamInLan() ? this.lan.ip : this.wan.ip),
+      send: (pkt, ctx) => (this.upstreamInLan() ? this.lan.sendIp(pkt, ctx, this.emitLan(ctx)) : this.wan.sendIp(pkt, ctx, this.emitWan(ctx))),
     });
     if (cfg.forwards) this.nat.setForwards(cfg.forwards);
+  }
+
+  private upstreamInLan(): boolean {
+    const up = this.dnsForwarder.config.upstream;
+    try {
+      return !!up && !!this.lan.ip && sameSubnet(up, this.lan.ip, this.lan.prefix);
+    } catch {
+      return false;
+    }
   }
 
   get dhcp(): DhcpServerConfig {
@@ -247,7 +257,7 @@ export class Router implements SimNode {
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `LAN 쪽 DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frame.id);
       else if (m.kind === "dhcp") ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frame.id);
       else if (pkt.dst === this.lan.ip && m.kind === "dns" && udp.dstPort === DNS_PORT) {
-        if (this.dnsForwarder.config.enabled) this.dnsForwarder.handle(pkt, udp.srcPort, m, frame.id, ctx, emit);
+        if (this.dnsForwarder.config.enabled || m.op === "response") this.dnsForwarder.handle(pkt, udp.srcPort, m, frame.id, ctx, emit);
         else ctx.trace("dns.nxdomain", "app", `DNS 포워더가 꺼져 있음 → 질의에 응답하지 않음 (라우터 설정에서 켜거나 호스트 DNS 를 바꾸세요)`, {}, frame.id);
       } else if (pkt.dst === this.lan.ip) ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frame.id);
       else this.forwardToWan(pkt, frame.id, ctx);

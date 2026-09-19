@@ -30,6 +30,8 @@ export class NatTable {
   private seq = NAT_ID_START;
   /** 포트 포워딩 규칙 (TCP 전용). 규칙 자체가 매핑이므로 동적 항목을 만들지 않는다 */
   forwards: PortForward[] = [];
+  /** 규칙으로 들어온 흐름: "내부IP:내부포트:상대IP:상대포트" → 공인 포트 (같은 내부 서버를 가리키는 규칙이 여럿일 때 구분) */
+  private readonly ruleFlows = new Map<string, number>();
 
   setForwards(rules: PortForward[]): void {
     this.forwards = [...rules];
@@ -55,8 +57,9 @@ export class NatTable {
     const p = pkt.payload;
     const proto = p.kind;
     if (p.kind === "tcp") {
-      // 포트 포워딩으로 들어온 연결의 응답: 규칙의 역방향으로 되돌린다 (동적 항목 없음)
-      const rule = this.forwards.find((r) => r.lanIp === pkt.src && r.lanPort === p.srcPort);
+      // 포트 포워딩으로 들어온 연결의 응답: 그 흐름이 들어온 공인 포트로 되돌린다 (동적 항목 없음)
+      const flowPort = this.ruleFlows.get(`${pkt.src}:${p.srcPort}:${pkt.dst}:${p.dstPort}`);
+      const rule = flowPort !== undefined ? this.forwards.find((r) => r.publicPort === flowPort) : this.forwards.find((r) => r.lanIp === pkt.src && r.lanPort === p.srcPort);
       if (rule) {
         ctx.trace(
           "nat.forward.reply",
@@ -108,6 +111,8 @@ export class NatTable {
             { proto, publicPort: rule.publicPort, lanIp: rule.lanIp, lanPort: rule.lanPort },
             frameId,
           );
+          this.ruleFlows.set(`${rule.lanIp}:${rule.lanPort}:${pkt.src}:${p.srcPort}`, rule.publicPort);
+          if (this.ruleFlows.size > 256) this.ruleFlows.delete(this.ruleFlows.keys().next().value!);
           return { ...pkt, dst: rule.lanIp, payload: { ...p, dstPort: rule.lanPort } };
         }
       }

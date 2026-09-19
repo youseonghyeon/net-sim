@@ -177,7 +177,11 @@ export class L3Node implements SimNode {
       const m = udp.payload;
       if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT && this.clients[port]) this.clients[port]!.handle(m, frameId, ctx, this.emit(port, ctx));
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) this.handleRelay(port, pkt, m, frameId, ctx);
-      else if (m.kind !== "dhcp" && !this.ifaces.some((i) => i.ip === pkt.dst)) this.forward(pkt, port, frameId, ctx);
+      else if (m.kind !== "dhcp" && this.nat && port === this.outside && pkt.dst === this.ifaces[port]!.ip) {
+        // 바깥에서 공인 주소로 돌아온 UDP 응답(예: DNS) → NAT 테이블로 내부 호스트를 찾아 전달
+        const restored = this.nat.restore(pkt, this.ifaces[port]!.ip!, ctx, frameId);
+        if (restored) this.forward(restored, port, frameId, ctx);
+      } else if (m.kind !== "dhcp" && !this.ifaces.some((i) => i.ip === pkt.dst)) this.forward(pkt, port, frameId, ctx);
       else ctx.trace("ip.drop", "L4", `[${name}] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frameId);
       return;
     }

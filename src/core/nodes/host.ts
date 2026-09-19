@@ -1,4 +1,4 @@
-import type { Ip, Mac } from "../addr";
+import { ipToInt, type Ip, type Mac } from "../addr";
 import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, type DnsServerConfig } from "./dns";
@@ -72,6 +72,14 @@ export class Host implements SimNode {
     this.dhcpServer = new DhcpServer(cfg.dhcpServer ?? { enabled: false, start: "", end: "" }, this.iface, false);
     this.dnsServer = new DnsServer(cfg.dnsServer ?? { enabled: false, records: [] }, this.iface);
     this.resolver = new DnsResolver(this.iface, hashCode(cfg.id));
+    this.resolver.local = this.dnsServer;
+    this.iface.loopback = (pkt, ctx) => this.loopback(pkt, ctx);
+  }
+
+  /** 내 주소로 보내는 패킷은 네트워크로 나가지 않고 바로 받는다 (루프백) */
+  private loopback(pkt: Ipv4Packet, ctx: NodeContext): void {
+    ctx.trace("ip.route", "L3", `${pkt.dst} 는 내 주소 → 루프백으로 바로 처리`, { dst: pkt.dst });
+    this.handleIp(pkt, -1, ctx);
   }
 
   /** DNS 서버 서비스 설정 교체 */
@@ -134,7 +142,7 @@ export class Host implements SimNode {
     if (cfg.ipMode === "static") {
       this.dhcp.stop();
       const addrChanged = cfg.ip !== this.iface.ip || (cfg.prefix ?? 24) !== this.iface.prefix;
-      if (cfg.dns !== this.iface.dns) this.resolver.cache.clear();
+      if (cfg.dns !== this.iface.dns) this.resolver.clear("DNS 설정 변경");
       this.iface.configure(cfg.ip || undefined, cfg.prefix ?? 24, cfg.gateway || undefined, cfg.dns || undefined);
       if (addrChanged) {
         this.dhcpServer.onInterfaceChanged(ctx);
@@ -176,7 +184,7 @@ export class Host implements SimNode {
     ctx.trace("link.down", "L1", `링크 끊김`);
     this.iface.clearPending();
     this.tcp.abortAll("링크 끊김", ctx);
-    this.resolver.clear();
+    this.resolver.clear("링크 끊김");
     if (this.ipMode === "dhcp") {
       const had = this.iface.ip;
       this.iface.clearAddress();
@@ -195,6 +203,12 @@ export class Host implements SimNode {
       rec.status = "failed";
       rec.reason = "IP 주소 없음";
       ctx.trace("ip.no-address", "L3", `ping ${target} 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)`, { dst: target });
+      return;
+    }
+    if (!looksLikeName(target) && !isValidIp(target)) {
+      rec.status = "failed";
+      rec.reason = "잘못된 주소";
+      ctx.trace("ip.drop", "L3", `ping ${target} 실패: IP 주소도 이름도 아님`, { dst: target });
       return;
     }
     if (looksLikeName(target)) {
@@ -249,6 +263,11 @@ export class Host implements SimNode {
     if (!this.iface.ip) {
       ctx.trace("ip.no-address", "L3", `${target}:${port} 연결 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)`, { dst: target, port });
       this.tcp.recordFailure("0.0.0.0", target, port, "IP 주소 없음", ctx);
+      return;
+    }
+    if (!looksLikeName(target) && !isValidIp(target)) {
+      ctx.trace("ip.drop", "L3", `${target}:${port} 연결 실패: IP 주소도 이름도 아님`, { dst: target, port });
+      this.tcp.recordFailure(this.iface.ip, target, port, "잘못된 주소", ctx);
       return;
     }
     if (looksLikeName(target)) {
@@ -422,6 +441,15 @@ export class Host implements SimNode {
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: i.arpRows() },
       ],
     };
+  }
+}
+
+function isValidIp(s: string): boolean {
+  try {
+    ipToInt(s);
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -182,3 +182,113 @@ describe("DNS: 라우터 포워더와 공인 DNS", () => {
     expect(rt.nat.values().some((e) => e.proto === "udp")).toBe(true);
   });
 });
+
+describe("DNS 리뷰 반영", () => {
+  it("NAT 박스 뒤 호스트가 8.8.8.8 을 직접 DNS 로 써도 응답이 UDP NAT 역변환으로 돌아온다", async () => {
+    const { Internet } = await import("../src/core/nodes/internet");
+    const { L3Node } = await import("../src/core/nodes/l3");
+    const { Switch } = await import("../src/core/nodes/switch");
+    const { Network } = await import("../src/core/network");
+    const net = new Network();
+    net.addNode(new Internet({ id: "inet", mac: "02:00:00:ff:00:01" }));
+    net.addNode(
+      new L3Node({
+        id: "nat",
+        kind: "nat",
+        outside: 0,
+        interfaces: [
+          { name: "outside", mac: "02:00:00:10:00:01", mode: "dhcp" },
+          { name: "inside", mac: "02:00:00:11:00:01", mode: "static", ip: "192.168.0.1", prefix: 24 },
+        ],
+      }),
+    );
+    net.addNode(new Switch("sw", 4));
+    net.addNode(new Host({ id: "a", mac: "02:00:00:00:00:0a", ipMode: "static", ip: "192.168.0.10", prefix: 24, gateway: "192.168.0.1", dns: "8.8.8.8" }));
+    net.connect("inet", 0, "nat", 0);
+    net.connect("nat", 1, "sw", 0);
+    net.connect("a", 0, "sw", 1);
+    net.runToIdle();
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "a", dst: "example.com" });
+    net.runToIdle();
+    expect(net.getHost("a").pings.at(-1)).toMatchObject({ status: "ok", resolved: "93.184.216.34" });
+  });
+
+  it("질의 대기 중 DNS 설정을 지우면 예외 없이 실패로 끝난다", () => {
+    const net = build("192.168.0.99"); // 응답 없는 서버
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "c1", dst: "srv.local" });
+    net.runUntil(net.now + 100);
+    const c1 = net.getHost("c1");
+    c1.configure({ ipMode: "static", ip: "192.168.0.60", prefix: 24, gateway: "192.168.0.1", dns: undefined }, net.contextFor("c1"));
+    expect(() => net.runToIdle()).not.toThrow();
+    expect(c1.pings.at(-1)).toMatchObject({ status: "failed", reason: "DNS 설정 변경" });
+    expect(net.pendingEvents).toBe(0);
+  });
+
+  it("IP 도 이름도 아닌 대상은 예외 없이 즉시 실패한다", () => {
+    const net = build();
+    for (const bad of ["192.168.0", "999.1.1.1", "1.2.3.4.5"]) {
+      net.scheduleAction(net.now, { kind: "ping", nodeId: "c1", dst: bad });
+      expect(() => net.runToIdle()).not.toThrow();
+      expect(net.getHost("c1").pings.at(-1)).toMatchObject({ dst: bad, status: "failed", reason: "잘못된 주소" });
+    }
+    net.scheduleAction(net.now, { kind: "tcp-connect", nodeId: "c1", dst: "192.168.0", port: 80 });
+    expect(() => net.runToIdle()).not.toThrow();
+    expect([...net.getHost("c1").tcp.conns.values()].at(-1)?.state).toBe("FAILED");
+  });
+
+  it("서버 두 대가 서로를 상위로 가리켜도 무한 루프 없이 SERVFAIL 로 끝난다", () => {
+    const net = build();
+    net.addNode(new Host({ id: "root", mac: "02:00:00:00:00:99", ipMode: "static", ip: "192.168.0.99", prefix: 24, dnsServer: { enabled: true, records: [], upstream: "192.168.0.53" } }));
+    net.connect("root", 0, "sw", 4);
+    net.runToIdle();
+    net.getHost("ns").setDnsServer({ enabled: true, records: [], upstream: "192.168.0.99" }, net.contextFor("ns"));
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "c1", dst: "loop.example" });
+    const events = net.runToIdle(20000);
+    expect(events).toBeLessThan(500);
+    expect(net.getHost("c1").pings.at(-1)?.status).toBe("failed");
+    expect(net.trace.some((e) => e.kind === "dns.timeout" && e.summary.includes("루프"))).toBe(true);
+  });
+
+  it("DNS 서버 호스트가 자기 주소를 DNS 로 쓰면 루프백으로 해석한다", () => {
+    const net = build();
+    const ns = net.getHost("ns");
+    ns.configure({ ipMode: "static", ip: "192.168.0.53", prefix: 24, gateway: "192.168.0.1", dns: "192.168.0.53" }, net.contextFor("ns"));
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "ns", dst: "srv.local" });
+    net.runToIdle();
+    expect(ns.pings.at(-1)).toMatchObject({ status: "ok", resolved: "192.168.0.50" });
+    expect(net.trace.some((e) => e.nodeId === "ns" && e.kind === "dns.query.sent" && e.summary.includes("루프백"))).toBe(true);
+  });
+
+  it("링크가 끊기면 대기 중이던 이름 해석은 실패로 끝난다 (영구 대기 없음)", () => {
+    const net = build("192.168.0.99");
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "c1", dst: "srv.local" });
+    net.runUntil(net.now + 100);
+    const link = [...net.links.values()].find((l) => l.a.node === "c1" || l.b.node === "c1")!;
+    net.disconnect(link.id);
+    net.runToIdle();
+    expect(net.getHost("c1").pings.at(-1)).toMatchObject({ status: "failed", reason: "링크 끊김" });
+  });
+
+  it("상위 DNS 무응답이면 SERVFAIL 이 리졸버가 포기하기 전에 도착해 원인이 정확히 남는다", () => {
+    const net = buildHomeLan(true, false);
+    net.connect("pc1", 0, "sw", 1);
+    net.runToIdle();
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "pc1", dst: "google.com" });
+    net.runToIdle();
+    expect(net.getHost("pc1").pings.at(-1)).toMatchObject({ status: "failed", reason: "DNS 서버가 상위 서버 응답을 받지 못함" });
+  });
+
+  it("라우터 상위 DNS 를 LAN 안의 서버로 두면 LAN 쪽으로 물어본다", () => {
+    const net = build();
+    const rt = net.nodes.get("rt") as import("../src/core/nodes/router").Router;
+    rt.configure(
+      { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.101" }, wan: { mode: "dhcp" }, dns: { enabled: true, records: [], upstream: "192.168.0.53" } },
+      net.contextFor("rt"),
+    );
+    net.connect("pc1", 0, "sw", 4);
+    net.runToIdle();
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "pc1", dst: "srv.local" });
+    net.runToIdle();
+    expect(net.getHost("pc1").pings.at(-1)).toMatchObject({ status: "ok", resolved: "192.168.0.50" });
+  });
+});

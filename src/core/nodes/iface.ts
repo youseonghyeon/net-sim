@@ -29,6 +29,8 @@ export class NetInterface {
   gateway: Ip | undefined;
   /** 이 인터페이스가 쓸 DNS 서버 (수동 설정 또는 DHCP 옵션) */
   dns: Ip | undefined;
+  /** 내 주소로 보내는 패킷을 네트워크 대신 바로 받게 하는 훅 (호스트가 설정) */
+  loopback: ((pkt: Ipv4Packet, ctx: NodeContext) => void) | undefined;
   readonly arpCache = new Map<Ip, ArpEntry>();
   /** nextHop IP → ARP 해석을 기다리는 패킷들 */
   readonly pending = new Map<Ip, PendingPacket[]>();
@@ -80,6 +82,10 @@ export class NetInterface {
     }
     if (pkt.dst === LIMITED_BROADCAST_IP) {
       this.transmit(BROADCAST_MAC, pkt, ctx, emit);
+      return;
+    }
+    if (pkt.dst === this.ip && this.loopback) {
+      this.loopback(pkt, ctx);
       return;
     }
     const nextHop = nextHopOverride ?? this.route(pkt.dst, ctx);

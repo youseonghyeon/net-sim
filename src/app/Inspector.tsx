@@ -8,7 +8,7 @@ import type { SnapshotTable as SnapshotTableData } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { sim, simVersion } from "../model/sim";
 import { removeCable, removeDevice, selectedCable, selectedDevice, topology, updateCable, updateDevice } from "../model/store";
-import { PUBLIC_ZONE } from "../core/nodes/dns";
+import { looksLikeName, PUBLIC_ZONE } from "../core/nodes/dns";
 import {
   cableAt,
   DEFAULT_DHCP_SERVER,
@@ -850,7 +850,7 @@ function DiagSection({ d }: { d: Device }) {
     if (n instanceof Host && n.dnsServer.config.enabled) for (const r of n.dnsServer.config.records) names.push({ ip: r.ip, name: r.name });
   }
   if (hasInternet) for (const r of PUBLIC_ZONE) names.push({ ip: r.ip, name: r.name });
-  const okTarget = (v: string) => validIp(v) || /^[a-z0-9.-]+$/i.test(v);
+  const okTarget = (v: string) => validIp(v) || (looksLikeName(v) && /^[a-z0-9.-]+$/i.test(v));
   const send = () => {
     const dst = input.current?.value.trim();
     if (!dst || !okTarget(dst)) {

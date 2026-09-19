@@ -253,3 +253,34 @@ describe("포트 포워딩 — NAT 박스", () => {
     expect(gw.snapshot().tables.some((t) => t.title === "포트 포워딩")).toBe(false);
   });
 });
+
+describe("포트 포워딩 리뷰 반영", () => {
+  it("같은 내부 서버를 가리키는 규칙이 둘이어도 각 연결의 응답이 들어온 공인 포트로 돌아간다", async () => {
+    const { buildHomeLan } = await import("../src/core/scenarios/homeLan");
+    const { Router } = await import("../src/core/nodes/router");
+    const { Internet } = await import("../src/core/nodes/internet");
+    const net = buildHomeLan(true, true);
+    net.connect("srv", 0, "sw", 2);
+    net.runToIdle();
+    const rt = net.nodes.get("rt") as InstanceType<typeof Router>;
+    rt.configure(
+      {
+        lanIp: "192.168.0.1",
+        lanPrefix: 24,
+        dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.101" },
+        wan: { mode: "dhcp" },
+        forwards: [
+          { publicPort: 80, lanIp: "192.168.0.50", lanPort: 80 },
+          { publicPort: 8080, lanIp: "192.168.0.50", lanPort: 80 },
+        ],
+      },
+      net.contextFor("rt"),
+    );
+    net.scheduleAction(net.now, { kind: "inet-connect", nodeId: "inet", dst: rt.wan.ip!, port: 8080 });
+    net.runToIdle();
+    const inet = net.nodes.get("inet") as InstanceType<typeof Internet>;
+    const conn = [...inet.tcp.conns.values()].find((c) => c.remotePort === 8080)!;
+    expect(conn.state).toBe("CLOSED");
+    expect(conn.bytesReceived).toBe(3000);
+  });
+});

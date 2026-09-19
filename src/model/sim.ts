@@ -269,7 +269,7 @@ function effectiveRouter(d: Device, current?: Router) {
     lanPrefix: r.lanPrefix,
     dhcp: { enabled: r.dhcp.enabled, start: validIp(r.dhcp.start) ?? current?.dhcp.start ?? r.dhcp.start, end: validIp(r.dhcp.end) ?? current?.dhcp.end ?? r.dhcp.end },
     wan: w.ipMode === "static" ? { mode: "static" as const, ip: validIp(w.ip), prefix: w.prefix, gateway: validIp(w.gateway) } : { mode: "dhcp" as const },
-    dns: { enabled: dns.enabled, records: [], upstream: validIp(dns.upstream) ?? current?.dnsForwarder.config.upstream },
+    dns: { enabled: dns.enabled, records: [], upstream: validIp(dns.upstream) },
     forwards: effectiveForwards(r.forwards),
   };
 }

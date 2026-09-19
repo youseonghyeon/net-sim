@@ -70,6 +70,8 @@ export interface DnsMessage {
   /** 응답: 찾은 주소. 없으면 rcode */
   answer?: Ip;
   rcode?: "NXDOMAIN" | "SERVFAIL";
+  /** 재귀 질의가 서버를 거친 횟수 (루프 방지) */
+  hops?: number;
 }
 
 export const DNS_PORT = 53;

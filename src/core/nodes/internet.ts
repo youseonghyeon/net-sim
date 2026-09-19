@@ -143,6 +143,10 @@ export class Internet implements SimNode {
 
   /** 공인 DNS(8.8.8.8, 1.1.1.1): 공개 이름들에 답한다. 다른 공인 주소로 온 질의는 그 주소에 DNS 가 없다고 본다 */
   private handleDns(pkt: Ipv4Packet, srcPort: number, msg: DnsMessage, frameId: number, ctx: NodeContext): void {
+    if (isPrivateIp(pkt.dst)) {
+      ctx.trace("ip.drop", "L3", `사설 주소 ${pkt.dst} 로 가는 DNS 질의가 인터넷으로 나옴 → 폐기. LAN 안의 DNS 서버라면 라우터가 LAN 쪽으로 보내야 함`, { dst: pkt.dst }, frameId);
+      return;
+    }
     if (isPrivateIp(pkt.src)) {
       ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} 인 DNS 질의 → 응답을 돌려줄 수 없어 폐기 (NAT 필요)`, { src: pkt.src }, frameId);
       return;
