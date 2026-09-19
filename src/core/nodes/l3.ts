@@ -4,6 +4,7 @@ import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, LIMITED_BROADCAST_IP
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient } from "./dhcp";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
+import { Firewall, type FirewallConfig, type FlowDirection } from "./firewall";
 import { NatTable, type PortForward } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 
@@ -31,6 +32,7 @@ export interface L3Config {
   /** NAT 박스: 이 인덱스의 인터페이스가 바깥(공인) 쪽 */
   outside?: number;
   routes?: StaticRoute[];
+  firewall?: FirewallConfig;
   /** NAT 박스 전용: 포트 포워딩 규칙 (TCP). kind 가 "gateway" 면 무시 */
   forwards?: PortForward[];
 }
@@ -55,6 +57,7 @@ export class L3Node implements SimNode {
   routes: StaticRoute[];
   /** 인터페이스별 DHCP 릴레이 대상 서버 */
   readonly relays: (Ip | undefined)[];
+  readonly firewall: Firewall;
 
   constructor(cfg: L3Config) {
     this.id = cfg.id;
@@ -70,6 +73,19 @@ export class L3Node implements SimNode {
     this.routes = [...(cfg.routes ?? [])];
     this.relays = cfg.interfaces.map((i) => i.relay);
     if (this.nat && cfg.forwards) this.nat.setForwards(cfg.forwards);
+    this.firewall = new Firewall(cfg.firewall);
+  }
+
+  setFirewall(cfg: FirewallConfig, ctx: NodeContext): void {
+    this.firewall.setConfig(cfg, ctx, "");
+  }
+
+  /** 업링크(0번 인터페이스 = if0/outside) 기준 방향 */
+  private flowDirection(inPort: number, outPort: number): FlowDirection {
+    const uplink = this.outside ?? 0;
+    if (inPort === uplink) return "in";
+    if (outPort === uplink) return "out";
+    return "lan";
   }
 
   setRoutes(routes: StaticRoute[], ctx: NodeContext): void {
@@ -328,6 +344,7 @@ export class L3Node implements SimNode {
     }
     const outName = this.names[r.out]!;
     const outIface = this.ifaces[r.out]!;
+    if (!this.firewall.check(pkt, this.flowDirection(inPort, r.out), ctx, frameId)) return;
     let out: Ipv4Packet = { ...pkt, ttl: pkt.ttl - 1 };
     if (this.nat && r.out === this.outside) {
       if (inPort === this.outside) {
@@ -384,6 +401,7 @@ export class L3Node implements SimNode {
     const def = this.route("0.0.0.1");
     if (def && def.kind === "default") routes.push(["0.0.0.0/0", this.names[def.out]!, `via ${def.nextHop}`]);
     const tables: NodeSnapshot["tables"] = [{ title: "라우팅 테이블", columns: ["목적지", "인터페이스", "다음 홉"], rows: routes }];
+    if (this.firewall.config.enabled) tables.push({ title: "방화벽 규칙", columns: ["#", "규칙"], rows: this.firewall.rows() });
     if (this.nat) {
       const publicIp = this.ifaces[this.outside!]!.ip;
       tables.push({ title: "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(publicIp) });
@@ -394,7 +412,12 @@ export class L3Node implements SimNode {
       id: this.id,
       type: this.type,
       label: this.id,
-      info: this.ifaces.map((_, i) => [this.names[i]!, this.ifaceStatus(i) + (this.relays[i] ? ` · DHCP 릴레이 → ${this.relays[i]}` : "")] as [string, string]),
+      info: [
+        ...this.ifaces.map((_, i) => [this.names[i]!, this.ifaceStatus(i) + (this.relays[i] ? ` · DHCP 릴레이 → ${this.relays[i]}` : "")] as [string, string]),
+        ...(this.firewall.config.enabled
+          ? [["방화벽", `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}`] as [string, string]]
+          : []),
+      ],
       tables,
     };
   }

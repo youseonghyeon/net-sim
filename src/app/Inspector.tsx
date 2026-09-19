@@ -9,10 +9,12 @@ import { Router } from "../core/nodes/router";
 import { sim, simVersion } from "../model/sim";
 import { removeCable, removeDevice, selectedCable, selectedDevice, topology, updateCable, updateDevice } from "../model/store";
 import { looksLikeName, PUBLIC_ZONE } from "../core/nodes/dns";
+import { validCidr } from "../core/nodes/firewall";
 import {
   cableAt,
   DEFAULT_DHCP_SERVER,
   DEFAULT_DNS_SERVER,
+  DEFAULT_FIREWALL_SETTINGS,
   DEFAULT_ROUTER_DNS,
   DEFAULT_WAN,
   defaultL3,
@@ -20,6 +22,8 @@ import {
   specOf,
   type Cable,
   type Device,
+  type FirewallRuleSettings,
+  type FirewallSettings,
   type HostSettings,
   type IfaceSettings,
   type L3Settings,
@@ -412,7 +416,110 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
           lanHint="안쪽 서버 주소가 다른 라우터 뒤에 있으면 그쪽 정적 경로도 있어야 합니다."
         />
       )}
+      <FirewallSection
+        value={l3.firewall ?? DEFAULT_FIREWALL_SETTINGS}
+        onChange={(firewall) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), firewall } }))}
+        uplinkName={isNat ? "outside" : "if0"}
+      />
     </>
+  );
+}
+
+/** 방화벽 규칙 편집기 (라우터 / 게이트웨이 / NAT 박스 공용). 지나가는 패킷만 검사한다 */
+function FirewallSection({ value, onChange, uplinkName }: { value: FirewallSettings; onChange: (v: FirewallSettings) => void; uplinkName: string }) {
+  const set = (patch: Partial<FirewallSettings>) => onChange({ ...value, ...patch });
+  const setRule = (i: number, patch: Partial<FirewallRuleSettings>) => set({ rules: value.rules.map((r, k) => (k === i ? { ...r, ...patch } : r)) });
+  const move = (i: number, d: -1 | 1) => {
+    const j = i + d;
+    if (j < 0 || j >= value.rules.length) return;
+    const rules = [...value.rules];
+    [rules[i], rules[j]] = [rules[j]!, rules[i]!];
+    set({ rules });
+  };
+  const err = (r: FirewallRuleSettings) => {
+    if (r.src && !validCidr(r.src)) return "출발지: 주소 또는 주소/프리픽스";
+    if (r.dst && !validCidr(r.dst)) return "목적지: 주소 또는 주소/프리픽스";
+    if (r.dstPort && !/^\d+$/.test(r.dstPort)) return "포트는 숫자";
+    if (r.dstPort && r.proto === "icmp") return "ICMP 에는 포트가 없습니다";
+    return undefined;
+  };
+  return (
+    <Section title="방화벽">
+      <label class="toggle-row">
+        <span>{value.enabled ? "켜짐" : "꺼짐"}</span>
+        <Toggle on={value.enabled} onToggle={() => set({ enabled: !value.enabled })} />
+      </label>
+      {!value.enabled && <p class="note">이 장치를 지나가는 패킷을 규칙으로 거릅니다. 켜면 "ping 은 되는데 80 은 막힘" 같은 상황을 만들 수 있습니다.</p>}
+      {value.enabled && (
+        <>
+          <Field label="기본 정책">
+            <div class="segmented" role="radiogroup">
+              <button class={value.defaultPolicy === "allow" ? "on" : ""} onClick={() => set({ defaultPolicy: "allow" })}>
+                허용
+              </button>
+              <button class={value.defaultPolicy === "deny" ? "on" : ""} onClick={() => set({ defaultPolicy: "deny" })}>
+                차단
+              </button>
+            </div>
+          </Field>
+          <label class="toggle-row">
+            <span>
+              상태 추적 <span class="muted">(안에서 시작한 통신의 응답 허용)</span>
+            </span>
+            <Toggle on={value.stateful} onToggle={() => set({ stateful: !value.stateful })} />
+          </label>
+          <p class="note">
+            규칙은 위에서부터 첫 일치가 이깁니다. "들어오는" 은 {uplinkName} 에서 들어오는 것, "나가는" 은 {uplinkName} 으로 나가는 것이고, 안쪽 서브넷끼리는 "모든 방향" 규칙에만 걸립니다. NAT 뒤라면 안쪽 주소로 씁니다.
+          </p>
+          {value.rules.map((r, i) => (
+            <div key={i} class="fw-rule">
+              <div class="fw-line">
+                <span class="fw-idx mono">{i + 1}</span>
+                <select class="input" value={r.action} onChange={(e) => setRule(i, { action: e.currentTarget.value as "allow" | "deny" })}>
+                  <option value="deny">차단</option>
+                  <option value="allow">허용</option>
+                </select>
+                <select class="input" value={r.direction} onChange={(e) => setRule(i, { direction: e.currentTarget.value as FirewallRuleSettings["direction"] })}>
+                  <option value="in">들어오는</option>
+                  <option value="out">나가는</option>
+                  <option value="any">모든 방향</option>
+                </select>
+                <select class="input" value={r.proto} onChange={(e) => setRule(i, { proto: e.currentTarget.value as FirewallRuleSettings["proto"] })}>
+                  <option value="any">모든 프로토콜</option>
+                  <option value="icmp">ICMP(ping)</option>
+                  <option value="tcp">TCP</option>
+                  <option value="udp">UDP</option>
+                </select>
+              </div>
+              <div class="fw-line fw-addr">
+                <span class="muted">출발</span>
+                <input class="input mono" value={r.src} placeholder="모두" title="출발지: 주소 또는 주소/프리픽스" onInput={(e) => setRule(i, { src: e.currentTarget.value })} />
+                <span class="muted">목적</span>
+                <input class="input mono" value={r.dst} placeholder="모두" title="목적지: 주소 또는 주소/프리픽스" onInput={(e) => setRule(i, { dst: e.currentTarget.value })} />
+                <span class="muted">:</span>
+                <input class="input mono port" value={r.dstPort} placeholder="포트" disabled={r.proto === "icmp"} onInput={(e) => setRule(i, { dstPort: e.currentTarget.value })} />
+              </div>
+              <div class="fw-line fw-actions">
+                <button class="icon-btn" title="위로" onClick={() => move(i, -1)} disabled={i === 0}>
+                  <Icon name="chevron" size={14} class="up" />
+                </button>
+                <button class="icon-btn" title="아래로" onClick={() => move(i, 1)} disabled={i === value.rules.length - 1}>
+                  <Icon name="chevron" size={14} />
+                </button>
+                <button class="icon-btn" title="규칙 삭제" onClick={() => set({ rules: value.rules.filter((_, k) => k !== i) })}>
+                  <Icon name="trash" size={15} />
+                </button>
+              </div>
+              {err(r) && <div class="error">{err(r)}</div>}
+            </div>
+          ))}
+          <button class="btn wide" onClick={() => set({ rules: [...value.rules, { action: "deny", proto: "any", direction: "in", src: "", dst: "", dstPort: "" }] })}>
+            <Icon name="plus" size={14} />
+            규칙 추가
+          </button>
+        </>
+      )}
+    </Section>
   );
 }
 
@@ -637,6 +744,7 @@ function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
       <WanSection d={d} w={r.wan ?? DEFAULT_WAN} />
       <RouterDnsSection d={d} r={r} />
       <ForwardSection rules={r.forwards ?? []} onChange={(forwards) => set({ forwards })} lanHint="예: 공인 :80 → 192.168.0.20:80 (LAN 의 웹 서버)." />
+      <FirewallSection value={r.firewall ?? DEFAULT_FIREWALL_SETTINGS} onChange={(firewall) => set({ firewall })} uplinkName="WAN" />
     </>
   );
 }

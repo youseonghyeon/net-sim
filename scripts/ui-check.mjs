@@ -67,6 +67,26 @@ await clickDevice("internet-1");
 await page.click("button:has-text('접속')");
 await page.waitForFunction(() => { const sec = [...document.querySelectorAll(".inspector .section")].find((s) => s.textContent.includes("웹 서버 연결")); return /종료됨|실패/.test(sec?.querySelector("tbody tr")?.textContent ?? ""); }, null, { timeout: 40000 });
 console.log("inbound via port forward:", await page.locator(".inspector .section", { hasText: "웹 서버 연결" }).locator("tbody tr").first().innerText());
+
+// 1a3) 방화벽: 라우터에서 "나가는 ICMP 차단" 규칙 → pc-1 의 외부 ping 이 막힌다
+await clickDevice("rt-1");
+const fwSection = page.locator(".inspector .section", { has: page.locator("h3", { hasText: /^방화벽$/ }) });
+await fwSection.locator(".toggle").first().click();
+await fwSection.locator("button:has-text('규칙 추가')").click();
+await fwSection.locator(".fw-line select").nth(1).selectOption("out");
+await fwSection.locator(".fw-line select").nth(2).selectOption("icmp");
+await page.waitForTimeout(100);
+await clickDevice("pc-1");
+await page.fill(".ping-row .input", "8.8.8.8");
+await page.click(".ping-row .btn");
+await page.waitForFunction(() => /8\.8\.8\.8/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+console.log("ping 8.8.8.8 with firewall:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+console.log("fw badge:", (await page.locator(".badge text").allTextContents()).includes("방화벽"));
+await clickDevice("rt-1");
+await page.waitForTimeout(100);
+await page.screenshot({ path: `${OUT}/18-firewall.png` });
+await fwSection.locator(".toggle").first().click(); // 다시 끔 (첫 토글 = 켜짐/꺼짐)
+await page.waitForTimeout(100);
 async function wanOf() {
   return (await device("rt-1").locator("text.addr, text.status").nth(1).textContent()) ?? "";
 }

@@ -164,6 +164,7 @@ export interface L3Settings {
   routes: StaticRouteSettings[];
   /** NAT 박스의 포트 포워딩 규칙 */
   forwards?: PortForwardSettings[];
+  firewall?: FirewallSettings;
 }
 
 export interface WanSettings {
@@ -179,6 +180,25 @@ export interface PortForwardSettings {
   lanPort: number;
 }
 
+export interface FirewallRuleSettings {
+  action: "allow" | "deny";
+  proto: "any" | "icmp" | "tcp" | "udp";
+  direction: "in" | "out" | "any";
+  src: string;
+  dst: string;
+  /** 비우면 모든 포트 */
+  dstPort: string;
+}
+
+export interface FirewallSettings {
+  enabled: boolean;
+  defaultPolicy: "allow" | "deny";
+  stateful: boolean;
+  rules: FirewallRuleSettings[];
+}
+
+export const DEFAULT_FIREWALL_SETTINGS: FirewallSettings = { enabled: false, defaultPolicy: "allow", stateful: true, rules: [] };
+
 export interface RouterSettings {
   lanIp: string;
   lanPrefix: number;
@@ -188,6 +208,7 @@ export interface RouterSettings {
   dns?: { enabled: boolean; upstream: string };
   /** 포트 포워딩 규칙 */
   forwards?: PortForwardSettings[];
+  firewall?: FirewallSettings;
 }
 
 export const DEFAULT_ROUTER_DNS = { enabled: true, upstream: "8.8.8.8" };

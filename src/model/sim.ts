@@ -10,7 +10,8 @@ import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { Switch } from "../core/nodes/switch";
 import { topology } from "./store";
-import { DEFAULT_DHCP_SERVER, DEFAULT_DNS_SERVER, DEFAULT_ROUTER_DNS, DEFAULT_WAN, DEVICE_SPECS, defaultL3, type Device, type Topology } from "./topology";
+import { validCidr } from "../core/nodes/firewall";
+import { DEFAULT_DHCP_SERVER, DEFAULT_DNS_SERVER, DEFAULT_FIREWALL_SETTINGS, DEFAULT_ROUTER_DNS, DEFAULT_WAN, DEVICE_SPECS, defaultL3, type Device, type FirewallSettings, type Topology } from "./topology";
 
 /** 1x 재생 속도에서 실제 1초당 흐르는 시뮬레이션 시간(ms). 링크 10ms 가 0.4초 */
 const BASE_RATE = 25;
@@ -254,6 +255,25 @@ function effectiveDnsServer(d: Device) {
   };
 }
 
+function effectiveFirewall(f: FirewallSettings | undefined) {
+  const c = f ?? DEFAULT_FIREWALL_SETTINGS;
+  return {
+    enabled: c.enabled,
+    defaultPolicy: c.defaultPolicy,
+    stateful: c.stateful,
+    rules: c.rules
+      .filter((r) => (!r.src || validCidr(r.src)) && (!r.dst || validCidr(r.dst)) && (!r.dstPort || /^\d+$/.test(r.dstPort)))
+      .map((r) => ({
+        action: r.action,
+        proto: r.proto,
+        direction: r.direction,
+        src: r.src.trim() || undefined,
+        dst: r.dst.trim() || undefined,
+        dstPort: r.dstPort ? Math.min(65535, Math.max(1, Number(r.dstPort))) : undefined,
+      })),
+  };
+}
+
 function effectiveForwards(rules: { publicPort: number; lanIp: string; lanPort: number }[] | undefined) {
   return (rules ?? [])
     .filter((f) => validIp(f.lanIp) && f.publicPort >= 1 && f.publicPort <= 65535 && f.lanPort >= 1 && f.lanPort <= 65535)
@@ -271,6 +291,7 @@ function effectiveRouter(d: Device, current?: Router) {
     wan: w.ipMode === "static" ? { mode: "static" as const, ip: validIp(w.ip), prefix: w.prefix, gateway: validIp(w.gateway) } : { mode: "dhcp" as const },
     dns: { enabled: dns.enabled, records: [], upstream: validIp(dns.upstream) },
     forwards: effectiveForwards(r.forwards),
+    firewall: effectiveFirewall(r.firewall),
   };
 }
 
@@ -313,6 +334,7 @@ function effectiveL3(d: Device) {
     }),
     routes: (l3.routes ?? []).filter((r) => validIp(r.dest) && validIp(r.via) && r.prefix >= 1 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix, via: r.via })),
     forwards: effectiveForwards(l3.forwards),
+    firewall: effectiveFirewall(l3.firewall),
   };
 }
 
@@ -338,6 +360,7 @@ function makeNode(d: Device): SimNode {
       interfaces: cfg.interfaces.map((c, i) => ({ name: spec.ports[i]!.name, mac: l3MacOf(d.mac, i), ...c })),
       routes: cfg.routes,
       forwards: cfg.forwards,
+      firewall: cfg.firewall,
     });
   }
   return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d) });
@@ -352,6 +375,7 @@ function applyConfig(net: Network, d: Device): void {
     node.configure(cfg.interfaces, net.contextFor(d.id));
     node.setRoutes(cfg.routes, net.contextFor(d.id));
     node.setForwards(cfg.forwards, net.contextFor(d.id));
+    node.setFirewall(cfg.firewall, net.contextFor(d.id));
   }
 }
 
@@ -400,9 +424,11 @@ export function serviceBadges(id: string): string[] {
     if (node.dhcp.enabled) out.push("DHCP");
     if (node.dnsForwarder.config.enabled) out.push("DNS");
     out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
+    if (node.firewall.config.enabled) out.push("방화벽");
   } else if (node instanceof L3Node) {
     if (node.relays.some(Boolean)) out.push("DHCP 릴레이");
     if (node.nat) out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
+    if (node.firewall.config.enabled) out.push("방화벽");
   } else if (node instanceof Internet) {
     out.push("ISP DHCP", "DNS", "웹");
   }

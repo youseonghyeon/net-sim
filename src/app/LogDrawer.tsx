@@ -10,7 +10,7 @@ const LAYERS: Layer[] = ["L1", "L2", "L3", "L4", "app", "sys"];
 const LAYER_HINT: Record<Layer, string> = {
   L1: "물리 · 링크 전송",
   L2: "이더넷 · ARP · 스위칭",
-  L3: "IP · 라우팅",
+  L3: "IP · 라우팅 · NAT · 방화벽",
   L4: "UDP · TCP",
   app: "DHCP · DNS · ping",
   sys: "설정 · 사용자 동작",

@@ -101,7 +101,10 @@ export type TraceKind =
   | "dns.timeout"
   | "dns.nxdomain"
   | "dns.no-server"
-  | "dns.resolved";
+  | "dns.resolved"
+  | "fw.allow"
+  | "fw.deny"
+  | "fw.established";
 
 export interface TraceEvent {
   seq: number;
@@ -146,4 +149,5 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "dns.timeout",
   "dns.nxdomain",
   "dns.no-server",
+  "fw.deny",
 ]);

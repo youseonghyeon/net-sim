@@ -2,6 +2,7 @@ import { BROADCAST_MAC, sameSubnet, type Ip, type Mac } from "../addr";
 import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_UPSTREAM_TIMER_TAG, DnsServer, type DnsServerConfig } from "./dns";
+import { Firewall, type FirewallConfig } from "./firewall";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
 import { NAT_ID_START, NatTable, type PortForward } from "./nat";
@@ -28,6 +29,7 @@ export interface RouterConfig {
   wan?: WanConfig;
   /** DNS 포워더 (공유기 안의 dnsmasq): LAN 의 질의를 상위 DNS 로 대신 물어봄 */
   dns?: DnsServerConfig;
+  firewall?: FirewallConfig;
   /** 포트 포워딩 규칙 (TCP): 공인 포트로 들어온 연결을 LAN 호스트로 */
   forwards?: PortForward[];
 }
@@ -54,6 +56,7 @@ export class Router implements SimNode {
   readonly dhcpServer: DhcpServer;
   readonly wanClient: DhcpClient;
   readonly dnsForwarder: DnsServer;
+  readonly firewall: Firewall;
   wanMode: "dhcp" | "static";
   wanLinkUp = false;
   readonly macTable = new Map<Mac, MacEntry>();
@@ -68,6 +71,7 @@ export class Router implements SimNode {
     this.wanMode = wan.mode;
     this.wan = new NetInterface(cfg.wanMac, wan.mode === "static" ? { ip: wan.ip, prefix: wan.prefix ?? 24, gateway: wan.gateway } : {});
     this.wanClient = new DhcpClient(this.wan, hashCode(cfg.id) + 7, "wan");
+    this.firewall = new Firewall(cfg.firewall);
     this.dnsForwarder = new DnsServer(cfg.dns ?? { enabled: true, records: [], upstream: "8.8.8.8" }, this.lan, "DNS 포워더", {
       // 상위 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
       srcIp: () => (this.upstreamInLan() ? this.lan.ip : this.wan.ip),
@@ -111,7 +115,8 @@ export class Router implements SimNode {
 
   // ---------- 설정 변경 ----------
 
-  configure(cfg: { lanIp: Ip; lanPrefix: number; dhcp: DhcpServerConfig; wan: WanConfig; dns?: DnsServerConfig; forwards?: PortForward[] }, ctx: NodeContext): void {
+  configure(cfg: { lanIp: Ip; lanPrefix: number; dhcp: DhcpServerConfig; wan: WanConfig; dns?: DnsServerConfig; forwards?: PortForward[]; firewall?: FirewallConfig }, ctx: NodeContext): void {
+    if (cfg.firewall) this.firewall.setConfig(cfg.firewall, ctx, "");
     if (cfg.lanIp !== this.lan.ip || cfg.lanPrefix !== this.lan.prefix) {
       this.lan.configure(cfg.lanIp, cfg.lanPrefix, undefined);
       this.lan.arpCache.clear();
@@ -306,6 +311,7 @@ export class Router implements SimNode {
     // 바깥에서 들어온 패킷: NAT 테이블로 내부 호스트를 찾는다
     const restored = this.nat.restore(pkt, this.wan.ip, ctx, frameId);
     if (!restored) return;
+    if (!this.firewall.check(restored, "in", ctx, frameId)) return;
     const inner: Ipv4Packet = { ...restored, ttl: pkt.ttl - 1 };
     ctx.trace("ip.forward", "L3", `라우팅: ${inner.dst} 는 LAN 안 → LAN 인터페이스로 전달 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: inner.dst }, frameId);
     this.lan.sendIp(inner, ctx, this.emitLan(ctx));
@@ -324,6 +330,7 @@ export class Router implements SimNode {
       ctx.trace("ip.ttl-expired", "L3", `TTL 이 0 이 되어 폐기 (루프 방지)`, { dst: pkt.dst }, frameId);
       return;
     }
+    if (!this.firewall.check(pkt, "out", ctx, frameId)) return;
     const translated = this.nat.translate({ ...pkt, ttl: pkt.ttl - 1 }, this.wan.ip, ctx, frameId);
     if (!translated) return;
     ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 외부 → WAN 인터페이스로 전달 (TTL ${pkt.ttl} → ${translated.ttl})`, { dst: pkt.dst }, frameId);
@@ -374,12 +381,14 @@ export class Router implements SimNode {
         ["WAN 게이트웨이", this.wan.gateway ?? "없음"],
         ["DHCP 서비스", this.dhcp.enabled ? `켜짐 · ${this.dhcp.start} ~ ${this.dhcp.end}` : "꺼짐"],
         ["DNS 포워더", this.dnsForwarder.config.enabled ? `켜짐 · 상위 ${this.dnsForwarder.config.upstream ?? "없음"}` : "꺼짐"],
+        ["방화벽", this.firewall.config.enabled ? `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}` : "꺼짐"],
       ],
       tables: [
         { title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
         ...(this.dnsForwarder.cache.size > 0 ? [{ title: "DNS 캐시", columns: ["이름", "IP", "출처"], rows: this.dnsForwarder.rows() }] : []),
         { title: "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(this.wan.ip) },
         { title: "포트 포워딩", columns: ["공인 포트", "내부"], rows: this.nat.forwardRows(this.wan.ip) },
+        ...(this.firewall.config.enabled ? [{ title: "방화벽 규칙", columns: ["#", "규칙"], rows: this.firewall.rows() }] : []),
         {
           title: "내부 스위치 MAC 테이블",
           columns: ["MAC", "포트", "학습 시각"],
