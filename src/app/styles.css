@@ -159,12 +159,21 @@ ul {
 .doc-meta {
   color: var(--ink-3);
   font-size: 12px;
+  white-space: nowrap;
 }
 .topbar-right {
   display: flex;
   justify-content: flex-end;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+/* 상단 오른쪽이 좁아지면 장치 수 표시부터 숨긴다 (버튼이 두 줄로 내려가지 않게) */
+@media (max-width: 1400px) {
+  .doc-meta,
+  .doc-meta + .vsep {
+    display: none;
+  }
 }
 .vsep {
   width: 1px;
@@ -200,6 +209,11 @@ select.btn.example {
   appearance: none;
   -webkit-appearance: none;
   padding-right: 12px;
+  /* 옵션 문구가 길어도 닫힌 상태의 폭은 고정 */
+  width: 124px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .btn.primary {
   background: var(--accent);
@@ -404,6 +418,14 @@ select.btn.example {
 .device.selected .tile {
   stroke: var(--accent);
   stroke-width: 2;
+}
+/* 영역 선택 사각형: 케이블·패킷 위에 그려지므로 채움은 옅게 */
+.marquee {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 .device.targeted .tile {
   stroke: var(--accent);
@@ -917,6 +939,118 @@ select.btn.example {
 }
 .ping-log li.failed span:last-child {
   color: var(--danger);
+}
+/* 구성 검사 배지 (타일 왼쪽 위) */
+.lint-badge circle {
+  fill: var(--warn);
+  stroke: var(--canvas);
+  stroke-width: 2;
+}
+.lint-badge.error circle {
+  fill: var(--danger);
+}
+.lint-badge text {
+  fill: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-anchor: middle;
+  pointer-events: none;
+}
+/* 구성 검사 목록 */
+.lint-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lint-item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  font-size: 12px;
+}
+.lint-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 5px;
+  background: var(--warn);
+}
+.lint-item.error .lint-dot {
+  background: var(--danger);
+}
+.lint-msg {
+  color: var(--ink);
+}
+.lint-fix {
+  color: var(--ink-2);
+  margin-top: 2px;
+}
+.lint-msg .link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+/* traceroute 결과: 홉 번호 · 주소 · 장치 이름 · RTT */
+.trace-result {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.trace-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink-2);
+}
+.trace-result.done .trace-head span:last-child {
+  color: var(--up);
+}
+.trace-result.failed .trace-head span:last-child {
+  color: var(--danger);
+}
+.trace-hops {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.trace-hops li {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto;
+  gap: 8px;
+  padding: 2px 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+}
+.trace-hops .ttl,
+.trace-hops .who,
+.trace-hops .rtt {
+  color: var(--ink-3);
+}
+/* 일괄 ping 결과: 행 상태색은 마지막 칸에만 */
+.ping-table {
+  margin-top: 8px;
+}
+.ping-table tr.ok td:last-child {
+  color: var(--up);
+}
+.ping-table tr.failed td:last-child {
+  color: var(--danger);
+}
+/* 버튼 줄: 2열 격자로 가지런히 (정렬 4개 → 2×2, 복제/삭제 → 나란히) */
+.btn-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.btn-row .btn {
+  width: 100%;
+  justify-content: center;
 }
 .segmented {
   display: grid;

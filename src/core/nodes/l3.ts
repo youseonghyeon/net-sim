@@ -1,6 +1,6 @@
 // 순수 L3 장치: 인터페이스 N개 사이를 라우팅한다. 게이트웨이(NAT 없음)와 NAT 박스(outside 인터페이스에서 변환)가 이 클래스다.
 import { networkOf, sameSubnet, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, LIMITED_BROADCAST_IP, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
+import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, icmpLabel, LIMITED_BROADCAST_IP, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient } from "./dhcp";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
@@ -298,7 +298,7 @@ export class L3Node implements SimNode {
       else if (m.kind !== "dhcp" && this.nat && port === this.outside && pkt.dst === this.ifaces[port]!.ip) {
         // 바깥에서 공인 주소로 돌아온 UDP 응답(예: DNS) → NAT 테이블로 내부 호스트를 찾아 전달
         const restored = this.nat.restore(pkt, this.ifaces[port]!.ip!, ctx, frameId);
-        if (restored) this.forward(restored, port, frameId, ctx);
+        if (restored) this.forward(restored, port, frameId, ctx, pkt);
       } else if (m.kind !== "dhcp" && !this.ifaces.some((i) => i.ip === pkt.dst)) this.forward(pkt, port, frameId, ctx);
       else ctx.trace("ip.drop", "L4", `[${name}] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frameId);
       return;
@@ -328,7 +328,7 @@ export class L3Node implements SimNode {
       if (!restored) return;
       inner = restored;
     }
-    this.forward(inner, port, frameId, ctx);
+    this.forward(inner, port, frameId, ctx, pkt);
   }
 
   /** DHCP 릴레이: 클라이언트 → 서버는 giaddr 를 붙여 유니캐스트, 서버 → 클라이언트는 giaddr 인터페이스에서 L2 유니캐스트 */
@@ -375,7 +375,7 @@ export class L3Node implements SimNode {
 
   private handleIcmp(port: number, pkt: Ipv4Packet, icmp: IcmpPacket, frameId: number, ctx: NodeContext): void {
     if (icmp.type !== "echo-request") {
-      ctx.trace("ip.drop", "L3", `요청한 적 없는 Echo 응답 → 무시`, {}, frameId);
+      ctx.trace("ip.drop", "L3", `요청한 적 없는 ICMP ${icmpLabel(icmp)} → 무시`, {}, frameId);
       return;
     }
     ctx.trace("icmp.echo.received", "app", `ICMP Echo 요청 수신 (from ${pkt.src}, seq=${icmp.seq})`, { from: pkt.src, seq: icmp.seq }, frameId);
@@ -425,13 +425,18 @@ export class L3Node implements SimNode {
     this.ifaces[r.out]!.sendIp(pkt, ctx, this.emit(r.out, ctx), r.nextHop);
   }
 
-  private forward(pkt: Ipv4Packet, inPort: number, frameId: number, ctx: NodeContext): void {
+  /**
+   * 패킷을 라우팅 테이블대로 다른 인터페이스로 넘긴다.
+   * @param received 선에서 받은 그대로의 패킷 (NAT 역변환 전). TTL 초과 통지에 내장할 원래 패킷은 보낸 이가 알아볼 수 있게 이걸 쓴다
+   */
+  private forward(pkt: Ipv4Packet, inPort: number, frameId: number, ctx: NodeContext, received: Ipv4Packet = pkt): void {
     if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
       ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 폐기`, { dst: pkt.dst }, frameId);
       return;
     }
     if (pkt.ttl <= 1) {
-      ctx.trace("ip.ttl-expired", "L3", `TTL 이 0 이 되어 폐기 (루프 방지)`, { dst: pkt.dst }, frameId);
+      const notice = this.ifaces[inPort]!.timeExceeded(received, ctx, frameId);
+      if (notice) this.sendVia(notice, ctx, frameId);
       return;
     }
     const r = this.route(pkt.dst);

@@ -24,7 +24,12 @@ export type IconName =
   | "pause"
   | "step"
   | "refresh"
-  | "send";
+  | "send"
+  | "undo"
+  | "redo"
+  | "download"
+  | "upload"
+  | "copy";
 
 const PATHS: Record<IconName, JSX.Element> = {
   pc: (
@@ -127,6 +132,16 @@ const PATHS: Record<IconName, JSX.Element> = {
   ),
   refresh: <path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5" />,
   send: <path d="M4 12h15M13 6l6 6-6 6" />,
+  undo: <path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3" />,
+  redo: <path d="m15 14 5-5-5-5M20 9H10a6 6 0 0 0 0 12h3" />,
+  download: <path d="M12 4v11M7 10l5 5 5-5M4 19h16" />,
+  upload: <path d="M12 15V4M7 9l5-5 5 5M4 19h16" />,
+  copy: (
+    <>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 20, class: cls }: { name: IconName; size?: number; class?: string }) {

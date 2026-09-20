@@ -1,7 +1,7 @@
 // 방화벽: 라우터/게이트웨이/NAT 박스를 "지나가는" 패킷을 규칙으로 거른다 (iptables 의 FORWARD 체인에 해당).
 // 규칙은 위에서부터 첫 일치가 이긴다. 상태 추적을 켜면 안에서 시작한 통신의 응답은 규칙과 무관하게 통과한다.
 import { ipToInt, prefixToMask, type Ip } from "../addr";
-import type { Ipv4Packet } from "../packet";
+import { describeOriginal, isTimeExceeded, type Ipv4Packet } from "../packet";
 import type { NodeContext } from "./node";
 
 export type FwAction = "allow" | "deny";
@@ -83,6 +83,12 @@ function isInitiator(pkt: Ipv4Packet): boolean {
 
 function flowKey(pkt: Ipv4Packet, reverse: boolean): string {
   const p = pkt.payload;
+  if (isTimeExceeded(p)) {
+    // ICMP 오류는 내장된 원래 패킷에 대한 응답이다: 역방향 키 = 원래 흐름의 정방향 키. 스스로 흐름을 만들지는 않는다
+    if (!reverse) return `icmp-error:${pkt.src}:${pkt.dst}`;
+    const o = p.original;
+    return o.l4.kind === "icmp" ? `icmp:${o.src}:${o.dst}:${o.l4.id}` : `${o.l4.kind}:${o.src}:${o.l4.srcPort}:${o.dst}:${o.l4.dstPort}`;
+  }
   const a = reverse ? pkt.dst : pkt.src;
   const b = reverse ? pkt.src : pkt.dst;
   if (p.kind === "icmp") return `icmp:${a}:${b}:${p.id}`;
@@ -142,7 +148,7 @@ export class Firewall {
       ctx.trace(
         "fw.established",
         "L3",
-        `방화벽: ${dirLabel} ${what} 은(는) ${rule ? `규칙 ${idx + 1}(${describeRule(rule)})` : "기본 정책"} 상 차단이지만, 안에서 시작한 통신의 응답이라 상태 추적으로 허용`,
+        `방화벽: ${dirLabel} ${what} 은(는) ${rule ? `규칙 ${idx + 1}(${describeRule(rule)})` : "기본 정책"} 상 차단이지만, 안에서 시작한 통신의 ${isTimeExceeded(pkt.payload) ? "오류 통지" : "응답"}라 상태 추적으로 허용`,
         { rule: idx, dir },
         frameId,
       );
@@ -175,6 +181,7 @@ export class Firewall {
 
 function describePacket(pkt: Ipv4Packet): string {
   const p = pkt.payload;
+  if (isTimeExceeded(p)) return `ICMP Time Exceeded ${pkt.src} → ${pkt.dst} (원래 ${describeOriginal(p.original)})`;
   if (p.kind === "icmp") return `ICMP ${p.type === "echo-request" ? "ping 요청" : "ping 응답"} ${pkt.src} → ${pkt.dst}`;
   return `${p.kind.toUpperCase()} ${pkt.src}:${p.srcPort} → ${pkt.dst}:${p.dstPort}`;
 }

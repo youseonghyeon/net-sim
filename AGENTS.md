@@ -9,9 +9,10 @@ Packet Tracer 식으로 직접 구성하는 네트워크 학습 시뮬레이터.
   - `packet.ts` — 계층별 패킷 모델 (학습에 필요한 필드만)
   - `trace.ts` — `TraceKind` 목록. 새 이벤트 종류를 추가하면 여기에 먼저 등록
   - `scenarios/` — 테스트용 고정 토폴로지
-- `src/model/` — 편집 가능한 토폴로지 모델(`topology.ts`: 장치 종류·포트·앵커 좌표·무선 파생·`planCable` 검증)과 앱 상태(`store.ts`: Preact signals, localStorage 저장). 시뮬레이션 실행 시 코어 `Network` 로 변환한다.
+- `src/model/` — 편집 가능한 토폴로지 모델(`topology.ts`: 장치 종류·포트·앵커 좌표·무선 파생·`planCable` 검증·`cloneDevices`/`alignDevices`·JSON 직렬화 `serializeTopology`/`parseTopology`·예제 레지스트리 `EXAMPLES`)과 앱 상태(`store.ts`: Preact signals, localStorage 저장, 되돌리기 스택 — 모든 편집은 `setTopology` 를 거치고 드래그는 `beginCoalesce/endCoalesce` 로 한 단계, 선택은 단일/다중/케이블, 클립보드). `store.ts` 는 브라우저 API 를 `typeof` 로 감싸 vitest 에서도 import 된다(`tests/store.test.ts`). 시뮬레이션 실행 시 코어 `Network` 로 변환한다.
+  - `lint.ts` — 구성 검사(순수). 토폴로지만 보고 "설정 한 칸 빠짐" 을 `LintIssue[]` 로. 오탐이 미탐보다 나쁘므로 주소를 모르는(DHCP) 인터페이스가 끼면 침묵. 규칙 추가 시 `tests/lint.test.ts` 에 걸리는/안 걸리는 케이스 + 모든 예제 이슈 0 유지(`tests/topology.test.ts`).
   - 순수(테스트 가능) 층: `netSync.ts`(`NetworkSync`: 토폴로지 → `Network` diff 동기화, `effective*` 입력 정리, `makeNode`/`applyConfig`), `simClock.ts`(`advanceClock`: 애니메이션 시계), `status.ts`(타일 문구·서비스 배지). `sim.ts` 는 이 셋을 신호·rAF 로 감싸기만 한다. 새 동기화 로직은 `sim.ts` 가 아니라 `netSync.ts` 에 넣고 `tests/netSync.test.ts` 로 고정한다.
-- `src/app/` — Preact UI. `Canvas.tsx`(SVG 캔버스: 이동/팬/줌/케이블 드래그), `Palette.tsx`, `Inspector.tsx`(우측 속성), `App.tsx`(상단바·로그 서랍), `styles.css`(토큰 + 컴포넌트).
+- `src/app/` — Preact UI. `Canvas.tsx`(SVG 캔버스: 빈 곳 드래그 = 영역 선택, ⌥/가운데 버튼 = 팬, Shift+클릭 토글, 묶음 이동, 케이블 드래그, 구성 검사 배지), `Palette.tsx`, `Inspector.tsx`(우측 속성: 단일 장치 패널·다중 선택 `MultiPanel`·케이블·네트워크 요약 + 구성 검사 목록), `App.tsx`(상단바: 재생·되돌리기·예제 메뉴·JSON 저장/불러오기·단축키), `styles.css`(토큰 + 컴포넌트).
 - `tests/` — vitest. 코어는 트레이스 순서(`nodeId:kind` 시퀀스)를 그대로 단언하는 방식을 유지한다.
 
 ## 규칙
@@ -41,6 +42,7 @@ npm run ui-check    # Playwright 스모크 (개발 서버 자동 기동, .shots/
 - 이름 해석: `ActionSpec.dst` 는 IP 또는 이름. 호스트가 `looksLikeName` 이면 리졸버로 먼저 해석(캐시 → 설정된 DNS → 실패 사유). DNS 서버 설정은 `NetInterface.dns`(수동 또는 DHCP 옵션).
 - 안전장치: L2 루프는 스위치가 같은 프레임 재수신/홉 16 초과 시 폐기(`switch.loop`), 같은 두 장치 사이 두 번째 케이블은 UI 가 거부, 한 프레임에 이벤트 4000 초과 시 일시정지. 장치 제거 시 `onRemove` 로 DHCP Release 를 보내고 그 프레임은 케이블이 빠져도 배달(`Transmission.graceful`).
 - 주소 변경 시 정합성: 호스트/라우터/L3 모두 주소가 바뀌면 ARP 캐시·대기열을 비우고 TCP 연결을 정리하며 Gratuitous ARP 를 보낸다. DHCP 서버는 인터페이스/범위 변경 시 범위 밖 임대를 무효화한다.
+- traceroute: 라우터 계열이 포워딩할 때 TTL 을 줄이고 0 이면 ICMP Time Exceeded(원 패킷 식별 정보 내장)를 들어온 인터페이스 주소로 보낸다. NAT 는 내장 정보로 역변환, 방화벽 상태 추적은 원 요청의 응답으로 취급. `Host.traceroute`(ICMP Echo 방식, 홉당 프로브 1개, 1000ms 타임아웃 → `*`, 16 홉). ICMP Destination Unreachable 은 없어 경로 없음·차단은 `*` 로만 보인다.
 - TCP 는 학습용 축소판: 누적 ACK, 타임아웃 재전송(RTO 400ms, 3회), 순서 어긋난 세그먼트는 버리고 중복 ACK. 슬라이딩 윈도우·빠른 재전송 없음. 앱은 "GET / 100B → 응답 1000B×3 → 서버 FIN".
 - 링크 손실: `Network.setLinkLoss`(xorshift 결정론 난수), `dropNextOn`(1회). 유실 프레임은 `Transmission.lost/lostAt` 으로 캔버스에서 중간에 사라진다.
 
@@ -55,3 +57,4 @@ npm run ui-check    # Playwright 스모크 (개발 서버 자동 기동, .shots/
 8. ✅ 무선 (AP·스마트폰·공유기 Wi-Fi)
 9. ✅ VLAN (액세스/트렁크, 게이트웨이 서브 인터페이스)
 10. 실제 네트워크 연결은 하지 않기로 결정(2026-09-19). 이후 작업은 품질(리뷰·테스트·문서)과 사용자가 새로 요청하는 것
+11. ✅ 편집 도구 묶음(2026-09-20): JSON 저장/불러오기, 되돌리기, 다중 선택/복사, 일괄 설정·ping, 구성 검사, traceroute, 예제 8종

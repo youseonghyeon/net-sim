@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { effectiveDnsServer, effectiveFirewall, effectiveForwards, effectiveL3, effectiveSwitchVlans } from "../src/model/netSync";
-import { createDevice, normalizeTopology, planCable, type Device, type Topology } from "../src/model/topology";
+import { lintTopology } from "../src/model/lint";
+import { createDevice, EXAMPLE_LIST, normalizeTopology, planCable, type Device, type Topology } from "../src/model/topology";
 
 describe("normalizeTopology", () => {
   it("저장된 게이트웨이의 서브 인터페이스·방화벽·포워딩 설정을 잃지 않는다", () => {
@@ -120,5 +121,16 @@ describe("effective*: 입력 중인 값을 시뮬레이션용으로 정리한다
     const srv = createDevice("server", 0, 0, []);
     srv.host = { ...srv.host!, dnsServer: { enabled: true, records: [{ name: " Web.Home ", ip: "192.168.0.20" }, { name: "", ip: "192.168.0.21" }, { name: "x", ip: "bad" }], upstream: "8.8.8." } };
     expect(effectiveDnsServer(srv)).toEqual({ enabled: true, records: [{ name: "web.home", ip: "192.168.0.20" }], upstream: undefined });
+  });
+});
+
+describe("예제 토폴로지", () => {
+  it("모든 예제는 구성 검사 이슈가 없고, 케이블은 존재하는 장치의 유효한 포트만 가리킨다", () => {
+    for (const ex of EXAMPLE_LIST) {
+      const t = ex.build();
+      expect(lintTopology(t), ex.id).toEqual([]);
+      expect(normalizeTopology(t).cables.length, ex.id).toBe(t.cables.length); // 정규화가 버리는 케이블이 없다
+      expect(new Set(t.devices.map((d) => d.name)).size, ex.id).toBe(t.devices.length);
+    }
   });
 });

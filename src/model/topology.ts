@@ -485,6 +485,102 @@ export function usedPorts(topology: Topology, deviceId: string): Set<number> {
  * 비어 있는 포트 중 상대 장치를 향한 쪽(상대가 위에 있으면 top)을 우선 고른다.
  * 케이블이 포트에서 수직으로 나가므로, 이렇게 해야 선이 자연스럽게 상대를 향한다.
  */
+/**
+ * 장치 묶음을 복제한다: 새 id·이름·MAC, 설정은 깊은 복사, 묶음 안에서 서로 잇는 케이블만 따라온다.
+ * @returns 붙여 넣을 장치·케이블 (원본 토폴로지에는 아직 없음)
+ */
+export function cloneDevices(t: Topology, ids: string[], offset: { x: number; y: number }): { devices: Device[]; cables: Cable[] } {
+  const picked = t.devices.filter((d) => ids.includes(d.id));
+  const pool = [...t.devices];
+  const idMap = new Map<string, string>();
+  const devices: Device[] = [];
+  for (const d of picked) {
+    const copy: Device = { ...structuredClone(d), id: newId(d.kind), name: nextName(d.kind, pool), mac: nextMac(pool), x: snap(d.x + offset.x), y: snap(d.y + offset.y) };
+    idMap.set(d.id, copy.id);
+    devices.push(copy);
+    pool.push(copy);
+  }
+  const cables: Cable[] = t.cables
+    .filter((c) => idMap.has(c.a.device) && idMap.has(c.b.device))
+    .map((c) => ({ ...c, id: newId("cable"), a: { device: idMap.get(c.a.device)!, port: c.a.port }, b: { device: idMap.get(c.b.device)!, port: c.b.port } }));
+  return { devices, cables };
+}
+
+export type AlignMode = "left" | "top" | "spread-x" | "spread-y";
+
+/** 여러 장치를 정렬한다. spread 는 양 끝은 두고 사이 간격을 같게 */
+export function alignDevices(t: Topology, ids: string[], mode: AlignMode): Topology {
+  const picked = t.devices.filter((d) => ids.includes(d.id));
+  if (picked.length < 2) return t;
+  const pos = new Map<string, { x: number; y: number }>();
+  if (mode === "left") {
+    const x = Math.min(...picked.map((d) => d.x));
+    for (const d of picked) pos.set(d.id, { x, y: d.y });
+  } else if (mode === "top") {
+    const y = Math.min(...picked.map((d) => d.y));
+    for (const d of picked) pos.set(d.id, { x: d.x, y });
+  } else {
+    const key = mode === "spread-x" ? "x" : "y";
+    const size = (d: Device) => (mode === "spread-x" ? specOf(d).width : specOf(d).height);
+    const sorted = [...picked].sort((a, b) => a[key] - b[key]);
+    const first = sorted[0]!;
+    const last = sorted[sorted.length - 1]!;
+    const span = last[key] - first[key] - sorted.slice(0, -1).reduce((acc, d) => acc + size(d), 0);
+    const gap = span / (sorted.length - 1);
+    let cursor = first[key];
+    for (const d of sorted) {
+      pos.set(d.id, { x: mode === "spread-x" ? snap(cursor) : d.x, y: mode === "spread-y" ? snap(cursor) : d.y });
+      cursor += size(d) + gap;
+    }
+  }
+  return { ...t, devices: t.devices.map((d) => (pos.has(d.id) ? { ...d, ...pos.get(d.id)! } : d)) };
+}
+
+/** 저장·공유용 JSON 문서 */
+export interface TopologyFile {
+  app: "net-sim";
+  version: 1;
+  devices: Device[];
+  cables: Cable[];
+}
+
+export function serializeTopology(t: Topology): string {
+  const doc: TopologyFile = { app: "net-sim", version: 1, devices: t.devices, cables: t.cables };
+  return JSON.stringify(doc, null, 2);
+}
+
+/** JSON 문자열 → 토폴로지. 형식이 틀리면 사용자에게 보일 이유를 돌려준다 */
+export function parseTopology(text: string): { topology?: Topology; error?: string } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { error: "JSON 으로 읽을 수 없습니다. net-sim 에서 내려받은 .json 파일인지 확인하세요" };
+  }
+  if (!raw || typeof raw !== "object") return { error: "JSON 최상위가 객체가 아닙니다" };
+  const doc = raw as Partial<TopologyFile>;
+  if (!Array.isArray(doc.devices) || !Array.isArray(doc.cables)) return { error: "devices 와 cables 배열이 있어야 합니다. net-sim 에서 내려받은 파일인지 확인하세요" };
+  const ids = new Set<string>();
+  for (const d of doc.devices as unknown[]) {
+    if (!d || typeof d !== "object") return { error: "devices 항목이 객체가 아닙니다" };
+    const dev = d as Partial<Device>;
+    if (typeof dev.id !== "string" || !dev.id) return { error: "id 가 없는 장치가 있습니다" };
+    if (ids.has(dev.id)) return { error: `장치 id 가 겹칩니다: ${dev.id}` };
+    ids.add(dev.id);
+    if (typeof dev.kind !== "string" || !(dev.kind in DEVICE_SPECS)) return { error: `모르는 장치 종류입니다: ${String(dev.kind)} (${dev.id}). 이 버전에서 지원하는 종류: ${Object.keys(DEVICE_SPECS).join(", ")}` };
+    if (typeof dev.x !== "number" || typeof dev.y !== "number" || !Number.isFinite(dev.x) || !Number.isFinite(dev.y)) return { error: `좌표가 숫자가 아닙니다: ${dev.id}` };
+    if (typeof dev.name !== "string") return { error: `이름이 없는 장치가 있습니다: ${dev.id}` };
+  }
+  for (const c of doc.cables as unknown[]) {
+    const cab = c as Partial<Cable>;
+    if (!cab || typeof cab.id !== "string" || !cab.a || !cab.b || typeof cab.a.device !== "string" || typeof cab.b.device !== "string" || !Number.isInteger(cab.a.port) || !Number.isInteger(cab.b.port)) {
+      return { error: "케이블 항목 형식이 틀립니다 (id, a{device,port}, b{device,port})" };
+    }
+  }
+  // 나머지(없는 설정, 사라진 장치를 가리키는 케이블, 겹치는 포트)는 normalizeTopology 가 기본값으로 채우거나 버린다
+  return { topology: normalizeTopology({ devices: doc.devices as Device[], cables: doc.cables as Cable[] }) };
+}
+
 /** 두 장치를 잇는 케이블의 양 끝 포트를 정한다. 못 잇는 이유는 사용자에게 보일 문장으로 돌려준다 */
 export function planCable(t: Topology, aId: string, bId: string): { a: PortRef; b: PortRef } | { error: string } {
   if (aId === bId) return { error: "같은 장치끼리는 연결할 수 없습니다" };
@@ -734,6 +830,198 @@ export function exampleTopology(): Topology {
   ];
   return { devices, cables };
 }
+
+/** 가장 단순한 예제: PC 2대 + 스위치, 수동 IP. ARP 와 ping 만 본다 */
+export function exampleStarterTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const sw = add("switch", 344, 96);
+  const pc1 = add("pc", 232, 280);
+  const pc2 = add("pc", 544, 280);
+  pc1.host = { ipMode: "static", ip: "192.168.0.10", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  pc2.host = { ipMode: "static", ip: "192.168.0.11", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const cables: Cable[] = [
+    { id: newId("cable"), a: { device: sw.id, port: 1 }, b: { device: pc1.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw.id, port: 6 }, b: { device: pc2.id, port: 0 } },
+  ];
+  return { devices, cables };
+}
+
+/** 게이트웨이 2단: NAT 아래에 라우터 전용 서브넷(10.0.0.0/24)을 두고 게이트웨이 둘이 각자 서브넷을 맡는다 */
+export function exampleTwoGatewaysTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const inet = add("internet", 344, -232);
+  const nat = add("nat", 344, -80);
+  nat.l3 = {
+    interfaces: [
+      { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" },
+      { ipMode: "static", ip: "10.0.0.1", prefix: 24, gateway: "" },
+    ],
+    // 게이트웨이마다 그 뒤 서브넷으로 돌아가는 경로. 이게 없으면 응답이 여기서 버려진다
+    routes: [
+      { dest: "192.168.1.0", prefix: 24, via: "10.0.0.2" },
+      { dest: "192.168.5.0", prefix: 24, via: "10.0.0.3" },
+    ],
+  };
+  const sw0 = add("switch", 344, 80); // 라우터들만 사는 서브넷
+  const gw1 = add("gateway", 96, 248);
+  const gw2 = add("gateway", 592, 248);
+  const gwCfg = (ifIp: string, lanIp: string, otherDest: string, otherVia: string): L3Settings => ({
+    interfaces: [
+      { ipMode: "static", ip: ifIp, prefix: 24, gateway: "10.0.0.1" },
+      { ipMode: "static", ip: lanIp, prefix: 24, gateway: "" },
+      { ipMode: "static", ip: "", prefix: 24, gateway: "" },
+    ],
+    // 옆 게이트웨이 뒤 서브넷은 NAT 를 거치지 않고 같은 스위치에서 바로 넘긴다
+    routes: [{ dest: otherDest, prefix: 24, via: otherVia }],
+  });
+  gw1.l3 = gwCfg("10.0.0.2", "192.168.1.1", "192.168.5.0", "10.0.0.3");
+  gw2.l3 = gwCfg("10.0.0.3", "192.168.5.1", "192.168.1.0", "10.0.0.2");
+  const sw1 = add("switch", 96, 424);
+  const sw2 = add("switch", 592, 424);
+  const pc1 = add("pc", 24, 592);
+  const pc2 = add("pc", 184, 592);
+  const pc3 = add("pc", 520, 592);
+  const srv = add("server", 680, 592);
+  const staticHost = (d: Device, ip: string, gw: string, services: number[] = []) => {
+    d.host = { ipMode: "static", ip, prefix: 24, gateway: gw, dns: "8.8.8.8", services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  staticHost(pc1, "192.168.1.10", "192.168.1.1");
+  staticHost(pc2, "192.168.1.11", "192.168.1.1");
+  staticHost(pc3, "192.168.5.10", "192.168.5.1");
+  staticHost(srv, "192.168.5.20", "192.168.5.1", [80]);
+  const cables: Cable[] = [
+    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: nat.id, port: 0 } },
+    { id: newId("cable"), a: { device: nat.id, port: 1 }, b: { device: sw0.id, port: 3 } },
+    { id: newId("cable"), a: { device: sw0.id, port: 0 }, b: { device: gw1.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw0.id, port: 7 }, b: { device: gw2.id, port: 0 } },
+    { id: newId("cable"), a: { device: gw1.id, port: 1 }, b: { device: sw1.id, port: 3 } },
+    { id: newId("cable"), a: { device: gw2.id, port: 1 }, b: { device: sw2.id, port: 3 } },
+    { id: newId("cable"), a: { device: sw1.id, port: 0 }, b: { device: pc1.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw1.id, port: 5 }, b: { device: pc2.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw2.id, port: 1 }, b: { device: pc3.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw2.id, port: 6 }, b: { device: srv.id, port: 0 } },
+  ];
+  return { devices, cables };
+}
+
+/** 허브 vs 스위치: 같은 공유기 아래 한쪽은 허브, 한쪽은 스위치. ping 이 어디까지 퍼지는지 비교 */
+export function exampleHubTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const rt = add("router", 344, 0);
+  const hub = add("hub", 112, 200);
+  const sw = add("switch", 560, 200);
+  const pc1 = add("pc", 40, 376);
+  const pc2 = add("pc", 200, 376);
+  const pc3 = add("pc", 504, 376);
+  const pc4 = add("pc", 664, 376);
+  const cables: Cable[] = [
+    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: hub.id, port: 1 } },
+    { id: newId("cable"), a: { device: rt.id, port: 4 }, b: { device: sw.id, port: 3 } },
+    { id: newId("cable"), a: { device: hub.id, port: 0 }, b: { device: pc1.id, port: 0 } },
+    { id: newId("cable"), a: { device: hub.id, port: 3 }, b: { device: pc2.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw.id, port: 0 }, b: { device: pc3.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw.id, port: 7 }, b: { device: pc4.id, port: 0 } },
+  ];
+  return { devices, cables };
+}
+
+/** 방화벽: 공유기가 나가는 TCP 80 만 막는다. ping 은 되고 웹 연결만 차단되는 걸 본다 */
+export function exampleFirewallTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const inet = add("internet", 344, -40);
+  const rt = add("router", 344, 96);
+  rt.router = {
+    ...rt.router!,
+    firewall: {
+      enabled: true,
+      defaultPolicy: "allow",
+      stateful: true,
+      rules: [
+        { action: "deny", proto: "tcp", direction: "out", src: "", dst: "", dstPort: "80" },
+        { action: "deny", proto: "icmp", direction: "in", src: "", dst: "", dstPort: "" },
+      ],
+    },
+  };
+  const sw = add("switch", 344, 272);
+  const pc = add("pc", 232, 440);
+  const laptop = add("laptop", 456, 440);
+  const cables: Cable[] = [
+    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: rt.id, port: 0 } },
+    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw.id, port: 2 }, b: { device: pc.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw.id, port: 5 }, b: { device: laptop.id, port: 0 } },
+  ];
+  return { devices, cables };
+}
+
+/** 무선 로밍: 같은 SSID 의 AP 두 대. 스마트폰을 끌어 옮기면 가까운 AP 로 갈아탄다 */
+export function exampleRoamingTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const rt = add("router", 344, 0);
+  const sw = add("switch", 344, 176);
+  const ap1 = add("ap", 16, 352);
+  const ap2 = add("ap", 704, 352);
+  ap1.ap = { enabled: true, ssid: "office" };
+  ap2.ap = { enabled: true, ssid: "office" };
+  const phone = add("phone", 56, 544);
+  phone.wifi = { ssid: "office" };
+  const cables: Cable[] = [
+    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 3 } },
+    { id: newId("cable"), a: { device: sw.id, port: 0 }, b: { device: ap1.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw.id, port: 7 }, b: { device: ap2.id, port: 0 } },
+  ];
+  return { devices, cables };
+}
+
+export type ExampleId = "starter" | "router" | "parts" | "gateways" | "hub" | "vlan" | "firewall" | "roaming";
+
+export interface ExampleSpec {
+  id: ExampleId;
+  /** 메뉴 묶음 */
+  group: string;
+  label: string;
+  /** 불러온 뒤 무엇을 해 보면 되는지 한 줄 */
+  blurb: string;
+  build: () => Topology;
+}
+
+export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
+  starter: { id: "starter", group: "기본", label: "PC 2대 + 스위치 (수동 IP)", blurb: "pc-1 에서 pc-2 로 ping 하면 ARP 로 MAC 을 찾은 뒤 ICMP 가 오갑니다.", build: exampleStarterTopology },
+  router: { id: "router", group: "기본", label: "공유기 하나로 (DHCP + NAT + 포트 포워딩 + Wi-Fi)", blurb: "케이블만 꽂으면 DHCP 로 주소를 받고, google.com 으로 ping 하면 DNS → NAT 를 거칩니다.", build: exampleTopology },
+  parts: { id: "parts", group: "기능 단위", label: "기능 단위로 (NAT 박스 + 게이트웨이 + DHCP/DNS 서버)", blurb: "공유기를 상자별로 뜯은 구성. 노트북은 게이트웨이 릴레이로 다른 서브넷의 DHCP 서버에서 주소를 받습니다.", build: examplePartsTopology },
+  gateways: { id: "gateways", group: "기능 단위", label: "게이트웨이 2단 (라우터 전용 서브넷 + 정적 경로)", blurb: "pc-1 → 192.168.5.10 은 gw-1 이 정적 경로로 gw-2 에 바로 넘기고, 인터넷은 NAT 로 올라갑니다. NAT 의 정적 경로를 지우면 응답이 돌아오지 못합니다.", build: exampleTwoGatewaysTopology },
+  hub: { id: "hub", group: "L2", label: "허브 vs 스위치", blurb: "pc-1 → pc-2 ping 이 허브의 모든 포트(공유기까지)로 복제되는 것과, pc-3 → pc-4 가 스위치에서 그 포트로만 가는 것을 비교하세요.", build: exampleHubTopology },
+  vlan: { id: "vlan", group: "L2", label: "VLAN 으로 나눈 사무실 (트렁크 + 서브 인터페이스)", blurb: "같은 스위치인데 VLAN 10 과 20 은 게이트웨이 서브 인터페이스를 거쳐야 통신됩니다.", build: exampleVlanTopology },
+  firewall: { id: "firewall", group: "서비스", label: "방화벽 (ping 은 되고 웹은 막힘)", blurb: "pc-1 에서 example.com 으로 ping 은 되지만 TCP 80 연결은 공유기 방화벽 규칙 1 에서 차단됩니다. 인터넷 쪽 클라이언트의 ping 도 막힙니다.", build: exampleFirewallTopology },
+  roaming: { id: "roaming", group: "무선", label: "무선 로밍 (같은 SSID 의 AP 두 대)", blurb: "phone-1 을 오른쪽 AP 쪽으로 끌면 가까운 AP 로 갈아타고 DHCP 를 다시 합니다.", build: exampleRoamingTopology },
+};
+
+export const EXAMPLE_LIST: ExampleSpec[] = Object.values(EXAMPLES);
 
 /** 장치 포트의 VLAN 모드 (스위치가 아니면 undefined) */
 export function portVlanOf(d: Device, port: number): number | "trunk" | undefined {

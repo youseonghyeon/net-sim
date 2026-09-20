@@ -1,5 +1,5 @@
 import { isPrivateIp, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, type DnsMessage, type EthernetFrame, type Ipv4Packet } from "../packet";
+import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, type DnsMessage, type EthernetFrame, type Ipv4Packet } from "../packet";
 import { DhcpServer } from "./dhcp";
 import { normalizeName, PUBLIC_ZONE } from "./dns";
 import { NetInterface, type Emit } from "./iface";
@@ -103,7 +103,7 @@ export class Internet implements SimNode {
         return;
       }
       if (p.type !== "echo-request") {
-        ctx.trace("ip.drop", "L3", `요청한 적 없는 Echo 응답 → 무시`, {}, frameId);
+        ctx.trace("ip.drop", "L3", `요청한 적 없는 ICMP ${icmpLabel(p)} → 무시`, {}, frameId);
         return;
       }
       ctx.trace("icmp.echo.received", "app", `ISP 게이트웨이가 ICMP Echo 요청 수신 (from ${pkt.src})`, { from: pkt.src }, frameId);
@@ -120,6 +120,12 @@ export class Internet implements SimNode {
       ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} → 응답을 돌려줄 수 없어 폐기 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
       return;
     }
+    // ISP 라우터(203.0.113.1)를 지나 공인 서버로 가는 것도 홉 하나: TTL 이 다 됐으면 ISP 라우터가 통지한다
+    if (pkt.ttl <= 1) {
+      const notice = this.iface.timeExceeded(pkt, ctx, frameId);
+      if (notice) this.iface.sendIp(notice, ctx, emit);
+      return;
+    }
     const name = KNOWN_SERVERS[pkt.dst];
     if (p.kind === "tcp") {
       const who = pkt.dst === Internet.REMOTE_CLIENT ? "클라이언트" : "서버";
@@ -128,7 +134,7 @@ export class Internet implements SimNode {
       return;
     }
     if (p.type !== "echo-request") {
-      ctx.trace("ip.drop", "L3", `공인 주소 ${pkt.dst} 로 가는 Echo 응답 → 시뮬레이션 밖이므로 폐기`, {}, frameId);
+      ctx.trace("ip.drop", "L3", `공인 주소 ${pkt.dst} 로 가는 ICMP ${icmpLabel(p)} → 시뮬레이션 밖이므로 폐기`, {}, frameId);
       return;
     }
     ctx.trace(

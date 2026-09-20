@@ -1,5 +1,5 @@
 import { BROADCAST_MAC, networkOf, sameSubnet, ZERO_MAC, type Ip, type Mac } from "../addr";
-import { describeFrame, LIMITED_BROADCAST_IP, type ArpPacket, type EthernetFrame, type Ipv4Packet } from "../packet";
+import { describeFrame, LIMITED_BROADCAST_IP, timeExceededFor, type ArpPacket, type EthernetFrame, type Ipv4Packet } from "../packet";
 import type { NodeContext, TimerHandle } from "./node";
 
 export interface ArpEntry {
@@ -111,6 +111,27 @@ export class NetInterface {
       this.sendArpRequest(nextHop, ctx, emit);
       this.arpTimers.set(nextHop, ctx.timer(NetInterface.ARP_TIMEOUT, "arp-timeout", { ip: nextHop }));
     }
+  }
+
+  /**
+   * TTL 이 1 이하인 패킷이 이 인터페이스로 들어와 더 넘길 수 없을 때: 폐기를 기록하고 보낸 이에게 돌려줄
+   * Time Exceeded 패킷(출발지 = 이 인터페이스 주소)을 만든다. 보내는 방법은 장치마다 다르므로 호출자가 보낸다.
+   * 통지를 만들 수 없으면(주소 없음, ICMP 오류에 대한 오류, 출발지 0.0.0.0) undefined
+   */
+  timeExceeded(pkt: Ipv4Packet, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
+    const notice = this.ip ? timeExceededFor(this.ip, pkt) : undefined;
+    if (!notice) {
+      ctx.trace("ip.ttl-expired", "L3", `TTL ${pkt.ttl} 로 도착한 ${pkt.src} → ${pkt.dst}: 더 넘기면 0 → 폐기 (통지는 보내지 않음)`, { src: pkt.src, dst: pkt.dst }, frameId);
+      return undefined;
+    }
+    ctx.trace(
+      "icmp.ttl-exceeded",
+      "L3",
+      `TTL ${pkt.ttl} 로 도착한 ${pkt.src} → ${pkt.dst}: 한 홉 더 넘기면 0 → 폐기하고 ${this.ip} 이름으로 보낸 이에게 Time Exceeded 통지 (traceroute 는 이 통지로 경로의 홉을 알아낸다)`,
+      { src: pkt.src, dst: pkt.dst, from: this.ip, ttl: pkt.ttl },
+      frameId,
+    );
+    return notice;
   }
 
   /** IP 주소가 없어도 보낼 수 있는 브로드캐스트 (DHCP Discover/Request) */

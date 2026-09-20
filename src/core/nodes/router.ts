@@ -1,5 +1,5 @@
 import { BROADCAST_MAC, sameSubnet, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
+import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_UPSTREAM_TIMER_TAG, DnsServer, type DnsServerConfig } from "./dns";
 import { Firewall, type FirewallConfig } from "./firewall";
@@ -355,6 +355,11 @@ export class Router implements SimNode {
       return;
     }
     // 바깥에서 들어온 패킷: NAT 테이블로 내부 호스트를 찾는다
+    if (pkt.ttl <= 1) {
+      const notice = this.wan.timeExceeded(pkt, ctx, frameId);
+      if (notice) this.wan.sendIp(notice, ctx, emit);
+      return;
+    }
     const restored = this.nat.restore(pkt, this.wan.ip, ctx, frameId);
     if (!restored) return;
     if (!this.firewall.check(restored, "in", ctx, frameId)) return;
@@ -368,12 +373,13 @@ export class Router implements SimNode {
       ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 는 LAN 안의 주소 → 라우터를 거칠 필요가 없음 (호스트끼리 직접 통신) → 폐기`, { dst: pkt.dst }, frameId);
       return;
     }
-    if (!this.wan.ip) {
-      ctx.trace("ip.no-route", "L3", `${pkt.dst} 는 외부 주소인데 WAN 에 공인 주소가 없음 → 인터넷으로 보낼 수 없음 (WAN 케이블과 DHCP 확인)`, { dst: pkt.dst }, frameId);
+    if (pkt.ttl <= 1) {
+      const notice = this.lan.timeExceeded(pkt, ctx, frameId);
+      if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
       return;
     }
-    if (pkt.ttl <= 1) {
-      ctx.trace("ip.ttl-expired", "L3", `TTL 이 0 이 되어 폐기 (루프 방지)`, { dst: pkt.dst }, frameId);
+    if (!this.wan.ip) {
+      ctx.trace("ip.no-route", "L3", `${pkt.dst} 는 외부 주소인데 WAN 에 공인 주소가 없음 → 인터넷으로 보낼 수 없음 (WAN 케이블과 DHCP 확인)`, { dst: pkt.dst }, frameId);
       return;
     }
     if (!this.firewall.check(pkt, "out", ctx, frameId)) return;
@@ -385,7 +391,7 @@ export class Router implements SimNode {
 
   private handleIcmp(pkt: Ipv4Packet, icmp: IcmpPacket, frameId: number, ctx: NodeContext, iface: NetInterface, emit: Emit, replySrc?: Ip): void {
     if (icmp.type !== "echo-request") {
-      ctx.trace("ip.drop", "L3", `요청한 적 없는 Echo 응답 → 무시`, {}, frameId);
+      ctx.trace("ip.drop", "L3", `요청한 적 없는 ICMP ${icmpLabel(icmp)} → 무시`, {}, frameId);
       return;
     }
     ctx.trace("icmp.echo.received", "app", `ICMP Echo 요청 수신 (from ${pkt.src}, seq=${icmp.seq})`, { from: pkt.src, seq: icmp.seq }, frameId);

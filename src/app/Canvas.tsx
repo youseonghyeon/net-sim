@@ -3,7 +3,8 @@ import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
 import { frameCategory, shortLabel } from "../core/packet";
 import { hostStatus, serviceBadges, sim, simTime, simVersion, wanStatus } from "../model/sim";
-import { connectDevices, fitRequest, loadExample, moveDevice, selection, tool, topology, viewport } from "../model/store";
+import { beginCoalesce, connectDevices, endCoalesce, fitRequest, lintIssues, loadExample, moveDevices, selectedDeviceIds, selection, selectionOf, toggleDeviceSelection, tool, topology, viewport } from "../model/store";
+import type { LintIssue } from "../model/lint";
 import {
   baseSsid,
   freePort,
@@ -12,7 +13,6 @@ import {
   PORT_DEPTH,
   PORT_WIDTH,
   portAnchor,
-  snap,
   specOf,
   usedPorts,
   WIFI_RANGE,
@@ -25,9 +25,21 @@ import {
 import { GlyphInSvg } from "./Icons";
 
 type Drag =
-  | { type: "move"; id: string; ox: number; oy: number }
+  /** 선택된 장치들을 함께 옮긴다. starts = 드래그 시작 시 각 장치 위치 */
+  | { type: "move"; starts: Map<string, { x: number; y: number }>; sx: number; sy: number; moved: boolean }
   | { type: "pan"; sx: number; sy: number; vx: number; vy: number; moved: boolean }
-  | { type: "cable"; from: string; target?: string };
+  | { type: "cable"; from: string; target?: string; sx: number; sy: number; moved: boolean }
+  /** 빈 곳에서 끌어 영역 선택 (캔버스 좌표) */
+  | { type: "marquee"; x0: number; y0: number; x1: number; y1: number };
+
+/** 마퀴 사각형 안에 타일이 걸치는 장치 */
+function devicesInRect(devices: Device[], x0: number, y0: number, x1: number, y1: number): string[] {
+  const left = Math.min(x0, x1), right = Math.max(x0, x1), top = Math.min(y0, y1), bottom = Math.max(y0, y1);
+  return devices.filter((d) => {
+    const s = specOf(d);
+    return d.x < right && d.x + s.width > left && d.y < bottom && d.y + s.height > top;
+  }).map((d) => d.id);
+}
 
 interface Draft {
   from: string;
@@ -40,10 +52,12 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<Drag | null>(null);
   const draft = useSignal<Draft | null>(null);
+  const marquee = useSignal<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   const t = topology.value;
   const v = viewport.value;
   const sel = selection.value;
+  const selectedIds = new Set(selectedDeviceIds(sel));
 
   function toCanvas(clientX: number, clientY: number): { x: number; y: number } {
     const rect = svgRef.current!.getBoundingClientRect();
@@ -66,23 +80,33 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     const cableEl = target.closest("[data-cable]") as SVGGElement | null;
     svgRef.current!.setPointerCapture(e.pointerId);
 
-    if (deviceEl && e.button === 0) {
+    // ⌥(Alt) 를 누른 채 끌거나 가운데 버튼이면 팬. 그 외 빈 곳 끌기는 영역 선택
+    const panning = e.button === 1 || e.altKey;
+    if (deviceEl && e.button === 0 && !panning) {
       const id = deviceEl.dataset.device!;
       if (tool.value === "cable" || e.shiftKey) {
+        // Shift+끌기 = 케이블, Shift+클릭(안 움직임) = 선택 토글 (pointerup 에서 판정)
         const p = toCanvas(e.clientX, e.clientY);
-        dragRef.current = { type: "cable", from: id };
+        dragRef.current = { type: "cable", from: id, sx: e.clientX, sy: e.clientY, moved: false };
         draft.value = { from: id, x: p.x, y: p.y };
       } else {
-        selection.value = { type: "device", id };
-        const d = topology.value.devices.find((x) => x.id === id)!;
-        const p = toCanvas(e.clientX, e.clientY);
-        dragRef.current = { type: "move", id, ox: p.x - d.x, oy: p.y - d.y };
+        // 이미 다중 선택에 든 장치를 잡으면 묶음째 옮기고, 아니면 그 장치만 선택
+        const ids = selectedIds.has(id) ? [...selectedIds] : [id];
+        if (!selectedIds.has(id)) selection.value = { type: "device", id };
+        const starts = new Map<string, { x: number; y: number }>();
+        for (const d of topology.value.devices) if (ids.includes(d.id)) starts.set(d.id, { x: d.x, y: d.y });
+        dragRef.current = { type: "move", starts, sx: e.clientX, sy: e.clientY, moved: false };
       }
       return;
     }
-    if (cableEl && e.button === 0) {
+    if (cableEl && e.button === 0 && !panning) {
       selection.value = { type: "cable", id: cableEl.dataset.cable! };
       dragRef.current = null;
+      return;
+    }
+    if (!panning) {
+      const p = toCanvas(e.clientX, e.clientY);
+      dragRef.current = { type: "marquee", x0: p.x, y0: p.y, x1: p.x, y1: p.y };
       return;
     }
     dragRef.current = { type: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y, moved: false };
@@ -92,14 +116,27 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     const d = dragRef.current;
     if (!d) return;
     if (d.type === "move") {
+      const k = viewport.value.k;
+      const dx = (e.clientX - d.sx) / k;
+      const dy = (e.clientY - d.sy) / k;
+      if (!d.moved) {
+        if (Math.abs(dx) + Math.abs(dy) < 2) return;
+        d.moved = true;
+        beginCoalesce(); // 드래그 한 번 = 되돌리기 한 단계
+      }
+      moveDevices(d.starts, dx, dy);
+    } else if (d.type === "marquee") {
       const p = toCanvas(e.clientX, e.clientY);
-      moveDevice(d.id, snap(p.x - d.ox), snap(p.y - d.oy));
+      d.x1 = p.x;
+      d.y1 = p.y;
+      marquee.value = { x0: d.x0, y0: d.y0, x1: p.x, y1: p.y };
     } else if (d.type === "pan") {
       const dx = e.clientX - d.sx;
       const dy = e.clientY - d.sy;
       if (Math.abs(dx) + Math.abs(dy) > 2) d.moved = true;
       viewport.value = { ...viewport.value, x: d.vx + dx, y: d.vy + dy };
     } else {
+      if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) d.moved = true;
       const p = toCanvas(e.clientX, e.clientY);
       const over = deviceAt(e.clientX, e.clientY);
       d.target = over && over !== d.from ? over : undefined;
@@ -107,16 +144,30 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     }
   }
 
-  function onPointerUp(): void {
+  function onPointerUp(e: PointerEvent): void {
     const d = dragRef.current;
     dragRef.current = null;
     if (!d) return;
+    if (d.type === "move") {
+      if (d.moved) endCoalesce();
+      return;
+    }
+    if (d.type === "marquee") {
+      marquee.value = null;
+      const tiny = Math.abs(d.x1 - d.x0) < 4 && Math.abs(d.y1 - d.y0) < 4;
+      const ids = tiny ? [] : devicesInRect(topology.value.devices, d.x0, d.y0, d.x1, d.y1);
+      // Shift 를 누른 채 영역 선택하면 기존 선택에 더한다
+      selection.value = selectionOf(e.shiftKey ? [...new Set([...selectedDeviceIds(selection.value), ...ids])] : ids);
+      return;
+    }
     if (d.type === "pan" && !d.moved) selection.value = null;
     if (d.type === "cable") {
       draft.value = null;
       if (d.target) {
         const r = connectDevices(d.from, d.target);
         if (r.error) onNotice(r.error);
+      } else if (!d.moved && tool.value !== "cable") {
+        toggleDeviceSelection(d.from);
       }
     }
   }
@@ -163,6 +214,8 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
   }, []);
 
   const byId = new Map(t.devices.map((d) => [d.id, d]));
+  const issuesByDevice = new Map<string, LintIssue[]>();
+  for (const i of lintIssues.value) issuesByDevice.set(i.deviceId, [...(issuesByDevice.get(i.deviceId) ?? []), i]);
   const dr = draft.value;
   const draftPath = dr ? draftCablePath(dr, byId) : null;
   const wl = wirelessLinks(t);
@@ -211,9 +264,10 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
                 key={d.id}
                 d={d}
                 used={usedPorts(t, d.id)}
-                selected={sel?.type === "device" && sel.id === d.id}
+                selected={selectedIds.has(d.id)}
                 targeted={dr?.target === d.id}
                 source={dr?.from === d.id}
+                issues={issuesByDevice.get(d.id)}
               />
             ))}
           </g>
@@ -223,6 +277,15 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
             </g>
           )}
           <PacketLayer byId={byId} cables={t.cables} wireless={wl} />
+          {marquee.value && (
+            <rect
+              class="marquee"
+              x={Math.min(marquee.value.x0, marquee.value.x1)}
+              y={Math.min(marquee.value.y0, marquee.value.y1)}
+              width={Math.abs(marquee.value.x1 - marquee.value.x0)}
+              height={Math.abs(marquee.value.y1 - marquee.value.y0)}
+            />
+          )}
         </g>
       </svg>
       {t.devices.length === 0 && (
@@ -266,7 +329,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
   );
 }
 
-function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: Set<number>; selected: boolean; targeted: boolean; source: boolean }) {
+function DeviceView({ d, used, selected, targeted, source, issues }: { d: Device; used: Set<number>; selected: boolean; targeted: boolean; source: boolean; issues?: LintIssue[] }) {
   const spec = specOf(d);
   const wide = spec.role !== "host";
   const glyph = wide ? 24 : 28;
@@ -285,6 +348,7 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
         <GlyphInSvg name={d.kind} x={wide ? 14 : (spec.width - glyph) / 2} y={(spec.height - glyph) / 2} size={glyph} />
       </g>
       {badges.length > 0 && <ServiceBadges badges={badges} width={spec.width} below={wide ? undefined : spec.height + 46} />}
+      {issues && issues.length > 0 && <LintBadge issues={issues} />}
       {spec.ports.map((p, i) => {
         if (p.radio) return null;
         const a = portAnchor(d, i);
@@ -327,6 +391,18 @@ function DeviceView({ d, used, selected, targeted, source }: { d: Device; used: 
           )}
         </>
       )}
+    </g>
+  );
+}
+
+/** 구성 검사 배지: 타일 왼쪽 위 모서리. 오류가 하나라도 있으면 빨강, 아니면 노랑. 자세한 건 인스펙터 */
+function LintBadge({ issues }: { issues: LintIssue[] }) {
+  const severity = issues.some((i) => i.severity === "error") ? "error" : "warn";
+  return (
+    <g class={`lint-badge ${severity}`} transform="translate(-2,-2)">
+      <circle r={8} />
+      <text y={3.5}>!</text>
+      <title>{issues.map((i) => `${i.severity === "error" ? "오류" : "주의"}: ${i.message}`).join("\n")}</title>
     </g>
   );
 }

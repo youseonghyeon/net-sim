@@ -42,6 +42,8 @@ export interface Transmission {
 /** 사용자 동작. 직렬화 가능한 형태 */
 export type ActionSpec =
   | { kind: "ping"; nodeId: string; dst: Ip }
+  /** 경로 추적: TTL 을 1 부터 늘려 가며 각 홉의 Time Exceeded 로 라우터 목록을 얻는다. dst 는 IP 또는 이름 */
+  | { kind: "traceroute"; nodeId: string; dst: string }
   | { kind: "dhcp-renew"; nodeId: string }
   | { kind: "tcp-connect"; nodeId: string; dst: Ip; port: number }
   /** 인터넷 노드의 "저편 클라이언트" 가 공인 주소 dst:port 로 TCP 연결 (포트 포워딩 시연) */
@@ -280,6 +282,10 @@ export class Network {
       case "ping":
         ctx.trace("action", "sys", `[사용자] ping ${action.dst}`, { ...action });
         this.getHost(action.nodeId).ping(action.dst, ctx);
+        break;
+      case "traceroute":
+        ctx.trace("action", "sys", `[사용자] traceroute ${action.dst}`, { ...action });
+        this.getHost(action.nodeId).traceroute(action.dst, ctx);
         break;
       case "dhcp-renew":
         ctx.trace("action", "sys", `[사용자] DHCP 다시 요청`, { ...action });

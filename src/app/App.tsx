@@ -1,7 +1,26 @@
 import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
 import { running, sim, simNotice, simTime, speed, togglePlay } from "../model/sim";
-import { clearAll, loadExample, removeSelected, theme, toggleTheme, topology } from "../model/store";
+import {
+  canRedo,
+  canUndo,
+  clearAll,
+  copySelected,
+  duplicateSelected,
+  exportJson,
+  importJson,
+  loadExample,
+  paste,
+  redo,
+  removeSelected,
+  selectAll,
+  selection,
+  theme,
+  toggleTheme,
+  topology,
+  undo,
+} from "../model/store";
+import { EXAMPLE_LIST, EXAMPLES, type ExampleId } from "../model/topology";
 import { Canvas } from "./Canvas";
 import { Icon } from "./Icons";
 import { Inspector } from "./Inspector";
@@ -32,11 +51,53 @@ export function App() {
     });
   }, []);
 
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  function download(): void {
+    const blob = new Blob([exportJson()], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `net-sim-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function upload(file: File): void {
+    file.text().then((text) => {
+      const r = importJson(text);
+      if (r.error) showNotice(`불러오지 못했습니다: ${r.error}`);
+      else {
+        sim.reset();
+        showNotice(`${file.name} 에서 장치 ${r.devices}개를 불러왔습니다.`);
+      }
+    });
+  }
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return;
-      if (e.key === "Delete" || e.key === "Backspace") {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (mod && e.key.toLowerCase() === "c") {
+        const n = copySelected();
+        if (n) showNotice(`장치 ${n}개를 복사했습니다. ⌘V 로 붙여 넣습니다.`);
+      } else if (mod && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+        paste();
+      } else if (mod && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        duplicateSelected();
+      } else if (mod && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        selectAll();
+      } else if (e.key === "Escape") {
+        selection.value = null;
+      } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         removeSelected();
       } else if (e.key === " ") {
@@ -83,23 +144,53 @@ export function App() {
             장치 {t.devices.length} · 케이블 {t.cables.length}
           </span>
           <span class="vsep" />
+          <button class="icon-btn" onClick={undo} disabled={!canUndo.value} title="되돌리기 (⌘Z)">
+            <Icon name="undo" size={18} />
+          </button>
+          <button class="icon-btn" onClick={redo} disabled={!canRedo.value} title="다시 실행 (⌘⇧Z)">
+            <Icon name="redo" size={18} />
+          </button>
           <select
             class="btn ghost example"
             value=""
             onChange={(e) => {
-              const v = e.currentTarget.value as "" | "router" | "parts" | "vlan";
+              const v = e.currentTarget.value as "" | ExampleId;
               e.currentTarget.value = "";
               if (!v) return;
               loadExample(v);
               sim.reset();
+              showNotice(EXAMPLES[v].blurb);
             }}
             title="예제 네트워크 불러오기"
           >
             <option value="">예제 불러오기</option>
-            <option value="router">공유기 하나로 (라우터 + 포트 포워딩)</option>
-            <option value="parts">기능 단위로 (NAT + 게이트웨이 + DHCP/DNS 서버)</option>
-            <option value="vlan">VLAN 으로 나눈 사무실 (트렁크 + 서브 인터페이스)</option>
+            {[...new Set(EXAMPLE_LIST.map((x) => x.group))].map((g) => (
+              <optgroup key={g} label={g}>
+                {EXAMPLE_LIST.filter((x) => x.group === g).map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
           </select>
+          <button class="icon-btn" onClick={download} disabled={t.devices.length === 0} title="JSON 으로 내려받기">
+            <Icon name="download" size={18} />
+          </button>
+          <button class="icon-btn" onClick={() => fileInput.current?.click()} title="JSON 불러오기">
+            <Icon name="upload" size={18} />
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".json,application/json"
+            hidden
+            onChange={(e) => {
+              const f = e.currentTarget.files?.[0];
+              e.currentTarget.value = "";
+              if (f) upload(f);
+            }}
+          />
           <button
             class="btn ghost"
             onClick={() => {

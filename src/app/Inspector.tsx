@@ -7,7 +7,8 @@ import { L3Node } from "../core/nodes/l3";
 import type { SnapshotTable as SnapshotTableData } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { sim, simVersion } from "../model/sim";
-import { removeCable, removeDevice, selectedCable, selectedDevice, topology, updateCable, updateDevice } from "../model/store";
+import { alignSelected, duplicateSelected, lintIssues, removeCable, removeDevice, removeDevices, selectedCable, selectedDevice, selection, topology, updateCable, updateDevice, updateDevices } from "../model/store";
+import type { LintIssue } from "../model/lint";
 import { looksLikeName, PUBLIC_ZONE } from "../core/nodes/dns";
 import { validCidr } from "../core/nodes/firewall";
 import {
@@ -43,9 +44,10 @@ import { Icon } from "./Icons";
 export function Inspector() {
   const device = selectedDevice.value;
   const cable = selectedCable.value;
+  const sel = selection.value;
   return (
     <aside class="inspector">
-      {device ? <DevicePanel d={device} /> : cable ? <CablePanel c={cable} /> : <NetworkPanel />}
+      {sel?.type === "devices" ? <MultiPanel ids={sel.ids} /> : device ? <DevicePanel d={device} /> : cable ? <CablePanel c={cable} /> : <NetworkPanel />}
     </aside>
   );
 }
@@ -98,6 +100,45 @@ function portName(id: string, port: number): string {
 
 // ---------- 패널 ----------
 
+/** 구성 검사 항목 하나: 무엇이 문제인지 + 고치는 법 */
+function LintItem({ issue, deviceName }: { issue: LintIssue; deviceName?: string }) {
+  return (
+    <li class={`lint-item ${issue.severity}`}>
+      <span class="lint-dot" />
+      <div>
+        <div class="lint-msg">
+          {deviceName && (
+            <button class="link" onClick={() => (selection.value = { type: "device", id: issue.deviceId })}>
+              {deviceName}
+            </button>
+          )}
+          {deviceName && " · "}
+          {issue.message}
+        </div>
+        <div class="lint-fix">{issue.fix}</div>
+      </div>
+    </li>
+  );
+}
+
+function LintSection({ issues, withNames }: { issues: LintIssue[]; withNames: boolean }) {
+  const t = topology.value;
+  const name = (id: string) => t.devices.find((d) => d.id === id)?.name ?? id;
+  return (
+    <Section title={`구성 검사${issues.length ? ` · ${issues.length}` : ""}`}>
+      {issues.length === 0 ? (
+        <p class="note">설정에서 빠진 칸이나 어긋난 값이 없습니다. 통신이 안 되면 로그를 보세요.</p>
+      ) : (
+        <ul class="lint-list">
+          {issues.map((i, k) => (
+            <LintItem key={`${i.deviceId}:${i.code}:${k}`} issue={i} deviceName={withNames ? name(i.deviceId) : undefined} />
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
 function NetworkPanel() {
   const t = topology.value;
   return (
@@ -119,12 +160,15 @@ function NetworkPanel() {
           <b>{t.cables.length}</b>
         </div>
       </Section>
+      {t.devices.length > 0 && <LintSection issues={lintIssues.value} withNames />}
       <Section title="사용법">
         <ul class="hints">
           <li>팔레트의 장치를 캔버스로 끌어다 놓습니다.</li>
-          <li>케이블 도구(C)로 장치에서 장치로 끌면 빈 포트끼리 연결됩니다.</li>
-          <li>Shift 를 누른 채 끌어도 케이블이 연결됩니다.</li>
-          <li>휠로 이동, ⌘ + 휠로 확대·축소.</li>
+          <li>케이블 도구(C)로 장치에서 장치로 끌면 빈 포트끼리 연결됩니다. Shift 를 누른 채 끌어도 됩니다.</li>
+          <li>빈 곳을 끌면 영역 선택, Shift+클릭으로 선택에 더하거나 뺍니다. 선택한 묶음은 함께 옮기고 ⌘C · ⌘V · ⌘D 로 복제합니다.</li>
+          <li>⌘Z 되돌리기, ⌘⇧Z 다시 실행. 상단의 화살표 버튼도 같습니다.</li>
+          <li>휠로 이동, ⌘ + 휠로 확대·축소, ⌥ 를 누른 채 끌어도 이동합니다.</li>
+          <li>상단 ⤓ 로 JSON 저장, ⤒ 로 불러오기.</li>
         </ul>
       </Section>
     </>
@@ -175,6 +219,167 @@ function CablePanel({ c }: { c: Cable }) {
   );
 }
 
+/** 여러 값이 섞여 있으면 undefined */
+function common<T>(values: T[]): T | undefined {
+  return values.length > 0 && values.every((v) => v === values[0]) ? values[0] : undefined;
+}
+
+/** 다중 선택 패널: 공통 설정 일괄 변경 + 일괄 동작 */
+function MultiPanel({ ids }: { ids: string[] }) {
+  void simVersion.value;
+  const t = topology.value;
+  const devices = t.devices.filter((d) => ids.includes(d.id));
+  const hosts = devices.filter((d) => d.host);
+  const phones = devices.filter((d) => d.wifi);
+  const dhcpHosts = hosts.filter((d) => d.host!.ipMode === "dhcp" && sim.node(d.id) instanceof Host && (sim.node(d.id) as Host).linkUp);
+  const pingInput = useRef<HTMLInputElement>(null);
+  const kinds = new Map<string, number>();
+  for (const d of devices) kinds.set(specOf(d).label, (kinds.get(specOf(d).label) ?? 0) + 1);
+  const setHosts = (patch: Partial<HostSettings>) => updateDevices(hosts.map((d) => d.id), (x) => ({ ...x, host: { ...x.host!, ...patch } }));
+  const ipMode = common(hosts.map((d) => d.host!.ipMode));
+  const gateway = common(hosts.map((d) => d.host!.gateway));
+  const dns = common(hosts.map((d) => d.host!.dns ?? ""));
+  const prefix = common(hosts.map((d) => d.host!.prefix));
+  const ssid = common(phones.map((d) => d.wifi!.ssid));
+  const pingAll = () => {
+    const dst = pingInput.current?.value.trim();
+    if (!dst) {
+      pingInput.current?.focus();
+      return;
+    }
+    for (const d of hosts) sim.act({ kind: "ping", nodeId: d.id, dst });
+  };
+  const pingRows = hosts.map((d) => ({ d, last: (sim.node(d.id) as Host | undefined)?.pings.at(-1) })).filter((r) => r.last);
+  return (
+    <>
+      <header class="panel-head">
+        <Icon name="copy" />
+        <div>
+          <h2>장치 {devices.length}개 선택</h2>
+          <p>{[...kinds.entries()].map(([k, n]) => `${k} ${n}`).join(" · ")}</p>
+        </div>
+      </header>
+      <Section title="정렬">
+        <div class="btn-row">
+          <button class="btn" onClick={() => alignSelected("left")} title="가장 왼쪽 장치의 x 로 맞춤">
+            왼쪽 맞춤
+          </button>
+          <button class="btn" onClick={() => alignSelected("top")} title="가장 위 장치의 y 로 맞춤">
+            위쪽 맞춤
+          </button>
+          <button class="btn" onClick={() => alignSelected("spread-x")} title="양 끝은 두고 가로 간격을 같게">
+            가로 간격
+          </button>
+          <button class="btn" onClick={() => alignSelected("spread-y")} title="양 끝은 두고 세로 간격을 같게">
+            세로 간격
+          </button>
+        </div>
+      </Section>
+      {hosts.length > 0 && (
+        <Section title={`호스트 ${hosts.length}대 공통 설정`}>
+          <div class="segmented" role="radiogroup">
+            <button class={ipMode === "dhcp" ? "on" : ""} onClick={() => setHosts({ ipMode: "dhcp" })}>
+              자동 (DHCP)
+            </button>
+            <button class={ipMode === "static" ? "on" : ""} onClick={() => setHosts({ ipMode: "static" })}>
+              수동
+            </button>
+          </div>
+          {ipMode === undefined && <p class="note">IP 모드가 섞여 있습니다. 위에서 고르면 전부 같은 모드가 됩니다.</p>}
+          {ipMode !== "dhcp" && (
+            <>
+              <p class="note">IP 주소는 장치마다 달라야 하므로 여기서는 바꾸지 않습니다. 서브넷·게이트웨이·DNS 는 한 번에 적용됩니다.</p>
+              <Field label="서브넷">
+                <div class="prefix">
+                  <span class="mono">/</span>
+                  <input
+                    class="input mono"
+                    type="number"
+                    min={0}
+                    max={32}
+                    value={prefix ?? ""}
+                    placeholder="여러 값"
+                    onInput={(e) => setHosts({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) })}
+                  />
+                </div>
+              </Field>
+              <Field label="게이트웨이" error={gateway ? ipError(gateway, false) : undefined}>
+                <input class="input mono" value={gateway ?? ""} placeholder={gateway === undefined ? "여러 값" : "192.168.0.1"} onInput={(e) => setHosts({ gateway: e.currentTarget.value })} />
+              </Field>
+              <Field label="DNS 서버" error={dns ? ipError(dns, false) : undefined}>
+                <input class="input mono" value={dns ?? ""} placeholder={dns === undefined ? "여러 값" : "비우면 이름 해석 불가"} onInput={(e) => setHosts({ dns: e.currentTarget.value })} />
+              </Field>
+            </>
+          )}
+        </Section>
+      )}
+      {phones.length > 0 && (
+        <Section title={`무선 단말 ${phones.length}대 공통 설정`}>
+          <Field label="SSID">
+            <input class="input" value={ssid ?? ""} placeholder={ssid === undefined ? "여러 값" : "home"} onInput={(e) => updateDevices(phones.map((d) => d.id), (x) => ({ ...x, wifi: { ...x.wifi!, ssid: e.currentTarget.value } }))} />
+          </Field>
+        </Section>
+      )}
+      {hosts.length > 0 && (
+        <Section title="일괄 진단">
+          <div class="ping-row">
+            <input
+              ref={pingInput}
+              class="input mono"
+              placeholder="모두가 ping 보낼 주소 또는 이름"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") pingAll();
+              }}
+            />
+            <button class="btn" onClick={pingAll}>
+              <Icon name="send" size={14} />
+              ping {hosts.length}대
+            </button>
+          </div>
+          {pingRows.length > 0 && (
+            <table class="table ping-table">
+              <thead>
+                <tr>
+                  <th>호스트</th>
+                  <th>대상</th>
+                  <th>결과</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pingRows.map(({ d, last }) => (
+                  <tr key={d.id} class={last!.status}>
+                    <td>{d.name}</td>
+                    <td class="mono">{last!.dst}</td>
+                    <td>{last!.status === "ok" ? `응답 ${last!.rtt}ms` : last!.status === "failed" ? `실패 · ${last!.reason}` : "기다리는 중"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {dhcpHosts.length > 0 && (
+            <button class="btn wide" onClick={() => dhcpHosts.forEach((d) => sim.act({ kind: "dhcp-renew", nodeId: d.id }))}>
+              <Icon name="refresh" size={14} />
+              DHCP 다시 요청 ({dhcpHosts.length}대)
+            </button>
+          )}
+        </Section>
+      )}
+      <Section>
+        <div class="btn-row">
+          <button class="btn" onClick={() => duplicateSelected()} title="복제 (⌘D)">
+            <Icon name="copy" size={16} />
+            복제
+          </button>
+          <button class="btn danger" onClick={() => removeDevices(ids)}>
+            <Icon name="trash" size={16} />
+            {devices.length}개 삭제
+          </button>
+        </div>
+      </Section>
+    </>
+  );
+}
+
 function DevicePanel({ d }: { d: Device }) {
   const spec = specOf(d);
   const t = topology.value;
@@ -193,6 +398,10 @@ function DevicePanel({ d }: { d: Device }) {
         </Field>
       </Section>
       <StatusSection d={d} />
+      {(() => {
+        const mine = lintIssues.value.filter((i) => i.deviceId === d.id);
+        return mine.length > 0 ? <LintSection issues={mine} withNames={false} /> : null;
+      })()}
       {d.wifi && <WifiClientSection d={d} />}
       {spec.ports.some((p) => !p.radio) && (
       <Section title="포트">
@@ -1157,6 +1366,15 @@ function DiagSection({ d }: { d: Device }) {
     }
     sim.act({ kind: "ping", nodeId: d.id, dst });
   };
+  const trace = () => {
+    const dst = input.current?.value.trim();
+    if (!dst || !okTarget(dst)) {
+      input.current?.focus();
+      return;
+    }
+    sim.act({ kind: "traceroute", nodeId: d.id, dst });
+  };
+  const tr = node.traceroutes.at(-1);
   const connect = () => {
     const dst = tcpInput.current?.value.trim();
     const port = Number(portInput.current?.value) || 80;
@@ -1181,7 +1399,7 @@ function DiagSection({ d }: { d: Device }) {
         />
         <datalist id={`targets-${d.id}`}>
           {targets.map((t) => (
-            <option key={t.ip} value={t.ip}>
+            <option key={`${t.ip}-${t.name}`} value={t.ip}>
               {t.name}
             </option>
           ))}
@@ -1195,6 +1413,9 @@ function DiagSection({ d }: { d: Device }) {
           <Icon name="send" size={14} />
           ping
         </button>
+        <button class="btn" onClick={trace} title="traceroute: TTL 을 1 부터 늘려 가며 보내 경로의 라우터를 차례로 알아냅니다">
+          경로
+        </button>
       </div>
       {node.pings.length > 0 && (
         <ul class="ping-log">
@@ -1205,6 +1426,34 @@ function DiagSection({ d }: { d: Device }) {
             </li>
           ))}
         </ul>
+      )}
+      {tr && (
+        <div class={`trace-result ${tr.status}`}>
+          <div class="trace-head">
+            <span class="mono">traceroute {tr.resolved && tr.resolved !== tr.dst ? `${tr.dst} (${tr.resolved})` : tr.dst}</span>
+            <span>{tr.status === "done" ? `${tr.hops.length}홉` : tr.status === "failed" ? `실패 · ${tr.reason}` : "찾는 중…"}</span>
+          </div>
+          <ol class="trace-hops">
+            {tr.hops.map((h) => {
+              const who = h.ip ? topology.value.devices.find((x) => {
+                const n = sim.node(x.id);
+                if (n instanceof Host) return n.ip === h.ip;
+                if (n instanceof Router) return n.lan.ip === h.ip || n.wan.ip === h.ip;
+                if (n instanceof L3Node) return n.ifaces.some((f) => f.ip === h.ip);
+                if (n instanceof Internet) return n.iface.ip === h.ip;
+                return false;
+              })?.name : undefined;
+              return (
+                <li key={h.ttl}>
+                  <span class="ttl mono">{h.ttl}</span>
+                  <span class="mono">{h.ip ?? "*"}</span>
+                  <span class="who">{who ?? (h.ip ? "" : "응답 없음")}</span>
+                  <span class="rtt">{h.rtt !== undefined ? `${h.rtt}ms` : ""}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
       )}
       <div class="ping-row tcp-row">
         <input
@@ -1219,7 +1468,7 @@ function DiagSection({ d }: { d: Device }) {
         />
         <datalist id={`servers-${d.id}`}>
           {servers.map((t) => (
-            <option key={t.ip} value={t.ip}>
+            <option key={`${t.ip}-${t.name}`} value={t.ip}>
               {t.name}
             </option>
           ))}

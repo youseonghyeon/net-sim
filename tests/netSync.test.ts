@@ -3,7 +3,7 @@ import { Host } from "../src/core/nodes/host";
 import { L3Node } from "../src/core/nodes/l3";
 import { Router } from "../src/core/nodes/router";
 import { NetworkSync } from "../src/model/netSync";
-import { createDevice, exampleTopology, examplePartsTopology, exampleVlanTopology, newId, type Device, type Topology } from "../src/model/topology";
+import { createDevice, EXAMPLES, exampleTopology, examplePartsTopology, exampleVlanTopology, newId, type Device, type Topology } from "../src/model/topology";
 
 function byName(t: Topology, name: string): Device {
   const d = t.devices.find((x) => x.name === name);
@@ -68,6 +68,71 @@ describe("NetworkSync: 예제 토폴로지가 그대로 동작한다", () => {
     expect(ping(s, t, "pc-1", "192.168.10.11")).toMatchObject({ status: "ok" });
     expect(ping(s, t, "pc-1", "192.168.20.20")).toMatchObject({ status: "ok" });
     expect(ping(s, t, "pc-1", "google.com")).toMatchObject({ status: "ok" });
+  });
+});
+
+describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트가 재현된다", () => {
+  function load(id: keyof typeof EXAMPLES) {
+    const s = new NetworkSync();
+    const t = EXAMPLES[id].build();
+    s.sync(t);
+    s.net.runToIdle();
+    return { s, t };
+  }
+
+  it("PC 2대 + 스위치: ARP 뒤 ping", () => {
+    const { s, t } = load("starter");
+    expect(ping(s, t, "pc-1", "192.168.0.11")).toMatchObject({ status: "ok" });
+    expect(s.net.trace.some((e) => e.kind === "arp.request.sent")).toBe(true);
+  });
+
+  it("게이트웨이 2단: 옆 서브넷은 정적 경로로 바로, 인터넷은 NAT 로. NAT 의 되돌아오는 경로를 지우면 응답이 끊긴다", () => {
+    const { s, t } = load("gateways");
+    expect(ping(s, t, "pc-1", "192.168.5.10")).toMatchObject({ status: "ok" });
+    // gw-1 이 NAT 를 거치지 않고 gw-2 로 넘겼다
+    expect(s.net.transmissions.some((x) => x.from.node === byName(t, "gw-1").id && x.to.node === byName(t, "sw-1").id)).toBe(true);
+    expect(ping(s, t, "pc-3", "8.8.8.8")).toMatchObject({ status: "ok" });
+    const broken = patch(t, "nat-1", (d) => ({ ...d, l3: { ...d.l3!, routes: [] } }));
+    s.sync(broken);
+    expect(ping(s, broken, "pc-3", "8.8.8.8")).toMatchObject({ status: "failed" });
+  });
+
+  it("허브 vs 스위치: 허브 쪽 ping 은 공유기까지 복제되고 스위치 쪽은 안 간다", () => {
+    const { s, t } = load("hub");
+    const rt = byName(t, "rt-1").id;
+    const ip = (n: string) => host(s, t, n).ip!;
+    const before = s.net.transmissions.length;
+    ping(s, t, "pc-1", ip("pc-2"));
+    const hubSide = s.net.transmissions.slice(before);
+    expect(hubSide.some((x) => x.to.node === rt && x.frame.payload.kind === "ipv4" && x.frame.payload.payload.kind === "icmp")).toBe(true);
+    const mid = s.net.transmissions.length;
+    ping(s, t, "pc-3", ip("pc-4"));
+    const swSide = s.net.transmissions.slice(mid);
+    expect(swSide.some((x) => x.to.node === rt && x.frame.payload.kind === "ipv4" && x.frame.payload.payload.kind === "icmp")).toBe(false);
+  });
+
+  it("방화벽: ping 은 되고 TCP 80 은 공유기에서 차단", () => {
+    const { s, t } = load("firewall");
+    expect(ping(s, t, "pc-1", "example.com")).toMatchObject({ status: "ok" });
+    const pc = byName(t, "pc-1").id;
+    s.net.scheduleAction(s.net.now, { kind: "tcp-connect", nodeId: pc, dst: "example.com", port: 80 });
+    s.net.runToIdle();
+    expect(s.net.trace.some((e) => e.nodeId === byName(t, "rt-1").id && e.kind === "fw.deny")).toBe(true);
+    expect([...host(s, t, "pc-1").tcp.conns.values()].at(-1)?.state).toBe("FAILED");
+  });
+
+  it("무선 로밍: 왼쪽 AP 에 붙었다가 오른쪽으로 옮기면 갈아탄다", () => {
+    const { s, t } = load("roaming");
+    const ap1 = byName(t, "ap-1").id;
+    const ap2 = byName(t, "ap-2").id;
+    const link = () => [...s.net.links.values()].find((l) => l.id.startsWith("wl_"));
+    expect(host(s, t, "phone-1").ip).toMatch(/^192\.168\.0\./);
+    expect([link()!.a.node, link()!.b.node]).toContain(ap1);
+    const moved = patch(t, "phone-1", (d) => ({ ...d, x: 740 }));
+    s.sync(moved);
+    s.net.runToIdle();
+    expect([link()!.a.node, link()!.b.node]).toContain(ap2);
+    expect(host(s, t, "phone-1").ip).toMatch(/^192\.168\.0\./);
   });
 });
 
