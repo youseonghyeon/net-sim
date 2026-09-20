@@ -6,8 +6,8 @@ import {
   examplePartsTopology,
   exampleTopology,
   exampleVlanTopology,
-  freePort,
   newId,
+  planCable,
   normalizeTopology,
   snap,
   type Cable,
@@ -115,22 +115,9 @@ export function removeDevice(id: string): void {
 
 /** 두 장치를 잇는다. 포트는 상대를 향한 빈 포트를 자동 선택. 실패 사유를 문자열로 돌려준다 */
 export function connectDevices(aId: string, bId: string): { cable?: Cable; error?: string } {
-  const t = topology.value;
-  if (aId === bId) return { error: "같은 장치끼리는 연결할 수 없습니다" };
-  const a = t.devices.find((d) => d.id === aId);
-  const b = t.devices.find((d) => d.id === bId);
-  if (!a || !b) return { error: "장치를 찾을 수 없습니다" };
-  for (const d of [a, b]) {
-    if (DEVICE_SPECS[d.kind].ports.every((p) => p.radio)) return { error: `${d.name} 은(는) 무선 전용이라 케이블을 꽂을 수 없습니다. SSID 를 맞추고 AP 근처로 옮기세요` };
-  }
-  if (t.cables.some((c) => (c.a.device === aId && c.b.device === bId) || (c.a.device === bId && c.b.device === aId))) {
-    return { error: `${a.name} 와 ${b.name} 는 이미 연결되어 있습니다. 두 번째 케이블은 L2 루프(브로드캐스트 폭주)를 만듭니다` };
-  }
-  const pa = freePort(t, aId, b.y);
-  const pb = freePort(t, bId, a.y);
-  if (pa === undefined) return { error: `${a.name} 에 빈 포트가 없습니다` };
-  if (pb === undefined) return { error: `${b.name} 에 빈 포트가 없습니다` };
-  return { cable: addCable({ device: aId, port: pa }, { device: bId, port: pb }) };
+  const plan = planCable(topology.value, aId, bId);
+  if ("error" in plan) return { error: plan.error };
+  return { cable: addCable(plan.a, plan.b) };
 }
 
 export function addCable(a: PortRef, b: PortRef): Cable {

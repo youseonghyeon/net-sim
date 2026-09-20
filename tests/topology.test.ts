@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createDevice, normalizeTopology, type Device } from "../src/model/topology";
+import { effectiveDnsServer, effectiveFirewall, effectiveForwards, effectiveL3, effectiveSwitchVlans } from "../src/model/netSync";
+import { createDevice, normalizeTopology, planCable, type Device, type Topology } from "../src/model/topology";
 
 describe("normalizeTopology", () => {
   it("저장된 게이트웨이의 서브 인터페이스·방화벽·포워딩 설정을 잃지 않는다", () => {
@@ -19,5 +20,105 @@ describe("normalizeTopology", () => {
     expect(l3.firewall?.defaultPolicy).toBe("deny");
     expect(l3.forwards).toHaveLength(1);
     expect(l3.interfaces).toHaveLength(l3In.interfaces.length);
+  });
+});
+
+describe("planCable: 케이블 연결 검증", () => {
+  function mk() {
+    const devices: Device[] = [];
+    const add = (kind: Parameters<typeof createDevice>[0]) => {
+      const d = createDevice(kind, 0, devices.length * 200, devices);
+      devices.push(d);
+      return d;
+    };
+    return { devices, add };
+  }
+
+  it("빈 포트를 골라 잇고, 같은 두 장치 사이 두 번째 케이블은 L2 루프라 거부한다", () => {
+    const { devices, add } = mk();
+    const sw = add("switch");
+    const pc = add("pc");
+    const t: Topology = { devices, cables: [] };
+    const plan = planCable(t, pc.id, sw.id);
+    expect("error" in plan).toBe(false);
+    if ("error" in plan) return;
+    expect(plan.a).toEqual({ device: pc.id, port: 0 });
+    expect(plan.b.device).toBe(sw.id);
+    t.cables.push({ id: "c1", a: plan.a, b: plan.b });
+    const again = planCable(t, sw.id, pc.id);
+    expect("error" in again && again.error).toContain("이미 연결");
+    expect("error" in planCable(t, pc.id, pc.id)).toBe(true);
+  });
+
+  it("무선 전용 단말과 포트가 다 찬 장치는 이유를 말하며 거부한다", () => {
+    const { devices, add } = mk();
+    const phone = add("phone");
+    const pc = add("pc");
+    const pc2 = add("pc");
+    const sw = add("switch");
+    const t: Topology = { devices, cables: [{ id: "c1", a: { device: pc.id, port: 0 }, b: { device: sw.id, port: 0 } }] };
+    const wl = planCable(t, phone.id, sw.id);
+    expect("error" in wl && wl.error).toContain("무선 전용");
+    const full = planCable(t, pc.id, pc2.id);
+    expect("error" in full && full.error).toContain("빈 포트가 없습니다");
+    expect("error" in planCable(t, "nope", sw.id)).toBe(true);
+  });
+});
+
+describe("effective*: 입력 중인 값을 시뮬레이션용으로 정리한다", () => {
+  it("방화벽: 형식이 틀린 CIDR·포트 규칙은 빼고, 포트는 1..65535 로 자른다", () => {
+    const out = effectiveFirewall({
+      enabled: true,
+      defaultPolicy: "deny",
+      stateful: false,
+      rules: [
+        { action: "allow", proto: "tcp", direction: "in", src: "", dst: "192.168.0.0/24", dstPort: "80" },
+        { action: "deny", proto: "any", direction: "any", src: "10.0.0.0/", dst: "", dstPort: "" },
+        { action: "deny", proto: "udp", direction: "out", src: "", dst: "", dstPort: "abc" },
+        { action: "allow", proto: "tcp", direction: "out", src: "", dst: "", dstPort: "99999" },
+      ],
+    });
+    expect(out.rules).toEqual([
+      { action: "allow", proto: "tcp", direction: "in", src: undefined, dst: "192.168.0.0/24", dstPort: 80 },
+      { action: "allow", proto: "tcp", direction: "out", src: undefined, dst: undefined, dstPort: 65535 },
+    ]);
+  });
+
+  it("포트 포워딩·정적 경로·서브 인터페이스: 불완전한 항목은 빠지고 무선 슬롯 포트엔 서브 인터페이스를 못 둔다", () => {
+    expect(effectiveForwards([{ publicPort: 80, lanIp: "192.168.0.", lanPort: 80 }, { publicPort: 0, lanIp: "192.168.0.2", lanPort: 80 }, { publicPort: 8080, lanIp: "192.168.0.2", lanPort: 80 }])).toEqual([
+      { publicPort: 8080, lanIp: "192.168.0.2", lanPort: 80 },
+    ]);
+    const gw = createDevice("gateway", 0, 0, []);
+    gw.l3 = {
+      ...gw.l3!,
+      routes: [{ dest: "10.0.0.0", prefix: 8, via: "192.168.0.254" }, { dest: "10.0", prefix: 8, via: "192.168.0.254" }, { dest: "10.0.0.0", prefix: 40, via: "192.168.0.254" }],
+      subinterfaces: [
+        { port: 1, vlan: 10, ip: "192.168.10.1", prefix: 24, relay: "" },
+        { port: 0, vlan: 20, ip: "10.0.0.1", prefix: 24, relay: "" }, // 업링크엔 불가
+        { port: 1, vlan: 5000, ip: "192.168.50.1", prefix: 24, relay: "" }, // 범위 밖
+        { port: 1, vlan: 30, ip: "192.168.30.", prefix: 24, relay: "192.168.1.2" }, // 주소 입력 중
+      ],
+    };
+    const l3 = effectiveL3(gw);
+    expect(l3.routes).toEqual([{ dest: "10.0.0.0", prefix: 8, via: "192.168.0.254" }]);
+    expect(l3.subinterfaces).toEqual([
+      { port: 1, vlan: 10, ip: "192.168.10.1", prefix: 24, relay: undefined },
+      { port: 1, vlan: 30, ip: undefined, prefix: 24, relay: "192.168.1.2" },
+    ]);
+  });
+
+  it("스위치 VLAN: 1..4094 와 trunk 만 남는다", () => {
+    const sw = createDevice("switch", 0, 0, []);
+    sw.switch = { vlans: { 0: "trunk", 1: 10, 2: 0, 3: 4095, 4: 2.5 as number } };
+    expect([...effectiveSwitchVlans(sw).entries()]).toEqual([
+      [0, "trunk"],
+      [1, 10],
+    ]);
+  });
+
+  it("호스트 DNS 서버: 이름은 소문자로 정리하고 주소가 틀린 레코드는 뺀다", () => {
+    const srv = createDevice("server", 0, 0, []);
+    srv.host = { ...srv.host!, dnsServer: { enabled: true, records: [{ name: " Web.Home ", ip: "192.168.0.20" }, { name: "", ip: "192.168.0.21" }, { name: "x", ip: "bad" }], upstream: "8.8.8." } };
+    expect(effectiveDnsServer(srv)).toEqual({ enabled: true, records: [{ name: "web.home", ip: "192.168.0.20" }], upstream: undefined });
   });
 });

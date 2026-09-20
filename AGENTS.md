@@ -9,7 +9,8 @@ Packet Tracer 식으로 직접 구성하는 네트워크 학습 시뮬레이터.
   - `packet.ts` — 계층별 패킷 모델 (학습에 필요한 필드만)
   - `trace.ts` — `TraceKind` 목록. 새 이벤트 종류를 추가하면 여기에 먼저 등록
   - `scenarios/` — 테스트용 고정 토폴로지
-- `src/model/` — 편집 가능한 토폴로지 모델(`topology.ts`: 장치 종류·포트·앵커 좌표)과 앱 상태(`store.ts`: Preact signals, localStorage 저장). 시뮬레이션 실행 시 코어 `Network` 로 변환한다.
+- `src/model/` — 편집 가능한 토폴로지 모델(`topology.ts`: 장치 종류·포트·앵커 좌표·무선 파생·`planCable` 검증)과 앱 상태(`store.ts`: Preact signals, localStorage 저장). 시뮬레이션 실행 시 코어 `Network` 로 변환한다.
+  - 순수(테스트 가능) 층: `netSync.ts`(`NetworkSync`: 토폴로지 → `Network` diff 동기화, `effective*` 입력 정리, `makeNode`/`applyConfig`), `simClock.ts`(`advanceClock`: 애니메이션 시계), `status.ts`(타일 문구·서비스 배지). `sim.ts` 는 이 셋을 신호·rAF 로 감싸기만 한다. 새 동기화 로직은 `sim.ts` 가 아니라 `netSync.ts` 에 넣고 `tests/netSync.test.ts` 로 고정한다.
 - `src/app/` — Preact UI. `Canvas.tsx`(SVG 캔버스: 이동/팬/줌/케이블 드래그), `Palette.tsx`, `Inspector.tsx`(우측 속성), `App.tsx`(상단바·로그 서랍), `styles.css`(토큰 + 컴포넌트).
 - `tests/` — vitest. 코어는 트레이스 순서(`nodeId:kind` 시퀀스)를 그대로 단언하는 방식을 유지한다.
 
@@ -32,7 +33,7 @@ npm run ui-check    # Playwright 스모크 (개발 서버 자동 기동, .shots/
 코어 변경은 `npm test`, UI 변경은 `npm run ui-check` 까지 통과해야 완료.
 
 ## 시뮬레이션 연결 방식
-- `src/model/sim.ts` 의 `SimController` 가 토폴로지 signal 을 구독해 `Network` 에 diff 로 반영한다(장치 추가/삭제, 케이블 connect/disconnect, 설정 변경 → `node.configure`).
+- `src/model/sim.ts` 의 `SimController` 가 토폴로지 signal 을 구독해 `NetworkSync.sync` 로 `Network` 에 diff 반영한다(장치 추가/삭제, 케이블 connect/disconnect, 설정 변경 → `node.configure`). 위치 이동만 있으면 `sync` 가 false 를 돌려 패널이 재렌더되지 않는다.
 - 시계: 패킷이 링크 위에 있을 때만 흐르고, 대기 이벤트만 있으면 그 시각으로 점프, 아무것도 없으면 정지. 사용자 개입 시각은 정수 ms 로 올림.
 - 노드 클래스: `Host`(DhcpClient + 선택적 DhcpServer/DnsServer + DnsResolver + ping + TcpStack), `Switch`, `Hub`(학습 없이 전부 반복), `Router`(LAN 브리지 + DhcpServer + DNS 포워더 + WAN DhcpClient + NatTable/포트 포워딩), `L3Node`(게이트웨이/NAT 박스: 인터페이스 N개, 직접 연결 → 정적 경로 → 기본 경로, DHCP 릴레이, NAT 는 outside 에서 + 포트 포워딩), `Internet`(ISP DhcpServer + 공인 DNS 8.8.8.8/1.1.1.1 + 공인 서버 대역 ping/TCP 응답 + 외부 클라이언트 198.51.100.7). 공용 모듈: `nodes/dhcp.ts`, `nodes/dns.ts`, `nodes/tcp.ts`, `nodes/nat.ts`, `nodes/firewall.ts`(지나가는 패킷만 검사, 방향은 업링크 기준 in/out, 안쪽끼리는 lan, 상태 추적은 initiator 패킷만 흐름 등록).
 - 무선: 모델의 `wirelessLinks(topology)` 가 SSID·거리(`WIFI_RANGE`)로 단말→기지 연결을 파생하고, `sim.ts` 가 이를 `wl_<단말id>_<기지id>_<슬롯>` 케이블로 `Network` 에 넣는다(지연 20ms, 기지·슬롯이 바뀌면 다른 링크로 보고 재연결). 기지 포트는 `PortSpec.radio`(그리지 않음, 케이블 금지). 코어 `AccessPoint`(포트 0 = eth0, 1..8 = 무선 슬롯), `Router.RADIO_PORTS`(5..12). 슬롯 할당은 `slotTable` 로 안정화.

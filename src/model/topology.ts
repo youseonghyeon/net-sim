@@ -485,6 +485,25 @@ export function usedPorts(topology: Topology, deviceId: string): Set<number> {
  * 비어 있는 포트 중 상대 장치를 향한 쪽(상대가 위에 있으면 top)을 우선 고른다.
  * 케이블이 포트에서 수직으로 나가므로, 이렇게 해야 선이 자연스럽게 상대를 향한다.
  */
+/** 두 장치를 잇는 케이블의 양 끝 포트를 정한다. 못 잇는 이유는 사용자에게 보일 문장으로 돌려준다 */
+export function planCable(t: Topology, aId: string, bId: string): { a: PortRef; b: PortRef } | { error: string } {
+  if (aId === bId) return { error: "같은 장치끼리는 연결할 수 없습니다" };
+  const a = t.devices.find((d) => d.id === aId);
+  const b = t.devices.find((d) => d.id === bId);
+  if (!a || !b) return { error: "장치를 찾을 수 없습니다" };
+  for (const d of [a, b]) {
+    if (DEVICE_SPECS[d.kind].ports.every((p) => p.radio)) return { error: `${d.name} 은(는) 무선 전용이라 케이블을 꽂을 수 없습니다. SSID 를 맞추고 AP 근처로 옮기세요` };
+  }
+  if (t.cables.some((c) => (c.a.device === aId && c.b.device === bId) || (c.a.device === bId && c.b.device === aId))) {
+    return { error: `${a.name} 와 ${b.name} 는 이미 연결되어 있습니다. 두 번째 케이블은 L2 루프(브로드캐스트 폭주)를 만듭니다` };
+  }
+  const pa = freePort(t, aId, b.y);
+  const pb = freePort(t, bId, a.y);
+  if (pa === undefined) return { error: `${a.name} 에 빈 포트가 없습니다` };
+  if (pb === undefined) return { error: `${b.name} 에 빈 포트가 없습니다` };
+  return { a: { device: aId, port: pa }, b: { device: bId, port: pb } };
+}
+
 export function freePort(topology: Topology, deviceId: string, peerY?: number): number | undefined {
   const device = topology.devices.find((d) => d.id === deviceId);
   if (!device) return undefined;
