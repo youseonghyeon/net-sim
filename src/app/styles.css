@@ -86,10 +86,19 @@ body {
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
 }
+/* select 도 포함: 빠지면 다크 테마에서 브라우저 기본색(검정 글자)이 남는다 */
 button,
-input {
+input,
+select {
   font: inherit;
   color: inherit;
+}
+/* 네이티브 드롭다운 목록·스크롤바가 테마를 따르게 */
+:root {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 .mono {
   font-family: var(--mono);
@@ -1266,8 +1275,15 @@ select.btn.example {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   padding: 4px 0 8px;
   cursor: pointer;
+}
+/* 토글 옆 부연 설명은 라벨 아래 작은 줄로 (한 줄에 붙이면 토글 밑으로 감긴다) */
+.toggle-row small {
+  display: block;
+  font-size: 11px;
+  line-height: 1.4;
 }
 .toggle {
   position: relative;

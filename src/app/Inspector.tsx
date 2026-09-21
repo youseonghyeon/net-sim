@@ -1022,7 +1022,8 @@ function FirewallSection({ value, onChange, uplinkName }: { value: FirewallSetti
           </Field>
           <label class="toggle-row">
             <span>
-              Stateful 검사 <span class="muted">(안에서 시작한 통신의 응답 허용)</span>
+              Stateful 검사
+              <small class="muted">안에서 시작한 통신의 응답은 허용</small>
             </span>
             <Toggle on={value.stateful} onToggle={() => set({ stateful: !value.stateful })} />
           </label>
