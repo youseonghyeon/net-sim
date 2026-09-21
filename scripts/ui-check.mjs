@@ -439,12 +439,14 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForTimeout(100);
   await page.click("text=영역으로 묶기");
   await page.waitForTimeout(150);
-  console.log("zones:", await page.locator("[data-zone]").count(), "| panel:", await page.locator(".inspector h2").textContent(), "| members:", (await page.locator(".inspector p").first().textContent()));
+  const zonesBefore = await page.locator("[data-zone]").count();
+  console.log("zones (예제 2 + 새로 1):", zonesBefore, "| panel:", await page.locator(".inspector h2").textContent(), "| members:", (await page.locator(".inspector p").first().textContent()));
   await page.fill(".inspector .input", "컨테이너들");
   await page.waitForTimeout(100);
-  console.log("zone label:", await page.locator("[data-zone] .zone-label text").textContent());
+  const zone = page.locator("[data-zone].selected");
+  console.log("zone label:", await zone.locator(".zone-label text").textContent());
   const before = await device("web").locator(".tile").boundingBox();
-  const lab = await page.locator("[data-zone] .zone-label rect").boundingBox();
+  const lab = await zone.locator(".zone-label rect").boundingBox();
   await page.mouse.move(lab.x + lab.width / 2, lab.y + lab.height / 2);
   await page.mouse.down();
   await page.mouse.move(lab.x + lab.width / 2 - 120, lab.y + lab.height / 2, { steps: 6 });
