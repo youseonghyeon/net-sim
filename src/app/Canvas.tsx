@@ -546,7 +546,7 @@ function PacketLayer({ byId, cables, wireless }: { byId: Map<string, Device>; ca
       <g key={tx.id} class={`packet ${frameCategory(tx.frame)}${lost ? " lost" : ""}`} transform={`translate(${p.x},${p.y})`} opacity={fade}>
         <circle r={7} />
         {lost && <path d="M-3.5,-3.5 L3.5,3.5 M3.5,-3.5 L-3.5,3.5" />}
-        <text y={-13}>{lost ? `${shortLabel(tx.frame)} 유실` : shortLabel(tx.frame)}</text>
+        <text y={-13}>{lost ? `${shortLabel(tx.frame)} 손실` : shortLabel(tx.frame)}</text>
       </g>
     );
   });

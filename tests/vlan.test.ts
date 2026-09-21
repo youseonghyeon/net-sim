@@ -74,7 +74,7 @@ describe("VLAN 스위치", () => {
     expect(net.getHost("a").pings.at(-1)?.status).toBe("failed");
   });
 
-  it("트렁크에 태그 없는 프레임이 오면(상대가 액세스 포트) 폐기하고 안내한다", () => {
+  it("트렁크에 태그 없는 프레임이 오면(상대가 액세스 포트) 드롭하고 안내한다", () => {
     const net = new Network();
     const s1 = net.addNode(new Switch("s1", 4));
     net.addNode(new Switch("s2", 4)); // 기본: 모두 액세스 VLAN 1
@@ -89,11 +89,11 @@ describe("VLAN 스위치", () => {
     net.runToIdle();
     expect(net.getHost("b").pings.at(-1)?.status).toBe("failed");
     expect(net.trace.some((e) => e.nodeId === "s1" && e.kind === "vlan.drop" && e.summary.includes("태그 없는"))).toBe(true);
-    // 반대 방향: s1 이 태그를 붙여 보낸 프레임을 s2 액세스 포트가 폐기
+    // 반대 방향: s1 이 태그를 붙여 보낸 프레임을 s2 액세스 포트가 드롭
     net.scheduleAction(net.now, { kind: "ping", nodeId: "a", dst: "10.0.0.2" });
     net.runToIdle();
     expect(net.trace.some((e) => e.nodeId === "s2" && e.kind === "vlan.drop" && e.summary.includes("액세스 포트"))).toBe(true);
-    // 호스트에 태그 프레임이 직접 가면 호스트도 폐기
+    // 호스트에 태그 프레임이 직접 가면 호스트도 드롭
     net.addNode(new Host({ id: "h", mac: "02:00:00:00:00:0e", ipMode: "static", ip: "10.0.0.9", prefix: 24 }));
     net.connect("h", 0, "s1", 2);
     s1.setVlans(vlans([[0, "trunk"], [1, 1], [2, "trunk"]]), net.contextFor("s1"));
@@ -185,7 +185,7 @@ describe("게이트웨이 서브 인터페이스 (router-on-a-stick)", () => {
     expect(net.pendingEvents).toBe(0);
   });
 
-  it("서브 인터페이스가 없는 VLAN 의 프레임은 게이트웨이가 폐기하고 안내한다", () => {
+  it("서브 인터페이스가 없는 VLAN 의 프레임은 게이트웨이가 드롭하고 안내한다", () => {
     const net = stick();
     const gw = net.nodes.get("gw") as L3Node;
     gw.setSubinterfaces([{ port: 1, vlan: 10, ip: "192.168.10.1", prefix: 24 }], net.contextFor("gw"));

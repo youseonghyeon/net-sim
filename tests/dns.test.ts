@@ -106,9 +106,9 @@ describe("DNS", () => {
     expect(pc1.pings.at(-1)).toMatchObject({ status: "ok", resolved: "192.168.0.50" });
   });
 
-  it("DNS 서버가 모르는 이름은 상위 DNS 에 재귀 질의해 답을 전달한다", () => {
+  it("DNS 서버가 모르는 이름은 업스트림 DNS 에 재귀 질의해 답을 전달한다", () => {
     const net = build();
-    // 상위 DNS 역할의 호스트 하나 더
+    // 업스트림 DNS 역할의 호스트 하나 더
     net.addNode(new Host({ id: "root", mac: "02:00:00:00:00:99", ipMode: "static", ip: "192.168.0.99", prefix: 24, dnsServer: { enabled: true, records: [{ name: "far.example", ip: "192.168.0.50" }] } }));
     net.connect("root", 0, "sw", 4);
     net.runToIdle();
@@ -159,7 +159,7 @@ describe("DNS: 라우터 포워더와 공인 DNS", () => {
     expect(net.getHost("pc1").pings.at(-1)).toMatchObject({ status: "failed", reason: "없는 이름" });
   });
 
-  it("인터넷이 없으면 라우터 포워더는 상위 응답을 못 받아 SERVFAIL 을 돌려준다", () => {
+  it("인터넷이 없으면 라우터 포워더는 업스트림 응답을 못 받아 SERVFAIL 을 돌려준다", () => {
     const net = buildHomeLan(true, false);
     net.connect("pc1", 0, "sw", 1);
     net.runToIdle();
@@ -236,7 +236,7 @@ describe("DNS 리뷰 반영", () => {
     expect([...net.getHost("c1").tcp.conns.values()].at(-1)?.state).toBe("FAILED");
   });
 
-  it("서버 두 대가 서로를 상위로 가리켜도 무한 루프 없이 SERVFAIL 로 끝난다", () => {
+  it("서버 두 대가 서로를 업스트림으로 가리켜도 무한 루프 없이 SERVFAIL 로 끝난다", () => {
     const net = build();
     net.addNode(new Host({ id: "root", mac: "02:00:00:00:00:99", ipMode: "static", ip: "192.168.0.99", prefix: 24, dnsServer: { enabled: true, records: [], upstream: "192.168.0.53" } }));
     net.connect("root", 0, "sw", 4);
@@ -269,16 +269,16 @@ describe("DNS 리뷰 반영", () => {
     expect(net.getHost("c1").pings.at(-1)).toMatchObject({ status: "failed", reason: "링크 끊김" });
   });
 
-  it("상위 DNS 무응답이면 SERVFAIL 이 리졸버가 포기하기 전에 도착해 원인이 정확히 남는다", () => {
+  it("업스트림 DNS 무응답이면 SERVFAIL 이 리졸버가 포기하기 전에 도착해 원인이 정확히 남는다", () => {
     const net = buildHomeLan(true, false);
     net.connect("pc1", 0, "sw", 1);
     net.runToIdle();
     net.scheduleAction(net.now, { kind: "ping", nodeId: "pc1", dst: "google.com" });
     net.runToIdle();
-    expect(net.getHost("pc1").pings.at(-1)).toMatchObject({ status: "failed", reason: "DNS 서버가 상위 서버 응답을 받지 못함" });
+    expect(net.getHost("pc1").pings.at(-1)).toMatchObject({ status: "failed", reason: "DNS 서버가 업스트림 서버 응답을 받지 못함" });
   });
 
-  it("라우터 상위 DNS 를 LAN 안의 서버로 두면 LAN 쪽으로 물어본다", () => {
+  it("라우터 업스트림 DNS 를 LAN 안의 서버로 두면 LAN 쪽으로 물어본다", () => {
     const net = build();
     const rt = net.nodes.get("rt") as import("../src/core/nodes/router").Router;
     rt.configure(

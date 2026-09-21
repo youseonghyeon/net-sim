@@ -27,7 +27,7 @@ export interface RouterConfig {
   lanPrefix?: number;
   dhcp: DhcpServerConfig;
   wan?: WanConfig;
-  /** DNS 포워더 (공유기 안의 dnsmasq): LAN 의 질의를 상위 DNS 로 대신 물어봄 */
+  /** DNS 포워더 (공유기 안의 dnsmasq): LAN 의 질의를 업스트림 DNS 로 대신 물어봄 */
   dns?: DnsServerConfig;
   firewall?: FirewallConfig;
   wifi?: { enabled: boolean; ssid: string };
@@ -80,7 +80,7 @@ export class Router implements SimNode {
     this.firewall = new Firewall(cfg.firewall);
     this.wifi = cfg.wifi ?? { enabled: false, ssid: "home" };
     this.dnsForwarder = new DnsServer(cfg.dns ?? { enabled: true, records: [], upstream: "8.8.8.8" }, this.lan, "DNS 포워더", {
-      // 상위 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
+      // 업스트림 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
       srcIp: () => (this.upstreamInLan() ? this.lan.ip : this.wan.ip),
       send: (pkt, ctx) => (this.upstreamInLan() ? this.lan.sendIp(pkt, ctx, this.emitLan(ctx)) : this.wan.sendIp(pkt, ctx, this.emitWan(ctx))),
     });
@@ -181,7 +181,7 @@ export class Router implements SimNode {
     if (cfg.dns) {
       const cur = this.dnsForwarder.config;
       if (cfg.dns.enabled !== cur.enabled || cfg.dns.upstream !== cur.upstream) {
-        ctx.trace("ip.config", "sys", cfg.dns.enabled ? `DNS 포워더 켜짐 (상위 DNS ${cfg.dns.upstream ?? "없음"}) — LAN 호스트에게 내 주소를 DNS 로 안내` : `DNS 포워더 꺼짐`, { ...cfg.dns });
+        ctx.trace("ip.config", "sys", cfg.dns.enabled ? `DNS 포워더 켜짐 (업스트림 DNS ${cfg.dns.upstream ?? "없음"}) — LAN 호스트에게 내 주소를 DNS 로 안내` : `DNS 포워더 꺼짐`, { ...cfg.dns });
         this.dnsForwarder.config = { ...cfg.dns, records: [] };
       }
     }
@@ -226,7 +226,7 @@ export class Router implements SimNode {
   receive(port: number, frame: EthernetFrame, ctx: NodeContext): void {
     if (port === Router.WAN_PORT) {
       if (!this.wan.accepts(frame)) {
-        ctx.trace("frame.drop", "L2", `wan 수신: 목적지 MAC ${frame.dst} 가 내 WAN MAC 아님 → 폐기`, { dst: frame.dst }, frame.id);
+        ctx.trace("frame.drop", "L2", `wan 수신: 목적지 MAC ${frame.dst} 가 내 WAN MAC 아님 → 드롭`, { dst: frame.dst }, frame.id);
         return;
       }
       ctx.trace("frame.receive", "L2", `wan 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === BROADCAST_MAC ? "브로드캐스트" : "내 WAN MAC"}]`, { src: frame.src, dst: frame.dst }, frame.id);
@@ -237,7 +237,7 @@ export class Router implements SimNode {
 
     const pn = Router.portName(port);
     if (frame.vlan !== undefined) {
-      ctx.trace("vlan.drop", "L2", `${pn} 에 VLAN ${frame.vlan} 태그 프레임 → 공유기 LAN 포트는 태그를 이해하지 못해 폐기 (스위치 쪽 포트를 액세스로)`, { port, vlan: frame.vlan }, frame.id);
+      ctx.trace("vlan.drop", "L2", `${pn} 에 VLAN ${frame.vlan} 태그 프레임 → 공유기 LAN 포트는 태그를 이해하지 못해 드롭 (스위치 쪽 포트를 액세스로)`, { port, vlan: frame.vlan }, frame.id);
       return;
     }
     ctx.trace("frame.receive", "L2", `${pn} 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === BROADCAST_MAC ? "브로드캐스트" : frame.dst}]`, { port, src: frame.src, dst: frame.dst }, frame.id);
@@ -306,17 +306,17 @@ export class Router implements SimNode {
       const m = udp.payload;
       if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) this.dhcpServer.handle(m, frame.id, ctx, emit);
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `LAN 쪽 DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frame.id);
-      else if (m.kind === "dhcp") ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frame.id);
+      else if (m.kind === "dhcp") ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frame.id);
       else if (pkt.dst === this.lan.ip && m.kind === "dns" && udp.dstPort === DNS_PORT) {
         if (this.dnsForwarder.config.enabled || m.op === "response") this.dnsForwarder.handle(pkt, udp.srcPort, m, frame.id, ctx, emit);
         else ctx.trace("dns.nxdomain", "app", `DNS 포워더가 꺼져 있음 → 질의에 응답하지 않음 (라우터 설정에서 켜거나 호스트 DNS 를 바꾸세요)`, {}, frame.id);
-      } else if (pkt.dst === this.lan.ip) ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frame.id);
+      } else if (pkt.dst === this.lan.ip) ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frame.id);
       else this.forwardToWan(pkt, frame.id, ctx);
       return;
     }
     if (pkt.dst === this.lan.ip || (this.wan.ip && pkt.dst === this.wan.ip)) {
       if (pkt.payload.kind === "tcp") {
-        ctx.trace("ip.drop", "L4", `라우터 자신에게 온 TCP ${pkt.payload.dstPort} 포트 → 듣는 서비스 없음, 폐기`, { port: pkt.payload.dstPort }, frame.id);
+        ctx.trace("ip.drop", "L4", `라우터 자신에게 온 TCP ${pkt.payload.dstPort} 포트 → 듣는 서비스 없음, 드롭`, { port: pkt.payload.dstPort }, frame.id);
         return;
       }
       // LAN 에서 내 WAN 주소로 온 ping 도 내 것: 응답은 WAN 주소를 출발지로 LAN 쪽으로 돌려준다
@@ -324,7 +324,7 @@ export class Router implements SimNode {
       return;
     }
     if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
-      ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 폐기`, { dst: pkt.dst }, frame.id);
+      ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 드롭`, { dst: pkt.dst }, frame.id);
       return;
     }
     this.forwardToWan(pkt, frame.id, ctx);
@@ -337,15 +337,15 @@ export class Router implements SimNode {
       const m = udp.payload as DhcpMessage;
       if (udp.dstPort === DHCP_CLIENT_PORT) this.wanClient.handle(m, frameId, ctx, emit);
       else if (udp.dstPort === DHCP_SERVER_PORT) ctx.trace("dhcp.ignore", "app", `[wan] 다른 장치의 DHCP ${m.op} → 무시`, {}, frameId);
-      else ctx.trace("ip.drop", "L4", `[wan] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frameId);
+      else ctx.trace("ip.drop", "L4", `[wan] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
       return;
     }
     if (pkt.dst !== this.wan.ip) {
-      ctx.trace("ip.drop", "L3", `[wan] 목적지 ${pkt.dst} 는 내 공인 주소(${this.wan.ip ?? "없음"}) 아님 → 폐기`, { dst: pkt.dst }, frameId);
+      ctx.trace("ip.drop", "L3", `[wan] 목적지 ${pkt.dst} 는 내 공인 주소(${this.wan.ip ?? "없음"}) 아님 → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
     if (pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dns" && pkt.payload.dstPort === DNS_PORT) {
-      // 내가 상위 DNS 에 물어본 답 → 포워더가 LAN 클라이언트에게 전달
+      // 내가 업스트림 DNS 에 물어본 답 → 포워더가 LAN 클라이언트에게 전달
       this.dnsForwarder.handle(pkt, pkt.payload.srcPort, pkt.payload.payload, frameId, ctx, this.emitLan(ctx));
       return;
     }
@@ -370,7 +370,7 @@ export class Router implements SimNode {
 
   private forwardToWan(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
     if (sameSubnet(pkt.dst, this.lan.ip!, this.lan.prefix)) {
-      ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 는 LAN 안의 주소 → 라우터를 거칠 필요가 없음 (호스트끼리 직접 통신) → 폐기`, { dst: pkt.dst }, frameId);
+      ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 는 LAN 안의 주소 → 라우터를 거칠 필요가 없음 (호스트끼리 직접 통신) → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
     if (pkt.ttl <= 1) {
@@ -418,7 +418,7 @@ export class Router implements SimNode {
     const wanState = this.wan.ip
       ? `${this.wan.ip}/${this.wan.prefix}`
       : !this.wanLinkUp
-        ? "없음 (케이블 없음)"
+        ? "없음 (링크 다운)"
         : this.wanMode === "dhcp"
           ? `없음 (DHCP: ${DHCP_STATE_LABEL[this.wanClient.state]})`
           : "없음 (수동 입력 필요)";
@@ -432,7 +432,7 @@ export class Router implements SimNode {
         ["WAN IP", wanState],
         ["WAN 게이트웨이", this.wan.gateway ?? "없음"],
         ["DHCP 서비스", this.dhcp.enabled ? `켜짐 · ${this.dhcp.start} ~ ${this.dhcp.end}` : "꺼짐"],
-        ["DNS 포워더", this.dnsForwarder.config.enabled ? `켜짐 · 상위 ${this.dnsForwarder.config.upstream ?? "없음"}` : "꺼짐"],
+        ["DNS 포워더", this.dnsForwarder.config.enabled ? `켜짐 · 업스트림 ${this.dnsForwarder.config.upstream ?? "없음"}` : "꺼짐"],
         ["무선", this.wifi.enabled ? `켜짐 · SSID ${this.wifi.ssid}` : "꺼짐"],
         ["방화벽", this.firewall.config.enabled ? `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}` : "꺼짐"],
       ],

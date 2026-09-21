@@ -24,13 +24,13 @@ describe("리뷰에서 나온 엣지케이스", () => {
     expect(net.pendingEvents).toBe(0);
   });
 
-  it("마지막 ACK 이 유실돼도 재전송된 FIN 을 다시 ACK 해 양쪽 모두 정상 종료한다", () => {
+  it("마지막 ACK 이 손실돼도 재전송된 FIN 을 다시 ACK 해 양쪽 모두 정상 종료한다", () => {
     const net = buildHomeLan();
     const pc1Link = net.connect("pc1", 0, "sw", 1);
     net.connect("srv", 0, "sw", 2);
     net.runToIdle();
     net.scheduleAction(net.now, { kind: "tcp-connect", nodeId: "pc1", dst: "192.168.0.50", port: 80 });
-    // 서버의 마지막 ACK(pc1 의 FIN 에 대한 응답)이 pc1 링크에서 유실되도록: 서버 FIN 이 오간 뒤 시점을 찾아 다음 프레임 유실
+    // 서버의 마지막 ACK(pc1 의 FIN 에 대한 응답)이 pc1 링크에서 손실되도록: 서버 FIN 이 오간 뒤 시점을 찾아 다음 프레임 손실
     for (let guard = 0; guard < 200; guard++) {
       const before = net.trace.length;
       net.step();

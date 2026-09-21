@@ -57,9 +57,9 @@ export interface IcmpEcho {
 }
 
 /**
- * ICMP Time Exceeded (TTL 이 0 이 되어 라우터가 폐기했음을 보낸 이에게 알림).
+ * ICMP Time Exceeded (TTL 이 0 이 되어 라우터가 드롭했음을 보낸 이에게 알림).
  * 실제 ICMP 는 원래 IP 헤더 + 데이터 앞 8바이트를 싣는다. 여기서는 그에 해당하는 식별 정보만 담는다.
- * traceroute 는 이 메시지의 출발지(= 폐기한 라우터)로 경로를 알아낸다.
+ * traceroute 는 이 메시지의 출발지(= 드롭한 라우터)로 경로를 알아낸다.
  */
 export interface IcmpTimeExceeded {
   kind: "icmp";
@@ -82,7 +82,7 @@ export function isTimeExceeded(p: Ipv4Packet["payload"]): p is IcmpTimeExceeded 
 }
 
 /**
- * TTL 이 다 된 패킷을 폐기한 라우터가 보낸 이에게 돌려줄 Time Exceeded 패킷.
+ * TTL 이 다 된 패킷을 드롭한 라우터가 보낸 이에게 돌려줄 Time Exceeded 패킷.
  * ICMP 오류에 대한 오류(RFC 1122)나 출발지가 없는(0.0.0.0) 패킷에는 만들지 않는다 → undefined.
  */
 export function timeExceededFor(from: Ip, dropped: Ipv4Packet): Ipv4Packet | undefined {

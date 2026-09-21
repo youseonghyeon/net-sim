@@ -97,7 +97,7 @@ export class AccessPoint implements SimNode {
       return;
     }
     if (!ctx.isPortConnected(AccessPoint.ETH_PORT)) {
-      ctx.trace("link.unconnected", "L1", `${frame.dst} 는 단말 목록에 없고 eth0 에 케이블이 없음 → 폐기`, {}, frame.id);
+      ctx.trace("link.unconnected", "L1", `${frame.dst} 는 단말 목록에 없고 eth0 에 케이블이 없음 → 드롭`, {}, frame.id);
       return;
     }
     ctx.trace("switch.forward", "L2", `${frame.dst} 는 무선 단말이 아님 → 유선(eth0)으로 전달`, { dst: frame.dst }, frame.id);

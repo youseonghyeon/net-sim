@@ -34,7 +34,7 @@ describe("Hub", () => {
         (t) => t.to.node === "c" && t.frame.payload.kind === "ipv4" && t.frame.payload.payload.kind === "icmp" && t.frame.payload.payload.type === "echo-reply",
       ),
     ).toBe(true);
-    // c 는 "내 MAC 아님" 으로 폐기
+    // c 는 "내 MAC 아님" 으로 드롭
     const after = net.trace.slice(from);
     expect(after.some((e) => e.nodeId === "c" && e.kind === "frame.drop" && e.summary.includes("내 MAC"))).toBe(true);
 

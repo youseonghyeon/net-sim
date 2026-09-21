@@ -85,7 +85,7 @@ describe("effective*: 입력 중인 값을 시뮬레이션용으로 정리한다
     ]);
   });
 
-  it("포트 포워딩·정적 경로·서브 인터페이스: 불완전한 항목은 빠지고 무선 슬롯 포트엔 서브 인터페이스를 못 둔다", () => {
+  it("포트 포워딩·스태틱 라우팅·서브 인터페이스: 불완전한 항목은 빠지고 무선 슬롯 포트엔 서브 인터페이스를 못 둔다", () => {
     expect(effectiveForwards([{ publicPort: 80, lanIp: "192.168.0.", lanPort: 80 }, { publicPort: 0, lanIp: "192.168.0.2", lanPort: 80 }, { publicPort: 8080, lanIp: "192.168.0.2", lanPort: 80 }])).toEqual([
       { publicPort: 8080, lanIp: "192.168.0.2", lanPort: 80 },
     ]);

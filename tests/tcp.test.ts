@@ -64,13 +64,13 @@ describe("TCP", () => {
     expect(net.pendingEvents).toBe(0);
   });
 
-  it("데이터 세그먼트가 유실되면 중복 ACK 후 타임아웃 재전송으로 복구된다", () => {
+  it("데이터 세그먼트가 손실되면 중복 ACK 후 타임아웃 재전송으로 복구된다", () => {
     const net = buildHomeLan();
     net.connect("pc1", 0, "sw", 1);
     const srvLink = net.connect("srv", 0, "sw", 2);
     net.runToIdle();
     net.scheduleAction(net.now, { kind: "tcp-connect", nodeId: "pc1", dst: "192.168.0.50", port: 80 });
-    // handshake 가 끝나고 서버가 응답을 보내기 직전(요청 도착 전)에 서버 링크의 다음 프레임 1개를 유실시킨다
+    // handshake 가 끝나고 서버가 응답을 보내기 직전(요청 도착 전)에 서버 링크의 다음 프레임 1개를 손실시킨다
     net.runUntil(net.now + 55);
     net.dropNextOn(srvLink.id);
     net.runToIdle();
@@ -86,7 +86,7 @@ describe("TCP", () => {
     expect(net.pendingEvents).toBe(0);
   });
 
-  it("SYN 이 계속 유실되면 재전송 3회 후 실패한다", () => {
+  it("SYN 이 계속 손실되면 재전송 3회 후 실패한다", () => {
     const net = buildHomeLan();
     const link = net.connect("pc1", 0, "sw", 1);
     net.connect("srv", 0, "sw", 2);

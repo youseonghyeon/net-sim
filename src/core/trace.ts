@@ -132,7 +132,7 @@ export interface TraceEvent {
   packetId?: number;
 }
 
-/** 실패·폐기 계열 (UI 에서 붉게 표시) */
+/** 실패·드롭 계열 (UI 에서 붉게 표시) */
 export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "frame.drop",
   "ip.drop",

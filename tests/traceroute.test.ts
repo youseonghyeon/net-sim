@@ -22,7 +22,7 @@ function home() {
 
 /**
  * 기능 단위 2단 구성 (tests/l3.test.ts 와 같은 모양):
- *   inet ── nat(outside dhcp / inside 10.0.0.1, 정적 경로 192.168.0.0/16 via 10.0.0.2) ── gw(if0 10.0.0.2 / if1 192.168.1.1) ── sw ── a(192.168.1.10)
+ *   inet ── nat(outside dhcp / inside 10.0.0.1, 스태틱 라우팅 192.168.0.0/16 via 10.0.0.2) ── gw(if0 10.0.0.2 / if1 192.168.1.1) ── sw ── a(192.168.1.10)
  */
 function twoStage() {
   const net = new Network();
@@ -106,7 +106,7 @@ describe("traceroute", () => {
       "rt:nat.restore",
       "pc1:trace.done",
     ]);
-    // TTL 초과 폐기는 traceroute 의 정상 동작: 붉은 "ip.ttl-expired" 는 나오지 않는다
+    // TTL 초과 드롭은 traceroute 의 정상 동작: 붉은 "ip.ttl-expired" 는 나오지 않는다
     expect(net.trace.slice(from).some((e) => e.kind === "ip.ttl-expired")).toBe(false);
     expect(net.trace.slice(from).find((e) => e.nodeId === "rt" && e.kind === "icmp.ttl-exceeded")!.summary).toContain("192.168.0.1");
     // 타이머가 남지 않는다
@@ -158,7 +158,7 @@ describe("traceroute", () => {
     expect(net.pendingEvents).toBe(0);
   });
 
-  it("(e) 상태 추적 방화벽이 들어오는 모든 것을 막아도 Time Exceeded 는 응답으로 통과한다", () => {
+  it("(e) Stateful 검사 방화벽이 들어오는 모든 것을 막아도 Time Exceeded 는 응답으로 통과한다", () => {
     const { net, rt } = home();
     const fw: FirewallConfig = { enabled: true, defaultPolicy: "allow", stateful: true, rules: [{ action: "deny", proto: "any", direction: "in" }] };
     rt.configure({ lanIp: "192.168.0.1", lanPrefix: 24, dhcp: rt.dhcp, wan: { mode: "dhcp" }, firewall: fw }, net.contextFor("rt"));
@@ -170,7 +170,7 @@ describe("traceroute", () => {
     expect(est.some((e) => e.summary.includes("Time Exceeded") && e.summary.includes("오류 통지"))).toBe(true);
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "fw.deny")).toBe(false);
 
-    // 상태 추적을 끄면 같은 규칙에 Time Exceeded 가 막혀 홉이 * 가 된다
+    // Stateful 검사를 끄면 같은 규칙에 Time Exceeded 가 막혀 홉이 * 가 된다
     rt.configure({ lanIp: "192.168.0.1", lanPrefix: 24, dhcp: rt.dhcp, wan: { mode: "dhcp" }, firewall: { ...fw, stateful: false } }, net.contextFor("rt"));
     net.scheduleAction(net.now, { kind: "traceroute", nodeId: "pc1", dst: "8.8.8.8" });
     net.runToIdle();
@@ -235,7 +235,7 @@ describe("traceroute", () => {
   });
 
   it("라우팅 루프에 걸린 ping 은 Time Exceeded 로 실패 이유를 안다", () => {
-    // gw 는 기본 경로로 nat 에, nat 는 172.16.0.0/16 을 다시 gw 로 보낸다 → 172.16.0.1 은 둘 사이를 맴돈다
+    // gw 는 디폴트 라우트로 nat 에, nat 는 172.16.0.0/16 을 다시 gw 로 보낸다 → 172.16.0.1 은 둘 사이를 맴돈다
     const net = twoStage();
     const nat = net.nodes.get("nat") as L3Node;
     nat.setRoutes(

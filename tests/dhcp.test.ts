@@ -106,7 +106,7 @@ describe("DHCP", () => {
     expect(pc1.ip).toBe("192.168.0.100");
   });
 
-  it("전송 중에 케이블이 빠지면 프레임이 유실되고 클라이언트는 재시도한다", () => {
+  it("전송 중에 케이블이 빠지면 프레임이 손실되고 클라이언트는 재시도한다", () => {
     const net = buildHomeLan();
     const link = net.connect("pc1", 0, "sw", 1);
     // Discover 가 링크 위에 있는 동안(0~10ms) 케이블 제거

@@ -9,10 +9,10 @@ import { buildHomeLan } from "../src/core/scenarios/homeLan";
 import { hostStatusOf, serviceBadgesOf, wanStatusOf } from "../src/model/status";
 
 describe("타일 상태 문구", () => {
-  it("호스트: 케이블 없음 → DHCP 요청 중 → 주소, 무선 단말은 '무선 연결 없음'", () => {
+  it("호스트: 링크 다운 → DHCP 요청 중 → 주소, 무선 단말은 '무선 연결 없음'", () => {
     const net = new Network();
     const h = net.addNode(new Host({ id: "a", mac: "02:00:00:00:00:0a" }));
-    expect(hostStatusOf(h, false)).toMatchObject({ text: "케이블 없음", tone: "muted" });
+    expect(hostStatusOf(h, false)).toMatchObject({ text: "링크 다운", tone: "muted" });
     expect(hostStatusOf(h, true)).toMatchObject({ text: "무선 연결 없음", tone: "muted" });
     net.addNode(new Switch("sw", 2));
     net.connect("a", 0, "sw", 0);
@@ -23,7 +23,7 @@ describe("타일 상태 문구", () => {
     h.configure({ ipMode: "static", ip: "10.0.0.5", prefix: 24 }, net.contextFor("a"));
     expect(hostStatusOf(h, false)).toMatchObject({ text: "10.0.0.5/24", tone: "ok", mono: true });
     h.configure({ ipMode: "static" }, net.contextFor("a"));
-    expect(hostStatusOf(h, false)).toMatchObject({ text: "IP 없음 · 수동 입력 필요", tone: "warn" });
+    expect(hostStatusOf(h, false)).toMatchObject({ text: "IP 미설정", tone: "warn" });
     expect(hostStatusOf(undefined, false)).toBeNull();
   });
 

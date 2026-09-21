@@ -169,7 +169,7 @@ export class DhcpClient {
     ctx.trace(
       "dhcp.failed",
       "app",
-      this.tag(`DHCP 실패: 서버 응답 없음 (${DHCP_MAX_ATTEMPTS}회 시도) → 주소 없음. DHCP 서비스를 켠 뒤 "DHCP 다시 요청" 을 누르거나, IP 를 수동 설정하세요`),
+      this.tag(`DHCP 실패: 서버 응답 없음 (${DHCP_MAX_ATTEMPTS}회 시도) → 주소 없음. DHCP 서비스를 켠 뒤 "DHCP 임대 갱신" 을 누르거나, IP 를 수동 설정하세요`),
       {},
     );
   }
@@ -312,7 +312,7 @@ export class DhcpServer {
       ctx.trace(
         "dhcp.lease",
         "app",
-        `${why} → 범위 밖 임대 ${dropped.length}개 무효화 (${dropped.join(", ")}). 해당 호스트는 "DHCP 다시 요청" 을 하면 새 주소를 받는다`,
+        `${why} → 범위 밖 임대 ${dropped.length}개 무효화 (${dropped.join(", ")}). 해당 호스트는 "DHCP 임대 갱신" 을 하면 새 주소를 받는다`,
         { dropped },
       );
     }
@@ -339,7 +339,7 @@ export class DhcpServer {
       }
       const ip = this.pickAddress(msg.clientMac, pool);
       if (!ip) {
-        ctx.trace("dhcp.pool.exhausted", "app", `빌려줄 주소가 없음 (범위 ${pool.start} ~ ${pool.end} 모두 사용 중) → 응답 안 함`, {}, frameId);
+        ctx.trace("dhcp.pool.exhausted", "app", `임대할 주소 없음 (풀 고갈) (범위 ${pool.start} ~ ${pool.end} 모두 사용 중) → 응답 안 함`, {}, frameId);
         return;
       }
       this.offers.set(msg.clientMac, ip);
@@ -356,7 +356,7 @@ export class DhcpServer {
       ctx.trace(
         "dhcp.offer.sent",
         "app",
-        `DHCP Offer: ${msg.clientMac} 에게 ${ip}/${pool.prefix} 제안 (게이트웨이 ${pool.router ?? "안내 없음"}) → ${msg.giaddr ? `릴레이 ${msg.giaddr} 로 유니캐스트` : "클라이언트 MAC 으로 유니캐스트"}`,
+        `DHCP Offer: ${msg.clientMac} 에게 ${ip}/${pool.prefix} 제안 (기본 게이트웨이 옵션 ${pool.router ?? "없음"}) → ${msg.giaddr ? `릴레이 ${msg.giaddr} 로 유니캐스트` : "클라이언트 MAC 으로 유니캐스트"}`,
         { ...offer },
       );
       this.reply(offer, ip, msg, ctx, emit);
@@ -396,7 +396,7 @@ export class DhcpServer {
         giaddr: msg.giaddr,
         options: { prefix: pool.prefix, router: pool.router, dns: pool.dns, leaseTime: LEASE_TIME },
       };
-      ctx.trace("dhcp.lease", "app", `임대 등록: ${ip} → ${msg.clientMac}`, { ip, mac: msg.clientMac });
+      ctx.trace("dhcp.lease", "app", `임대 할당: ${ip} → ${msg.clientMac}`, { ip, mac: msg.clientMac });
       ctx.trace("dhcp.ack.sent", "app", `DHCP Ack: ${msg.clientMac} 에게 ${ip}/${pool.prefix} 확정 (게이트웨이 ${pool.router ?? "안내 없음"}, DNS ${pool.dns ?? "안내 없음"})${msg.giaddr ? ` → 릴레이 ${msg.giaddr} 로` : ""}`, { ...ack });
       this.reply(ack, ip, msg, ctx, emit);
       return;

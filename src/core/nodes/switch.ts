@@ -81,14 +81,14 @@ export class Switch implements SimNode {
     let vlan: number;
     if (mode === "trunk") {
       if (frame.vlan === undefined) {
-        ctx.trace("vlan.drop", "L2", `${pn} 는 트렁크인데 태그 없는 프레임 → 폐기 (상대 포트도 트렁크여야 함)`, { port }, frame.id);
+        ctx.trace("vlan.drop", "L2", `${pn} 는 트렁크인데 태그 없는 프레임 → 드롭 (상대 포트도 트렁크여야 함)`, { port }, frame.id);
         return;
       }
       vlan = frame.vlan;
       frame = { ...frame, vlan: undefined };
     } else {
       if (frame.vlan !== undefined) {
-        ctx.trace("vlan.drop", "L2", `${pn} 는 액세스 포트(VLAN ${mode})인데 VLAN ${frame.vlan} 태그 프레임 → 폐기 (트렁크로 바꿔야 함)`, { port }, frame.id);
+        ctx.trace("vlan.drop", "L2", `${pn} 는 액세스 포트(VLAN ${mode})인데 VLAN ${frame.vlan} 태그 프레임 → 드롭 (트렁크로 바꿔야 함)`, { port }, frame.id);
         return;
       }
       vlan = mode;
@@ -197,12 +197,12 @@ export class Switch implements SimNode {
  */
 export function guardLoop(seen: Map<number, number>, port: number, frame: EthernetFrame, ctx: NodeContext, portName: string): boolean {
   if ((frame.hops ?? 0) >= MAX_L2_HOPS) {
-    ctx.trace("switch.loop", "L2", `프레임이 스위치 ${MAX_L2_HOPS}개를 넘게 돌았음 → L2 루프로 판단해 폐기. 실제 이더넷엔 TTL 이 없어 STP 가 없으면 브로드캐스트 폭주가 난다`, { port }, frame.id);
+    ctx.trace("switch.loop", "L2", `프레임이 스위치 ${MAX_L2_HOPS}개를 넘게 돌았음 → L2 루프로 판단해 드롭. 실제 이더넷엔 TTL 이 없어 STP 가 없으면 브로드캐스트 폭주가 난다`, { port }, frame.id);
     return false;
   }
   const prev = seen.get(frame.id);
   if (prev !== undefined) {
-    ctx.trace("switch.loop", "L2", `같은 프레임을 ${portName} 에서 다시 받음 (처음은 다른 포트) → L2 루프 감지, 폐기. 케이블이 두 경로로 이어져 있음`, { port, first: prev }, frame.id);
+    ctx.trace("switch.loop", "L2", `같은 프레임을 ${portName} 에서 다시 받음 (처음은 다른 포트) → L2 루프 감지, 드롭. 케이블이 두 경로로 이어져 있음`, { port, first: prev }, frame.id);
     return false;
   }
   seen.set(frame.id, port);

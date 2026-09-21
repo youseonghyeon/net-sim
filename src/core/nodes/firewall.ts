@@ -1,5 +1,5 @@
 // 방화벽: 라우터/게이트웨이/NAT 박스를 "지나가는" 패킷을 규칙으로 거른다 (iptables 의 FORWARD 체인에 해당).
-// 규칙은 위에서부터 첫 일치가 이긴다. 상태 추적을 켜면 안에서 시작한 통신의 응답은 규칙과 무관하게 통과한다.
+// 규칙은 위에서부터 첫 일치가 이긴다. Stateful 검사를 켜면 안에서 시작한 통신의 응답은 규칙과 무관하게 통과한다.
 import { ipToInt, prefixToMask, type Ip } from "../addr";
 import { describeOriginal, isTimeExceeded, type Ipv4Packet } from "../packet";
 import type { NodeContext } from "./node";
@@ -26,7 +26,7 @@ export interface FirewallConfig {
   enabled: boolean;
   /** 어떤 규칙에도 안 걸린 패킷의 처리 */
   defaultPolicy: FwAction;
-  /** 안에서 시작한 통신의 응답을 자동 허용 (상태 추적) */
+  /** 안에서 시작한 통신의 응답을 자동 허용 (Stateful 검사) */
   stateful: boolean;
   rules: FirewallRule[];
 }
@@ -34,7 +34,7 @@ export interface FirewallConfig {
 export const DEFAULT_FIREWALL: FirewallConfig = { enabled: false, defaultPolicy: "allow", stateful: true, rules: [] };
 
 export const PROTO_LABEL: Record<FwProto, string> = { any: "모든 프로토콜", icmp: "ICMP(ping)", tcp: "TCP", udp: "UDP" };
-export const DIRECTION_LABEL: Record<FwDirection, string> = { in: "들어오는", out: "나가는", any: "모든 방향" };
+export const DIRECTION_LABEL: Record<FwDirection, string> = { in: "인바운드", out: "아웃바운드", any: "양방향" };
 
 /** "a.b.c.d" 또는 "a.b.c.d/n" 이 ip 를 포함하는지. 형식이 틀리면 false */
 export function cidrContains(cidr: string, ip: Ip): boolean {
@@ -116,7 +116,7 @@ export class Firewall {
     ctx.trace(
       "ip.config",
       "sys",
-      `${label} 방화벽: 규칙 ${cfg.rules.length}개, 기본 정책 ${cfg.defaultPolicy === "allow" ? "허용" : "차단"}, 상태 추적 ${cfg.stateful ? "켜짐" : "꺼짐"}`,
+      `${label} 방화벽: 규칙 ${cfg.rules.length}개, 기본 정책 ${cfg.defaultPolicy === "allow" ? "허용" : "차단"}, Stateful 검사 ${cfg.stateful ? "켜짐" : "꺼짐"}`,
       { rules: cfg.rules.length, defaultPolicy: cfg.defaultPolicy, stateful: cfg.stateful },
     );
   }
@@ -138,7 +138,7 @@ export class Firewall {
   check(pkt: Ipv4Packet, dir: FlowDirection, ctx: NodeContext, frameId?: number): boolean {
     if (!this.config.enabled) return true;
     const what = describePacket(pkt);
-    const dirLabel = dir === "in" ? "들어오는" : dir === "out" ? "나가는" : "서브넷 간";
+    const dirLabel = dir === "in" ? "인바운드" : dir === "out" ? "아웃바운드" : "서브넷 간";
     const established = this.config.stateful && this.flows.has(flowKey(pkt, true));
     const idx = this.config.rules.findIndex((r) => this.matches(r, pkt, dir));
     const rule = idx >= 0 ? this.config.rules[idx]! : undefined;
@@ -148,7 +148,7 @@ export class Firewall {
       ctx.trace(
         "fw.established",
         "L3",
-        `방화벽: ${dirLabel} ${what} 은(는) ${rule ? `규칙 ${idx + 1}(${describeRule(rule)})` : "기본 정책"} 상 차단이지만, 안에서 시작한 통신의 ${isTimeExceeded(pkt.payload) ? "오류 통지" : "응답"}라 상태 추적으로 허용`,
+        `방화벽: ${dirLabel} ${what} 은(는) ${rule ? `규칙 ${idx + 1}(${describeRule(rule)})` : "기본 정책"} 상 차단이지만, 안에서 시작한 통신의 ${isTimeExceeded(pkt.payload) ? "오류 통지" : "응답"}라 Stateful 검사으로 허용`,
         { rule: idx, dir },
         frameId,
       );
@@ -158,7 +158,7 @@ export class Firewall {
       ctx.trace(
         "fw.deny",
         "L3",
-        `방화벽 차단: ${dirLabel} ${what} — ${rule ? `규칙 ${idx + 1} (${describeRule(rule)})` : "일치하는 규칙 없음, 기본 정책 차단"} → 폐기`,
+        `방화벽 차단: ${dirLabel} ${what} — ${rule ? `규칙 ${idx + 1} (${describeRule(rule)})` : "일치하는 규칙 없음, 기본 정책 차단"} → 드롭`,
         { rule: idx, dir, src: pkt.src, dst: pkt.dst },
         frameId,
       );

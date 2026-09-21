@@ -183,9 +183,9 @@ export class TcpStack {
           ctx.trace("tcp.established", "L4", `ACK 수신 → 3-way handshake 완료, 연결 성립 ${endpoint(conn.localIp, conn.localPort)} ↔ ${endpoint(conn.remoteIp, conn.remotePort)}`, { conn: conn.id });
           if (seg.len > 0) this.receiveData(conn, seg, ctx);
         } else if (seg.syn && !seg.ackFlag) {
-          // 클라이언트가 SYN 을 다시 보냄 (내 SYN·ACK 이 유실됨) → SYN·ACK 재전송
+          // 클라이언트가 SYN 을 다시 보냄 (내 SYN·ACK 이 손실됨) → SYN·ACK 재전송
           const u = conn.unacked.find((x) => x.seg.syn);
-          ctx.trace("tcp.retransmit", "L4", `SYN 이 다시 옴 → 내 SYN·ACK 이 유실된 것으로 보고 즉시 재전송`, { conn: conn.id });
+          ctx.trace("tcp.retransmit", "L4", `SYN 이 다시 옴 → 내 SYN·ACK 이 손실된 것으로 보고 즉시 재전송`, { conn: conn.id });
           if (u) this.host.send(this.packet(conn.localIp, conn.remoteIp, u.seg), ctx);
         } else {
           ctx.trace("tcp.ignore", "L4", `SYN_RCVD 상태에서 기대하지 않은 ${flags} → 무시`, { conn: conn.id });
@@ -209,9 +209,9 @@ export class TcpStack {
         return;
 
       case "CLOSED":
-        // 내 마지막 ACK 이 유실되어 상대가 FIN 을 다시 보낸 경우: 다시 ACK 해 준다 (TIME_WAIT 의 역할)
+        // 내 마지막 ACK 이 손실되어 상대가 FIN 을 다시 보낸 경우: 다시 ACK 해 준다 (TIME_WAIT 의 역할)
         if (seg.fin || seg.len > 0) {
-          ctx.trace("tcp.ack.sent", "L4", `종료된 연결로 ${flags} 가 다시 옴 → 내 마지막 ACK 이 유실된 듯, ACK 재전송 (ack=${conn.rcvNxt})`, { conn: conn.id });
+          ctx.trace("tcp.ack.sent", "L4", `종료된 연결로 ${flags} 가 다시 옴 → 내 마지막 ACK 이 손실된 듯, ACK 재전송 (ack=${conn.rcvNxt})`, { conn: conn.id });
           this.host.send(this.packet(conn.localIp, conn.remoteIp, { srcPort: conn.localPort, dstPort: conn.remotePort, seq: conn.sndNxt, ack: conn.rcvNxt, ackFlag: true, len: 0 }), ctx);
           return;
         }
@@ -296,7 +296,7 @@ export class TcpStack {
       return;
     }
     if (seg.seq > conn.rcvNxt) {
-      ctx.trace("tcp.out-of-order", "L4", `순서가 어긋난 데이터 (seq ${seg.seq}, 기대 ${conn.rcvNxt}) → 중간 세그먼트가 유실됨. 버리고 ACK ${conn.rcvNxt} 로 재요청`, { conn: conn.id });
+      ctx.trace("tcp.out-of-order", "L4", `순서가 어긋난 데이터 (seq ${seg.seq}, 기대 ${conn.rcvNxt}) → 중간 세그먼트가 손실됨. 버리고 ACK ${conn.rcvNxt} 로 재요청`, { conn: conn.id });
       this.transmit(conn, { ackFlag: true }, ctx, `중복 ACK 전송 (ack=${conn.rcvNxt}): "여기부터 다시 보내라"`, "tcp.ack.sent");
       return;
     }
@@ -318,7 +318,7 @@ export class TcpStack {
 
   private receiveFin(conn: TcpConn, seg: TcpSegment, ctx: NodeContext): void {
     if (seg.seq !== conn.rcvNxt) {
-      ctx.trace("tcp.out-of-order", "L4", `FIN 의 seq ${seg.seq} 가 기대 ${conn.rcvNxt} 와 다름 → 앞 데이터가 유실됨. ACK ${conn.rcvNxt} 재요청`, { conn: conn.id });
+      ctx.trace("tcp.out-of-order", "L4", `FIN 의 seq ${seg.seq} 가 기대 ${conn.rcvNxt} 와 다름 → 앞 데이터가 손실됨. ACK ${conn.rcvNxt} 재요청`, { conn: conn.id });
       this.transmit(conn, { ackFlag: true }, ctx, `중복 ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
       return;
     }

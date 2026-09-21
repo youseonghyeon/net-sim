@@ -74,7 +74,7 @@ describe("단일 서브넷 ping", () => {
     expect(net.pendingEvents).toBe(0);
   });
 
-  it("없는 호스트로 ping → ARP 타임아웃, 대기 패킷 폐기", () => {
+  it("없는 호스트로 ping → ARP 타임아웃, 대기 패킷 드롭", () => {
     const net = singleSubnet.build();
     net.scheduleAction(0, { kind: "ping", nodeId: "h2", dst: "10.0.0.99" });
     net.runToIdle();
@@ -89,7 +89,7 @@ describe("단일 서브넷 ping", () => {
     expect(net.pendingEvents).toBe(0);
   });
 
-  it("다른 서브넷인데 게이트웨이 없음 → 즉시 폐기, 프레임 송신 없음", () => {
+  it("다른 서브넷인데 게이트웨이 없음 → 즉시 드롭, 프레임 송신 없음", () => {
     const net = settled();
     const before = net.transmissions.length;
     net.scheduleAction(net.now, { kind: "ping", nodeId: "h1", dst: "8.8.8.8" });

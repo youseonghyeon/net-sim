@@ -1,4 +1,4 @@
-// DNS: 호스트 리졸버(질의·캐시)와 DNS 서버(레코드 응답, 모르는 이름은 상위 서버로 재귀 질의).
+// DNS: 호스트 리졸버(질의·캐시)와 DNS 서버(레코드 응답, 모르는 이름은 업스트림 서버로 재귀 질의).
 // 호스트의 서비스, 라우터의 포워더, 인터넷의 공인 DNS 가 같은 DnsServer 를 쓴다.
 import type { Ip } from "../addr";
 import { DNS_PORT, type DnsMessage, type Ipv4Packet } from "../packet";
@@ -10,7 +10,7 @@ export interface DnsRecord {
   ip: Ip;
 }
 
-/** 리졸버가 한 번 묻고 기다리는 시간. 서버의 상위 질의 타임아웃(DNS_UPSTREAM_TIMEOUT)보다 길어야 SERVFAIL 이 제때 도착한다 */
+/** 리졸버가 한 번 묻고 기다리는 시간. 서버의 업스트림 질의 타임아웃(DNS_UPSTREAM_TIMEOUT)보다 길어야 SERVFAIL 이 제때 도착한다 */
 export const DNS_TIMEOUT = 2000;
 export const DNS_MAX_ATTEMPTS = 2;
 export const DNS_UPSTREAM_TIMEOUT = 1500;
@@ -135,7 +135,7 @@ export class DnsResolver {
       return;
     }
     ctx.trace("dns.nxdomain", "app", `DNS 응답: ${q.name} 은(는) 없는 이름 (${msg.rcode ?? "NXDOMAIN"}) — 서버 ${from} 가 모르는 이름`, { name: q.name, rcode: msg.rcode }, frameId);
-    q.done(undefined, msg.rcode === "SERVFAIL" ? "DNS 서버가 상위 서버 응답을 받지 못함" : "없는 이름");
+    q.done(undefined, msg.rcode === "SERVFAIL" ? "DNS 서버가 업스트림 서버 응답을 받지 못함" : "없는 이름");
   }
 
   onTimeout(data: unknown, ctx: NodeContext, emit: Emit): void {
@@ -183,7 +183,7 @@ export class DnsResolver {
 export interface DnsServerConfig {
   enabled: boolean;
   records: DnsRecord[];
-  /** 모르는 이름을 물어볼 상위 DNS (재귀). 비우면 NXDOMAIN */
+  /** 모르는 이름을 물어볼 업스트림 DNS (재귀 질의). 비우면 NXDOMAIN */
   upstream?: Ip;
 }
 
@@ -196,7 +196,7 @@ interface PendingUpstream {
 }
 
 export class DnsServer {
-  /** 상위 서버에서 받아 둔 답 */
+  /** 업스트림 서버에서 받아 둔 답 */
   readonly cache = new Map<string, { ip: Ip; at: number }>();
   private readonly pendingUpstream = new Map<number, PendingUpstream>();
   private idSeq = 0x7000;
@@ -206,7 +206,7 @@ export class DnsServer {
     private readonly iface: NetInterface,
     /** 로그 문구 앞에 붙는 역할 이름 (예: "공인 DNS") */
     private readonly label = "DNS 서버",
-    /** 상위 질의를 다른 인터페이스로 내보내야 할 때 (라우터: WAN). 없으면 iface 로 보낸다 */
+    /** 업스트림 질의를 다른 인터페이스로 내보내야 할 때 (라우터: WAN). 없으면 iface 로 보낸다 */
     private readonly upstreamPath?: { srcIp: () => Ip | undefined; send: (pkt: Ipv4Packet, ctx: NodeContext) => void },
   ) {}
 
@@ -220,7 +220,7 @@ export class DnsServer {
     return undefined;
   }
 
-  /** UDP 53 으로 온 메시지 처리 (질의 또는 상위 서버의 응답) */
+  /** UDP 53 으로 온 메시지 처리 (질의 또는 업스트림 서버의 응답) */
   handle(pkt: Ipv4Packet, srcPort: number, msg: DnsMessage, frameId: number, ctx: NodeContext, emit: Emit): void {
     if (msg.op === "response") {
       this.handleUpstreamResponse(pkt, msg, frameId, ctx, emit);
@@ -235,13 +235,13 @@ export class DnsServer {
     const ip = this.lookup(name, ctx.now);
     if (ip) {
       const fromCache = !this.config.records.some((r) => normalizeName(r.name) === name);
-      ctx.trace("dns.response.sent", "app", `${this.label}: ${name} = ${ip} 응답 (${fromCache ? "상위 서버 답 캐시" : "내 레코드"}) → ${pkt.src}`, { name, ip, to: pkt.src });
+      ctx.trace("dns.response.sent", "app", `${this.label}: ${name} = ${ip} 응답 (${fromCache ? "업스트림 서버 답 캐시" : "내 레코드"}) → ${pkt.src}`, { name, ip, to: pkt.src });
       this.respond(pkt.src, srcPort, { kind: "dns", id: msg.id, op: "response", name: msg.name, answer: ip }, ctx, emit);
       return;
     }
     const hops = msg.hops ?? 0;
     if (this.config.upstream && this.config.upstream !== this.iface.ip && hops >= DNS_MAX_HOPS) {
-      ctx.trace("dns.timeout", "app", `${this.label}: ${name} 질의가 서버 ${DNS_MAX_HOPS}대를 넘게 돌았음 → 서버들이 서로를 상위로 가리키는 루프로 보고 SERVFAIL`, { name, hops });
+      ctx.trace("dns.timeout", "app", `${this.label}: ${name} 질의가 서버 ${DNS_MAX_HOPS}대를 넘게 돌았음 → 서버들이 서로를 업스트림으로 가리키는 루프로 보고 SERVFAIL`, { name, hops });
       this.respond(pkt.src, srcPort, { kind: "dns", id: msg.id, op: "response", name: msg.name, rcode: "SERVFAIL" }, ctx, emit);
       return;
     }
@@ -249,10 +249,10 @@ export class DnsServer {
       const id = ++this.idSeq;
       const timer = ctx.timer(DNS_UPSTREAM_TIMEOUT, DNS_UPSTREAM_TIMER_TAG, { id });
       this.pendingUpstream.set(id, { clientIp: pkt.src, clientPort: srcPort, clientId: msg.id, name, timer });
-      ctx.trace("dns.forward", "app", `${this.label}: ${name} 은(는) 내 레코드에 없음 → 상위 DNS ${this.config.upstream} 에 대신 물어봄 (재귀 질의)`, { name, upstream: this.config.upstream });
+      ctx.trace("dns.forward", "app", `${this.label}: ${name} 은(는) 내 레코드에 없음 → 업스트림 DNS ${this.config.upstream} 에 대신 물어봄 (재귀 질의)`, { name, upstream: this.config.upstream });
       const src = this.upstreamPath?.srcIp() ?? this.iface.ip;
       if (!src) {
-        ctx.trace("dns.timeout", "app", `${this.label}: 상위 DNS 에 물어볼 인터페이스에 주소가 없음 → SERVFAIL`, { name });
+        ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS 에 물어볼 인터페이스에 주소가 없음 → SERVFAIL`, { name });
         this.pendingUpstream.delete(id);
         timer.cancel();
         this.respond(pkt.src, srcPort, { kind: "dns", id: msg.id, op: "response", name: msg.name, rcode: "SERVFAIL" }, ctx, emit);
@@ -263,24 +263,24 @@ export class DnsServer {
       else this.iface.sendIp(q, ctx, emit);
       return;
     }
-    ctx.trace("dns.nxdomain", "app", `${this.label}: ${name} 은(는) 내 레코드에 없고 상위 DNS 도 없음 → NXDOMAIN 응답`, { name });
+    ctx.trace("dns.nxdomain", "app", `${this.label}: ${name} 은(는) 내 레코드에 없고 업스트림 DNS 도 없음 → NXDOMAIN 응답`, { name });
     this.respond(pkt.src, srcPort, { kind: "dns", id: msg.id, op: "response", name: msg.name, rcode: "NXDOMAIN" }, ctx, emit);
   }
 
   private handleUpstreamResponse(pkt: Ipv4Packet, msg: DnsMessage, frameId: number, ctx: NodeContext, emit: Emit): void {
     const p = this.pendingUpstream.get(msg.id);
     if (!p) {
-      ctx.trace("dns.response.received", "app", `${this.label}: 요청한 적 없는 상위 DNS 응답 (id ${msg.id}) → 무시`, { id: msg.id }, frameId);
+      ctx.trace("dns.response.received", "app", `${this.label}: 요청한 적 없는 업스트림 DNS 응답 (id ${msg.id}) → 무시`, { id: msg.id }, frameId);
       return;
     }
     this.pendingUpstream.delete(msg.id);
     p.timer.cancel();
     if (msg.answer) {
       this.cache.set(p.name, { ip: msg.answer, at: ctx.now });
-      ctx.trace("dns.response.received", "app", `${this.label}: 상위 DNS ${pkt.src} 의 답 ${p.name} = ${msg.answer} → 캐시`, { name: p.name, ip: msg.answer }, frameId);
-      ctx.trace("dns.response.sent", "app", `${this.label}: ${p.name} = ${msg.answer} 응답 (상위 서버 답 전달) → ${p.clientIp}`, { name: p.name, ip: msg.answer, to: p.clientIp });
+      ctx.trace("dns.response.received", "app", `${this.label}: 업스트림 DNS ${pkt.src} 의 답 ${p.name} = ${msg.answer} → 캐시`, { name: p.name, ip: msg.answer }, frameId);
+      ctx.trace("dns.response.sent", "app", `${this.label}: ${p.name} = ${msg.answer} 응답 (업스트림 서버 답 전달) → ${p.clientIp}`, { name: p.name, ip: msg.answer, to: p.clientIp });
     } else {
-      ctx.trace("dns.nxdomain", "app", `${this.label}: 상위 DNS 도 ${p.name} 을(를) 모름 (${msg.rcode ?? "NXDOMAIN"}) → 클라이언트 ${p.clientIp} 에게 그대로 전달`, { name: p.name }, frameId);
+      ctx.trace("dns.nxdomain", "app", `${this.label}: 업스트림 DNS 도 ${p.name} 을(를) 모름 (${msg.rcode ?? "NXDOMAIN"}) → 클라이언트 ${p.clientIp} 에게 그대로 전달`, { name: p.name }, frameId);
     }
     this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, answer: msg.answer, rcode: msg.rcode }, ctx, emit);
   }
@@ -290,7 +290,7 @@ export class DnsServer {
     const p = this.pendingUpstream.get(id);
     if (!p) return;
     this.pendingUpstream.delete(id);
-    ctx.trace("dns.timeout", "app", `${this.label}: 상위 DNS ${this.config.upstream} 응답 없음 → 클라이언트에게 SERVFAIL`, { name: p.name });
+    ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS ${this.config.upstream} 응답 없음 → 클라이언트에게 SERVFAIL`, { name: p.name });
     this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, rcode: "SERVFAIL" }, ctx, emit);
   }
 

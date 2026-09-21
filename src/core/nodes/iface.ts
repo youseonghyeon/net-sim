@@ -73,7 +73,7 @@ export class NetInterface {
 
   /**
    * 일반 L3 송신: 라우팅 → ARP 해석 → 프레임.
-   * nextHopOverride 가 있으면(라우터가 라우팅 테이블로 이미 정한 다음 홉) 인터페이스 자체 라우팅을 건너뛴다.
+   * nextHopOverride 가 있으면(라우터가 라우팅 테이블로 이미 정한 넥스트 홉) 인터페이스 자체 라우팅을 건너뛴다.
    */
   sendIp(pkt: Ipv4Packet, ctx: NodeContext, emit: Emit, nextHopOverride?: Ip): void {
     if (!this.ip) {
@@ -114,20 +114,20 @@ export class NetInterface {
   }
 
   /**
-   * TTL 이 1 이하인 패킷이 이 인터페이스로 들어와 더 넘길 수 없을 때: 폐기를 기록하고 보낸 이에게 돌려줄
+   * TTL 이 1 이하인 패킷이 이 인터페이스로 들어와 더 넘길 수 없을 때: 드롭를 기록하고 보낸 이에게 돌려줄
    * Time Exceeded 패킷(출발지 = 이 인터페이스 주소)을 만든다. 보내는 방법은 장치마다 다르므로 호출자가 보낸다.
    * 통지를 만들 수 없으면(주소 없음, ICMP 오류에 대한 오류, 출발지 0.0.0.0) undefined
    */
   timeExceeded(pkt: Ipv4Packet, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const notice = this.ip ? timeExceededFor(this.ip, pkt) : undefined;
     if (!notice) {
-      ctx.trace("ip.ttl-expired", "L3", `TTL ${pkt.ttl} 로 도착한 ${pkt.src} → ${pkt.dst}: 더 넘기면 0 → 폐기 (통지는 보내지 않음)`, { src: pkt.src, dst: pkt.dst }, frameId);
+      ctx.trace("ip.ttl-expired", "L3", `TTL ${pkt.ttl} 로 도착한 ${pkt.src} → ${pkt.dst}: 더 넘기면 0 → 드롭 (통지는 보내지 않음)`, { src: pkt.src, dst: pkt.dst }, frameId);
       return undefined;
     }
     ctx.trace(
       "icmp.ttl-exceeded",
       "L3",
-      `TTL ${pkt.ttl} 로 도착한 ${pkt.src} → ${pkt.dst}: 한 홉 더 넘기면 0 → 폐기하고 ${this.ip} 이름으로 보낸 이에게 Time Exceeded 통지 (traceroute 는 이 통지로 경로의 홉을 알아낸다)`,
+      `TTL ${pkt.ttl} 로 도착한 ${pkt.src} → ${pkt.dst}: 한 홉 더 넘기면 0 → 드롭하고 ${this.ip} 이름으로 보낸 이에게 Time Exceeded 통지 (traceroute 는 이 통지로 경로의 홉을 알아낸다)`,
       { src: pkt.src, dst: pkt.dst, from: this.ip, ttl: pkt.ttl },
       frameId,
     );
@@ -154,7 +154,7 @@ export class NetInterface {
       ctx.trace("ip.route", "L3", `${dst} 는 다른 서브넷 → 게이트웨이 ${this.gateway} 로 전달`, { dst, nextHop: this.gateway });
       return this.gateway;
     }
-    ctx.trace("ip.no-route", "L3", `${dst} 는 다른 서브넷인데 게이트웨이 설정 없음 → 폐기`, { dst });
+    ctx.trace("ip.no-route", "L3", `${dst} 는 다른 서브넷인데 게이트웨이 설정 없음 → 드롭`, { dst });
     return undefined;
   }
 
@@ -256,14 +256,14 @@ export class NetInterface {
     }
   }
 
-  /** "arp-timeout" 타이머. 폐기한 패킷을 돌려준다 (호스트가 ping 실패 등을 기록할 수 있도록) */
+  /** "arp-timeout" 타이머. 드롭한 패킷을 돌려준다 (호스트가 ping 실패 등을 기록할 수 있도록) */
   onArpTimeout(data: unknown, ctx: NodeContext): Ipv4Packet[] {
     const { ip } = data as { ip: Ip };
     this.arpTimers.delete(ip);
     const queue = this.pending.get(ip);
     if (!queue || this.arpCache.has(ip)) return [];
     this.pending.delete(ip);
-    ctx.trace("arp.timeout", "L2", `ARP 응답 없음 (${ip}, ${NetInterface.ARP_TIMEOUT}ms) → 대기 패킷 ${queue.length}개 폐기`, { ip, dropped: queue.length });
+    ctx.trace("arp.timeout", "L2", `ARP 응답 없음 (${ip}, ${NetInterface.ARP_TIMEOUT}ms) → 대기 패킷 ${queue.length}개 드롭`, { ip, dropped: queue.length });
     return queue.map((q) => q.pkt);
   }
 

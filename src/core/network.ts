@@ -16,9 +16,9 @@ export interface Link {
   a: Endpoint;
   b: Endpoint;
   latency: number;
-  /** 0~1. 프레임마다 이 확률로 유실 (결정론적 난수) */
+  /** 0~1. 프레임마다 이 확률로 손실 (결정론적 난수) */
   lossRate: number;
-  /** 다음 프레임 1개를 유실시킨다 (사용자 실험용) */
+  /** 다음 프레임 1개를 손실시킨다 (사용자 실험용) */
   dropNext: boolean;
 }
 
@@ -31,9 +31,9 @@ export interface Transmission {
   departAt: number;
   arriveAt: number;
   frame: EthernetFrame;
-  /** 도착 전에 링크가 끊기거나 손실로 유실됨 */
+  /** 도착 전에 링크가 끊기거나 손실로 손실됨 */
   lost?: boolean;
-  /** 유실된 경우 화면에서 사라지는 시각 */
+  /** 손실된 경우 화면에서 사라지는 시각 */
   lostAt?: number;
   /** 장치 제거 직전에 보낸 프레임: 케이블이 빠져도 배달 (정상 종료 메시지) */
   graceful?: boolean;
@@ -126,7 +126,7 @@ export class Network {
       if (tx.linkId === linkId && !tx.lost && !tx.graceful && tx.arriveAt > this.now) {
         tx.lost = true;
         tx.lostAt = this.now;
-        this.pushTrace(tx.from.node, "link.lost", "L1", `케이블이 빠져 전송 중이던 ${describeFrame(tx.frame)} 유실`, { linkId }, tx.frame.id);
+        this.pushTrace(tx.from.node, "link.lost", "L1", `케이블이 빠져 전송 중이던 ${describeFrame(tx.frame)} 손실`, { linkId }, tx.frame.id);
       }
     }
     for (const ep of [link.a, link.b]) {
@@ -144,7 +144,7 @@ export class Network {
     if (link) link.lossRate = Math.min(1, Math.max(0, lossRate));
   }
 
-  /** 다음에 이 링크를 지나는 프레임 1개를 유실시킨다 */
+  /** 다음에 이 링크를 지나는 프레임 1개를 손실시킨다 */
   dropNextOn(linkId: string): void {
     const link = this.links.get(linkId);
     if (link) link.dropNext = true;
@@ -199,7 +199,7 @@ export class Network {
     }
   }
 
-  /** 실제로 처리될 이벤트 수 (취소·고아 타이머, 유실 배달 제외) */
+  /** 실제로 처리될 이벤트 수 (취소·고아 타이머, 손실 배달 제외) */
   get pendingEvents(): number {
     this.peekNextTime();
     return this.sched.count((p) => {
@@ -260,7 +260,7 @@ export class Network {
     return n;
   }
 
-  /** 지정 시각에 링크 위에 있는 프레임 (유실 중인 것은 사라지는 시각까지 포함) */
+  /** 지정 시각에 링크 위에 있는 프레임 (손실 중인 것은 사라지는 시각까지 포함) */
   inFlight(at = this.now): Transmission[] {
     return this.transmissions.filter((t) => t.departAt <= at && at < (t.lost ? (t.lostAt ?? t.departAt) : t.arriveAt));
   }
@@ -288,7 +288,7 @@ export class Network {
         this.getHost(action.nodeId).traceroute(action.dst, ctx);
         break;
       case "dhcp-renew":
-        ctx.trace("action", "sys", `[사용자] DHCP 다시 요청`, { ...action });
+        ctx.trace("action", "sys", `[사용자] DHCP 임대 갱신`, { ...action });
         this.getHost(action.nodeId).renewDhcp(ctx);
         break;
       case "tcp-connect":
@@ -323,7 +323,7 @@ export class Network {
     const from = { node: nodeId, port };
     const conn = this.portMap.get(epKey(from));
     if (!conn) {
-      this.pushTrace(nodeId, "link.unconnected", "L1", `port ${port} 에 연결된 케이블 없음 → 송신 실패`, { port }, frame.id);
+      this.pushTrace(nodeId, "link.unconnected", "L1", `port ${port} 에 연결된 링크 다운 → 송신 실패`, { port }, frame.id);
       return;
     }
     const tx: Transmission = {
@@ -346,11 +346,11 @@ export class Network {
     );
     const link = conn.link;
     if (link.dropNext || (link.lossRate > 0 && this.random() < link.lossRate)) {
-      const why = link.dropNext ? "사용자가 유실시킴" : `손실률 ${Math.round(link.lossRate * 100)}%`;
+      const why = link.dropNext ? "사용자가 손실시킴" : `손실률 ${Math.round(link.lossRate * 100)}%`;
       link.dropNext = false;
       tx.lost = true;
       tx.lostAt = this.now + link.latency * 0.55;
-      this.pushTrace(nodeId, "link.loss", "L1", `케이블에서 ${describeFrame(frame)} 유실 (${why}) — 상대는 받지 못한다`, { linkId: link.id }, frame.id);
+      this.pushTrace(nodeId, "link.loss", "L1", `케이블에서 ${describeFrame(frame)} 손실 (${why}) — 상대는 받지 못한다`, { linkId: link.id }, frame.id);
       return;
     }
     this.sched.push(tx.arriveAt, { type: "deliver", tx });

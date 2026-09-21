@@ -138,7 +138,7 @@ export interface DnsRecordSettings {
 export interface DnsServerSettings {
   enabled: boolean;
   records: DnsRecordSettings[];
-  /** 모르는 이름을 물어볼 상위 DNS */
+  /** 모르는 이름을 물어볼 업스트림 DNS */
   upstream: string;
 }
 
@@ -819,7 +819,7 @@ export function exampleTopology(): Topology {
   // 웹 서버는 고정 주소로 두고 라우터가 공인 :80 을 여기로 포워딩한다
   srv.host = { ipMode: "static", ip: "192.168.0.20", prefix: 24, gateway: "192.168.0.1", dns: "192.168.0.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   rt.router = { ...rt.router!, forwards: [{ publicPort: 80, lanIp: "192.168.0.20", lanPort: 80 }], wifi: { enabled: true, ssid: "home" } };
-  // 공유기의 Wi-Fi 에 붙는 스마트폰 (케이블 없음, 전파 범위 안)
+  // 공유기의 Wi-Fi 에 붙는 스마트폰 (링크 다운, 전파 범위 안)
   add("phone", 600, 120);
   const cables: Cable[] = [
     { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: rt.id, port: 0 } }, // isp ↔ wan
@@ -914,7 +914,7 @@ export function exampleTwoGatewaysTopology(): Topology {
   return { devices, cables };
 }
 
-/** 집 두 곳 잇기: 인터넷 없이 게이트웨이 둘을 if0 끼리 직접 잇고, 서로의 서브넷을 정적 경로로 안다 */
+/** 집 두 곳 잇기: 인터넷 없이 게이트웨이 둘을 if0 끼리 직접 잇고, 서로의 서브넷을 스태틱 라우팅으로 안다 */
 export function exampleTwoHomesTopology(): Topology {
   const devices: Device[] = [];
   const add = (kind: DeviceKind, x: number, y: number) => {
@@ -926,7 +926,7 @@ export function exampleTwoHomesTopology(): Topology {
   const gw2 = add("gateway", 592, 200);
   const gwCfg = (linkIp: string, lanIp: string, otherDest: string, otherVia: string): L3Settings => ({
     interfaces: [
-      { ipMode: "static", ip: linkIp, prefix: 24, gateway: "" }, // if0: 두 집 사이 링크(10.0.0.0/24). 인터넷이 없으니 기본 경로도 없다
+      { ipMode: "static", ip: linkIp, prefix: 24, gateway: "" }, // if0: 두 집 사이 링크(10.0.0.0/24). 인터넷이 없으니 디폴트 라우트도 없다
       { ipMode: "static", ip: lanIp, prefix: 24, gateway: "" },
       { ipMode: "static", ip: "", prefix: 24, gateway: "" },
     ],
@@ -979,7 +979,7 @@ export function exampleBackboneTopology(): Topology {
     const gw = add("gateway", h.x, 216);
     gw.l3 = {
       interfaces: [
-        { ipMode: "static", ip: h.link, prefix: 24, gateway: "" }, // if0: 백본 쪽. 인터넷이 없으니 기본 경로 없음
+        { ipMode: "static", ip: h.link, prefix: 24, gateway: "" }, // if0: 백본 쪽. 인터넷이 없으니 디폴트 라우트 없음
         { ipMode: "static", ip: `${h.lan}.1`, prefix: 24, gateway: "" },
         { ipMode: "static", ip: "", prefix: 24, gateway: "" },
       ],
@@ -1167,17 +1167,17 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     id: "homes",
     group: "기능 단위",
     label: "집 두 곳 잇기 (게이트웨이 ↔ 게이트웨이, 인터넷 없음)",
-    blurb: "pc-1 → 192.168.2.10 은 gw-1 → gw-2 두 홉을 지납니다. \"경로\" 로 홉을 확인하고, gw-1 의 정적 경로를 지우면 '경로 없음' 으로 바뀝니다.",
+    blurb: "pc-1 → 192.168.2.10 은 gw-1 → gw-2 두 홉을 지납니다. \"경로\" 로 홉을 확인하고, gw-1 의 스태틱 라우팅을 지우면 No route 로 실패합니다.",
     build: exampleTwoHomesTopology,
   },
   backbone: {
     id: "backbone",
     group: "기능 단위",
     label: "백본 스위치로 집 세 곳 잇기 (라우터 전용 서브넷)",
-    blurb: "게이트웨이 셋의 if0 이 sw-backbone(10.0.0.0/24) 에서 만납니다. 게이트웨이마다 다른 두 집으로 가는 정적 경로가 있고, 하나를 지우면 그 집만 못 갑니다.",
+    blurb: "게이트웨이 셋의 if0 이 sw-backbone(10.0.0.0/24) 에서 만납니다. 게이트웨이마다 다른 두 집으로 가는 스태틱 라우팅이 있고, 하나를 지우면 그 집만 못 갑니다.",
     build: exampleBackboneTopology,
   },
-  gateways: { id: "gateways", group: "기능 단위", label: "게이트웨이 2단 (라우터 전용 서브넷 + 정적 경로)", blurb: "pc-1 → 192.168.5.10 은 gw-1 이 정적 경로로 gw-2 에 바로 넘기고, 인터넷은 NAT 로 올라갑니다. NAT 의 정적 경로를 지우면 응답이 돌아오지 못합니다.", build: exampleTwoGatewaysTopology },
+  gateways: { id: "gateways", group: "기능 단위", label: "게이트웨이 2단 (라우터 전용 서브넷 + 스태틱 라우팅)", blurb: "pc-1 → 192.168.5.10 은 gw-1 이 스태틱 라우팅으로 gw-2 에 바로 넘기고, 인터넷은 NAT 로 올라갑니다. NAT 의 스태틱 라우팅을 지우면 응답이 돌아오지 못합니다.", build: exampleTwoGatewaysTopology },
   hub: { id: "hub", group: "L2", label: "허브 vs 스위치", blurb: "pc-1 → pc-2 ping 이 허브의 모든 포트(공유기까지)로 복제되는 것과, pc-3 → pc-4 가 스위치에서 그 포트로만 가는 것을 비교하세요.", build: exampleHubTopology },
   vlan: { id: "vlan", group: "L2", label: "VLAN 으로 나눈 사무실 (트렁크 + 서브 인터페이스)", blurb: "같은 스위치인데 VLAN 10 과 20 은 게이트웨이 서브 인터페이스를 거쳐야 통신됩니다.", build: exampleVlanTopology },
   firewall: { id: "firewall", group: "서비스", label: "방화벽 (ping 은 되고 웹은 막힘)", blurb: "pc-1 에서 example.com 으로 ping 은 되지만 TCP 80 연결은 공유기 방화벽 규칙 1 에서 차단됩니다. 인터넷 쪽 클라이언트의 ping 도 막힙니다.", build: exampleFirewallTopology },

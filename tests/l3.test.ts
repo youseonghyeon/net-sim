@@ -7,7 +7,7 @@ import { Switch } from "../src/core/nodes/switch";
 
 /**
  * 기능 단위 구성:
- *   inet ── nat(outside dhcp / inside 10.0.0.1, 정적 경로 192.168.0.0/16 via 10.0.0.2) ── gw(if0 10.0.0.2 gw 10.0.0.1 / if1 192.168.1.1 / if2 192.168.2.1)
+ *   inet ── nat(outside dhcp / inside 10.0.0.1, 스태틱 라우팅 192.168.0.0/16 via 10.0.0.2) ── gw(if0 10.0.0.2 gw 10.0.0.1 / if1 192.168.1.1 / if2 192.168.2.1)
  *   gw.if1 ── sw1 ── a(192.168.1.10), dhcpsrv(192.168.1.2, DHCP 서버: .100~.101, 게이트웨이 안내 192.168.1.1), c(dhcp)
  *   gw.if2 ── sw2 ── b(192.168.2.10)
  */
@@ -131,7 +131,7 @@ describe("게이트웨이 / NAT 박스 / DHCP 서버 호스트", () => {
     expect(c.pings.at(-1)?.status).toBe("failed");
   });
 
-  it("게이트웨이에 기본 경로가 없으면 외부 주소는 경로 없음으로 폐기된다", () => {
+  it("게이트웨이에 디폴트 라우트가 없으면 외부 주소는 No route 로 드롭된다", () => {
     const net = build();
     const gw = net.nodes.get("gw") as L3Node;
     gw.configure(
@@ -148,13 +148,13 @@ describe("게이트웨이 / NAT 박스 / DHCP 서버 호스트", () => {
     expect(net.getHost("a").pings.at(-1)?.status).toBe("failed");
   });
 
-  it("NAT 박스에 안쪽 정적 경로가 없으면 응답이 되돌아가지 못한다", () => {
+  it("NAT 박스에 안쪽 스태틱 라우팅이 없으면 응답이 되돌아가지 못한다", () => {
     const net = build();
     const nat = net.nodes.get("nat") as L3Node;
     nat.setRoutes([], net.contextFor("nat"));
     net.scheduleAction(net.now, { kind: "ping", nodeId: "a", dst: "8.8.8.8" });
     net.runToIdle();
-    expect(net.trace.some((e) => e.nodeId === "nat" && e.kind === "ip.no-route" && e.summary.includes("정적 경로"))).toBe(true);
+    expect(net.trace.some((e) => e.nodeId === "nat" && e.kind === "ip.no-route" && e.summary.includes("스태틱 라우팅"))).toBe(true);
     expect(net.getHost("a").pings.at(-1)?.status).toBe("failed");
   });
 

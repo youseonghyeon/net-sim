@@ -557,7 +557,7 @@ export function lintTopology(t: Topology): LintIssue[] {
         severity: "error",
         code: "host.gateway-outside-subnet",
         message: `게이트웨이 ${gw} 가 내 서브넷 ${fmtSubnet(own)} 밖 → ARP 로 찾을 수 없어 어디로도 못 나감`,
-        fix: `${d.name} → IP 설정 → 게이트웨이를 ${fmtSubnet(own)} 안의 라우터 주소로 바꾸거나, IP/프리픽스를 게이트웨이와 같은 서브넷으로`,
+        fix: `${d.name} → IP 설정 → 게이트웨이를 ${fmtSubnet(own)} 안의 라우터 주소로 바꾸거나, IP/서브넷 마스크를 게이트웨이와 같은 서브넷으로`,
       });
     }
     const inSegment = m.linked.has(key) && !m.stranded.has(key);
@@ -601,7 +601,7 @@ export function lintTopology(t: Topology): LintIssue[] {
     }
   }
 
-  // 규칙 6: 게이트웨이/NAT 업링크(if0/outside)가 수동인데 기본 경로 없음
+  // 규칙 6: 게이트웨이/NAT 업링크(if0/outside)가 수동인데 디폴트 라우트 없음
   for (const d of t.devices) {
     if (DEVICE_SPECS[d.kind].role !== "l3" || !d.l3) continue;
     const c = d.l3.interfaces[0];
@@ -609,7 +609,7 @@ export function lintTopology(t: Topology): LintIssue[] {
     const ip = validIp(c.ip);
     if (!ip || validIp(c.gateway)) continue;
     const key = `${d.id}:0`;
-    // 위쪽에 "안쪽 인터페이스"(다른 라우터의 LAN 쪽·인터넷)가 있을 때만: 게이트웨이끼리 if0 을 맞댄 백본은 기본 경로가 필요 없다
+    // 위쪽에 "안쪽 인터페이스"(다른 라우터의 LAN 쪽·인터넷)가 있을 때만: 게이트웨이끼리 if0 을 맞댄 백본은 디폴트 라우트가 필요 없다
     const ups = m.gwsOf(key).filter((g) => g.device !== d && g.inside);
     if (ups.length === 0) continue;
     const pick = pickGw(ups, ip);
@@ -618,13 +618,13 @@ export function lintTopology(t: Topology): LintIssue[] {
       deviceId: d.id,
       severity: "error",
       code: "l3.uplink-no-default",
-      message: `${name} 에 주소 ${ip} 는 있지만 기본 경로(게이트웨이)가 없음 → 바깥으로 나가는 패킷을 보낼 곳이 없어 폐기`,
+      message: `${name} 에 주소 ${ip} 는 있지만 디폴트 라우트(게이트웨이)가 없음 → 바깥으로 나가는 패킷을 보낼 곳이 없어 드롭`,
       fix: `${d.name} → ${name} → 게이트웨이 칸에 ${pick?.ip ?? `위쪽 라우터(${pick?.label ?? "?"}) 의 주소`} 입력`,
       related: pick ? [pick.device.id] : undefined,
     });
   }
 
-  // 규칙 7: 안쪽에 또 다른 게이트웨이가 있는데 그 뒤 서브넷으로 돌아가는 정적 경로 없음
+  // 규칙 7: 안쪽에 또 다른 게이트웨이가 있는데 그 뒤 서브넷으로 돌아가는 스태틱 라우팅 없음
   for (const x of t.devices) {
     const role = DEVICE_SPECS[x.kind].role;
     if (role !== "l3" && role !== "router") continue;
@@ -652,10 +652,10 @@ export function lintTopology(t: Topology): LintIssue[] {
       const ip = c?.ipMode === "static" ? validIp(c.ip) : undefined;
       return ip ?? `${y.name} 의 ${portName(y, 0)} 주소 (DHCP 로 받는 주소라 수동으로 고정하는 편이 안전)`;
     };
-    // 같은 다음 홉끼리 묶어 "A, B (다음 홉 X)" 로
+    // 같은 넥스트 홉끼리 묶어 "A, B (넥스트 홉 X)" 로
     const byHop = new Map<string, Subnet[]>();
     for (const q of missing) byHop.set(hop(q.y), [...(byHop.get(hop(q.y)) ?? []), q.subnet]);
-    const entries = [...byHop].map(([h, subs]) => `${subs.map(fmtSubnet).join(", ")} → 다음 홉 ${h}`).join("; ");
+    const entries = [...byHop].map(([h, subs]) => `${subs.map(fmtSubnet).join(", ")} → 넥스트 홉 ${h}`).join("; ");
     add({
       deviceId: x.id,
       severity: "error",
@@ -663,8 +663,8 @@ export function lintTopology(t: Topology): LintIssue[] {
       message: `${names(ys)} 뒤 ${list} 로 돌아가는 경로가 없어 그쪽에서 나온 통신의 응답이 ${x.name} 에서 버려짐`,
       fix:
         role === "router"
-          ? `공유기는 정적 경로가 없음 → ${x.name} 자리에 게이트웨이나 NAT 박스를 쓰거나, ${names(ys)} 를 없애고 스위치로 바꾸기`
-          : `${x.name} → 정적 경로에 ${entries} 추가`,
+          ? `공유기는 스태틱 라우팅이 없음 → ${x.name} 자리에 게이트웨이나 NAT 박스를 쓰거나, ${names(ys)} 를 없애고 스위치로 바꾸기`
+          : `${x.name} → 스태틱 라우팅에 ${entries} 추가`,
       related: ys.map((y) => y.id),
     });
   }
@@ -681,7 +681,7 @@ export function lintTopology(t: Topology): LintIssue[] {
       severity: "error",
       code: "l3.subnet-overlap",
       message: `${pairs.map(([a, b]) => `${a.ifName} ${fmtSubnet(a.subnet!)} 와 ${b.ifName} ${fmtSubnet(b.subnet!)}`).join(", ")} 서브넷이 겹침 → 어느 인터페이스로 보낼지 정할 수 없음`,
-      fix: `${d.name} → ${pairs[0]![1].ifName} → IP/프리픽스를 다른 서브넷으로 (인터페이스마다 서브넷이 달라야 함)`,
+      fix: `${d.name} → ${pairs[0]![1].ifName} → IP/서브넷 마스크를 다른 서브넷으로 (인터페이스마다 서브넷이 달라야 함)`,
     });
   }
 
@@ -756,7 +756,7 @@ export function lintTopology(t: Topology): LintIssue[] {
   for (const d of t.devices) {
     if (DEVICE_SPECS[d.kind].role !== "l3" || !d.l3) continue;
     const ifs = d.l3.interfaces;
-    // DHCP 로 받는 인터페이스나 수동 게이트웨이가 있으면 기본 경로가 생기므로 통과로 본다
+    // DHCP 로 받는 인터페이스나 수동 게이트웨이가 있으면 디폴트 라우트가 생기므로 통과로 본다
     const hasDefault = ifs.some((c) => c && (c.ipMode === "dhcp" || validIp(c.gateway)));
     if (hasDefault) continue;
     const connected = m.allGws.filter((g) => g.device === d && g.subnet).map((g) => g.subnet!);
@@ -773,8 +773,8 @@ export function lintTopology(t: Topology): LintIssue[] {
         deviceId: d.id,
         severity: "warn",
         code: "relay.unreachable",
-        message: `${tgt.ifName} 의 DHCP 릴레이 대상 ${tgt.relay} 로 가는 경로가 없음 (어느 인터페이스 서브넷에도 없고 정적·기본 경로도 없음)`,
-        fix: `${d.name} → 정적 경로에 ${tgt.relay}/32 를 추가하거나, ${tgt.ifName} 의 릴레이 칸을 이 장치 인터페이스 서브넷 안의 DHCP 서버 주소로`,
+        message: `${tgt.ifName} 의 DHCP 릴레이 대상 ${tgt.relay} 로 가는 경로가 없음 (어느 인터페이스 서브넷에도 없고 정적·디폴트 라우트도 없음)`,
+        fix: `${d.name} → 스태틱 라우팅에 ${tgt.relay}/32 를 추가하거나, ${tgt.ifName} 의 릴레이 칸을 이 장치 인터페이스 서브넷 안의 DHCP 서버 주소로`,
       });
     }
   }

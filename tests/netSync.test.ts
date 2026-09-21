@@ -86,7 +86,7 @@ describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트�
     expect(s.net.trace.some((e) => e.kind === "arp.request.sent")).toBe(true);
   });
 
-  it("집 두 곳: 게이트웨이 둘이 if0 로 직접 이어져 정적 경로로 오가고, 경로를 지우면 '경로 없음'", () => {
+  it("집 두 곳: 게이트웨이 둘이 if0 로 직접 이어져 스태틱 라우팅으로 오가고, 경로를 지우면 'No route'", () => {
     const { s, t } = load("homes");
     expect(ping(s, t, "pc-1", "192.168.1.11")).toMatchObject({ status: "ok" }); // 같은 집
     expect(ping(s, t, "pc-1", "192.168.2.10")).toMatchObject({ status: "ok" }); // 다른 집
@@ -110,7 +110,7 @@ describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트�
     s.net.scheduleAction(s.net.now, { kind: "traceroute", nodeId: pc1, dst: "192.168.3.10" });
     s.net.runToIdle();
     expect(host(s, t, "pc-1").traceroutes.at(-1)).toMatchObject({ status: "done", hops: [{ ip: "192.168.1.1" }, { ip: "10.0.0.3" }, { ip: "192.168.3.10" }] });
-    // gw-1 에서 3번 집 경로만 지우면 2번 집은 되고 3번 집은 경로 없음
+    // gw-1 에서 3번 집 경로만 지우면 2번 집은 되고 3번 집은 No route
     const broken = patch(t, "gw-1", (d) => ({ ...d, l3: { ...d.l3!, routes: d.l3!.routes.filter((r) => r.dest !== "192.168.3.0") } }));
     s.sync(broken);
     expect(ping(s, broken, "pc-1", "192.168.2.10")).toMatchObject({ status: "ok" });
@@ -137,7 +137,7 @@ describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트�
     expect(s.net.trace.some((e) => e.nodeId === host.id && e.kind === "nat.translate")).toBe(true);
   });
 
-  it("게이트웨이 2단: 옆 서브넷은 정적 경로로 바로, 인터넷은 NAT 로. NAT 의 되돌아오는 경로를 지우면 응답이 끊긴다", () => {
+  it("게이트웨이 2단: 옆 서브넷은 스태틱 라우팅으로 바로, 인터넷은 NAT 로. NAT 의 되돌아오는 경로를 지우면 응답이 끊긴다", () => {
     const { s, t } = load("gateways");
     expect(ping(s, t, "pc-1", "192.168.5.10")).toMatchObject({ status: "ok" });
     // gw-1 이 NAT 를 거치지 않고 gw-2 로 넘겼다

@@ -73,7 +73,7 @@ export class Internet implements SimNode {
 
   receive(_port: number, frame: EthernetFrame, ctx: NodeContext): void {
     if (!this.iface.accepts(frame)) {
-      ctx.trace("frame.drop", "L2", `목적지 MAC ${frame.dst} 가 ISP 게이트웨이 MAC 아님 → 폐기`, { dst: frame.dst }, frame.id);
+      ctx.trace("frame.drop", "L2", `목적지 MAC ${frame.dst} 가 ISP 게이트웨이 MAC 아님 → 드롭`, { dst: frame.dst }, frame.id);
       return;
     }
     ctx.trace("frame.receive", "L2", `프레임 수신: ${describeFrame(frame)} [${frame.src}]`, { src: frame.src, dst: frame.dst }, frame.id);
@@ -92,14 +92,14 @@ export class Internet implements SimNode {
       if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) this.dhcpServer.handle(m, frameId, ctx, emit);
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frameId);
       else if (m.kind === "dns" && udp.dstPort === DNS_PORT && m.op === "query") this.handleDns(pkt, udp.srcPort, m, frameId, ctx);
-      else if (m.kind === "dns") ctx.trace("ip.drop", "L4", `공인 DNS 가 아닌 주소로 온 DNS 응답 → 폐기`, {}, frameId);
-      else ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frameId);
+      else if (m.kind === "dns") ctx.trace("ip.drop", "L4", `공인 DNS 가 아닌 주소로 온 DNS 응답 → 드롭`, {}, frameId);
+      else ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
       return;
     }
     const p = pkt.payload;
     if (pkt.dst === this.iface.ip) {
       if (p.kind === "tcp") {
-        ctx.trace("ip.drop", "L4", `ISP 게이트웨이는 TCP 서비스를 열지 않음 → 폐기`, {}, frameId);
+        ctx.trace("ip.drop", "L4", `ISP 게이트웨이는 TCP 서비스를 열지 않음 → 드롭`, {}, frameId);
         return;
       }
       if (p.type !== "echo-request") {
@@ -113,11 +113,11 @@ export class Internet implements SimNode {
       return;
     }
     if (isPrivateIp(pkt.dst)) {
-      ctx.trace("ip.drop", "L3", `사설 주소 ${pkt.dst} 는 인터넷에서 라우팅되지 않음 → 폐기 (그래서 NAT 가 필요함)`, { dst: pkt.dst }, frameId);
+      ctx.trace("ip.drop", "L3", `사설 주소 ${pkt.dst} 는 인터넷에서 라우팅되지 않음 → 드롭 (그래서 NAT 가 필요함)`, { dst: pkt.dst }, frameId);
       return;
     }
     if (isPrivateIp(pkt.src)) {
-      ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} → 응답을 돌려줄 수 없어 폐기 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
+      ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} → 응답을 돌려줄 수 없어 드롭 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
       return;
     }
     // ISP 라우터(203.0.113.1)를 지나 공인 서버로 가는 것도 홉 하나: TTL 이 다 됐으면 ISP 라우터가 통지한다
@@ -134,7 +134,7 @@ export class Internet implements SimNode {
       return;
     }
     if (p.type !== "echo-request") {
-      ctx.trace("ip.drop", "L3", `공인 주소 ${pkt.dst} 로 가는 ICMP ${icmpLabel(p)} → 시뮬레이션 밖이므로 폐기`, {}, frameId);
+      ctx.trace("ip.drop", "L3", `공인 주소 ${pkt.dst} 로 가는 ICMP ${icmpLabel(p)} → 시뮬레이션 밖이므로 드롭`, {}, frameId);
       return;
     }
     ctx.trace(
@@ -150,15 +150,15 @@ export class Internet implements SimNode {
   /** 공인 DNS(8.8.8.8, 1.1.1.1): 공개 이름들에 답한다. 다른 공인 주소로 온 질의는 그 주소에 DNS 가 없다고 본다 */
   private handleDns(pkt: Ipv4Packet, srcPort: number, msg: DnsMessage, frameId: number, ctx: NodeContext): void {
     if (isPrivateIp(pkt.dst)) {
-      ctx.trace("ip.drop", "L3", `사설 주소 ${pkt.dst} 로 가는 DNS 질의가 인터넷으로 나옴 → 폐기. LAN 안의 DNS 서버라면 라우터가 LAN 쪽으로 보내야 함`, { dst: pkt.dst }, frameId);
+      ctx.trace("ip.drop", "L3", `사설 주소 ${pkt.dst} 로 가는 DNS 질의가 인터넷으로 나옴 → 드롭. LAN 안의 DNS 서버라면 라우터가 LAN 쪽으로 보내야 함`, { dst: pkt.dst }, frameId);
       return;
     }
     if (isPrivateIp(pkt.src)) {
-      ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} 인 DNS 질의 → 응답을 돌려줄 수 없어 폐기 (NAT 필요)`, { src: pkt.src }, frameId);
+      ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} 인 DNS 질의 → 응답을 돌려줄 수 없어 드롭 (NAT 필요)`, { src: pkt.src }, frameId);
       return;
     }
     if (!PUBLIC_DNS.includes(pkt.dst)) {
-      ctx.trace("ip.drop", "L4", `${pkt.dst} 에는 DNS 서비스가 없음 → 폐기 (공인 DNS 는 ${PUBLIC_DNS.join(", ")})`, { dst: pkt.dst }, frameId);
+      ctx.trace("ip.drop", "L4", `${pkt.dst} 에는 DNS 서비스가 없음 → 드롭 (공인 DNS 는 ${PUBLIC_DNS.join(", ")})`, { dst: pkt.dst }, frameId);
       return;
     }
     const name = normalizeName(msg.name);

@@ -169,8 +169,8 @@ export class L3Node implements SimNode {
     const key = (r: StaticRoute) => `${r.dest}/${r.prefix} via ${r.via}`;
     const before = new Set(this.routes.map(key));
     const after = new Set(routes.map(key));
-    for (const r of routes) if (!before.has(key(r))) ctx.trace("ip.config", "sys", `정적 경로 추가: ${key(r)}`, { ...r });
-    for (const r of this.routes) if (!after.has(key(r))) ctx.trace("ip.config", "sys", `정적 경로 삭제: ${key(r)}`, { ...r });
+    for (const r of routes) if (!before.has(key(r))) ctx.trace("ip.config", "sys", `스태틱 라우팅 추가: ${key(r)}`, { ...r });
+    for (const r of this.routes) if (!after.has(key(r))) ctx.trace("ip.config", "sys", `스태틱 라우팅 삭제: ${key(r)}`, { ...r });
     this.routes = [...routes];
   }
 
@@ -266,7 +266,7 @@ export class L3Node implements SimNode {
         ctx.trace(
           "vlan.drop",
           "L2",
-          `${this.names[port]} 에 VLAN ${rawFrame.vlan} 태그 프레임 → 해당 서브 인터페이스 없음 → 폐기 (${subs.length ? `있는 것: ${subs.join(", ")}` : "이 포트에 VLAN 서브 인터페이스를 추가하세요"})`,
+          `${this.names[port]} 에 VLAN ${rawFrame.vlan} 태그 프레임 → 해당 서브 인터페이스 없음 → 드롭 (${subs.length ? `있는 것: ${subs.join(", ")}` : "이 포트에 VLAN 서브 인터페이스를 추가하세요"})`,
           { port, vlan: rawFrame.vlan },
           rawFrame.id,
         );
@@ -277,7 +277,7 @@ export class L3Node implements SimNode {
     const iface = this.ifaces[i]!;
     const name = this.names[i]!;
     if (!iface.accepts(frame)) {
-      ctx.trace("frame.drop", "L2", `${name} 수신: 목적지 MAC ${frame.dst} 가 내 MAC 아님 → 폐기`, { dst: frame.dst }, frame.id);
+      ctx.trace("frame.drop", "L2", `${name} 수신: 목적지 MAC ${frame.dst} 가 내 MAC 아님 → 드롭`, { dst: frame.dst }, frame.id);
       return;
     }
     ctx.trace("frame.receive", "L2", `${name} 수신: ${describeFrame(frame)} [${frame.src}]${rawFrame.vlan !== undefined ? ` (VLAN ${rawFrame.vlan} 태그 떼어냄)` : ""}`, { port, src: frame.src, vlan: rawFrame.vlan }, frame.id);
@@ -300,19 +300,19 @@ export class L3Node implements SimNode {
         const restored = this.nat.restore(pkt, this.ifaces[port]!.ip!, ctx, frameId);
         if (restored) this.forward(restored, port, frameId, ctx, pkt);
       } else if (m.kind !== "dhcp" && !this.ifaces.some((i) => i.ip === pkt.dst)) this.forward(pkt, port, frameId, ctx);
-      else ctx.trace("ip.drop", "L4", `[${name}] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 폐기`, { port: udp.dstPort }, frameId);
+      else ctx.trace("ip.drop", "L4", `[${name}] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
       return;
     }
     const mine = this.ifaces.findIndex((i) => i.ip !== undefined && i.ip === pkt.dst);
     const fromOutside = this.nat !== undefined && port === this.outside;
     if (fromOutside && mine >= 0 && mine !== this.outside) {
-      ctx.trace("ip.drop", "L3", `[${name}] 바깥에서 안쪽 주소 ${pkt.dst} 로 온 패킷 → 폐기. NAT 뒤의 사설 주소는 바깥에서 닿을 수 없음`, { dst: pkt.dst }, frameId);
+      ctx.trace("ip.drop", "L3", `[${name}] 바깥에서 안쪽 주소 ${pkt.dst} 로 온 패킷 → 드롭. NAT 뒤의 사설 주소는 바깥에서 닿을 수 없음`, { dst: pkt.dst }, frameId);
       return;
     }
     // 바깥에서 공인 주소로 온 패킷: ping 요청만 내가 직접 받고, 나머지(응답·TCP)는 NAT 테이블로 내부 호스트를 찾는다
     if (mine >= 0 && !(fromOutside && !(pkt.payload.kind === "icmp" && pkt.payload.type === "echo-request"))) {
       if (pkt.payload.kind === "tcp") {
-        ctx.trace("ip.drop", "L4", `이 장치는 TCP 서비스를 열지 않음 → 폐기`, {}, frameId);
+        ctx.trace("ip.drop", "L4", `이 장치는 TCP 서비스를 열지 않음 → 드롭`, {}, frameId);
         return;
       }
       this.handleIcmp(mine, pkt, pkt.payload, frameId, ctx);
@@ -321,7 +321,7 @@ export class L3Node implements SimNode {
     let inner = pkt;
     if (fromOutside) {
       if (mine < 0) {
-        ctx.trace("ip.drop", "L3", `[${name}] 목적지 ${pkt.dst} 는 내 공인 주소가 아님 → 폐기`, { dst: pkt.dst }, frameId);
+        ctx.trace("ip.drop", "L3", `[${name}] 목적지 ${pkt.dst} 는 내 공인 주소가 아님 → 드롭`, { dst: pkt.dst }, frameId);
         return;
       }
       const restored = this.nat!.restore(pkt, this.ifaces[port]!.ip!, ctx, frameId);
@@ -351,7 +351,7 @@ export class L3Node implements SimNode {
       ctx.trace(
         "dhcp.relay.forward",
         "app",
-        `[${name}] DHCP 릴레이: 브로드캐스트 ${msg.op} 를 giaddr=${iface.ip} 붙여 서버 ${server} 로 유니캐스트 전달 (브로드캐스트는 서브넷을 못 넘으므로)`,
+        `[${name}] DHCP 릴레이: 브로드캐스트 ${msg.op} 를 릴레이 에이전트 주소(giaddr)=${iface.ip} 붙여 서버 ${server} 로 유니캐스트 전달 (브로드캐스트는 서브넷을 못 넘으므로)`,
         { op: msg.op, giaddr: iface.ip, server },
         frameId,
       );
@@ -361,7 +361,7 @@ export class L3Node implements SimNode {
     if (!fromClient && msg.giaddr) {
       const back = this.ifaces.findIndex((i) => i.ip === msg.giaddr);
       if (back < 0) {
-        ctx.trace("dhcp.relay.miss", "app", `[${name}] 서버 응답의 giaddr ${msg.giaddr} 가 내 인터페이스가 아님 → 폐기`, { giaddr: msg.giaddr }, frameId);
+        ctx.trace("dhcp.relay.miss", "app", `[${name}] 서버 응답의 giaddr ${msg.giaddr} 가 내 인터페이스가 아님 → 드롭`, { giaddr: msg.giaddr }, frameId);
         return;
       }
       const dst = msg.op === "nak" ? LIMITED_BROADCAST_IP : (msg.yiaddr ?? LIMITED_BROADCAST_IP);
@@ -385,12 +385,12 @@ export class L3Node implements SimNode {
     this.sendVia(reply, ctx, frameId);
   }
 
-  /** 다음 홉이 속한(직접 연결된) 인터페이스 */
+  /** 넥스트 홉이 속한(직접 연결된) 인터페이스 */
   private ifaceFor(nextHop: Ip): number {
     return this.ifaces.findIndex((i) => i.ip !== undefined && sameSubnet(nextHop, i.ip, i.prefix));
   }
 
-  /** 라우팅 테이블 조회: 연결된 서브넷 → 정적 경로(긴 프리픽스 우선) → 기본 경로 */
+  /** 라우팅 테이블 조회: 연결된 서브넷 → 스태틱 라우팅(긴 마스크 우선) → 디폴트 라우트 */
   route(dst: Ip): Route | undefined {
     for (let i = 0; i < this.ifaces.length; i++) {
       const iface = this.ifaces[i]!;
@@ -419,7 +419,7 @@ export class L3Node implements SimNode {
   private sendVia(pkt: Ipv4Packet, ctx: NodeContext, frameId?: number): void {
     const r = this.route(pkt.dst);
     if (!r) {
-      ctx.trace("ip.no-route", "L3", `${pkt.dst} 로 가는 경로 없음 (연결된 서브넷도, 기본 경로도 없음) → 폐기`, { dst: pkt.dst }, frameId);
+      ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 로 가는 경로가 없음 (연결된 서브넷도, 디폴트 라우트도 없음) → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
     this.ifaces[r.out]!.sendIp(pkt, ctx, this.emit(r.out, ctx), r.nextHop);
@@ -431,7 +431,7 @@ export class L3Node implements SimNode {
    */
   private forward(pkt: Ipv4Packet, inPort: number, frameId: number, ctx: NodeContext, received: Ipv4Packet = pkt): void {
     if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
-      ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 폐기`, { dst: pkt.dst }, frameId);
+      ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
     if (pkt.ttl <= 1) {
@@ -445,8 +445,8 @@ export class L3Node implements SimNode {
       const hint =
         noAddr >= 0
           ? `${this.names[noAddr]} 에 주소가 없음 (케이블과 DHCP, 또는 수동 주소를 확인)`
-          : "정적 경로를 추가하거나 기본 경로(업링크 게이트웨이)를 설정하세요";
-      ctx.trace("ip.no-route", "L3", `${pkt.dst} 로 가는 경로 없음 (연결된 서브넷·정적 경로·기본 경로 모두 해당 없음) → 폐기. ${hint}`, { dst: pkt.dst }, frameId);
+          : "스태틱 라우팅을 추가하거나 디폴트 라우트(업링크 게이트웨이)를 설정하세요";
+      ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 로 가는 경로가 없음 (연결된 서브넷·스태틱 라우팅·디폴트 라우트 모두 해당 없음) → 드롭. ${hint}`, { dst: pkt.dst }, frameId);
       return;
     }
     const outName = this.names[r.out]!;
@@ -455,7 +455,7 @@ export class L3Node implements SimNode {
     let out: Ipv4Packet = { ...pkt, ttl: pkt.ttl - 1 };
     if (this.nat && r.out === this.outside) {
       if (inPort === this.outside) {
-        ctx.trace("ip.no-route", "L3", `${pkt.dst} 로 가는 안쪽 경로가 없어 바깥으로 되돌아감 → 폐기. 정적 경로를 추가하세요 (예: ${networkOf(pkt.dst, 24)}/24 via 안쪽 게이트웨이)`, { dst: pkt.dst }, frameId);
+        ctx.trace("ip.no-route", "L3", `${pkt.dst} 로 가는 안쪽 경로가 없어 바깥으로 되돌아감 → 드롭. 스태틱 라우팅을 추가하세요 (예: ${networkOf(pkt.dst, 24)}/24 via 안쪽 게이트웨이)`, { dst: pkt.dst }, frameId);
         return;
       }
       const translated = this.nat.translate(out, outIface.ip!, ctx, frameId);
@@ -466,8 +466,8 @@ export class L3Node implements SimNode {
       r.kind === "connected"
         ? `${networkOf(outIface.ip!, outIface.prefix)}/${outIface.prefix} 에 직접 연결`
         : r.kind === "static"
-          ? `정적 경로, 다음 홉 ${r.nextHop}`
-          : `기본 경로, 다음 홉 ${r.nextHop}`;
+          ? `스태틱 라우팅, 넥스트 홉 ${r.nextHop}`
+          : `디폴트 라우트, 넥스트 홉 ${r.nextHop}`;
     ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} → ${outName} (${via}), TTL ${pkt.ttl} → ${out.ttl}`, { dst: pkt.dst, out: outName, kind: r.kind }, frameId);
     outIface.sendIp(out, ctx, this.emit(r.out, ctx), r.nextHop);
   }
@@ -491,7 +491,7 @@ export class L3Node implements SimNode {
   ifaceStatus(i: number): string {
     const iface = this.ifaces[i]!;
     if (iface.ip) return `${iface.ip}/${iface.prefix}${this.modes[i] === "dhcp" ? " (DHCP)" : ""}`;
-    if (!this.linkUp[i]) return "없음 (케이블 없음)";
+    if (!this.linkUp[i]) return "없음 (링크 다운)";
     if (this.modes[i] === "dhcp") return `없음 (DHCP: ${DHCP_STATE_LABEL[this.clients[i]?.state ?? "idle"]})`;
     return "없음 (수동 입력 필요)";
   }
@@ -503,11 +503,11 @@ export class L3Node implements SimNode {
     });
     for (const r of this.routes) {
       const out = this.ifaceFor(r.via);
-      routes.push([`${r.dest}/${r.prefix}`, out >= 0 ? this.names[out]! : "(다음 홉에 닿는 인터페이스 없음)", `via ${r.via}`]);
+      routes.push([`${r.dest}/${r.prefix}`, out >= 0 ? this.names[out]! : "(넥스트 홉에 닿는 인터페이스 없음)", `via ${r.via}`]);
     }
     const def = this.route("0.0.0.1");
     if (def && def.kind === "default") routes.push(["0.0.0.0/0", this.names[def.out]!, `via ${def.nextHop}`]);
-    const tables: NodeSnapshot["tables"] = [{ title: "라우팅 테이블", columns: ["목적지", "인터페이스", "다음 홉"], rows: routes }];
+    const tables: NodeSnapshot["tables"] = [{ title: "라우팅 테이블", columns: ["목적지", "인터페이스", "넥스트 홉"], rows: routes }];
     if (this.firewall.config.enabled) tables.push({ title: "방화벽 규칙", columns: ["#", "규칙"], rows: this.firewall.rows() });
     if (this.nat) {
       const publicIp = this.ifaces[this.outside!]!.ip;

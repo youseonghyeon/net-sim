@@ -131,7 +131,7 @@ export class NatTable {
     } else {
       const rule = proto !== "icmp" ? this.forwards.find((r) => r.publicPort === publicId) : undefined;
       if (!rule) {
-        ctx.trace("nat.miss", "L3", `Time Exceeded 안의 원래 패킷(${what})이 NAT 테이블에 없음 → 폐기. 내부에서 시작한 통신의 오류 통지만 들어올 수 있음`, { proto, publicId }, frameId);
+        ctx.trace("nat.miss", "L3", `Time Exceeded 안의 원래 패킷(${what})이 NAT 테이블에 없음 → 드롭. 내부에서 시작한 통신의 오류 통지만 들어올 수 있음`, { proto, publicId }, frameId);
         return undefined;
       }
       lanIp = rule.lanIp;
@@ -173,7 +173,7 @@ export class NatTable {
         }
       }
       const hint = p.kind === "tcp" ? " (포트 포워딩 규칙을 추가하면 열 수 있음)" : "";
-      ctx.trace("nat.miss", "L3", `NAT 테이블에 없는 ${what} → 폐기. 내부에서 시작하지 않은 통신은 들어올 수 없음${hint}`, { proto, publicId }, frameId);
+      ctx.trace("nat.miss", "L3", `NAT 테이블에 없는 ${what} → 드롭. 내부에서 시작하지 않은 통신은 들어올 수 없음${hint}`, { proto, publicId }, frameId);
       return undefined;
     }
     entry.lastUsed = ctx.now;

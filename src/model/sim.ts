@@ -40,7 +40,7 @@ class SimController {
     this.sync(topology.peek());
   }
 
-  /** 케이블에서 다음 프레임 1개를 유실시킨다 (실험) */
+  /** 케이블에서 다음 프레임 1개를 손실시킨다 (실험) */
   dropNext(cableId: string): void {
     this.net.dropNextOn(cableId);
     this.bump();

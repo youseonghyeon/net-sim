@@ -45,7 +45,7 @@ function issue(issues: LintIssue[], deviceId: string, code: string): LintIssue {
   return found;
 }
 
-/** NAT(if1 10.0.0.1) 아래 게이트웨이(if0 10.0.0.2, 기본 경로 10.0.0.1), NAT 에 돌아오는 경로까지 갖춘 올바른 2단 구성 */
+/** NAT(if1 10.0.0.1) 아래 게이트웨이(if0 10.0.0.2, 디폴트 라우트 10.0.0.1), NAT 에 돌아오는 경로까지 갖춘 올바른 2단 구성 */
 function twoTier() {
   const b = build();
   const inet = b.add("internet");
@@ -298,7 +298,7 @@ describe("규칙 5 segment.no-router", () => {
 });
 
 describe("규칙 6 l3.uplink-no-default", () => {
-  it("업링크가 수동이고 주소는 있는데 기본 경로가 없으면 error, 위쪽 라우터 주소를 추천", () => {
+  it("업링크가 수동이고 주소는 있는데 디폴트 라우트가 없으면 error, 위쪽 라우터 주소를 추천", () => {
     const c = twoTier();
     c.gw.l3!.interfaces[0]!.gateway = "";
     const i = issue(lintTopology(c.t), c.gw.id, "l3.uplink-no-default");
@@ -307,15 +307,15 @@ describe("규칙 6 l3.uplink-no-default", () => {
     expect(i.related).toEqual([c.nat.id]);
   });
 
-  it("기본 경로가 있으면 통과, 케이블이 없거나 게이트웨이끼리 if0 을 맞댄 백본이면 침묵", () => {
+  it("디폴트 라우트가 있으면 통과, 케이블이 없거나 게이트웨이끼리 if0 을 맞댄 백본이면 침묵", () => {
     const c = twoTier();
     expect(lintTopology(c.t)).toEqual([]);
-    // if0 케이블 없음
+    // if0 링크 다운
     const b = build();
     const gw = b.add("gateway");
     gw.l3!.interfaces[0] = { ipMode: "static", ip: "10.0.0.2", prefix: 24, gateway: "" };
     expect(lintTopology(b.t)).toEqual([]);
-    // if0 ↔ if0 백본: 서로 정적 경로로 오간다
+    // if0 ↔ if0 백본: 서로 스태틱 라우팅으로 오간다
     const gw2 = b.add("gateway");
     gw2.l3!.interfaces[0] = { ipMode: "static", ip: "10.0.0.3", prefix: 24, gateway: "" };
     gw2.l3!.interfaces[1]!.ip = "192.168.3.1";
@@ -326,7 +326,7 @@ describe("규칙 6 l3.uplink-no-default", () => {
 });
 
 describe("규칙 7 l3.no-return-route", () => {
-  it("NAT 안쪽에 게이트웨이가 있는데 그 뒤 서브넷 정적 경로가 없으면 NAT 에 error, 커버되지 않은 서브넷만 나열", () => {
+  it("NAT 안쪽에 게이트웨이가 있는데 그 뒤 서브넷 스태틱 라우팅이 없으면 NAT 에 error, 커버되지 않은 서브넷만 나열", () => {
     const c = twoTier();
     c.nat.l3!.routes = [];
     const issues = lintTopology(c.t);
@@ -334,7 +334,7 @@ describe("규칙 7 l3.no-return-route", () => {
     expect(i.severity).toBe("error");
     expect(i.message).toContain("192.168.1.0/24");
     expect(i.message).toContain("192.168.2.0/24");
-    expect(i.fix).toContain("다음 홉 10.0.0.2");
+    expect(i.fix).toContain("넥스트 홉 10.0.0.2");
     expect(i.related).toEqual([c.gw.id]);
     expect(codes(issues, c.gw.id)).toEqual([]);
     // 한쪽만 커버
@@ -344,7 +344,7 @@ describe("규칙 7 l3.no-return-route", () => {
     expect(j.message).toContain("192.168.2.0/24");
   });
 
-  it("포함하는 정적 경로가 있으면 통과, 아래가 NAT 박스면 경로가 필요 없다", () => {
+  it("포함하는 스태틱 라우팅이 있으면 통과, 아래가 NAT 박스면 경로가 필요 없다", () => {
     const c = twoTier();
     expect(lintTopology(c.t)).toEqual([]);
     // 게이트웨이 대신 NAT 박스: 주소가 바뀌어 돌아오므로 위쪽 NAT 에 경로 불필요
@@ -358,7 +358,7 @@ describe("규칙 7 l3.no-return-route", () => {
     expect(lintTopology(b.t)).toEqual([]);
   });
 
-  it("공유기 아래 게이트웨이: 공유기는 정적 경로가 없으므로 장치를 바꾸라고 안내", () => {
+  it("공유기 아래 게이트웨이: 공유기는 스태틱 라우팅이 없으므로 장치를 바꾸라고 안내", () => {
     const b = build();
     const rt = b.add("router");
     const sw = b.add("switch");
@@ -387,9 +387,9 @@ describe("규칙 7 l3.no-return-route", () => {
     const top = issue(issues, c.nat.id, "l3.no-return-route");
     expect(top.message).toContain("172.16.1.0/24");
     expect(top.message).not.toContain("192.168.1.0/24"); // 이미 /16 으로 커버
-    expect(top.fix).toContain("다음 홉 10.0.0.2"); // NAT 에선 여전히 gw-1 이 다음 홉
+    expect(top.fix).toContain("넥스트 홉 10.0.0.2"); // NAT 에선 여전히 gw-1 이 넥스트 홉
     const mid = issue(issues, c.gw.id, "l3.no-return-route");
-    expect(mid.fix).toContain("다음 홉 192.168.1.2");
+    expect(mid.fix).toContain("넥스트 홉 192.168.1.2");
     // 둘 다 경로를 넣으면 조용
     c.nat.l3!.routes.push({ dest: "172.16.0.0", prefix: 16, via: "10.0.0.2" });
     c.gw.l3!.routes.push({ dest: "172.16.0.0", prefix: 16, via: "192.168.1.2" });
@@ -517,7 +517,7 @@ describe("규칙 11 segment.mixed-subnet", () => {
 });
 
 describe("규칙 12 relay.unreachable", () => {
-  it("릴레이 대상이 어느 인터페이스 서브넷에도 없고 정적·기본 경로도 없으면 경고", () => {
+  it("릴레이 대상이 어느 인터페이스 서브넷에도 없고 정적·디폴트 라우트도 없으면 경고", () => {
     const b = build();
     const gw = b.add("gateway");
     gw.l3!.interfaces[0] = { ipMode: "static", ip: "10.0.0.2", prefix: 24, gateway: "" };
@@ -531,7 +531,7 @@ describe("규칙 12 relay.unreachable", () => {
     expect(issue(lintTopology(b.t), gw.id, "relay.unreachable").message).toContain("if1.10");
   });
 
-  it("인터페이스 서브넷 안·정적 경로·기본 경로(수동 게이트웨이 또는 DHCP 인터페이스) 중 하나라도 있으면 통과", () => {
+  it("인터페이스 서브넷 안·스태틱 라우팅·디폴트 라우트(수동 게이트웨이 또는 DHCP 인터페이스) 중 하나라도 있으면 통과", () => {
     const b = build();
     const gw = b.add("gateway");
     gw.l3!.interfaces[0] = { ipMode: "static", ip: "10.0.0.2", prefix: 24, gateway: "" };

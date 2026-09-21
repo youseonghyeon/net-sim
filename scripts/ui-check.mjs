@@ -183,11 +183,11 @@ const tcpRows = () => page.locator(".inspector .section", { has: page.locator("h
 await page.waitForFunction(() => { const sec = [...document.querySelectorAll(".inspector .section")].find((s) => s.querySelector("h3")?.textContent === "TCP 연결"); return /종료됨/.test(sec?.querySelector("tbody tr")?.textContent ?? ""); }, null, { timeout: 40000 });
 console.log("tcp to srv-1:", await tcpRows().first().innerText());
 
-// 3c) 케이블 손실 실험: srv-1 케이블 다음 패킷 유실 → 재전송으로 복구
+// 3c) 케이블 손실 실험: srv-1 케이블 다음 패킷 손실 → 재전송으로 복구
 const srvCable = page.locator("[data-cable]").nth(4);
 await srvCable.locator(".hit").click({ force: true });
 await page.waitForTimeout(100);
-await page.click("text=다음 패킷 1개 유실시키기");
+await page.click("text=다음 패킷 1개 손실시키기");
 await clickDevice("pc-1");
 await page.click(".tcp-row .btn");
 await page.waitForFunction(() => { const sec = [...document.querySelectorAll(".inspector .section")].find((s) => s.querySelector("h3")?.textContent === "TCP 연결"); const rows = sec?.querySelectorAll("tbody tr") ?? []; return rows.length >= 2 && /종료됨/.test(rows[0]?.textContent ?? ""); }, null, { timeout: 60000 });
@@ -236,7 +236,7 @@ await lanInput.fill("192.168.127.1");
 await page.waitForTimeout(100);
 console.log("dhcp range after LAN change:", await page.locator(".inspector input.mono").evaluateAll((els) => els.map((e) => e.value).slice(2, 4)));
 await clickDevice("pc-1");
-await page.click("button:has-text('DHCP 다시 요청')");
+await page.click("button:has-text('DHCP 임대 갱신')");
 console.log("pc-1 after subnet change →", await waitAddr("pc-1", /^192\.168\.127\.\d+\/24$/));
 
 // 8) 기능 단위 예제: NAT 박스 + 게이트웨이 + DHCP 서버 호스트

@@ -46,7 +46,7 @@ describe("방화벽: 라우터", () => {
     expect(net.trace.some((e) => e.nodeId === "inet" && e.kind === "inet.forward")).toBe(false);
   });
 
-  it("상태 추적: 들어오는 모든 것을 차단해도 안에서 시작한 ping 의 응답은 돌아온다", () => {
+  it("Stateful 검사: 들어오는 모든 것을 차단해도 안에서 시작한 ping 의 응답은 돌아온다", () => {
     const { net, rt } = home();
     rt.configure({ ...rtBase, firewall: fw([{ action: "deny", proto: "any", direction: "in" }]) }, net.contextFor("rt"));
     net.scheduleAction(net.now, { kind: "ping", nodeId: "pc1", dst: "8.8.8.8" });
@@ -55,7 +55,7 @@ describe("방화벽: 라우터", () => {
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "fw.established")).toBe(true);
   });
 
-  it("상태 추적을 끄면 같은 규칙에 응답이 막힌다", () => {
+  it("Stateful 검사를 끄면 같은 규칙에 응답이 막힌다", () => {
     const { net, rt } = home();
     rt.configure({ ...rtBase, firewall: fw([{ action: "deny", proto: "any", direction: "in" }], { stateful: false }) }, net.contextFor("rt"));
     net.scheduleAction(net.now, { kind: "ping", nodeId: "pc1", dst: "8.8.8.8" });
@@ -155,7 +155,7 @@ describe("방화벽: 게이트웨이(서브넷 간)", () => {
     expect(net.trace.some((e) => e.nodeId === "gw" && e.kind === "fw.deny" && e.summary.includes("서브넷 간"))).toBe(true);
   });
 
-  it("TCP 80 만 허용하고 나머지 차단 (기본 정책 차단): 웹은 되고 ping 은 막힘, 응답은 상태 추적으로 통과", () => {
+  it("TCP 80 만 허용하고 나머지 차단 (기본 정책 차단): 웹은 되고 ping 은 막힘, 응답은 Stateful 검사으로 통과", () => {
     const { net, gw } = two();
     gw.setFirewall(fw([{ action: "allow", proto: "tcp", direction: "any", dst: "192.168.2.10", dstPort: 80 }], { defaultPolicy: "deny" }), net.contextFor("gw"));
     net.scheduleAction(net.now, { kind: "tcp-connect", nodeId: "a", dst: "192.168.2.10", port: 80 });

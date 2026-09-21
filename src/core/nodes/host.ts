@@ -126,9 +126,9 @@ export class Host implements SimNode {
   setDnsServer(cfg: DnsServerConfig, ctx: NodeContext): void {
     const prev = this.dnsServer.config;
     if (cfg.enabled !== prev.enabled) {
-      ctx.trace("ip.config", "sys", cfg.enabled ? `DNS 서버 시작 (레코드 ${cfg.records.length}개${cfg.upstream ? `, 상위 DNS ${cfg.upstream}` : ""})` : `DNS 서버 중지`, { ...cfg });
+      ctx.trace("ip.config", "sys", cfg.enabled ? `DNS 서버 시작 (레코드 ${cfg.records.length}개${cfg.upstream ? `, 업스트림 DNS ${cfg.upstream}` : ""})` : `DNS 서버 중지`, { ...cfg });
     } else if (cfg.enabled && (JSON.stringify(cfg.records) !== JSON.stringify(prev.records) || cfg.upstream !== prev.upstream)) {
-      ctx.trace("ip.config", "sys", `DNS 서버 설정 변경 (레코드 ${cfg.records.length}개${cfg.upstream ? `, 상위 DNS ${cfg.upstream}` : ""})`, { ...cfg });
+      ctx.trace("ip.config", "sys", `DNS 서버 설정 변경 (레코드 ${cfg.records.length}개${cfg.upstream ? `, 업스트림 DNS ${cfg.upstream}` : ""})`, { ...cfg });
     }
     this.dnsServer.config = { ...cfg, records: [...cfg.records] };
   }
@@ -137,9 +137,9 @@ export class Host implements SimNode {
   setDhcpServer(cfg: DhcpServerConfig, ctx: NodeContext): void {
     const prev = this.dhcpServer.config;
     if (cfg.enabled !== prev.enabled) {
-      ctx.trace("ip.config", "sys", cfg.enabled ? `DHCP 서버 시작 (범위 ${cfg.start} ~ ${cfg.end}, 게이트웨이 안내 ${cfg.router || "없음"})` : `DHCP 서버 중지`, { ...cfg });
+      ctx.trace("ip.config", "sys", cfg.enabled ? `DHCP 서버 시작 (범위 ${cfg.start} ~ ${cfg.end}, 기본 게이트웨이 옵션 ${cfg.router || "없음"})` : `DHCP 서버 중지`, { ...cfg });
     } else if (cfg.start !== prev.start || cfg.end !== prev.end || cfg.router !== prev.router) {
-      ctx.trace("ip.config", "sys", `DHCP 서버 설정 변경 (범위 ${cfg.start} ~ ${cfg.end}, 게이트웨이 안내 ${cfg.router || "없음"})`, { ...cfg });
+      ctx.trace("ip.config", "sys", `DHCP 서버 설정 변경 (범위 ${cfg.start} ~ ${cfg.end}, 기본 게이트웨이 옵션 ${cfg.router || "없음"})`, { ...cfg });
     }
     this.dhcpServer.setConfig(cfg, ctx);
   }
@@ -433,7 +433,7 @@ export class Host implements SimNode {
         ctx.trace(
           "icmp.ttl-received",
           "app",
-          `${pkt.src} 로부터 Time Exceeded 수신 (원래 ${describeOriginal(o)}) → ping ${rec.dst} 실패: 경로 위에서 TTL 이 다 됨 (라우팅 루프 의심 — 라우터들의 정적·기본 경로가 서로를 가리키는지 확인)`,
+          `${pkt.src} 로부터 Time Exceeded 수신 (원래 ${describeOriginal(o)}) → ping ${rec.dst} 실패: 경로 위에서 TTL 이 다 됨 (라우팅 루프 의심 — 라우터들의 정적·디폴트 라우트가 서로를 가리키는지 확인)`,
           { from: pkt.src, dst: rec.dst, seq },
           frameId,
         );
@@ -487,11 +487,11 @@ export class Host implements SimNode {
 
   receive(_port: number, frame: EthernetFrame, ctx: NodeContext): void {
     if (frame.vlan !== undefined) {
-      ctx.trace("vlan.drop", "L2", `VLAN ${frame.vlan} 태그가 달린 프레임 → 호스트는 태그를 이해하지 못해 폐기 (스위치 포트를 액세스로 바꾸세요)`, { vlan: frame.vlan }, frame.id);
+      ctx.trace("vlan.drop", "L2", `VLAN ${frame.vlan} 태그가 달린 프레임 → 호스트는 태그를 이해하지 못해 드롭 (스위치 포트를 액세스로 바꾸세요)`, { vlan: frame.vlan }, frame.id);
       return;
     }
     if (!this.iface.accepts(frame)) {
-      ctx.trace("frame.drop", "L2", `목적지 MAC ${frame.dst} 가 내 MAC(${this.iface.mac}) 아님 → 폐기`, { dst: frame.dst }, frame.id);
+      ctx.trace("frame.drop", "L2", `목적지 MAC ${frame.dst} 가 내 MAC(${this.iface.mac}) 아님 → 드롭`, { dst: frame.dst }, frame.id);
       return;
     }
     ctx.trace("frame.receive", "L2", `프레임 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === this.iface.mac ? "내 MAC" : "브로드캐스트"}]`, { src: frame.src, dst: frame.dst }, frame.id);
@@ -515,19 +515,19 @@ export class Host implements SimNode {
       }
       if (m.kind === "dns") {
         if (pkt.dst !== this.iface.ip) {
-          ctx.trace("ip.drop", "L3", `목적지 IP ${pkt.dst} 가 내 IP 아님 → 폐기`, { dst: pkt.dst }, frameId);
+          ctx.trace("ip.drop", "L3", `목적지 IP ${pkt.dst} 가 내 IP 아님 → 드롭`, { dst: pkt.dst }, frameId);
           return;
         }
         if (udp.dstPort === this.resolver.port) this.resolver.handle(m, pkt.src, frameId, ctx);
         else if (udp.dstPort === DNS_PORT && (this.dnsServer.config.enabled || m.op === "response")) this.dnsServer.handle(pkt, udp.srcPort, m, frameId, ctx, this.emit(ctx));
-        else ctx.trace("ip.drop", "L4", `DNS 질의를 받았지만 DNS 서버 서비스가 꺼져 있음 → 폐기 (서비스에서 DNS 서버를 켜세요)`, { port: udp.dstPort }, frameId);
+        else ctx.trace("ip.drop", "L4", `DNS 질의를 받았지만 DNS 서버 서비스가 꺼져 있음 → 드롭 (서비스에서 DNS 서버를 켜세요)`, { port: udp.dstPort }, frameId);
         return;
       }
-      ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 프로그램 없음 → 폐기`, { port: udp.dstPort }, frameId);
+      ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 프로그램 없음 → 드롭`, { port: udp.dstPort }, frameId);
       return;
     }
     if (pkt.dst !== this.iface.ip) {
-      ctx.trace("ip.drop", "L3", `목적지 IP ${pkt.dst} 가 내 IP(${this.iface.ip ?? "없음"}) 아님 → 폐기 (호스트는 포워딩 안 함)`, { dst: pkt.dst }, frameId);
+      ctx.trace("ip.drop", "L3", `목적지 IP ${pkt.dst} 가 내 IP(${this.iface.ip ?? "없음"}) 아님 → 드롭 (호스트는 포워딩 안 함)`, { dst: pkt.dst }, frameId);
       return;
     }
     if (pkt.payload.kind === "tcp") {

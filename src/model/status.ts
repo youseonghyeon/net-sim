@@ -17,8 +17,8 @@ export interface StatusLine {
 export function hostStatusOf(node: SimNode | undefined, wireless: boolean): StatusLine | null {
   if (node instanceof Host) {
     if (node.ip) return { text: `${node.ip}/${node.iface.prefix}`, tone: "ok", mono: true };
-    if (!node.linkUp) return { text: wireless ? "무선 연결 없음" : "케이블 없음", tone: "muted", mono: false };
-    if (node.ipMode === "static") return { text: "IP 없음 · 수동 입력 필요", tone: "warn", mono: false };
+    if (!node.linkUp) return { text: wireless ? "무선 연결 없음" : "링크 다운", tone: "muted", mono: false };
+    if (node.ipMode === "static") return { text: "IP 미설정", tone: "warn", mono: false };
     switch (node.dhcp.state) {
       case "discovering":
       case "requesting":

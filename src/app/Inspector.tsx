@@ -195,7 +195,7 @@ function CablePanel({ c }: { c: Cable }) {
           <b class="mono">{portName(c.b.device, c.b.port)}</b>
         </div>
       </Section>
-      <Section title="실험: 패킷 유실">
+      <Section title="실험: 패킷 손실">
         <Field label="손실률">
           <select class="input" value={String(Math.round((c.loss ?? 0) * 100))} onChange={(e) => updateCable(c.id, (x) => ({ ...x, loss: Number(e.currentTarget.value) / 100 }))}>
             <option value="0">없음</option>
@@ -205,9 +205,9 @@ function CablePanel({ c }: { c: Cable }) {
           </select>
         </Field>
         <button class="btn wide" onClick={() => sim.dropNext(c.id)}>
-          다음 패킷 1개 유실시키기
+          다음 패킷 1개 손실시키기
         </button>
-        <p class="note">유실된 패킷은 케이블 중간에서 사라집니다. TCP 는 ACK 가 안 오면 재전송하고, ping 은 시간 초과로 실패합니다.</p>
+        <p class="note">손실된 패킷은 케이블 중간에서 사라집니다. TCP 는 ACK 가 안 오면 재전송하고, ping 은 시간 초과로 실패합니다.</p>
       </Section>
       <Section>
         <button class="btn danger" onClick={() => removeCable(c.id)}>
@@ -359,7 +359,7 @@ function MultiPanel({ ids }: { ids: string[] }) {
           {dhcpHosts.length > 0 && (
             <button class="btn wide" onClick={() => dhcpHosts.forEach((d) => sim.act({ kind: "dhcp-renew", nodeId: d.id }))}>
               <Icon name="refresh" size={14} />
-              DHCP 다시 요청 ({dhcpHosts.length}대)
+              DHCP 임대 갱신 ({dhcpHosts.length}대)
             </button>
           )}
         </Section>
@@ -564,11 +564,11 @@ function subnetClash(l3: L3Settings, names: string[], i: number): string | undef
 }
 
 function routeError(l3: L3Settings, r: L3Settings["routes"][number]): string | undefined {
-  if (!validIp(r.dest) || !validIp(r.via)) return "목적지와 다음 홉 주소가 필요합니다";
-  if (r.prefix < 1) return "프리픽스는 1 이상 (기본 경로는 업링크의 기본 경로 칸에)";
+  if (!validIp(r.dest) || !validIp(r.via)) return "목적지와 넥스트 홉 주소가 필요합니다";
+  if (r.prefix < 1) return "마스크 길이는 1 이상 (디폴트 라우트는 업링크의 디폴트 라우트 칸에)";
   const statics = l3.interfaces.filter((f) => f.ipMode === "static" && validIp(f.ip));
-  if (statics.some((f) => f.ip === r.via)) return "다음 홉이 내 주소입니다";
-  if (statics.length > 0 && !statics.some((f) => sameSubnet(r.via, f.ip, f.prefix))) return "다음 홉이 연결된 서브넷 안에 없습니다";
+  if (statics.some((f) => f.ip === r.via)) return "넥스트 홉이 내 주소입니다";
+  if (statics.length > 0 && !statics.some((f) => sameSubnet(r.via, f.ip, f.prefix))) return "넥스트 홉이 연결된 서브넷 안에 없습니다";
   return undefined;
 }
 
@@ -594,8 +594,8 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
             <IfaceFields
               value={v}
               onChange={(patch) => setIface(i, patch)}
-              gatewayLabel={isUp ? "기본 경로" : "게이트웨이"}
-              dhcpNote={isUp ? "위쪽에 연결된 장치(인터넷 또는 다른 라우터)에서 주소와 기본 경로를 받습니다." : "이 인터페이스가 DHCP 로 주소를 받습니다. 보통 안쪽 인터페이스는 수동으로 고정합니다."}
+              gatewayLabel={isUp ? "디폴트 라우트" : "게이트웨이"}
+              dhcpNote={isUp ? "위쪽에 연결된 장치(인터넷 또는 다른 라우터)에서 주소와 디폴트 라우트를 받습니다." : "이 인터페이스가 DHCP 로 주소를 받습니다. 보통 안쪽 인터페이스는 수동으로 고정합니다."}
             />
             {subnetClash(l3, names, i) && <p class="note error-note">{subnetClash(l3, names, i)} 인터페이스와 서브넷이 겹칩니다. 라우터는 인터페이스마다 다른 서브넷이어야 합니다.</p>}
             {!isUp && v.ipMode === "static" && <p class="note">이 서브넷의 호스트들은 게이트웨이를 {v.ip || "이 주소"} 로 두어야 다른 네트워크로 나갈 수 있습니다.</p>}
@@ -605,22 +605,22 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
               </Field>
             )}
             {!isUp && !isNat && v.relay && validIp(v.relay) && (
-              <p class="note">이 인터페이스로 오는 DHCP 브로드캐스트에 giaddr={v.ip || "?"} 를 붙여 {v.relay} 로 유니캐스트 전달합니다. 서버 쪽 "다른 서브넷 풀" 에 이 서브넷 범위가 있어야 합니다.</p>
+              <p class="note">이 인터페이스로 오는 DHCP 브로드캐스트에 릴레이 에이전트 주소(giaddr)={v.ip || "?"} 를 붙여 {v.relay} 로 유니캐스트 전달합니다. 서버 쪽 "다른 서브넷 풀" 에 이 서브넷 범위가 있어야 합니다.</p>
             )}
           </Section>
         );
       })}
       {!isNat && <SubIfaceSection d={d} l3={l3} />}
-      <Section title="정적 경로">
-        {l3.routes.length === 0 && <p class="note">연결된 서브넷과 기본 경로 외에 알아야 할 경로가 있으면 추가합니다. {isNat ? "안쪽에 라우터가 또 있으면 그 뒤 서브넷(예: 192.168.0.0/16)을 안쪽 라우터로 보내는 경로가 필요합니다." : ""}</p>}
+      <Section title="스태틱 라우팅">
+        {l3.routes.length === 0 && <p class="note">연결된 서브넷과 디폴트 라우트 외에 알아야 할 경로가 있으면 추가합니다. {isNat ? "안쪽에 라우터가 또 있으면 그 뒤 서브넷(예: 192.168.0.0/16)을 안쪽 라우터로 보내는 경로가 필요합니다." : ""}</p>}
         {l3.routes.map((r, i) => (
           <div key={i} class="route-row">
             <span class="muted">목적지</span>
             <input class="input mono" value={r.dest} placeholder="192.168.0.0" title="목적지 네트워크" onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, dest: e.currentTarget.value } : x)))} />
             <span class="mono">/</span>
             <input class="input mono prefix-in" type="number" min={0} max={32} value={r.prefix} onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) } : x)))} />
-            <span class="muted">다음 홉</span>
-            <input class="input mono via" value={r.via} placeholder="연결된 서브넷 안의 주소" title="다음 홉 주소 (연결된 서브넷 안)" onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, via: e.currentTarget.value } : x)))} />
+            <span class="muted">넥스트 홉</span>
+            <input class="input mono via" value={r.via} placeholder="연결된 서브넷 안의 주소" title="넥스트 홉 주소 (연결된 서브넷 안)" onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, via: e.currentTarget.value } : x)))} />
             <button class="icon-btn" title="경로 삭제" onClick={() => setRoutes(l3.routes.filter((_, k) => k !== i))}>
               <Icon name="trash" size={15} />
             </button>
@@ -636,7 +636,7 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
         <ForwardSection
           rules={l3.forwards ?? []}
           onChange={(forwards) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), forwards } }))}
-          lanHint="안쪽 서버 주소가 다른 라우터 뒤에 있으면 그쪽 정적 경로도 있어야 합니다."
+          lanHint="안쪽 서버 주소가 다른 라우터 뒤에 있으면 그쪽 스태틱 라우팅도 있어야 합니다."
         />
       )}
       <FirewallSection
@@ -835,8 +835,8 @@ function FirewallSection({ value, onChange, uplinkName }: { value: FirewallSetti
     set({ rules });
   };
   const err = (r: FirewallRuleSettings) => {
-    if (r.src && !validCidr(r.src)) return "출발지: 주소 또는 주소/프리픽스";
-    if (r.dst && !validCidr(r.dst)) return "목적지: 주소 또는 주소/프리픽스";
+    if (r.src && !validCidr(r.src)) return "출발지: 주소 또는 CIDR (주소/마스크 길이)";
+    if (r.dst && !validCidr(r.dst)) return "목적지: 주소 또는 CIDR (주소/마스크 길이)";
     if (r.dstPort && !/^\d+$/.test(r.dstPort)) return "포트는 숫자";
     if (r.dstPort && r.proto === "icmp") return "ICMP 에는 포트가 없습니다";
     return undefined;
@@ -862,12 +862,12 @@ function FirewallSection({ value, onChange, uplinkName }: { value: FirewallSetti
           </Field>
           <label class="toggle-row">
             <span>
-              상태 추적 <span class="muted">(안에서 시작한 통신의 응답 허용)</span>
+              Stateful 검사 <span class="muted">(안에서 시작한 통신의 응답 허용)</span>
             </span>
             <Toggle on={value.stateful} onToggle={() => set({ stateful: !value.stateful })} />
           </label>
           <p class="note">
-            규칙은 위에서부터 첫 일치가 이깁니다. "들어오는" 은 {uplinkName} 에서 들어오는 것, "나가는" 은 {uplinkName} 으로 나가는 것이고, 안쪽 서브넷끼리는 "모든 방향" 규칙에만 걸립니다. NAT 뒤라면 안쪽 주소로 씁니다.
+            규칙은 위에서부터 첫 일치가 이깁니다. "인바운드" 는 {uplinkName} 에서 들어오는 것, "아웃바운드" 는 {uplinkName} 으로 나가는 것이고, 안쪽 서브넷끼리는 "양방향" 규칙에만 걸립니다. NAT 뒤라면 안쪽 주소로 씁니다.
           </p>
           {value.rules.map((r, i) => (
             <div key={i} class="fw-rule">
@@ -878,9 +878,9 @@ function FirewallSection({ value, onChange, uplinkName }: { value: FirewallSetti
                   <option value="allow">허용</option>
                 </select>
                 <select class="input" value={r.direction} onChange={(e) => setRule(i, { direction: e.currentTarget.value as FirewallRuleSettings["direction"] })}>
-                  <option value="in">들어오는</option>
-                  <option value="out">나가는</option>
-                  <option value="any">모든 방향</option>
+                  <option value="in">인바운드</option>
+                  <option value="out">아웃바운드</option>
+                  <option value="any">양방향</option>
                 </select>
                 <select class="input" value={r.proto} onChange={(e) => setRule(i, { proto: e.currentTarget.value as FirewallRuleSettings["proto"] })}>
                   <option value="any">모든 프로토콜</option>
@@ -891,9 +891,9 @@ function FirewallSection({ value, onChange, uplinkName }: { value: FirewallSetti
               </div>
               <div class="fw-line fw-addr">
                 <span class="muted">출발</span>
-                <input class="input mono" value={r.src} placeholder="모두" title="출발지: 주소 또는 주소/프리픽스" onInput={(e) => setRule(i, { src: e.currentTarget.value })} />
+                <input class="input mono" value={r.src} placeholder="모두" title="출발지: 주소 또는 CIDR (주소/마스크 길이)" onInput={(e) => setRule(i, { src: e.currentTarget.value })} />
                 <span class="muted">목적</span>
-                <input class="input mono" value={r.dst} placeholder="모두" title="목적지: 주소 또는 주소/프리픽스" onInput={(e) => setRule(i, { dst: e.currentTarget.value })} />
+                <input class="input mono" value={r.dst} placeholder="모두" title="목적지: 주소 또는 CIDR (주소/마스크 길이)" onInput={(e) => setRule(i, { dst: e.currentTarget.value })} />
                 <span class="muted">:</span>
                 <input class="input mono port" value={r.dstPort} placeholder="포트" disabled={r.proto === "icmp"} onInput={(e) => setRule(i, { dstPort: e.currentTarget.value })} />
               </div>
@@ -987,11 +987,11 @@ function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
           <Field label="끝 주소" error={rangeErr(ds.end)}>
             <input class="input mono" value={ds.end} onInput={(e) => setDs({ end: e.currentTarget.value })} />
           </Field>
-          <Field label="게이트웨이 안내" error={ipError(ds.router, false)}>
-            <input class="input mono" value={ds.router} placeholder="비우면 안내 없음" onInput={(e) => setDs({ router: e.currentTarget.value })} />
+          <Field label="기본 게이트웨이 (옵션 3)" error={ipError(ds.router, false)}>
+            <input class="input mono" value={ds.router} placeholder="비우면 옵션 없음" onInput={(e) => setDs({ router: e.currentTarget.value })} />
           </Field>
-          <Field label="DNS 안내" error={ipError(ds.dns ?? "", false)}>
-            <input class="input mono" value={ds.dns ?? ""} placeholder="비우면 안내 없음" onInput={(e) => setDs({ dns: e.currentTarget.value })} />
+          <Field label="DNS 서버 (옵션 6)" error={ipError(ds.dns ?? "", false)}>
+            <input class="input mono" value={ds.dns ?? ""} placeholder="비우면 옵션 없음" onInput={(e) => setDs({ dns: e.currentTarget.value })} />
           </Field>
           <p class="note">클라이언트에게 이 범위의 주소와 함께 게이트웨이·DNS 를 알려줍니다. 게이트웨이를 비우면 서브넷 밖으로 못 나가고, DNS 를 비우면 이름을 못 씁니다.</p>
           <h3 class="sub">다른 서브넷 풀 (릴레이용)</h3>
@@ -1008,7 +1008,7 @@ function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
                 <button class="icon-btn" title="풀 삭제" onClick={() => setDs({ extraPools: (ds.extraPools ?? []).filter((_, k) => k !== i) })}>
                   <Icon name="trash" size={15} />
                 </button>
-                <span class="muted">/ 프리픽스</span>
+                <span class="muted">/ 마스크 길이</span>
                 <input class="input mono prefix-in" type="number" min={1} max={32} value={p.prefix} onInput={(e) => setPool({ prefix: Math.min(32, Math.max(1, Number(e.currentTarget.value) || 24)) })} />
                 <span class="muted">게이트웨이</span>
                 <input class="input mono" value={p.router} placeholder="192.168.2.1" onInput={(e) => setPool({ router: e.currentTarget.value })} />
@@ -1059,10 +1059,10 @@ function DnsServiceSection({ d, h, staticIp }: { d: Device; h: HostSettings; sta
             <Icon name="plus" size={14} />
             레코드 추가
           </button>
-          <Field label="상위 DNS" error={ipError(ns.upstream, false)}>
+          <Field label="업스트림 DNS" error={ipError(ns.upstream, false)}>
             <input class="input mono" value={ns.upstream} placeholder="예: 8.8.8.8 (비우면 NXDOMAIN)" onInput={(e) => setNs({ upstream: e.currentTarget.value })} />
           </Field>
-          <p class="note">레코드에 없는 이름은 상위 DNS 에 대신 물어보고(재귀 질의) 답을 캐시합니다. 인터넷의 8.8.8.8 이나 1.1.1.1 은 google.com, example.com 같은 공개 이름을 압니다.</p>
+          <p class="note">레코드에 없는 이름은 업스트림 DNS 에 대신 물어보고(재귀 질의) 답을 캐시합니다. 인터넷의 8.8.8.8 이나 1.1.1.1 은 google.com, example.com 같은 공개 이름을 압니다.</p>
         </>
       )}
     </>
@@ -1115,7 +1115,7 @@ function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
             <span class="mono muted">{intToIp(prefixToMask(r.lanPrefix))}</span>
           </div>
         </Field>
-        <p class="note">주소를 바꾸면 DHCP 범위도 같은 서브넷으로 따라갑니다. 이미 주소를 받은 호스트는 "DHCP 다시 요청" 을 해야 새 주소를 받습니다.</p>
+        <p class="note">주소를 바꾸면 DHCP 범위도 같은 서브넷으로 따라갑니다. 이미 주소를 받은 호스트는 "DHCP 임대 갱신" 을 해야 새 주소를 받습니다.</p>
       </Section>
       <Section title="DHCP 서비스">
         <label class="toggle-row">
@@ -1133,7 +1133,7 @@ function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
             <Field label="끝 주소" error={rangeError(r, "end")}>
               <input class="input mono" value={r.dhcp.end} onInput={(e) => setDhcp({ end: e.currentTarget.value })} />
             </Field>
-            <p class="note">자동(DHCP) 로 설정된 호스트가 연결되면 이 범위에서 주소를 빌려줍니다. 게이트웨이는 LAN 주소로 안내합니다. 이미 실패한 호스트는 그 호스트의 진단에서 "DHCP 다시 요청" 을 누르세요.</p>
+            <p class="note">자동(DHCP) 로 설정된 호스트가 연결되면 이 범위에서 주소를 빌려줍니다. 기본 게이트웨이 옵션은 LAN 주소로 나갑니다. 이미 실패한 호스트는 그 호스트의 진단에서 "DHCP 임대 갱신" 을 누르세요.</p>
           </>
         ) : (
           <p class="note">꺼져 있으면 호스트는 주소를 받지 못합니다. 각 호스트에서 IP 를 수동으로 설정해야 통신할 수 있습니다.</p>
@@ -1159,10 +1159,10 @@ function RouterDnsSection({ d, r }: { d: Device; r: RouterSettings }) {
       </label>
       {dns.enabled ? (
         <>
-          <Field label="상위 DNS" error={ipError(dns.upstream, true)}>
+          <Field label="업스트림 DNS" error={ipError(dns.upstream, true)}>
             <input class="input mono" value={dns.upstream} placeholder="8.8.8.8" onInput={(e) => set({ upstream: e.currentTarget.value })} />
           </Field>
-          <p class="note">DHCP 로 주소를 받는 호스트에게 이 라우터를 DNS 로 안내하고, 호스트의 질의를 상위 DNS 에 대신 물어본 뒤 답을 캐시합니다 (공유기 안의 dnsmasq).</p>
+          <p class="note">DHCP 로 주소를 받는 호스트에게 이 라우터를 DNS 로 안내하고, 호스트의 질의를 업스트림 DNS 에 대신 물어본 뒤 답을 캐시합니다 (공유기 안의 dnsmasq).</p>
         </>
       ) : (
         <p class="note">꺼져 있으면 호스트가 이름을 못 씁니다. 호스트에 8.8.8.8 같은 DNS 를 직접 주거나 다시 켜세요.</p>
@@ -1247,7 +1247,7 @@ function InternetDiagSection({ d }: { d: Device }) {
           ))}
         </datalist>
         <input ref={port} class="input mono port" type="number" min={1} max={65535} defaultValue="80" title="포트" />
-        <button class="btn" onClick={go} title="바깥에서 TCP 연결 시도">
+        <button class="btn" onClick={go} title="외부 접속 (인바운드) 테스트">
           <Icon name="send" size={14} />
           접속
         </button>
@@ -1323,7 +1323,7 @@ function SnapshotTable({ t }: { t: SnapshotTableData }) {
   );
 }
 
-/** ping, TCP 연결, DHCP 다시 요청 */
+/** ping, TCP 연결, DHCP 임대 갱신 */
 function DiagSection({ d }: { d: Device }) {
   void simVersion.value;
   const node = sim.node(d.id);
@@ -1488,7 +1488,7 @@ function DiagSection({ d }: { d: Device }) {
       {node.ipMode === "dhcp" && (
         <button class="btn wide" onClick={() => sim.act({ kind: "dhcp-renew", nodeId: d.id })} disabled={!node.linkUp}>
           <Icon name="refresh" size={14} />
-          DHCP 다시 요청
+          DHCP 임대 갱신
         </button>
       )}
     </Section>
