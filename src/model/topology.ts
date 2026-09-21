@@ -1,7 +1,7 @@
 // 편집 가능한 토폴로지 모델. 시뮬레이션 코어(src/core)와 분리되어 있고, 실행 시 코어 Network 로 변환된다.
 
-export type DeviceKind = "pc" | "laptop" | "phone" | "server" | "switch" | "hub" | "ap" | "router" | "gateway" | "nat" | "internet";
-export type Role = "host" | "switch" | "hub" | "ap" | "router" | "l3" | "internet";
+export type DeviceKind = "pc" | "laptop" | "phone" | "server" | "switch" | "hub" | "ap" | "router" | "gateway" | "nat" | "firewall" | "internet";
+export type Role = "host" | "switch" | "hub" | "ap" | "router" | "l3" | "internet" | "firewall";
 export type PortSide = "top" | "bottom";
 
 export interface PortSpec {
@@ -97,6 +97,19 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
     ],
     namePrefix: "nat",
   },
+  firewall: {
+    kind: "firewall",
+    label: "방화벽",
+    role: "firewall",
+    width: 152,
+    height: 62,
+    // 투명(브리지) 방화벽: 위 = outside(인터넷 방향), 아래 = inside(보호할 쪽). IP 없음
+    ports: [
+      { name: "outside", side: "top" },
+      { name: "inside", side: "bottom" },
+    ],
+    namePrefix: "fw",
+  },
   internet: {
     kind: "internet",
     label: "인터넷",
@@ -108,7 +121,7 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
   },
 };
 
-export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "phone", "server", "hub", "switch", "ap", "router", "gateway", "nat", "internet"];
+export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "phone", "server", "hub", "switch", "ap", "router", "gateway", "nat", "firewall", "internet"];
 
 export interface DhcpPoolSettings {
   start: string;
@@ -279,6 +292,8 @@ export interface Device {
   switch?: SwitchSettings;
   /** 무선 단말 (스마트폰) */
   wifi?: WifiClientSettings;
+  /** 투명 방화벽 장비의 규칙 */
+  firewall?: FirewallSettings;
 }
 
 export interface PortRef {
@@ -394,6 +409,7 @@ export function createDevice(kind: DeviceKind, x: number, y: number, devices: De
   if (spec.role === "l3") device.l3 = defaultL3(kind);
   if (spec.role === "switch") device.switch = { vlans: {} };
   if (spec.role === "ap") device.ap = { ...DEFAULT_WIFI_BASE };
+  if (spec.role === "firewall") device.firewall = { ...DEFAULT_FIREWALL_SETTINGS, enabled: true, rules: [] };
   if (kind === "phone") device.wifi = { ssid: "home" };
   return device;
 }
@@ -699,6 +715,7 @@ export function normalizeTopology(t: Topology): Topology {
       }
     }
     if (spec.role === "ap" && !fixed.ap) fixed.ap = { ...DEFAULT_WIFI_BASE };
+    if (spec.role === "firewall" && !fixed.firewall) fixed.firewall = { ...DEFAULT_FIREWALL_SETTINGS, enabled: true, rules: [] };
     if (spec.role === "switch" && !fixed.switch) fixed.switch = { vlans: {} };
     if (fixed.kind === "phone" && !fixed.wifi) fixed.wifi = { ssid: "home" };
     if (spec.role === "l3") {
@@ -1201,6 +1218,40 @@ export function exampleFirewallTopology(): Topology {
   return { devices, cables };
 }
 
+/** 방화벽 장비: 스위치와 서버 사이에 투명 방화벽을 끼워 서버로 오는 ping 만 막는다. 주소는 하나도 안 바꾼다 */
+export function exampleFirewallApplianceTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const rt = add("router", 344, -40);
+  const sw = add("switch", 344, 136);
+  const pc = add("pc", 120, 320);
+  const laptop = add("laptop", 264, 320);
+  const fw = add("firewall", 520, 304);
+  fw.firewall = {
+    enabled: true,
+    defaultPolicy: "allow",
+    stateful: true,
+    // outside(스위치 쪽)에서 서버로 들어오는 ping 만 차단. TCP 80 은 열려 있고, 서버가 먼저 시작한 통신의 응답은 Stateful 로 통과
+    rules: [{ action: "deny", proto: "icmp", direction: "in", src: "", dst: "", dstPort: "" }],
+  };
+  const srv = add("server", 564, 488);
+  srv.host = { ipMode: "static", ip: "192.168.0.20", prefix: 24, gateway: "192.168.0.1", dns: "192.168.0.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const cables: Cable[] = [
+    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 3 } },
+    { id: newId("cable"), a: { device: sw.id, port: 0 }, b: { device: pc.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw.id, port: 2 }, b: { device: laptop.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw.id, port: 7 }, b: { device: fw.id, port: 0 } }, // outside ← 스위치
+    { id: newId("cable"), a: { device: fw.id, port: 1 }, b: { device: srv.id, port: 0 } }, // inside → 서버
+  ];
+  const t: Topology = { devices, cables };
+  t.zones = [{ id: newId("zone"), label: "방화벽 뒤 (보호 구역)", tint: "amber", ...zoneAround(t, [fw.id, srv.id], 20)! }];
+  return t;
+}
+
 /** 무선 로밍: 같은 SSID 의 AP 두 대. 스마트폰을 끌어 옮기면 가까운 AP 로 갈아탄다 */
 export function exampleRoamingTopology(): Topology {
   const devices: Device[] = [];
@@ -1225,7 +1276,7 @@ export function exampleRoamingTopology(): Topology {
   return { devices, cables };
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "gateways" | "hub" | "vlan" | "firewall" | "roaming" | "docker";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -1259,6 +1310,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
   hub: { id: "hub", group: "L2", label: "허브 vs 스위치", blurb: "pc-1 → pc-2 ping 이 허브의 모든 포트(공유기까지)로 복제되는 것과, pc-3 → pc-4 가 스위치에서 그 포트로만 가는 것을 비교하세요.", build: exampleHubTopology },
   vlan: { id: "vlan", group: "L2", label: "VLAN 으로 나눈 사무실 (트렁크 + 서브 인터페이스)", blurb: "같은 스위치인데 VLAN 10 과 20 은 게이트웨이 서브 인터페이스를 거쳐야 통신됩니다.", build: exampleVlanTopology },
   firewall: { id: "firewall", group: "서비스", label: "방화벽 (ping 은 되고 웹은 막힘)", blurb: "pc-1 에서 example.com 으로 ping 은 되지만 TCP 80 연결은 공유기 방화벽 규칙 1 에서 차단됩니다. 인터넷 쪽 클라이언트의 ping 도 막힙니다.", build: exampleFirewallTopology },
+  fwbox: {
+    id: "fwbox",
+    group: "서비스",
+    label: "방화벽 장비 (서버 앞에 끼운 투명 방화벽)",
+    blurb: "pc-1 → srv-1 ping 은 fw-1 에서 차단되지만 TCP 80 연결은 됩니다. fw-1 은 IP 가 없어 traceroute 홉에도 안 보입니다. srv-1 → pc-1 ping 은 응답이 Stateful 로 돌아옵니다.",
+    build: exampleFirewallApplianceTopology,
+  },
   docker: {
     id: "docker",
     group: "서비스",

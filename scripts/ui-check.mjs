@@ -467,6 +467,26 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForTimeout(100);
   console.log("zones after delete:", await page.locator("[data-zone]").count(), "| devices intact:", await page.locator("[data-device]").count());
 }
+// 13) 방화벽 장비 예제: ping 차단, TCP 80 통과, 장치 패널에 규칙 편집기
+{
+  await page.selectOption("select.example", "fwbox");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 });
+  console.log("fw device:", await device("fw-1").count(), "| status:", await addrOf("fw-1"));
+  await clickDevice("fw-1");
+  await page.waitForTimeout(150);
+  console.log("fw panel sections:", (await page.locator(".inspector h3").allTextContents()).slice(0, 5).join(" / "));
+  await clickDevice("pc-1");
+  await waitAddr("pc-1", /^192\.168\.0\.\d+\/24$/);
+  await page.fill(".ping-row .input", "192.168.0.20");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("ping srv through fw:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+  await page.fill(".tcp-row .input", "192.168.0.20");
+  await page.click(".tcp-row .btn");
+  await page.waitForFunction(() => { const sec = [...document.querySelectorAll(".inspector .section")].find((s) => s.querySelector("h3")?.textContent === "TCP 연결"); return /종료됨|실패/.test(sec?.querySelector("tbody tr")?.textContent ?? ""); }, null, { timeout: 40000 });
+  console.log("tcp srv through fw:", await tcpRows().first().innerText());
+  await page.screenshot({ path: `${OUT}/31-firewall-box.png` });
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

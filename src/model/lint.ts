@@ -2,7 +2,7 @@
 // DOM·signal·코어에 의존하지 않는 순수 함수. 입력 중인 불완전한 값(빈 칸, "192.168.0.")은 netSync 의 effective* 와
 // 같은 기준으로 "없음" 으로 보되, 빈 칸 자체는 지적하지 않고(타일 상태 문구가 보여줌) 값끼리 안 맞는 것만 지적한다.
 // 오탐이 미탐보다 나쁘므로, 확신이 없는 경우(주소를 아직 모르는 DHCP 인터페이스 등)는 조용히 넘어간다.
-import { DEVICE_SPECS, portVlanOf, wirelessLinks, type Device, type Topology } from "./topology";
+import { DEVICE_SPECS, portVlanOf, wirelessLinks, type Device, type PortRef, type Topology } from "./topology";
 
 export interface LintIssue {
   /** 배지를 붙일 장치 */
@@ -242,6 +242,9 @@ function attachOf(d: Device, port: number): Attach {
     case "hub":
     case "ap":
       return { kind: "bridge", key: bridgeKey(d) };
+    case "firewall":
+      // 투명 방화벽은 analyze 에서 케이블 두 개를 하나로 접어 없앤다. 여기 오면 한쪽만 꽂힌 것 → 고립
+      return { kind: "none" };
     case "switch": {
       const v = accessVlanOf(d, port);
       return v === "trunk" ? { kind: "trunk", sw: d } : { kind: "access", key: switchKey(d, v) };
@@ -271,10 +274,22 @@ function analyze(t: Topology): Model {
     for (let p = 1; p < spec.ports.length; p++) uf.union(`${d.id}:${p}`, routerLanKey(d));
   }
 
-  const links = [
+  // 투명 방화벽(IP 없는 브리지)은 L2 로는 전선과 같다: 양쪽 케이블을 하나로 접어 방화벽 너머의 장치끼리 직접 잇는다
+  const rawLinks = [
     ...t.cables.map((c) => ({ a: c.a, b: c.b })),
     ...wirelessLinks(t).map((l) => ({ a: { device: l.client, port: 0 }, b: { device: l.base, port: l.slot } })),
   ];
+  const links: { a: PortRef; b: PortRef }[] = [];
+  const fwEnds = new Map<string, PortRef[]>(); // 방화벽 id → 양쪽 끝 (outside 쪽, inside 쪽)
+  for (const l of rawLinks) {
+    const fa = byId.get(l.a.device)?.kind === "firewall";
+    const fb = byId.get(l.b.device)?.kind === "firewall";
+    if (fa && fb) continue; // 방화벽끼리 직결: 보수적으로 무시
+    if (fa) (fwEnds.get(l.a.device) ?? fwEnds.set(l.a.device, []).get(l.a.device)!)[l.a.port] = l.b;
+    else if (fb) (fwEnds.get(l.b.device) ?? fwEnds.set(l.b.device, []).get(l.b.device)!)[l.b.port] = l.a;
+    else links.push(l);
+  }
+  for (const ends of fwEnds.values()) if (ends[0] && ends[1]) links.push({ a: ends[0], b: ends[1] });
   const mark = (a: Attach) => {
     if (a.kind === "end" || a.kind === "bridge" || a.kind === "access") linked.add(a.key);
     if (a.kind === "end") for (const s of a.subifs ?? []) linked.add(s.key);

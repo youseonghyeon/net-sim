@@ -11,6 +11,7 @@ export type IconName =
   | "router"
   | "gateway"
   | "nat"
+  | "firewall"
   | "internet"
   | "cursor"
   | "cable"
@@ -97,6 +98,13 @@ const PATHS: Record<IconName, JSX.Element> = {
       <rect x="2.5" y="6.5" width="7.5" height="11" rx="1.5" />
       <rect x="14" y="6.5" width="7.5" height="11" rx="1.5" />
       <path d="M10 10h4l-1.5-1.5M14 14h-4l1.5 1.5" />
+    </>
+  ),
+  // 방화벽: 벽돌 벽 (투명 방화벽 장비)
+  firewall: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="1.5" />
+      <path d="M3 9.7h18M3 14.3h18M9 5v4.7M15 5v4.7M6 9.7v4.6M12 9.7v4.6M18 9.7v4.6M9 14.3V19M15 14.3V19" />
     </>
   ),
   internet: <path d="M7 18.5a4 4 0 0 1-.6-7.95A5.5 5.5 0 0 1 17 9.5a3.5 3.5 0 0 1 .5 6.96V18.5z" />,

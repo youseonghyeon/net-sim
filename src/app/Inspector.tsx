@@ -575,6 +575,17 @@ function DevicePanel({ d }: { d: Device }) {
       </Section>
       )}
       {d.kind === "ap" && <WifiBaseSection d={d} />}
+      {d.kind === "firewall" && (
+        <Section title="동작 방식">
+          <p class="note">
+            투명(브리지) 방화벽입니다. IP 주소가 없어 ping 대상도, traceroute 홉도 아니고, 주소·경로·서브넷을 바꾸지 않은 채 케이블 사이에 끼웁니다. 위 포트 outside 에서 들어오는 패킷이 인바운드,
+            아래 inside 에서 outside 로 나가는 패킷이 아웃바운드입니다. ARP·DHCP 같은 L2 브로드캐스트는 규칙과 무관하게 통과합니다.
+          </p>
+        </Section>
+      )}
+      {d.kind === "firewall" && (
+        <FirewallSection value={d.firewall ?? { ...DEFAULT_FIREWALL_SETTINGS, enabled: true }} onChange={(v) => updateDevice(d.id, (x) => ({ ...x, firewall: v }))} uplinkName="outside" />
+      )}
       {d.kind === "switch" && <VlanSection d={d} />}
       {d.host && <HostSection d={d} h={d.host} />}
       {d.host && <ServiceSection d={d} h={d.host} />}

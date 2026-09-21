@@ -2,6 +2,7 @@
 import { ipToInt } from "../core/addr";
 import { Network } from "../core/network";
 import { AccessPoint } from "../core/nodes/ap";
+import { FirewallBridge } from "../core/nodes/fwbridge";
 import { Host } from "../core/nodes/host";
 import { Hub } from "../core/nodes/hub";
 import { Internet } from "../core/nodes/internet";
@@ -292,6 +293,7 @@ export function effectiveApSsid(d: Device): string {
 
 export function configKey(d: Device): string {
   if (d.kind === "ap") return JSON.stringify({ mac: d.mac, ssid: effectiveApSsid(d) });
+  if (d.kind === "firewall") return JSON.stringify({ mac: d.mac, fw: effectiveFirewall(d.firewall) });
   if (d.kind === "switch") return JSON.stringify({ mac: d.mac, vlans: [...effectiveSwitchVlans(d).entries()] });
   if (d.host) return JSON.stringify({ mac: d.mac, host: effectiveHost(d) });
   if (d.router) return JSON.stringify({ mac: d.mac, router: effectiveRouter(d) });
@@ -309,6 +311,7 @@ export function makeNode(d: Device): SimNode {
   }
   if (spec.role === "hub") return new Hub(d.id, spec.ports.map((p) => p.name));
   if (spec.role === "ap") return new AccessPoint(d.id, effectiveApSsid(d));
+  if (spec.role === "firewall") return new FirewallBridge(d.id, effectiveFirewall(d.firewall));
   if (spec.role === "router") return new Router({ id: d.id, mac: d.mac, wanMac: wanMacOf(d.mac), ...effectiveRouter(d) });
   if (spec.role === "internet") return new Internet({ id: d.id, mac: d.mac });
   if (spec.role === "l3") {
@@ -331,6 +334,7 @@ export function applyConfig(net: Network, d: Device): void {
   const node = net.nodes.get(d.id);
   if (node instanceof Host && d.host) node.configure(effectiveHost(d), net.contextFor(d.id));
   else if (node instanceof Switch) node.setVlans(effectiveSwitchVlans(d), net.contextFor(d.id));
+  else if (node instanceof FirewallBridge) node.configure(effectiveFirewall(d.firewall), net.contextFor(d.id));
   else if (node instanceof AccessPoint) {
     node.ssid = effectiveApSsid(d);
     net.contextFor(d.id).trace("ip.config", "sys", `SSID 변경: "${node.ssid}"`, { ssid: node.ssid });

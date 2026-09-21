@@ -1,5 +1,6 @@
 // 타일·패널에 보이는 상태 문구. 노드 객체만 보고 결정하므로 유닛 테스트가 가능하다.
 import { AccessPoint } from "../core/nodes/ap";
+import { FirewallBridge } from "../core/nodes/fwbridge";
 import { DHCP_MAX_ATTEMPTS, DHCP_STATE_LABEL, Host } from "../core/nodes/host";
 import { Internet } from "../core/nodes/internet";
 import { L3Node } from "../core/nodes/l3";
@@ -32,6 +33,11 @@ export function hostStatusOf(node: SimNode | undefined, wireless: boolean): Stat
   if (node instanceof Router) return { text: `${node.lan.ip}/${node.lan.prefix}`, tone: "ok", mono: true };
   if (node instanceof Internet) return { text: `ISP ${node.iface.ip}/${node.iface.prefix}`, tone: "ok", mono: true };
   if (node instanceof AccessPoint) return { text: `SSID ${node.ssid} · 단말 ${node.stations.size}대`, tone: "ok", mono: false };
+  if (node instanceof FirewallBridge) {
+    const c = node.firewall.config;
+    if (!c.enabled) return { text: "꺼짐 · 모두 통과", tone: "muted", mono: false };
+    return { text: `규칙 ${c.rules.length}개 · 기본 ${c.defaultPolicy === "allow" ? "허용" : "차단"}`, tone: c.rules.length > 0 || c.defaultPolicy === "deny" ? "ok" : "muted", mono: false };
+  }
   if (node instanceof L3Node) {
     // 아래쪽(안쪽) 물리 인터페이스 요약. 서브 인터페이스가 있으면 "if1.10/.20" 처럼 접는다
     const parts: string[] = [];
@@ -72,6 +78,8 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     out.push("ISP DHCP", "DNS", "웹");
   } else if (node instanceof Switch && node.vlanAware) {
     out.push("VLAN");
+  } else if (node instanceof FirewallBridge) {
+    if (node.firewall.config.enabled && node.firewall.config.stateful) out.push("Stateful");
   }
   return out;
 }

@@ -172,6 +172,17 @@ describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트�
     expect([...host(s, t, "pc-1").tcp.conns.values()].at(-1)?.state).toBe("FAILED");
   });
 
+  it("방화벽 장비 예제: 서버로 오는 ping 은 막히고 TCP 80 은 되며, 서버가 시작한 ping 은 Stateful 로 돌아온다", () => {
+    const { s, t } = load("fwbox");
+    expect(ping(s, t, "pc-1", "192.168.0.20")).toMatchObject({ status: "failed" });
+    const pc = byName(t, "pc-1").id;
+    s.net.scheduleAction(s.net.now, { kind: "tcp-connect", nodeId: pc, dst: "192.168.0.20", port: 80 });
+    s.net.runToIdle();
+    expect([...host(s, t, "pc-1").tcp.conns.values()].at(-1)).toMatchObject({ state: "CLOSED", bytesReceived: 3000 });
+    expect(ping(s, t, "srv-1", host(s, t, "pc-1").ip!)).toMatchObject({ status: "ok" });
+    expect(s.net.trace.some((e) => e.nodeId === byName(t, "fw-1").id && e.kind === "fw.deny")).toBe(true);
+  });
+
   it("무선 로밍: 왼쪽 AP 에 붙었다가 오른쪽으로 옮기면 갈아탄다", () => {
     const { s, t } = load("roaming");
     const ap1 = byName(t, "ap-1").id;
