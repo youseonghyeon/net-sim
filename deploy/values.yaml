@@ -1,7 +1,7 @@
 image:
   repository: ghcr.io/youseonghyeon/net-sim
   # CI가 main push마다 커밋 SHA로 갱신한다. 첫 CI 전에는 latest.
-  tag: "ff11e2725eb7b5f13f85db256d8a3be95d690ac1"
+  tag: "1603aae538295339e7ca33a0691f1c010dc2e66a"
   pullPolicy: IfNotPresent
 
 # ghcr 패키지가 private이면 pull secret 이름을 넣는다. public이면 비워 둔다.
