@@ -25,7 +25,7 @@ function build(fw: Partial<FirewallConfig> = {}) {
 describe("투명 방화벽 장비", () => {
   it("주소·경로를 바꾸지 않고도 서버로 오는 ping 만 막고 TCP 80 은 통과시킨다", () => {
     const net = build();
-    expect(net.getHost("pc1").ip).toMatch(/^192\.168\.0\.1\d\d$/); // DHCP 브로드캐스트는 방화벽과 무관
+    expect(net.getHost("pc1").ip).toMatch(/^192\.168\.0\.1\d\d$/); // pc1 은 방화벽 바깥이라 DHCP 와 무관
     net.scheduleAction(net.now, { kind: "ping", nodeId: "pc1", dst: "192.168.0.20" });
     net.runToIdle();
     expect(net.getHost("pc1").pings.at(-1)).toMatchObject({ status: "failed" });
@@ -59,6 +59,27 @@ describe("투명 방화벽 장비", () => {
     net.scheduleAction(net.now, { kind: "traceroute", nodeId: "pc1", dst: "192.168.0.20" });
     net.runToIdle();
     expect(net.getHost("pc1").traceroutes.at(-1)).toMatchObject({ status: "done", hops: [{ ip: "192.168.0.20" }] }); // 같은 서브넷: 한 홉, 방화벽은 없음
+  });
+
+  it("기본 정책 차단이면 안쪽 DHCP 호스트는 UDP 67/68 허용 규칙이 있어야 주소를 받는다 (DHCP 는 IP 라 규칙 대상)", () => {
+    const net = build({ defaultPolicy: "deny", rules: [] });
+    net.addNode(new Host({ id: "pc2", mac: "02:00:00:00:00:03", ipMode: "dhcp" }));
+    net.addNode(new Switch("sw2", 4));
+    // fw inside 쪽에 스위치를 두고 srv 와 pc2 를 붙인다
+    net.disconnect([...net.links.values()].find((l) => l.b.node === "srv" || l.a.node === "srv")!.id);
+    net.connect("fw", FirewallBridge.INSIDE, "sw2", 0);
+    net.connect("sw2", 1, "srv", 0);
+    net.connect("sw2", 2, "pc2", 0);
+    net.runToIdle();
+    expect(net.getHost("pc2").ip).toBeUndefined();
+    expect(net.trace.some((e) => e.nodeId === "fw" && e.kind === "fw.deny" && e.summary.includes("UDP"))).toBe(true);
+    (net.nodes.get("fw") as FirewallBridge).configure(
+      { enabled: true, defaultPolicy: "deny", stateful: true, rules: [{ action: "allow", proto: "udp", direction: "any", dstPort: 67 }, { action: "allow", proto: "udp", direction: "any", dstPort: 68 }] },
+      net.contextFor("fw"),
+    );
+    net.scheduleAction(net.now, { kind: "dhcp-renew", nodeId: "pc2" });
+    net.runToIdle();
+    expect(net.getHost("pc2").ip).toMatch(/^192\.168\.0\.1\d\d$/);
   });
 
   it("한쪽 케이블이 없으면 드롭하고, 기본 정책 차단이면 허용 규칙 없는 것은 전부 막힌다", () => {

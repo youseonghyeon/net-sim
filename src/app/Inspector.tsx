@@ -579,7 +579,7 @@ function DevicePanel({ d }: { d: Device }) {
         <Section title="동작 방식">
           <p class="note">
             투명(브리지) 방화벽입니다. IP 주소가 없어 ping 대상도, traceroute 홉도 아니고, 주소·경로·서브넷을 바꾸지 않은 채 케이블 사이에 끼웁니다. 위 포트 outside 에서 들어오는 패킷이 인바운드,
-            아래 inside 에서 outside 로 나가는 패킷이 아웃바운드입니다. ARP·DHCP 같은 L2 브로드캐스트는 규칙과 무관하게 통과합니다.
+            아래 inside 에서 outside 로 나가는 패킷이 아웃바운드입니다. ARP 는 IP 가 아니라(L2) 규칙과 무관하게 통과하지만, DHCP·DNS 는 IP(UDP) 라 규칙에 걸립니다 — 기본 정책을 차단으로 두면 UDP 67/68 허용 규칙이 있어야 안쪽 호스트가 주소를 받습니다.
           </p>
         </Section>
       )}

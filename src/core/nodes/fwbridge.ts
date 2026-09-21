@@ -42,7 +42,7 @@ export class FirewallBridge implements SimNode {
       ctx.trace("link.unconnected", "L1", `${this.portName(out)} 에 케이블이 없음 → 드롭`, { port: out }, frame.id);
       return;
     }
-    // IP 패킷만 규칙에 걸린다. ARP·DHCP 같은 L2/브로드캐스트는 그대로 통과 (실제 투명 방화벽도 ARP 는 통과시킨다)
+    // IP 패킷만 규칙에 걸린다. ARP 는 L2 라 그대로 통과 (실제 투명 방화벽도 ARP 는 통과시킨다). DHCP·DNS 는 IP 라 규칙 대상
     if (frame.payload.kind === "ipv4") {
       const dir = port === FirewallBridge.OUTSIDE ? "in" : "out";
       if (!this.firewall.check(frame.payload, dir, ctx, frame.id)) return;
