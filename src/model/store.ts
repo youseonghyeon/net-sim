@@ -70,6 +70,42 @@ export const tool = signal<Tool>("select");
 const prefersDark = typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches;
 export const theme = signal<Theme>(load<Theme>(THEME_KEY) ?? (prefersDark ? "dark" : "light"));
 export const viewport = signal({ x: 0, y: 0, k: 1 });
+
+// ---------- 인스펙터(오른쪽 패널) 표시 상태: 브라우저별 편의 설정이라 localStorage ----------
+
+export const INSPECTOR_MIN = 280;
+export const INSPECTOR_MAX = 640;
+export const INSPECTOR_DEFAULT = 304;
+export const INSPECTOR_WIDE = 480;
+/** 접힌 상태에서는 28px 레일만 남긴다 */
+export const INSPECTOR_RAIL = 28;
+export const inspectorOpen = signal<boolean>(load<boolean>("net-sim.inspector.open") ?? true);
+export const inspectorWidth = signal<number>(clampWidth(load<number>("net-sim.inspector.width") ?? INSPECTOR_DEFAULT));
+/** 접어 둔 섹션 키 (제목 또는 명시한 id) */
+export const collapsedSections = signal<string[]>(load<string[]>("net-sim.inspector.collapsed") ?? []);
+
+function clampWidth(w: number): number {
+  return Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, Math.round(Number.isFinite(w) ? w : INSPECTOR_DEFAULT)));
+}
+
+export function toggleInspector(): void {
+  inspectorOpen.value = !inspectorOpen.value;
+}
+
+export function setInspectorWidth(w: number): void {
+  inspectorWidth.value = clampWidth(w);
+}
+
+/** 보통(304) ↔ 넓게(480) */
+export function toggleInspectorWide(): void {
+  setInspectorWidth(inspectorWidth.value >= INSPECTOR_WIDE - 40 ? INSPECTOR_DEFAULT : INSPECTOR_WIDE);
+}
+
+export function toggleSection(key: string): void {
+  const cur = collapsedSections.value;
+  collapsedSections.value = cur.includes(key) ? cur.filter((k) => k !== key) : [...cur, key];
+}
+
 export const logOpen = signal(false);
 /** 증가할 때마다 캔버스가 내용에 맞춰 뷰포트를 다시 잡는다 */
 export const fitRequest = signal(0);
@@ -162,6 +198,9 @@ export const selectedCable = computed<Cable | undefined>(() => {
 });
 
 effect(() => save(TOPOLOGY_KEY, topology.value));
+effect(() => save("net-sim.inspector.open", inspectorOpen.value));
+effect(() => save("net-sim.inspector.width", inspectorWidth.value));
+effect(() => save("net-sim.inspector.collapsed", collapsedSections.value));
 effect(() => {
   save(THEME_KEY, theme.value);
   if (typeof document !== "undefined") document.documentElement.dataset.theme = theme.value;

@@ -29,7 +29,9 @@ export type IconName =
   | "redo"
   | "download"
   | "upload"
-  | "copy";
+  | "copy"
+  | "panel"
+  | "widen";
 
 const PATHS: Record<IconName, JSX.Element> = {
   pc: (
@@ -142,6 +144,13 @@ const PATHS: Record<IconName, JSX.Element> = {
       <path d="M5 15V6a2 2 0 0 1 2-2h9" />
     </>
   ),
+  panel: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M15 5v14" />
+    </>
+  ),
+  widen: <path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4" />,
 };
 
 export function Icon({ name, size = 20, class: cls }: { name: IconName; size?: number; class?: string }) {

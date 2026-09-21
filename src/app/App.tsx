@@ -9,6 +9,9 @@ import {
   duplicateSelected,
   exportJson,
   importJson,
+  INSPECTOR_RAIL,
+  inspectorOpen,
+  inspectorWidth,
   loadExample,
   paste,
   redo,
@@ -16,6 +19,7 @@ import {
   selectAll,
   selection,
   theme,
+  toggleInspector,
   toggleTheme,
   topology,
   undo,
@@ -79,7 +83,10 @@ export function App() {
       const el = e.target as HTMLElement;
       if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return;
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key.toLowerCase() === "z") {
+      if (mod && e.key === "\\") {
+        e.preventDefault();
+        toggleInspector();
+      } else if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
         if (e.shiftKey) redo();
         else undo();
@@ -206,7 +213,7 @@ export function App() {
           </button>
         </div>
       </header>
-      <div class="body">
+      <div class="body" style={{ "--inspector-w": `${inspectorOpen.value ? inspectorWidth.value : INSPECTOR_RAIL}px` }}>
         <Palette />
         <Canvas onNotice={showNotice} />
         <Inspector />

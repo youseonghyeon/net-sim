@@ -369,6 +369,39 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForTimeout(300);
   console.log("bad import toast:", await page.locator(".toast").textContent().catch(() => ""));
 }
+// 11) 인스펙터: 섹션 접기 → 넓게 → 접기(레일) → 펼치기, 끌어서 폭 조절
+{
+  await clickDevice("gw-1");
+  await page.waitForTimeout(150);
+  const sec = page.locator(".inspector .section").filter({ has: page.locator("h3", { hasText: /^스태틱 라우팅$/ }) });
+  await sec.locator("h3").click();
+  console.log("section collapsed:", await sec.evaluate((el) => el.classList.contains("collapsed")), "| fields hidden:", (await sec.locator(".btn").count()) === 0);
+  await sec.locator("h3").click();
+  const w0 = (await page.locator(".inspector").boundingBox()).width;
+  await page.click('.inspector-tools .icon-btn[title="넓게"]');
+  await page.waitForTimeout(150);
+  const w1 = (await page.locator(".inspector").boundingBox()).width;
+  await page.screenshot({ path: `${OUT}/26-inspector-wide.png` });
+  await page.click('.inspector-tools .icon-btn[title="보통 폭"]');
+  await page.waitForTimeout(150);
+  await page.keyboard.press("Meta+\\");
+  await page.waitForTimeout(150);
+  const w2 = (await page.locator(".inspector").boundingBox()).width;
+  const canvasW = (await page.locator(".canvas-wrap").boundingBox()).width;
+  await page.click('.inspector .icon-btn[title*="펼치기"]');
+  await page.waitForTimeout(150);
+  const w3 = (await page.locator(".inspector").boundingBox()).width;
+  console.log("inspector width: normal", w0, "→ wide", w1, "→ collapsed", w2, "(canvas", Math.round(canvasW), ") → open", w3);
+  // 끌어서 400px
+  const h = await page.locator(".inspector-resize").boundingBox();
+  await page.mouse.move(h.x + 3, h.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(1440 - 400, h.y + 200, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  console.log("dragged width:", (await page.locator(".inspector").boundingBox()).width);
+  await page.click('.inspector-tools .icon-btn[title="보통 폭"]').catch(() => {});
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

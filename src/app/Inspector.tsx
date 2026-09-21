@@ -7,7 +7,29 @@ import { L3Node } from "../core/nodes/l3";
 import type { SnapshotTable as SnapshotTableData } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { sim, simVersion } from "../model/sim";
-import { alignSelected, duplicateSelected, lintIssues, removeCable, removeDevice, removeDevices, selectedCable, selectedDevice, selection, topology, updateCable, updateDevice, updateDevices } from "../model/store";
+import {
+  alignSelected,
+  collapsedSections,
+  duplicateSelected,
+  INSPECTOR_WIDE,
+  inspectorOpen,
+  inspectorWidth,
+  lintIssues,
+  removeCable,
+  removeDevice,
+  removeDevices,
+  selectedCable,
+  selectedDevice,
+  selection,
+  setInspectorWidth,
+  toggleInspector,
+  toggleInspectorWide,
+  toggleSection,
+  topology,
+  updateCable,
+  updateDevice,
+  updateDevices,
+} from "../model/store";
 import type { LintIssue } from "../model/lint";
 import { looksLikeName, PUBLIC_ZONE } from "../core/nodes/dns";
 import { validCidr } from "../core/nodes/firewall";
@@ -45,28 +67,74 @@ export function Inspector() {
   const device = selectedDevice.value;
   const cable = selectedCable.value;
   const sel = selection.value;
+  const width = inspectorWidth.value;
+  const wide = width >= INSPECTOR_WIDE - 40;
+  const resizing = useRef(false);
+  if (!inspectorOpen.value) {
+    return (
+      <aside class="inspector collapsed">
+        <button class="icon-btn" onClick={toggleInspector} title="속성 패널 펼치기 (⌘\)">
+          <Icon name="panel" size={18} />
+        </button>
+      </aside>
+    );
+  }
+  // 왼쪽 가장자리를 끌어 폭 조절. 패널 오른쪽 끝은 창에 붙어 있으므로 폭 = 창 오른쪽 - 포인터 x
+  const onResizeDown = (e: PointerEvent) => {
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    resizing.current = true;
+  };
+  const onResizeMove = (e: PointerEvent) => {
+    if (!resizing.current) return;
+    setInspectorWidth(window.innerWidth - e.clientX);
+  };
+  const onResizeUp = () => {
+    resizing.current = false;
+  };
   return (
-    <aside class="inspector">
-      {sel?.type === "devices" ? <MultiPanel ids={sel.ids} /> : device ? <DevicePanel d={device} /> : cable ? <CablePanel c={cable} /> : <NetworkPanel />}
+    <aside class={`inspector${wide ? " wide" : ""}`}>
+      <div class="inspector-resize" onPointerDown={onResizeDown} onPointerMove={onResizeMove} onPointerUp={onResizeUp} onPointerCancel={onResizeUp} title="끌어서 폭 조절" />
+      <div class="inspector-scroll">
+        <div class="inspector-tools">
+          <button class="icon-btn" onClick={toggleInspectorWide} title={wide ? "보통 폭" : "넓게"}>
+            <Icon name="widen" size={16} />
+          </button>
+          <button class="icon-btn" onClick={toggleInspector} title="속성 패널 접기 (⌘\)">
+            <Icon name="panel" size={16} />
+          </button>
+        </div>
+        {sel?.type === "devices" ? <MultiPanel ids={sel.ids} /> : device ? <DevicePanel d={device} /> : cable ? <CablePanel c={cable} /> : <NetworkPanel />}
+      </div>
     </aside>
   );
 }
 
 // ---------- 공통 조각 ----------
 
-function Section({ title, children }: { title?: string; children: ComponentChildren }) {
+/** 제목이 있는 섹션은 접을 수 있다. 접힘 상태는 제목(또는 id)별로 기억한다 */
+function Section({ title, id, children }: { title?: string; id?: string; children: ComponentChildren }) {
+  if (!title) return <section class="section">{children}</section>;
+  const key = id ?? title;
+  const collapsed = collapsedSections.value.includes(key);
   return (
-    <section class="section">
-      {title && <h3>{title}</h3>}
-      {children}
+    <section class={`section${collapsed ? " collapsed" : ""}`}>
+      <h3 onClick={() => toggleSection(key)} title={collapsed ? "펼치기" : "접기"}>
+        <span>{title}</span>
+        <Icon name="chevron" size={14} class="chev" />
+      </h3>
+      {!collapsed && children}
     </section>
   );
 }
 
-function Field({ label, children, error }: { label: string; children: ComponentChildren; error?: string }) {
+function Field({ label, hint, children, error }: { label: string; hint?: string; children: ComponentChildren; error?: string }) {
   return (
     <div class={`field${error ? " has-error" : ""}`}>
-      <label>{label}</label>
+      <label>
+        {label}
+        {hint && <small>{hint}</small>}
+      </label>
       <div class="control">
         {children}
         {error && <div class="error">{error}</div>}
@@ -125,7 +193,7 @@ function LintSection({ issues, withNames }: { issues: LintIssue[]; withNames: bo
   const t = topology.value;
   const name = (id: string) => t.devices.find((d) => d.id === id)?.name ?? id;
   return (
-    <Section title={`구성 검사${issues.length ? ` · ${issues.length}` : ""}`}>
+    <Section id="lint" title={`구성 검사${issues.length ? ` · ${issues.length}` : ""}`}>
       {issues.length === 0 ? (
         <p class="note">설정에서 빠진 칸이나 어긋난 값이 없습니다. 통신이 안 되면 로그를 보세요.</p>
       ) : (
@@ -276,7 +344,7 @@ function MultiPanel({ ids }: { ids: string[] }) {
         </div>
       </Section>
       {hosts.length > 0 && (
-        <Section title={`호스트 ${hosts.length}대 공통 설정`}>
+        <Section id="multi-hosts" title={`호스트 ${hosts.length}대 공통 설정`}>
           <div class="segmented" role="radiogroup">
             <button class={ipMode === "dhcp" ? "on" : ""} onClick={() => setHosts({ ipMode: "dhcp" })}>
               자동 (DHCP)
@@ -314,7 +382,7 @@ function MultiPanel({ ids }: { ids: string[] }) {
         </Section>
       )}
       {phones.length > 0 && (
-        <Section title={`무선 단말 ${phones.length}대 공통 설정`}>
+        <Section id="multi-phones" title={`무선 단말 ${phones.length}대 공통 설정`}>
           <Field label="SSID">
             <input class="input" value={ssid ?? ""} placeholder={ssid === undefined ? "여러 값" : "home"} onInput={(e) => updateDevices(phones.map((d) => d.id), (x) => ({ ...x, wifi: { ...x.wifi!, ssid: e.currentTarget.value } }))} />
           </Field>
@@ -987,10 +1055,10 @@ function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
           <Field label="끝 주소" error={rangeErr(ds.end)}>
             <input class="input mono" value={ds.end} onInput={(e) => setDs({ end: e.currentTarget.value })} />
           </Field>
-          <Field label="기본 게이트웨이 (옵션 3)" error={ipError(ds.router, false)}>
+          <Field label="기본 게이트웨이" hint="옵션 3" error={ipError(ds.router, false)}>
             <input class="input mono" value={ds.router} placeholder="비우면 옵션 없음" onInput={(e) => setDs({ router: e.currentTarget.value })} />
           </Field>
-          <Field label="DNS 서버 (옵션 6)" error={ipError(ds.dns ?? "", false)}>
+          <Field label="DNS 서버" hint="옵션 6" error={ipError(ds.dns ?? "", false)}>
             <input class="input mono" value={ds.dns ?? ""} placeholder="비우면 옵션 없음" onInput={(e) => setDs({ dns: e.currentTarget.value })} />
           </Field>
           <p class="note">클라이언트에게 이 범위의 주소와 함께 게이트웨이·DNS 를 알려줍니다. 게이트웨이를 비우면 서브넷 밖으로 못 나가고, DNS 를 비우면 이름을 못 씁니다.</p>
