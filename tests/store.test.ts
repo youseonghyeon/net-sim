@@ -13,6 +13,7 @@ import {
   importJson,
   loadExample,
   moveDevices,
+  moveZoneWithContents,
   paste,
   redo,
   removeSelected,
@@ -23,6 +24,9 @@ import {
   topology,
   undo,
   updateDevices,
+  updateZone,
+  zoneAroundSelected,
+  zoneMembers,
 } from "../src/model/store";
 
 beforeEach(() => {
@@ -184,5 +188,42 @@ describe("JSON 저장·불러오기", () => {
     expect(t.devices[0]!.host?.ipMode).toBe("dhcp");
     expect(t.devices[1]!.l3?.interfaces).toHaveLength(3);
     expect(t.devices.every((d) => d.mac)).toBe(true);
+  });
+});
+
+describe("영역", () => {
+  it("선택한 장치를 영역으로 묶고, 이름표를 끌면 안의 장치가 함께 움직이며, 되돌리기가 된다", () => {
+    const a = addDevice("pc", 100, 100);
+    const b = addDevice("pc", 300, 100);
+    const far = addDevice("pc", 900, 900);
+    selection.value = { type: "devices", ids: [a.id, b.id] };
+    const z = zoneAroundSelected("집 안")!;
+    expect(selection.value).toEqual({ type: "zone", id: z.id });
+    expect(zoneMembers(z.id).sort()).toEqual([a.id, b.id].sort());
+    const starts = new Map([a, b].map((d) => [d.id, { x: d.x, y: d.y }]));
+    moveZoneWithContents(z.id, { x: z.x, y: z.y }, starts, 200, 0);
+    const t = topology.value;
+    expect(t.devices.find((d) => d.id === a.id)!.x).toBe(a.x + 200);
+    expect(t.devices.find((d) => d.id === far.id)!.x).toBe(far.x); // 밖의 장치는 그대로
+    expect(t.zones![0]!.x).toBe(z.x + 200);
+    updateZone(z.id, { label: "우리 집", tint: "green", w: 10 });
+    expect(topology.value.zones![0]).toMatchObject({ label: "우리 집", tint: "green", w: 96 }); // 최소 크기
+    removeSelected(); // 영역만 지워지고 장치는 남는다
+    expect(topology.value.zones ?? []).toHaveLength(0);
+    expect(topology.value.devices).toHaveLength(3);
+    expect(selection.value).toBeNull();
+    undo();
+    expect(topology.value.zones).toHaveLength(1);
+  });
+
+  it("JSON 저장·불러오기에 영역이 포함된다", () => {
+    addDevice("pc", 0, 0);
+    selectAll();
+    zoneAroundSelected("집");
+    const text = exportJson();
+    expect(JSON.parse(text).zones).toHaveLength(1);
+    clearAll();
+    importJson(text);
+    expect(topology.value.zones![0]!.label).toBe("집");
   });
 });

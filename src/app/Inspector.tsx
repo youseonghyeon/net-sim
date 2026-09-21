@@ -19,8 +19,10 @@ import {
   removeCable,
   removeDevice,
   removeDevices,
+  removeZone,
   selectedCable,
   selectedDevice,
+  selectedZone,
   selection,
   setInspectorWidth,
   toggleInspector,
@@ -30,6 +32,8 @@ import {
   updateCable,
   updateDevice,
   updateDevices,
+  updateZone,
+  zoneAroundSelected,
 } from "../model/store";
 import type { LintIssue } from "../model/lint";
 import { looksLikeName, PUBLIC_ZONE } from "../core/nodes/dns";
@@ -61,12 +65,16 @@ import {
   WIFI_RANGE,
   wirelessLinks,
   wirelessStatus,
+  devicesInZone,
+  ZONE_TINTS,
+  type Zone,
 } from "../model/topology";
 import { Icon } from "./Icons";
 
 export function Inspector() {
   const device = selectedDevice.value;
   const cable = selectedCable.value;
+  const zone = selectedZone.value;
   const sel = selection.value;
   const width = inspectorWidth.value;
   const wide = width >= INSPECTOR_WIDE - 40;
@@ -116,7 +124,7 @@ export function Inspector() {
             <Icon name="panel" size={16} />
           </button>
         </div>
-        {sel?.type === "devices" ? <MultiPanel ids={sel.ids} /> : device ? <DevicePanel d={device} /> : cable ? <CablePanel c={cable} /> : <NetworkPanel />}
+        {sel?.type === "devices" ? <MultiPanel ids={sel.ids} /> : device ? <DevicePanel d={device} /> : cable ? <CablePanel c={cable} /> : zone ? <ZonePanel z={zone} /> : <NetworkPanel />}
       </div>
     </aside>
   );
@@ -250,6 +258,63 @@ function NetworkPanel() {
           <li>휠로 이동, ⌘ + 휠로 확대·축소, ⌥ 를 누른 채 끌어도 이동합니다.</li>
           <li>상단 ⤓ 로 JSON 저장, ⤒ 로 불러오기.</li>
         </ul>
+      </Section>
+    </>
+  );
+}
+
+/** 영역(주석 네모) 패널: 이름·색·안의 장치 */
+function ZonePanel({ z }: { z: Zone }) {
+  const t = topology.value;
+  const members = devicesInZone(t, z);
+  return (
+    <>
+      <header class="panel-head">
+        <Icon name="zone" />
+        <div>
+          <h2>{z.label}</h2>
+          <p>영역 · 안의 장치 {members.length}개</p>
+        </div>
+      </header>
+      <Section>
+        <Field label="이름">
+          <input class="input" value={z.label} placeholder="집 안, 사무실, 도커 호스트 …" onInput={(e) => updateZone(z.id, { label: e.currentTarget.value })} />
+        </Field>
+        <Field label="색">
+          <div class="segmented" role="radiogroup">
+            {ZONE_TINTS.map((tt) => (
+              <button key={tt.id} class={z.tint === tt.id ? "on" : ""} onClick={() => updateZone(z.id, { tint: tt.id })}>
+                <i class={`zone-swatch tint-${tt.id}`} />
+                {tt.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <p class="note">영역은 그림일 뿐 통신에는 영향이 없습니다. 이름표를 끌면 안의 장치가 함께 움직이고, 오른쪽 아래 손잡이로 크기를 바꿉니다.</p>
+      </Section>
+      <Section title="안의 장치">
+        {members.length === 0 ? (
+          <p class="note">타일 중심이 영역 안에 있는 장치가 여기에 나옵니다.</p>
+        ) : (
+          <ul class="hints">
+            {members.map((id) => {
+              const d = t.devices.find((x) => x.id === id)!;
+              return (
+                <li key={id}>
+                  <button class="link" onClick={() => (selection.value = { type: "device", id })}>
+                    {d.name}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Section>
+      <Section>
+        <button class="btn danger" onClick={() => removeZone(z.id)}>
+          <Icon name="trash" size={16} />
+          영역 삭제 (장치는 남음)
+        </button>
       </Section>
     </>
   );
@@ -445,6 +510,10 @@ function MultiPanel({ ids }: { ids: string[] }) {
         </Section>
       )}
       <Section>
+        <button class="btn wide" onClick={() => zoneAroundSelected()} title="선택한 장치를 감싸는 영역(주석 네모)을 만듭니다">
+          <Icon name="zone" size={16} />
+          영역으로 묶기
+        </button>
         <div class="btn-row">
           <button class="btn" onClick={() => duplicateSelected()} title="복제 (⌘D)">
             <Icon name="copy" size={16} />

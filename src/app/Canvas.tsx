@@ -3,11 +3,32 @@ import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
 import { frameCategory, shortLabel } from "../core/packet";
 import { hostStatus, serviceBadges, sim, simTime, simVersion, wanStatus } from "../model/sim";
-import { beginCoalesce, connectDevices, endCoalesce, fitRequest, lintIssues, loadExample, moveDevices, requestFit, selectedDeviceIds, selection, selectionOf, toggleDeviceSelection, tool, topology, viewport } from "../model/store";
+import {
+  addZone,
+  beginCoalesce,
+  connectDevices,
+  endCoalesce,
+  fitRequest,
+  lintIssues,
+  loadExample,
+  moveDevices,
+  moveZoneWithContents,
+  requestFit,
+  selectedDeviceIds,
+  selection,
+  selectionOf,
+  toggleDeviceSelection,
+  tool,
+  topology,
+  updateZone,
+  viewport,
+  zoneMembers,
+} from "../model/store";
 import type { LintIssue } from "../model/lint";
 import {
   baseSsid,
   freePort,
+  snap,
   portVlanOf,
   vlanColor,
   PORT_DEPTH,
@@ -21,6 +42,8 @@ import {
   type Device,
   type PortSide,
   type WirelessLink,
+  type Zone,
+  ZONE_MIN,
 } from "../model/topology";
 import { GlyphInSvg, Icon } from "./Icons";
 
@@ -30,7 +53,12 @@ type Drag =
   | { type: "pan"; sx: number; sy: number; vx: number; vy: number; moved: boolean }
   | { type: "cable"; from: string; target?: string; sx: number; sy: number; moved: boolean }
   /** 빈 곳에서 끌어 영역 선택 (캔버스 좌표) */
-  | { type: "marquee"; x0: number; y0: number; x1: number; y1: number };
+  | { type: "marquee"; x0: number; y0: number; x1: number; y1: number }
+  /** 영역 도구: 빈 곳에서 끌어 영역(주석 네모) 그리기 */
+  | { type: "zone-draw"; x0: number; y0: number; x1: number; y1: number }
+  /** 영역 라벨을 잡고 끌면 영역과 안의 장치를 함께 옮긴다 */
+  | { type: "zone-move"; id: string; zoneStart: { x: number; y: number }; starts: Map<string, { x: number; y: number }>; sx: number; sy: number; moved: boolean }
+  | { type: "zone-resize"; id: string; x: number; y: number; moved: boolean };
 
 /** 마퀴 사각형 안에 타일이 걸치는 장치 */
 function devicesInRect(devices: Device[], x0: number, y0: number, x1: number, y1: number): string[] {
@@ -82,6 +110,29 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
 
     // ⌥(Alt) 를 누른 채 끌거나 가운데 버튼이면 팬. 그 외 빈 곳 끌기는 영역 선택
     const panning = e.button === 1 || e.altKey;
+    const zoneHandle = target.closest("[data-zone-handle]") as SVGElement | null;
+    const zoneEl = target.closest("[data-zone]") as SVGGElement | null;
+    if (zoneHandle && e.button === 0 && !panning) {
+      const id = zoneHandle.dataset.zoneHandle!;
+      const z = topology.value.zones?.find((x) => x.id === id);
+      if (z) {
+        selection.value = { type: "zone", id };
+        dragRef.current = { type: "zone-resize", id, x: z.x, y: z.y, moved: false };
+      }
+      return;
+    }
+    if (zoneEl && e.button === 0 && !panning) {
+      const id = zoneEl.dataset.zone!;
+      const z = topology.value.zones?.find((x) => x.id === id);
+      if (z) {
+        selection.value = { type: "zone", id };
+        const starts = new Map<string, { x: number; y: number }>();
+        const members = new Set(zoneMembers(id));
+        for (const d of topology.value.devices) if (members.has(d.id)) starts.set(d.id, { x: d.x, y: d.y });
+        dragRef.current = { type: "zone-move", id, zoneStart: { x: z.x, y: z.y }, starts, sx: e.clientX, sy: e.clientY, moved: false };
+      }
+      return;
+    }
     if (deviceEl && e.button === 0 && !panning) {
       const id = deviceEl.dataset.device!;
       if (tool.value === "cable" || e.shiftKey) {
@@ -106,7 +157,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     }
     if (!panning) {
       const p = toCanvas(e.clientX, e.clientY);
-      dragRef.current = { type: "marquee", x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+      dragRef.current = tool.value === "zone" ? { type: "zone-draw", x0: p.x, y0: p.y, x1: p.x, y1: p.y } : { type: "marquee", x0: p.x, y0: p.y, x1: p.x, y1: p.y };
       return;
     }
     dragRef.current = { type: "pan", sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y, moved: false };
@@ -125,11 +176,28 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
         beginCoalesce(); // 드래그 한 번 = 되돌리기 한 단계
       }
       moveDevices(d.starts, dx, dy);
-    } else if (d.type === "marquee") {
+    } else if (d.type === "marquee" || d.type === "zone-draw") {
       const p = toCanvas(e.clientX, e.clientY);
       d.x1 = p.x;
       d.y1 = p.y;
       marquee.value = { x0: d.x0, y0: d.y0, x1: p.x, y1: p.y };
+    } else if (d.type === "zone-move") {
+      const k = viewport.value.k;
+      const dx = (e.clientX - d.sx) / k;
+      const dy = (e.clientY - d.sy) / k;
+      if (!d.moved) {
+        if (Math.abs(dx) + Math.abs(dy) < 2) return;
+        d.moved = true;
+        beginCoalesce();
+      }
+      moveZoneWithContents(d.id, d.zoneStart, d.starts, dx, dy);
+    } else if (d.type === "zone-resize") {
+      const p = toCanvas(e.clientX, e.clientY);
+      if (!d.moved) {
+        d.moved = true;
+        beginCoalesce();
+      }
+      updateZone(d.id, { w: Math.max(ZONE_MIN, snap(p.x - d.x)), h: Math.max(ZONE_MIN, snap(p.y - d.y)) });
     } else if (d.type === "pan") {
       const dx = e.clientX - d.sx;
       const dy = e.clientY - d.sy;
@@ -148,8 +216,20 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     const d = dragRef.current;
     dragRef.current = null;
     if (!d) return;
-    if (d.type === "move") {
+    if (d.type === "move" || d.type === "zone-move" || d.type === "zone-resize") {
       if (d.moved) endCoalesce();
+      return;
+    }
+    if (d.type === "zone-draw") {
+      marquee.value = null;
+      const w = Math.abs(d.x1 - d.x0);
+      const h = Math.abs(d.y1 - d.y0);
+      if (w < 16 && h < 16) {
+        selection.value = null;
+        return;
+      }
+      addZone({ x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.max(ZONE_MIN, w), h: Math.max(ZONE_MIN, h) });
+      tool.value = "select";
       return;
     }
     if (d.type === "marquee") {
@@ -244,6 +324,11 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
         </defs>
         <rect class="grid-bg" width="100%" height="100%" fill="url(#grid)" />
         <g transform={`translate(${v.x},${v.y}) scale(${v.k})`}>
+          <g class="zones">
+            {(t.zones ?? []).map((z) => (
+              <ZoneView key={z.id} z={z} selected={sel?.type === "zone" && sel.id === z.id} />
+            ))}
+          </g>
           <g class="coverage">
             {bases.map((b) => {
               const s = specOf(b);
@@ -281,7 +366,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
           <PacketLayer byId={byId} cables={t.cables} wireless={wl} />
           {marquee.value && (
             <rect
-              class="marquee"
+              class={dragRef.current?.type === "zone-draw" ? "marquee zone-draft" : "marquee"}
               x={Math.min(marquee.value.x0, marquee.value.x1)}
               y={Math.min(marquee.value.y0, marquee.value.y1)}
               width={Math.abs(marquee.value.x1 - marquee.value.x0)}
@@ -398,6 +483,25 @@ function DeviceView({ d, used, selected, targeted, source, issues }: { d: Device
           )}
         </>
       )}
+    </g>
+  );
+}
+
+/**
+ * 영역(주석 네모). 몸통은 포인터를 받지 않아 그 위에서도 영역 선택·팬이 되고,
+ * 라벨과 테두리만 잡을 수 있다. 라벨을 끌면 안의 장치가 함께 움직이고, 선택하면 오른쪽 아래 손잡이로 크기를 바꾼다.
+ */
+function ZoneView({ z, selected }: { z: Zone; selected: boolean }) {
+  const labelW = Math.round(textWidth(z.label)) + 16;
+  return (
+    <g data-zone={z.id} class={`zone tint-${z.tint}${selected ? " selected" : ""}`} transform={`translate(${z.x},${z.y})`}>
+      <rect class="zone-body" width={z.w} height={z.h} rx={12} />
+      <rect class="zone-edge" width={z.w} height={z.h} rx={12} />
+      <g class="zone-label" transform="translate(12,-11)">
+        <rect width={labelW} height={22} rx={6} />
+        <text x={8} y={15}>{z.label}</text>
+      </g>
+      {selected && <rect data-zone-handle={z.id} class="zone-handle" x={z.w - 7} y={z.h - 7} width={14} height={14} rx={3} />}
     </g>
   );
 }

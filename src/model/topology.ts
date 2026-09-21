@@ -294,12 +294,63 @@ export interface Cable {
   loss?: number;
 }
 
+/** 영역: 장치 뒤에 그리는 라벨 붙은 네모. "집 안", "도커 호스트" 처럼 묶음을 표시하는 주석이라 시뮬레이션에는 영향이 없다 */
+export interface Zone {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  tint: ZoneTint;
+}
+export type ZoneTint = "gray" | "blue" | "green" | "amber";
+export const ZONE_TINTS: { id: ZoneTint; label: string }[] = [
+  { id: "gray", label: "회색" },
+  { id: "blue", label: "파랑" },
+  { id: "green", label: "초록" },
+  { id: "amber", label: "노랑" },
+];
+export const ZONE_MIN = 96;
+
 export interface Topology {
   devices: Device[];
   cables: Cable[];
+  /** 없으면 [] 로 본다 (예전 저장본 호환) */
+  zones?: Zone[];
 }
 
 export const EMPTY_TOPOLOGY: Topology = { devices: [], cables: [] };
+
+/** 장치 타일 중심이 영역 안에 있으면 "영역 안" */
+export function zoneContains(z: Zone, d: Device): boolean {
+  const s = DEVICE_SPECS[d.kind];
+  const cx = d.x + s.width / 2;
+  const cy = d.y + s.height / 2;
+  return cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h;
+}
+
+/** 영역 안의 장치 id */
+export function devicesInZone(t: Topology, z: Zone): string[] {
+  return t.devices.filter((d) => zoneContains(z, d)).map((d) => d.id);
+}
+
+/** 장치 묶음을 감싸는 영역 사각형 (호스트는 아래 이름 줄까지 포함, 여백 pad) */
+export function zoneAround(t: Topology, ids: string[], pad = 32): { x: number; y: number; w: number; h: number } | null {
+  const picked = t.devices.filter((d) => ids.includes(d.id));
+  if (picked.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const d of picked) {
+    const s = DEVICE_SPECS[d.kind];
+    const host = s.role === "host";
+    // 호스트는 타일 아래 이름·주소 줄이 타일보다 넓다
+    minX = Math.min(minX, d.x - (host ? 20 : 0));
+    minY = Math.min(minY, d.y - 12);
+    maxX = Math.max(maxX, d.x + s.width + (host ? 20 : 0));
+    maxY = Math.max(maxY, d.y + s.height + (host ? 44 : 12));
+  }
+  return { x: snap(minX - pad), y: snap(minY - pad - 12), w: snap(maxX - minX + pad * 2), h: snap(maxY - minY + pad * 2 + 12) };
+}
 
 export function specOf(device: Device): DeviceSpec {
   return DEVICE_SPECS[device.kind];
@@ -542,10 +593,11 @@ export interface TopologyFile {
   version: 1;
   devices: Device[];
   cables: Cable[];
+  zones?: Zone[];
 }
 
 export function serializeTopology(t: Topology): string {
-  const doc: TopologyFile = { app: "net-sim", version: 1, devices: t.devices, cables: t.cables };
+  const doc: TopologyFile = { app: "net-sim", version: 1, devices: t.devices, cables: t.cables, ...(t.zones?.length ? { zones: t.zones } : {}) };
   return JSON.stringify(doc, null, 2);
 }
 
@@ -578,7 +630,7 @@ export function parseTopology(text: string): { topology?: Topology; error?: stri
     }
   }
   // 나머지(없는 설정, 사라진 장치를 가리키는 케이블, 겹치는 포트)는 normalizeTopology 가 기본값으로 채우거나 버린다
-  return { topology: normalizeTopology({ devices: doc.devices as Device[], cables: doc.cables as Cable[] }) };
+  return { topology: normalizeTopology({ devices: doc.devices as Device[], cables: doc.cables as Cable[], zones: Array.isArray(doc.zones) ? (doc.zones as Zone[]) : [] }) };
 }
 
 /** 두 장치를 잇는 케이블의 양 끝 포트를 정한다. 못 잇는 이유는 사용자에게 보일 문장으로 돌려준다 */
@@ -675,7 +727,18 @@ export function normalizeTopology(t: Topology): Topology {
     usedPort.add(kb);
     cables.push(c);
   }
-  return { devices, cables };
+  const zones: Zone[] = (t.zones ?? [])
+    .filter((z) => z && typeof z.id === "string" && [z.x, z.y, z.w, z.h].every((n) => typeof n === "number" && Number.isFinite(n)))
+    .map((z) => ({
+      id: z.id,
+      label: typeof z.label === "string" ? z.label : "영역",
+      x: z.x,
+      y: z.y,
+      w: Math.max(ZONE_MIN, z.w),
+      h: Math.max(ZONE_MIN, z.h),
+      tint: ZONE_TINTS.some((tt) => tt.id === z.tint) ? z.tint : "gray",
+    }));
+  return zones.length > 0 ? { devices, cables, zones } : { devices, cables };
 }
 
 /** 기능 단위 구성 예제: 인터넷 → NAT 박스 → 게이트웨이 → 스위치 2대(서브넷 2개) + DHCP 서버 호스트 */
@@ -956,7 +1019,12 @@ export function exampleTwoHomesTopology(): Topology {
     { id: newId("cable"), a: { device: sw2.id, port: 1 }, b: { device: pc3.id, port: 0 } },
     { id: newId("cable"), a: { device: sw2.id, port: 6 }, b: { device: pc4.id, port: 0 } },
   ];
-  return { devices, cables };
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "집 A 192.168.1.0/24", tint: "blue", ...zoneAround(t, [gw1.id, sw1.id, pc1.id, pc2.id], 24)! },
+    { id: newId("zone"), label: "집 B 192.168.2.0/24", tint: "green", ...zoneAround(t, [gw2.id, sw2.id, pc3.id, pc4.id], 24)! },
+  ];
+  return t;
 }
 
 /** 백본: 집 세 곳의 게이트웨이 if0 을 스위치 하나(10.0.0.0/24, 라우터만 사는 서브넷)에 모은다. 인터넷 없음 */
@@ -975,6 +1043,8 @@ export function exampleBackboneTopology(): Topology {
     { x: 688, link: "10.0.0.3", lan: "192.168.3", bbPort: 7 },
   ];
   const cables: Cable[] = [];
+  const zones: Zone[] = [];
+  const tints: ZoneTint[] = ["blue", "green", "amber"];
   homes.forEach((h, i) => {
     const gw = add("gateway", h.x, 216);
     gw.l3 = {
@@ -997,8 +1067,10 @@ export function exampleBackboneTopology(): Topology {
       { id: newId("cable"), a: { device: sw.id, port: 0 }, b: { device: a.id, port: 0 } },
       { id: newId("cable"), a: { device: sw.id, port: 6 }, b: { device: b.id, port: 0 } },
     );
+    zones.push({ id: newId("zone"), label: `집 ${i + 1} ${h.lan}.0/24`, tint: tints[i]!, ...zoneAround({ devices, cables: [] }, [gw.id, sw.id, a.id, b.id], 20)! });
   });
-  return { devices, cables };
+  zones.push({ id: newId("zone"), label: "백본 10.0.0.0/24 (라우터만)", tint: "gray", ...zoneAround({ devices, cables: [] }, [bb.id], 20)! });
+  return { devices, cables, zones };
 }
 
 /**
@@ -1060,7 +1132,13 @@ export function exampleDockerTopology(): Topology {
     { id: newId("cable"), a: { device: br.id, port: 4 }, b: { device: db.id, port: 0 } },
     { id: newId("cable"), a: { device: br.id, port: 7 }, b: { device: dns.id, port: 0 } },
   ];
-  return { devices, cables };
+  const t: Topology = { devices, cables };
+  // 영역: 점선 네모 안은 전부 "컴퓨터 한 대(docker-host) 안" 이라는 뜻
+  t.zones = [
+    { id: newId("zone"), label: "docker-host 한 대 안 (브리지 네트워크 app)", tint: "blue", ...zoneAround(t, [host.id, br.id, web.id, db.id, dns.id])! },
+    { id: newId("zone"), label: "집 LAN 192.168.0.0/24", tint: "gray", ...zoneAround(t, [rt.id, sw.id, pc.id], 24)! },
+  ];
+  return t;
 }
 
 /** 허브 vs 스위치: 같은 공유기 아래 한쪽은 허브, 한쪽은 스위치. ping 이 어디까지 퍼지는지 비교 */

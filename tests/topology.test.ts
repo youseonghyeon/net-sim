@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { effectiveDnsServer, effectiveFirewall, effectiveForwards, effectiveL3, effectiveSwitchVlans } from "../src/model/netSync";
 import { lintTopology } from "../src/model/lint";
-import { createDevice, EXAMPLE_LIST, normalizeTopology, planCable, type Device, type Topology } from "../src/model/topology";
+import { createDevice, devicesInZone, EXAMPLE_LIST, normalizeTopology, planCable, zoneAround, type Device, type Topology } from "../src/model/topology";
 
 describe("normalizeTopology", () => {
   it("저장된 게이트웨이의 서브 인터페이스·방화벽·포워딩 설정을 잃지 않는다", () => {
@@ -132,5 +132,44 @@ describe("예제 토폴로지", () => {
       expect(normalizeTopology(t).cables.length, ex.id).toBe(t.cables.length); // 정규화가 버리는 케이블이 없다
       expect(new Set(t.devices.map((d) => d.name)).size, ex.id).toBe(t.devices.length);
     }
+  });
+});
+
+describe("영역 (주석 네모)", () => {
+  it("normalize 가 영역을 보존하고 깨진 항목은 버리며, 최소 크기를 지킨다", () => {
+    const pc = createDevice("pc", 100, 100, []);
+    const t: Topology = {
+      devices: [pc],
+      cables: [],
+      zones: [
+        { id: "z1", label: "집 안", x: 0, y: 0, w: 40, h: 40, tint: "blue" },
+        { id: "z2", label: "x", x: Number.NaN, y: 0, w: 100, h: 100, tint: "gray" },
+        { id: "z3", label: "", x: 0, y: 0, w: 200, h: 200, tint: "purple" as never },
+      ],
+    };
+    const out = normalizeTopology(t);
+    expect(out.zones).toHaveLength(2);
+    expect(out.zones![0]).toMatchObject({ id: "z1", w: 96, h: 96, tint: "blue" }); // ZONE_MIN
+    expect(out.zones![1]).toMatchObject({ id: "z3", tint: "gray" });
+    expect(normalizeTopology({ devices: [], cables: [] }).zones).toBeUndefined();
+  });
+
+  it("zoneAround 는 장치 묶음(호스트 이름 줄 포함)을 감싸고, devicesInZone 은 타일 중심으로 판단한다", () => {
+    const devices: Device[] = [];
+    const a = createDevice("pc", 100, 100, devices);
+    devices.push(a);
+    const b = createDevice("switch", 300, 100, devices);
+    devices.push(b);
+    const c = createDevice("pc", 900, 900, devices);
+    devices.push(c);
+    const t: Topology = { devices, cables: [] };
+    const r = zoneAround(t, [a.id, b.id])!;
+    expect(r.x).toBeLessThan(100);
+    expect(r.y).toBeLessThan(88);
+    expect(r.x + r.w).toBeGreaterThan(300 + 152);
+    expect(r.y + r.h).toBeGreaterThan(100 + 64 + 44);
+    const z = { id: "z", label: "영역", tint: "gray" as const, ...r };
+    expect(devicesInZone(t, z)).toEqual([a.id, b.id]);
+    expect(zoneAround(t, [])).toBeNull();
   });
 });

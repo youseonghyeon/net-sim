@@ -53,6 +53,7 @@ export function Palette() {
       if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return;
       if (e.key === "v" || e.key === "V") tool.value = "select";
       if (e.key === "c" || e.key === "C") tool.value = "cable";
+      if (e.key === "z" || e.key === "Z") if (!e.metaKey && !e.ctrlKey) tool.value = "zone";
       if (e.key === "Escape") tool.value = "select";
     };
     window.addEventListener("keydown", onKey);
@@ -70,6 +71,10 @@ export function Palette() {
         <button class={`tool${tool.value === "cable" ? " on" : ""}`} onClick={() => (tool.value = "cable")} title="케이블 연결 (C) — 장치에서 장치로 끌기">
           <Icon name="cable" />
           <span>케이블</span>
+        </button>
+        <button class={`tool${tool.value === "zone" ? " on" : ""}`} onClick={() => (tool.value = "zone")} title="영역 (Z) — 빈 곳에서 끌어 '집 안', '도커 호스트' 같은 묶음을 표시">
+          <Icon name="zone" />
+          <span>영역</span>
         </button>
       </div>
       <div class="palette-sep" />

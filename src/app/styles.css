@@ -23,6 +23,15 @@
   --pkt-icmp: #2b8fd6;
   --pkt-tcp: #8b5cf6;
   --pkt-dns: #14b8a6;
+  /* 영역(주석 네모) 채움·테두리: 크롬 톤에 살짝 물든 정도 */
+  --zone-gray: rgba(100, 107, 120, 0.07);
+  --zone-gray-line: rgba(100, 107, 120, 0.45);
+  --zone-blue: rgba(52, 87, 213, 0.07);
+  --zone-blue-line: rgba(52, 87, 213, 0.5);
+  --zone-green: rgba(30, 158, 90, 0.08);
+  --zone-green-line: rgba(30, 158, 90, 0.5);
+  --zone-amber: rgba(201, 138, 16, 0.09);
+  --zone-amber-line: rgba(201, 138, 16, 0.55);
 
   --font: "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -50,6 +59,14 @@
   --tile-line: #4a515d;
   --wire: #8b93a1;
   --grid-dot: #2b3038;
+  --zone-gray: rgba(154, 161, 173, 0.08);
+  --zone-gray-line: rgba(154, 161, 173, 0.45);
+  --zone-blue: rgba(122, 147, 255, 0.09);
+  --zone-blue-line: rgba(122, 147, 255, 0.55);
+  --zone-green: rgba(30, 158, 90, 0.1);
+  --zone-green-line: rgba(74, 194, 130, 0.55);
+  --zone-amber: rgba(201, 138, 16, 0.1);
+  --zone-amber-line: rgba(230, 170, 50, 0.55);
 }
 
 /* ---------- 기본 ---------- */
@@ -431,6 +448,78 @@ select.btn.example {
   stroke: var(--accent);
   stroke-width: 2;
 }
+/* 영역(주석 네모) */
+.zone .zone-body {
+  pointer-events: none;
+  fill: var(--zone-gray);
+}
+.zone .zone-edge {
+  fill: none;
+  stroke: var(--zone-gray-line);
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+  pointer-events: stroke;
+  cursor: grab;
+}
+.zone.tint-blue .zone-body { fill: var(--zone-blue); }
+.zone.tint-blue .zone-edge { stroke: var(--zone-blue-line); }
+.zone.tint-green .zone-body { fill: var(--zone-green); }
+.zone.tint-green .zone-edge { stroke: var(--zone-green-line); }
+.zone.tint-amber .zone-body { fill: var(--zone-amber); }
+.zone.tint-amber .zone-edge { stroke: var(--zone-amber-line); }
+.zone.selected .zone-edge {
+  stroke: var(--accent);
+  stroke-dasharray: none;
+  stroke-width: 1.5;
+}
+.zone .zone-label {
+  cursor: grab;
+}
+.zone .zone-label rect {
+  fill: var(--surface);
+  stroke: var(--zone-gray-line);
+  stroke-width: 1;
+}
+.zone.tint-blue .zone-label rect { stroke: var(--zone-blue-line); }
+.zone.tint-green .zone-label rect { stroke: var(--zone-green-line); }
+.zone.tint-amber .zone-label rect { stroke: var(--zone-amber-line); }
+.zone.selected .zone-label rect {
+  stroke: var(--accent);
+}
+.zone .zone-label text {
+  fill: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+.zone .zone-handle {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  cursor: nwse-resize;
+}
+.marquee.zone-draft {
+  stroke-dasharray: 5 4;
+  fill: var(--zone-gray);
+}
+.tool-zone .canvas {
+  cursor: crosshair;
+}
+/* 인스펙터의 색 선택 칩 */
+.zone-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 5px;
+  background: var(--zone-gray);
+  border: 1px solid var(--zone-gray-line);
+  vertical-align: -1px;
+}
+.zone-swatch.tint-blue { background: var(--zone-blue); border-color: var(--zone-blue-line); }
+.zone-swatch.tint-green { background: var(--zone-green); border-color: var(--zone-green-line); }
+.zone-swatch.tint-amber { background: var(--zone-amber); border-color: var(--zone-amber-line); }
+
 /* 영역 선택 사각형: 케이블·패킷 위에 그려지므로 채움은 옅게 */
 .marquee {
   fill: var(--accent-soft);
@@ -1086,7 +1175,8 @@ select.btn.example {
   color: var(--ink-2);
   margin-top: 2px;
 }
-.lint-msg .link {
+/* 글자처럼 보이는 버튼 (구성 검사·영역 안 장치 목록에서 장치로 건너뛰기) */
+.link {
   background: none;
   border: 0;
   padding: 0;

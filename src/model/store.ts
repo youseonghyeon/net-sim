@@ -4,6 +4,11 @@ import {
   alignDevices,
   cloneDevices,
   createDevice,
+  devicesInZone,
+  zoneAround,
+  ZONE_MIN,
+  type Zone,
+  type ZoneTint,
   DEVICE_SPECS,
   EMPTY_TOPOLOGY,
   EXAMPLES,
@@ -22,8 +27,8 @@ import {
   type Topology,
 } from "./topology";
 
-/** 선택: 장치 하나 / 장치 여러 개 / 케이블 하나 */
-export type Selection = { type: "device"; id: string } | { type: "devices"; ids: string[] } | { type: "cable"; id: string } | null;
+/** 선택: 장치 하나 / 장치 여러 개 / 케이블 하나 / 영역 하나 */
+export type Selection = { type: "device"; id: string } | { type: "devices"; ids: string[] } | { type: "cable"; id: string } | { type: "zone"; id: string } | null;
 
 /** 선택된 장치 id 목록 (단일·다중 공통) */
 export function selectedDeviceIds(sel: Selection): string[] {
@@ -39,7 +44,7 @@ export function selectionOf(ids: string[]): Selection {
   if (ids.length === 1) return { type: "device", id: ids[0]! };
   return { type: "devices", ids };
 }
-export type Tool = "select" | "cable";
+export type Tool = "select" | "cable" | "zone";
 export type Theme = "light" | "dark";
 
 const TOPOLOGY_KEY = "net-sim.topology.v1";
@@ -187,6 +192,10 @@ function pruneSelection(): void {
     if (!t.cables.some((c) => c.id === s.id)) selection.value = null;
     return;
   }
+  if (s.type === "zone") {
+    if (!t.zones?.some((z) => z.id === s.id)) selection.value = null;
+    return;
+  }
   const alive = selectedDeviceIds(s).filter((id) => t.devices.some((d) => d.id === id));
   if (alive.length !== selectedDeviceIds(s).length) selection.value = selectionOf(alive);
 }
@@ -197,6 +206,11 @@ export const selectedDevice = computed<Device | undefined>(() => {
 });
 /** 구성 검사 결과. 토폴로지가 바뀔 때만 다시 계산한다 */
 export const lintIssues = computed<LintIssue[]>(() => lintTopology(topology.value));
+
+export const selectedZone = computed<Zone | undefined>(() => {
+  const s = selection.value;
+  return s?.type === "zone" ? topology.value.zones?.find((z) => z.id === s.id) : undefined;
+});
 
 export const selectedCable = computed<Cable | undefined>(() => {
   const s = selection.value;
@@ -266,7 +280,7 @@ export function removeDevices(ids: string[]): void {
     cables: t.cables.filter((c) => !set.has(c.a.device) && !set.has(c.b.device)),
   });
   const remaining = selectedDeviceIds(selection.value).filter((id) => !set.has(id));
-  if (selection.value && selection.value.type !== "cable") selection.value = selectionOf(remaining);
+  if (selection.value && (selection.value.type === "device" || selection.value.type === "devices")) selection.value = selectionOf(remaining);
 }
 
 export function alignSelected(mode: AlignMode): void {
@@ -350,7 +364,54 @@ export function removeSelected(): void {
   const s = selection.value;
   if (!s) return;
   if (s.type === "cable") removeCable(s.id);
+  else if (s.type === "zone") removeZone(s.id);
   else removeDevices(selectedDeviceIds(s));
+}
+
+// ---------- 영역 (주석 네모) ----------
+
+export function addZone(rect: { x: number; y: number; w: number; h: number }, label = "영역", tint: ZoneTint = "gray"): Zone {
+  const t = topology.value;
+  const zone: Zone = { id: newId("zone"), label, x: snap(rect.x), y: snap(rect.y), w: Math.max(ZONE_MIN, snap(rect.w)), h: Math.max(ZONE_MIN, snap(rect.h)), tint };
+  setTopology({ ...t, zones: [...(t.zones ?? []), zone] });
+  selection.value = { type: "zone", id: zone.id };
+  return zone;
+}
+
+/** 선택한 장치들을 감싸는 영역을 만든다 */
+export function zoneAroundSelected(label = "영역"): Zone | undefined {
+  const ids = selectedDeviceIds(selection.value);
+  const rect = zoneAround(topology.value, ids);
+  if (!rect) return undefined;
+  return addZone(rect, label);
+}
+
+export function updateZone(id: string, patch: Partial<Omit<Zone, "id">>): void {
+  const t = topology.value;
+  setTopology({ ...t, zones: (t.zones ?? []).map((z) => (z.id === id ? { ...z, ...patch, w: Math.max(ZONE_MIN, patch.w ?? z.w), h: Math.max(ZONE_MIN, patch.h ?? z.h) } : z)) });
+}
+
+/** 영역과 그 안의 장치를 함께 옮긴다 (드래그 시작 위치 기준) */
+export function moveZoneWithContents(id: string, zoneStart: { x: number; y: number }, starts: Map<string, { x: number; y: number }>, dx: number, dy: number): void {
+  const t = topology.value;
+  setTopology({
+    ...t,
+    zones: (t.zones ?? []).map((z) => (z.id === id ? { ...z, x: snap(zoneStart.x + dx), y: snap(zoneStart.y + dy) } : z)),
+    devices: t.devices.map((d) => (starts.has(d.id) ? { ...d, x: snap(starts.get(d.id)!.x + dx), y: snap(starts.get(d.id)!.y + dy) } : d)),
+  });
+}
+
+export function removeZone(id: string): void {
+  const t = topology.value;
+  setTopology({ ...t, zones: (t.zones ?? []).filter((z) => z.id !== id) });
+  if (selection.value?.type === "zone" && selection.value.id === id) selection.value = null;
+}
+
+/** 영역 안 장치 id (드래그 시작 시 계산) */
+export function zoneMembers(id: string): string[] {
+  const t = topology.value;
+  const z = t.zones?.find((x) => x.id === id);
+  return z ? devicesInZone(t, z) : [];
 }
 
 export type { ExampleId } from "./topology";

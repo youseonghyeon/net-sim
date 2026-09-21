@@ -426,6 +426,45 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   const boxes = await page.locator("[data-device] .tile").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()));
   console.log("fit: all tiles inside canvas:", boxes.every((b) => b.left >= cw.x && b.right <= cw.x + cw.width && b.top >= cw.y && b.bottom <= cw.y + cw.height));
 }
+// 12) 영역: 선택 → 영역으로 묶기 → 이름 바꾸기 → 이름표 끌어서 안의 장치와 함께 이동 → 영역 도구로 그리기 → 삭제
+{
+  await page.selectOption("select.example", "docker");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 });
+  const a = await device("web").locator(".tile").boundingBox();
+  const b = await device("embedded-dns").locator(".tile").boundingBox();
+  await page.mouse.move(a.x - 30, a.y - 30);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width + 30, b.y + b.height + 30, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+  await page.click("text=영역으로 묶기");
+  await page.waitForTimeout(150);
+  console.log("zones:", await page.locator("[data-zone]").count(), "| panel:", await page.locator(".inspector h2").textContent(), "| members:", (await page.locator(".inspector p").first().textContent()));
+  await page.fill(".inspector .input", "컨테이너들");
+  await page.waitForTimeout(100);
+  console.log("zone label:", await page.locator("[data-zone] .zone-label text").textContent());
+  const before = await device("web").locator(".tile").boundingBox();
+  const lab = await page.locator("[data-zone] .zone-label rect").boundingBox();
+  await page.mouse.move(lab.x + lab.width / 2, lab.y + lab.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(lab.x + lab.width / 2 - 120, lab.y + lab.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+  const after = await device("web").locator(".tile").boundingBox();
+  console.log("zone drag moved web by:", Math.round(after.x - before.x));
+  await page.screenshot({ path: `${OUT}/29-zone.png` });
+  // 영역 도구로 빈 곳에 그리기
+  await page.click(".palette .tool:has-text('영역')");
+  await page.mouse.move(150, 150);
+  await page.mouse.down();
+  await page.mouse.move(400, 320, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+  console.log("zones after draw:", await page.locator("[data-zone]").count(), "| tool back to select:", await page.locator(".palette .tool.on").textContent());
+  await page.keyboard.press("Delete");
+  await page.waitForTimeout(100);
+  console.log("zones after delete:", await page.locator("[data-zone]").count(), "| devices intact:", await page.locator("[data-device]").count());
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");
