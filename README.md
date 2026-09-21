@@ -24,6 +24,11 @@ npm run ui-check # 브라우저 스모크 테스트 (.shots/ 에 스크린샷)
 - 휠로 이동, ⌘ + 휠로 확대·축소, ⌥ 를 누른 채 끌어도 이동. Delete 로 선택 삭제. 작업은 브라우저에 자동 저장되고, 상단 ⤓/⤒ 로 JSON 파일로 내려받거나 불러옵니다.
 - 예제는 "기본 → 기능 단위 → L2 → 서비스 → 무선" 순으로 묶여 있고, 불러오면 무엇을 해 보면 되는지 안내가 뜹니다.
 
+## 배포
+- `main` 에 push 하면 GitHub Actions 가 `tsc` + vitest 게이트를 지난 뒤 이미지를 `ghcr.io/youseonghyeon/net-sim:<sha>` 로 올리고 `deploy/values.yaml` 의 태그를 봇 커밋으로 갱신합니다. ArgoCD(`argocd/application.yaml`, 한 번만 `kubectl apply`)가 `deploy/` Helm 차트를 `app` 네임스페이스에 자동 sync 합니다.
+- 이미지는 `vite build` 결과를 nginx(비특권, 8080)로 서빙하는 정적 SPA 입니다. 인그레스는 Tailscale + Funnel → `https://net-sim.<tailnet>.ts.net`.
+- 로컬에서 차트만 확인: `helm lint deploy && helm template net-sim deploy`.
+
 ## 문제가 생기면
 `docs/TROUBLESHOOTING.md` 에 로그 문구별 원인과 고치는 법이 있습니다. 개발 기록은 `docs/LESSONS.md`.
 

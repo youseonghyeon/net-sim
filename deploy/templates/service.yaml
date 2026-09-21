@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: net-sim
+  labels:
+    app: net-sim
+spec:
+  type: ClusterIP
+  selector:
+    app: net-sim
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP

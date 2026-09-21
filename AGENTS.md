@@ -33,6 +33,12 @@ npm run ui-check    # Playwright 스모크 (개발 서버 자동 기동, .shots/
 ```
 코어 변경은 `npm test`, UI 변경은 `npm run ui-check` 까지 통과해야 완료.
 
+## 배포 (porta-hub 와 같은 방식)
+- `Dockerfile`: node:24-alpine 에서 `vite build` → `nginxinc/nginx-unprivileged`(8080, uid 101) 가 `dist/` 서빙. 설정은 `deploy/nginx.conf`(`/healthz`, `/assets/` 영구 캐시, 나머지는 `index.html` 폴백).
+- `.github/workflows/docker-image.yml`: main push → `npm run typecheck` + `npm test` 게이트 → ghcr 푸시(`<sha>`, `latest`) → `deploy/values.yaml` 의 `image.tag` 를 sed 로 갱신해 봇 커밋. GITHUB_TOKEN 푸시는 워크플로를 다시 트리거하지 않는다.
+- `deploy/`: Helm 차트(Deployment 는 readOnlyRootFilesystem + `/tmp` emptyDir, Service, Ingress 는 tailscale 클래스 + funnel). `argocd/application.yaml`: namespace `app`, automated prune/selfHeal. 시크릿 없음.
+- 차트를 고치면 `helm lint deploy && helm template net-sim deploy` 로 렌더를 확인한다. 브라우저 스모크(`ui-check`)는 CI 에서 돌리지 않는다.
+
 ## 시뮬레이션 연결 방식
 - `src/model/sim.ts` 의 `SimController` 가 토폴로지 signal 을 구독해 `NetworkSync.sync` 로 `Network` 에 diff 반영한다(장치 추가/삭제, 케이블 connect/disconnect, 설정 변경 → `node.configure`). 위치 이동만 있으면 `sync` 가 false 를 돌려 패널이 재렌더되지 않는다.
 - 시계: 패킷이 링크 위에 있을 때만 흐르고, 대기 이벤트만 있으면 그 시각으로 점프, 아무것도 없으면 정지. 사용자 개입 시각은 정수 ms 로 올림.
