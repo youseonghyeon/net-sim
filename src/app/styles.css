@@ -102,6 +102,7 @@ ul {
   display: grid;
   grid-template-columns: var(--palette-w) minmax(0, 1fr) var(--inspector-w);
   min-height: 0;
+  overflow: hidden;
 }
 
 /* ---------- 상단바 ---------- */
@@ -381,13 +382,24 @@ select.btn.example {
   position: absolute;
   right: 12px;
   bottom: 10px;
-  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 2px;
   border-radius: 6px;
   background: var(--surface);
   border: 1px solid var(--line);
   color: var(--ink-3);
-  font-family: var(--mono);
   font-size: 11px;
+}
+.zoom .icon-btn {
+  width: 22px;
+  height: 22px;
+  color: var(--ink-2);
+}
+.zoom .mono {
+  min-width: 34px;
+  text-align: right;
 }
 .canvas-empty {
   position: absolute;
@@ -602,10 +614,15 @@ select.btn.example {
   min-height: 0;
   overflow-y: auto;
 }
-/* 접힌 상태: 레일 하나에 펼치기 버튼만 */
+/* 접힌 상태: 레일 하나에 펼치기 버튼만. 버튼이 레일보다 넓으면 가로 스크롤이 생기므로 24px 로 */
 .inspector.collapsed {
   align-items: center;
   padding-top: 6px;
+  overflow: hidden;
+}
+.inspector.collapsed .icon-btn {
+  width: 24px;
+  height: 24px;
 }
 /* 왼쪽 가장자리 끌기 손잡이 */
 .inspector-resize {

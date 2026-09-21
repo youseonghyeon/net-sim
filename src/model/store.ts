@@ -107,11 +107,17 @@ export function toggleSection(key: string): void {
 }
 
 export const logOpen = signal(false);
-/** 증가할 때마다 캔버스가 내용에 맞춰 뷰포트를 다시 잡는다 */
-export const fitRequest = signal(0);
+/** 증가할 때마다 캔버스가 내용에 맞춰 뷰포트를 다시 잡는다. ids 가 있으면 그 장치들만 화면에 맞춘다 */
+export const fitRequest = signal<{ seq: number; ids?: string[] }>({ seq: 0 });
 
-export function requestFit(): void {
-  fitRequest.value += 1;
+export function requestFit(ids?: string[]): void {
+  fitRequest.value = { seq: fitRequest.peek().seq + 1, ids };
+}
+
+/** 선택한 장치가 있으면 그것만, 없으면 전체를 화면에 맞춘다 */
+export function fitSelectionOrAll(): void {
+  const ids = selectedDeviceIds(selection.peek());
+  requestFit(ids.length > 0 ? ids : undefined);
 }
 
 // ---------- 되돌리기 ----------

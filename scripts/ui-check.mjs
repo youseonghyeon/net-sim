@@ -388,6 +388,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForTimeout(150);
   const w2 = (await page.locator(".inspector").boundingBox()).width;
   const canvasW = (await page.locator(".canvas-wrap").boundingBox()).width;
+  console.log("no horizontal scroll when collapsed:", await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth && document.body.scrollWidth <= window.innerWidth));
   await page.click('.inspector .icon-btn[title*="펼치기"]');
   await page.waitForTimeout(150);
   const w3 = (await page.locator(".inspector").boundingBox()).width;
@@ -400,7 +401,30 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.mouse.up();
   await page.waitForTimeout(150);
   console.log("dragged width:", (await page.locator(".inspector").boundingBox()).width);
+  // 오른쪽으로 계속 끌면 접힘 → 레일 버튼으로 다시 펼침
+  const h2 = await page.locator(".inspector-resize").boundingBox();
+  await page.mouse.move(h2.x + 3, h2.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(1440 - 120, h2.y + 200, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  console.log("drag past min → collapsed:", (await page.locator(".inspector").boundingBox()).width);
+  await page.click('.inspector .icon-btn[title*="펼치기"]');
+  await page.waitForTimeout(150);
+  console.log("reopened width:", (await page.locator(".inspector").boundingBox()).width);
   await page.click('.inspector-tools .icon-btn[title="보통 폭"]').catch(() => {});
+  // 화면에 맞추기: 뷰포트를 멀리 옮긴 뒤 버튼 → 장치들이 다시 캔버스 안에
+  await page.mouse.move(700, 450);
+  await page.keyboard.down("Alt");
+  await page.mouse.down();
+  await page.mouse.move(1100, 700, { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.up("Alt");
+  await page.click(".zoom .icon-btn");
+  await page.waitForTimeout(150);
+  const cw = await page.locator(".canvas-wrap").boundingBox();
+  const boxes = await page.locator("[data-device] .tile").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()));
+  console.log("fit: all tiles inside canvas:", boxes.every((b) => b.left >= cw.x && b.right <= cw.x + cw.width && b.top >= cw.y && b.bottom <= cw.y + cw.height));
 }
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 

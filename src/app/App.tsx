@@ -8,6 +8,7 @@ import {
   copySelected,
   duplicateSelected,
   exportJson,
+  fitSelectionOrAll,
   importJson,
   INSPECTOR_RAIL,
   inspectorOpen,
@@ -16,6 +17,7 @@ import {
   paste,
   redo,
   removeSelected,
+  requestFit,
   selectAll,
   selection,
   theme,
@@ -102,6 +104,12 @@ export function App() {
       } else if (mod && e.key.toLowerCase() === "a") {
         e.preventDefault();
         selectAll();
+      } else if (e.shiftKey && !mod && e.code === "Digit1") {
+        e.preventDefault();
+        requestFit();
+      } else if (e.shiftKey && !mod && e.code === "Digit2") {
+        e.preventDefault();
+        fitSelectionOrAll();
       } else if (e.key === "Escape") {
         selection.value = null;
       } else if (e.key === "Delete" || e.key === "Backspace") {

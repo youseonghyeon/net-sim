@@ -11,6 +11,7 @@ import {
   alignSelected,
   collapsedSections,
   duplicateSelected,
+  INSPECTOR_MIN,
   INSPECTOR_WIDE,
   inspectorOpen,
   inspectorWidth,
@@ -70,6 +71,7 @@ export function Inspector() {
   const width = inspectorWidth.value;
   const wide = width >= INSPECTOR_WIDE - 40;
   const resizing = useRef(false);
+  const startWidth = useRef(width);
   if (!inspectorOpen.value) {
     return (
       <aside class="inspector collapsed">
@@ -84,10 +86,20 @@ export function Inspector() {
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     resizing.current = true;
+    startWidth.current = inspectorWidth.peek();
   };
   const onResizeMove = (e: PointerEvent) => {
     if (!resizing.current) return;
-    setInspectorWidth(window.innerWidth - e.clientX);
+    const w = window.innerWidth - e.clientX;
+    // 최소 폭보다 한참 더 오른쪽으로 끌면 아예 접는다 (레일의 펼치기 버튼으로 다시 연다)
+    if (w < INSPECTOR_MIN - 70) {
+      resizing.current = false;
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      setInspectorWidth(startWidth.current); // 다시 펼치면 끌기 전 폭으로
+      toggleInspector();
+      return;
+    }
+    setInspectorWidth(w);
   };
   const onResizeUp = () => {
     resizing.current = false;

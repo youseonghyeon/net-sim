@@ -3,7 +3,7 @@ import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
 import { frameCategory, shortLabel } from "../core/packet";
 import { hostStatus, serviceBadges, sim, simTime, simVersion, wanStatus } from "../model/sim";
-import { beginCoalesce, connectDevices, endCoalesce, fitRequest, lintIssues, loadExample, moveDevices, selectedDeviceIds, selection, selectionOf, toggleDeviceSelection, tool, topology, viewport } from "../model/store";
+import { beginCoalesce, connectDevices, endCoalesce, fitRequest, lintIssues, loadExample, moveDevices, requestFit, selectedDeviceIds, selection, selectionOf, toggleDeviceSelection, tool, topology, viewport } from "../model/store";
 import type { LintIssue } from "../model/lint";
 import {
   baseSsid,
@@ -22,7 +22,7 @@ import {
   type PortSide,
   type WirelessLink,
 } from "../model/topology";
-import { GlyphInSvg } from "./Icons";
+import { GlyphInSvg, Icon } from "./Icons";
 
 type Drag =
   /** 선택된 장치들을 함께 옮긴다. starts = 드래그 시작 시 각 장치 위치 */
@@ -172,9 +172,11 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     }
   }
 
-  // 내용에 맞춰 보기: 장치 전체의 경계 상자를 화면 중앙에, 필요하면 축소
+  // 내용에 맞춰 보기: 장치(전체 또는 요청된 것들)의 경계 상자를 화면 중앙에, 필요하면 축소
   useEffect(() => {
-    const devices = topology.value.devices;
+    const req = fitRequest.value;
+    const all = topology.peek().devices;
+    const devices = req.ids ? all.filter((d) => req.ids!.includes(d.id)) : all;
     if (devices.length === 0) return;
     const rect = svgRef.current!.getBoundingClientRect();
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -192,7 +194,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
       x: (rect.width - (maxX - minX) * k) / 2 - minX * k,
       y: (rect.height - (maxY - minY) * k) / 2 - minY * k,
     };
-  }, [fitRequest.value]);
+  }, [fitRequest.value.seq]);
 
   useEffect(() => {
     const svg = svgRef.current!;
@@ -324,7 +326,12 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
           DNS
         </span>
       </div>
-      <div class="zoom">{Math.round(v.k * 100)}%</div>
+      <div class="zoom">
+        <button class="icon-btn" onClick={() => requestFit()} title="전체를 화면에 맞추기 (⇧1). 선택한 것만 맞추기는 ⇧2" disabled={t.devices.length === 0}>
+          <Icon name="fit" size={16} />
+        </button>
+        <span class="mono">{Math.round(v.k * 100)}%</span>
+      </div>
     </div>
   );
 }
