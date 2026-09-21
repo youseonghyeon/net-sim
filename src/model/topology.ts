@@ -1001,6 +1001,68 @@ export function exampleBackboneTopology(): Topology {
   return { devices, cables };
 }
 
+/**
+ * 도커 호스트를 부품으로: 집 LAN 의 PC 한 대(docker-host) 안에 브리지 네트워크(172.18.0.0/16)와 컨테이너 3개.
+ * NAT 박스 = 호스트의 iptables(MASQUERADE + -p DNAT), 스위치 = 브리지(veth 가 꽂히는 곳), 서버 = 컨테이너, DNS 서버 = embedded DNS(실제로는 127.0.0.11).
+ */
+export function exampleDockerTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const inet = add("internet", 344, -232);
+  const rt = add("router", 344, -80);
+  const sw = add("switch", 344, 96);
+  const pc = add("pc", 120, 264); // 같은 집 LAN 의 다른 PC
+  const host = add("nat", 568, 264); // 도커가 돌아가는 컴퓨터. outside = 그 컴퓨터의 LAN NIC, inside = 브리지 게이트웨이
+  host.name = "docker-host";
+  host.l3 = {
+    interfaces: [
+      { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" }, // 공유기에서 주소를 받는다 (컴퓨터 한 대일 뿐)
+      { ipMode: "static", ip: "172.18.0.1", prefix: 16, gateway: "" }, // 사용자 정의 브리지 "app" 의 게이트웨이
+    ],
+    routes: [],
+    // docker run -p 8080:80 web
+    forwards: [{ publicPort: 8080, lanIp: "172.18.0.2", lanPort: 80 }],
+  };
+  const br = add("switch", 568, 440);
+  br.name = "bridge (app)";
+  const web = add("server", 456, 608);
+  const db = add("server", 616, 608);
+  const dns = add("server", 776, 608);
+  web.name = "web";
+  db.name = "db";
+  dns.name = "embedded-dns";
+  const container = (d: Device, ip: string, services: number[]) => {
+    d.host = { ipMode: "static", ip, prefix: 16, gateway: "172.18.0.1", dns: "172.18.0.53", services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  container(web, "172.18.0.2", [80]);
+  container(db, "172.18.0.3", [5432]);
+  container(dns, "172.18.0.53", []);
+  // 같은 사용자 정의 네트워크의 컨테이너는 이름으로 찾는다. 모르는 이름은 호스트가 쓰는 DNS 로 넘긴다
+  dns.host!.dnsServer = {
+    enabled: true,
+    records: [
+      { name: "web", ip: "172.18.0.2" },
+      { name: "db", ip: "172.18.0.3" },
+    ],
+    upstream: "8.8.8.8",
+  };
+  const cables: Cable[] = [
+    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: rt.id, port: 0 } },
+    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 3 } },
+    { id: newId("cable"), a: { device: sw.id, port: 0 }, b: { device: pc.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw.id, port: 7 }, b: { device: host.id, port: 0 } }, // 호스트 NIC
+    { id: newId("cable"), a: { device: host.id, port: 1 }, b: { device: br.id, port: 3 } }, // 브리지 게이트웨이
+    { id: newId("cable"), a: { device: br.id, port: 0 }, b: { device: web.id, port: 0 } }, // veth
+    { id: newId("cable"), a: { device: br.id, port: 4 }, b: { device: db.id, port: 0 } },
+    { id: newId("cable"), a: { device: br.id, port: 7 }, b: { device: dns.id, port: 0 } },
+  ];
+  return { devices, cables };
+}
+
 /** 허브 vs 스위치: 같은 공유기 아래 한쪽은 허브, 한쪽은 스위치. ping 이 어디까지 퍼지는지 비교 */
 export function exampleHubTopology(): Topology {
   const devices: Device[] = [];
@@ -1085,7 +1147,7 @@ export function exampleRoamingTopology(): Topology {
   return { devices, cables };
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "gateways" | "hub" | "vlan" | "firewall" | "roaming";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "gateways" | "hub" | "vlan" | "firewall" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -1119,6 +1181,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
   hub: { id: "hub", group: "L2", label: "허브 vs 스위치", blurb: "pc-1 → pc-2 ping 이 허브의 모든 포트(공유기까지)로 복제되는 것과, pc-3 → pc-4 가 스위치에서 그 포트로만 가는 것을 비교하세요.", build: exampleHubTopology },
   vlan: { id: "vlan", group: "L2", label: "VLAN 으로 나눈 사무실 (트렁크 + 서브 인터페이스)", blurb: "같은 스위치인데 VLAN 10 과 20 은 게이트웨이 서브 인터페이스를 거쳐야 통신됩니다.", build: exampleVlanTopology },
   firewall: { id: "firewall", group: "서비스", label: "방화벽 (ping 은 되고 웹은 막힘)", blurb: "pc-1 에서 example.com 으로 ping 은 되지만 TCP 80 연결은 공유기 방화벽 규칙 1 에서 차단됩니다. 인터넷 쪽 클라이언트의 ping 도 막힙니다.", build: exampleFirewallTopology },
+  docker: {
+    id: "docker",
+    group: "서비스",
+    label: "도커 호스트를 부품으로 (브리지 + MASQUERADE + -p + embedded DNS)",
+    blurb: "pc-1 에서 172.18.0.2 로 ping 은 실패하지만(호스트 뒤 사설망), docker-host 의 LAN 주소:8080 으로 TCP 연결은 -p 포워딩으로 web 에 닿습니다. web 에서 db 는 이름으로, google.com 은 MASQUERADE 로 나갑니다.",
+    build: exampleDockerTopology,
+  },
   roaming: { id: "roaming", group: "무선", label: "무선 로밍 (같은 SSID 의 AP 두 대)", blurb: "phone-1 을 오른쪽 AP 쪽으로 끌면 가까운 AP 로 갈아타고 DHCP 를 다시 합니다.", build: exampleRoamingTopology },
 };
 

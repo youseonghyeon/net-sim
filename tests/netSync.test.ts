@@ -117,6 +117,26 @@ describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트�
     expect(ping(s, broken, "pc-1", "192.168.3.10")).toMatchObject({ status: "failed" });
   });
 
+  it("도커 호스트: 컨테이너 IP 는 LAN 에서 직접 못 닿고, -p 포워딩으로만 열리며, 컨테이너끼리는 이름으로 찾는다", () => {
+    const { s, t } = load("docker");
+    const host = s.net.nodes.get(byName(t, "docker-host").id) as L3Node;
+    const hostIp = host.ifaces[0]!.ip!;
+    expect(hostIp).toMatch(/^192\.168\.0\./); // 호스트 NIC 은 공유기 DHCP 로
+    // LAN 의 PC 에서 컨테이너 주소로 직접: 실패 (사설망 뒤)
+    expect(ping(s, t, "pc-1", "172.18.0.2")).toMatchObject({ status: "failed" });
+    // -p 8080:80 → web
+    const pc = byName(t, "pc-1").id;
+    s.net.scheduleAction(s.net.now, { kind: "tcp-connect", nodeId: pc, dst: hostIp, port: 8080 });
+    s.net.runToIdle();
+    const conn = [...(s.net.nodes.get(pc) as Host).tcp.conns.values()].at(-1)!;
+    expect(conn).toMatchObject({ state: "CLOSED", bytesReceived: 3000 });
+    expect(s.net.trace.some((e) => e.nodeId === host.id && e.kind === "nat.forward.rule")).toBe(true);
+    // 컨테이너끼리 이름으로, 밖으로는 MASQUERADE
+    expect(ping(s, t, "web", "db")).toMatchObject({ status: "ok", resolved: "172.18.0.3" });
+    expect(ping(s, t, "web", "google.com")).toMatchObject({ status: "ok" });
+    expect(s.net.trace.some((e) => e.nodeId === host.id && e.kind === "nat.translate")).toBe(true);
+  });
+
   it("게이트웨이 2단: 옆 서브넷은 정적 경로로 바로, 인터넷은 NAT 로. NAT 의 되돌아오는 경로를 지우면 응답이 끊긴다", () => {
     const { s, t } = load("gateways");
     expect(ping(s, t, "pc-1", "192.168.5.10")).toMatchObject({ status: "ok" });
