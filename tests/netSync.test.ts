@@ -86,6 +86,21 @@ describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트�
     expect(s.net.trace.some((e) => e.kind === "arp.request.sent")).toBe(true);
   });
 
+  it("집 두 곳: 게이트웨이 둘이 if0 로 직접 이어져 정적 경로로 오가고, 경로를 지우면 '경로 없음'", () => {
+    const { s, t } = load("homes");
+    expect(ping(s, t, "pc-1", "192.168.1.11")).toMatchObject({ status: "ok" }); // 같은 집
+    expect(ping(s, t, "pc-1", "192.168.2.10")).toMatchObject({ status: "ok" }); // 다른 집
+    expect(ping(s, t, "pc-4", "192.168.1.10")).toMatchObject({ status: "ok" }); // 반대 방향
+    const pc1 = byName(t, "pc-1").id;
+    s.net.scheduleAction(s.net.now, { kind: "traceroute", nodeId: pc1, dst: "192.168.2.10" });
+    s.net.runToIdle();
+    expect(host(s, t, "pc-1").traceroutes.at(-1)).toMatchObject({ status: "done", hops: [{ ip: "192.168.1.1" }, { ip: "10.0.0.2" }, { ip: "192.168.2.10" }] });
+    const broken = patch(t, "gw-1", (d) => ({ ...d, l3: { ...d.l3!, routes: [] } }));
+    s.sync(broken);
+    expect(ping(s, broken, "pc-1", "192.168.2.10")).toMatchObject({ status: "failed" });
+    expect(s.net.trace.some((e) => e.nodeId === byName(t, "gw-1").id && e.kind === "ip.no-route")).toBe(true);
+  });
+
   it("게이트웨이 2단: 옆 서브넷은 정적 경로로 바로, 인터넷은 NAT 로. NAT 의 되돌아오는 경로를 지우면 응답이 끊긴다", () => {
     const { s, t } = load("gateways");
     expect(ping(s, t, "pc-1", "192.168.5.10")).toMatchObject({ status: "ok" });

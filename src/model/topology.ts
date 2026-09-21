@@ -914,6 +914,51 @@ export function exampleTwoGatewaysTopology(): Topology {
   return { devices, cables };
 }
 
+/** 집 두 곳 잇기: 인터넷 없이 게이트웨이 둘을 if0 끼리 직접 잇고, 서로의 서브넷을 정적 경로로 안다 */
+export function exampleTwoHomesTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const gw1 = add("gateway", 96, 200);
+  const gw2 = add("gateway", 592, 200);
+  const gwCfg = (linkIp: string, lanIp: string, otherDest: string, otherVia: string): L3Settings => ({
+    interfaces: [
+      { ipMode: "static", ip: linkIp, prefix: 24, gateway: "" }, // if0: 두 집 사이 링크(10.0.0.0/24). 인터넷이 없으니 기본 경로도 없다
+      { ipMode: "static", ip: lanIp, prefix: 24, gateway: "" },
+      { ipMode: "static", ip: "", prefix: 24, gateway: "" },
+    ],
+    routes: [{ dest: otherDest, prefix: 24, via: otherVia }], // 상대 집 서브넷은 상대 게이트웨이로
+  });
+  gw1.l3 = gwCfg("10.0.0.1", "192.168.1.1", "192.168.2.0", "10.0.0.2");
+  gw2.l3 = gwCfg("10.0.0.2", "192.168.2.1", "192.168.1.0", "10.0.0.1");
+  const sw1 = add("switch", 96, 376);
+  const sw2 = add("switch", 592, 376);
+  const pc1 = add("pc", 24, 544);
+  const pc2 = add("pc", 184, 544);
+  const pc3 = add("pc", 520, 544);
+  const pc4 = add("pc", 680, 544);
+  const staticHost = (d: Device, ip: string, gw: string) => {
+    d.host = { ipMode: "static", ip, prefix: 24, gateway: gw, services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  staticHost(pc1, "192.168.1.10", "192.168.1.1");
+  staticHost(pc2, "192.168.1.11", "192.168.1.1");
+  staticHost(pc3, "192.168.2.10", "192.168.2.1");
+  staticHost(pc4, "192.168.2.11", "192.168.2.1");
+  const cables: Cable[] = [
+    { id: newId("cable"), a: { device: gw1.id, port: 0 }, b: { device: gw2.id, port: 0 } }, // if0 ↔ if0
+    { id: newId("cable"), a: { device: gw1.id, port: 1 }, b: { device: sw1.id, port: 3 } },
+    { id: newId("cable"), a: { device: gw2.id, port: 1 }, b: { device: sw2.id, port: 3 } },
+    { id: newId("cable"), a: { device: sw1.id, port: 0 }, b: { device: pc1.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw1.id, port: 5 }, b: { device: pc2.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw2.id, port: 1 }, b: { device: pc3.id, port: 0 } },
+    { id: newId("cable"), a: { device: sw2.id, port: 6 }, b: { device: pc4.id, port: 0 } },
+  ];
+  return { devices, cables };
+}
+
 /** 허브 vs 스위치: 같은 공유기 아래 한쪽은 허브, 한쪽은 스위치. ping 이 어디까지 퍼지는지 비교 */
 export function exampleHubTopology(): Topology {
   const devices: Device[] = [];
@@ -998,7 +1043,7 @@ export function exampleRoamingTopology(): Topology {
   return { devices, cables };
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "gateways" | "hub" | "vlan" | "firewall" | "roaming";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "gateways" | "hub" | "vlan" | "firewall" | "roaming";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -1014,6 +1059,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
   starter: { id: "starter", group: "기본", label: "PC 2대 + 스위치 (수동 IP)", blurb: "pc-1 에서 pc-2 로 ping 하면 ARP 로 MAC 을 찾은 뒤 ICMP 가 오갑니다.", build: exampleStarterTopology },
   router: { id: "router", group: "기본", label: "공유기 하나로 (DHCP + NAT + 포트 포워딩 + Wi-Fi)", blurb: "케이블만 꽂으면 DHCP 로 주소를 받고, google.com 으로 ping 하면 DNS → NAT 를 거칩니다.", build: exampleTopology },
   parts: { id: "parts", group: "기능 단위", label: "기능 단위로 (NAT 박스 + 게이트웨이 + DHCP/DNS 서버)", blurb: "공유기를 상자별로 뜯은 구성. 노트북은 게이트웨이 릴레이로 다른 서브넷의 DHCP 서버에서 주소를 받습니다.", build: examplePartsTopology },
+  homes: {
+    id: "homes",
+    group: "기능 단위",
+    label: "집 두 곳 잇기 (게이트웨이 ↔ 게이트웨이, 인터넷 없음)",
+    blurb: "pc-1 → 192.168.2.10 은 gw-1 → gw-2 두 홉을 지납니다. \"경로\" 로 홉을 확인하고, gw-1 의 정적 경로를 지우면 '경로 없음' 으로 바뀝니다.",
+    build: exampleTwoHomesTopology,
+  },
   gateways: { id: "gateways", group: "기능 단위", label: "게이트웨이 2단 (라우터 전용 서브넷 + 정적 경로)", blurb: "pc-1 → 192.168.5.10 은 gw-1 이 정적 경로로 gw-2 에 바로 넘기고, 인터넷은 NAT 로 올라갑니다. NAT 의 정적 경로를 지우면 응답이 돌아오지 못합니다.", build: exampleTwoGatewaysTopology },
   hub: { id: "hub", group: "L2", label: "허브 vs 스위치", blurb: "pc-1 → pc-2 ping 이 허브의 모든 포트(공유기까지)로 복제되는 것과, pc-3 → pc-4 가 스위치에서 그 포트로만 가는 것을 비교하세요.", build: exampleHubTopology },
   vlan: { id: "vlan", group: "L2", label: "VLAN 으로 나눈 사무실 (트렁크 + 서브 인터페이스)", blurb: "같은 스위치인데 VLAN 10 과 20 은 게이트웨이 서브 인터페이스를 거쳐야 통신됩니다.", build: exampleVlanTopology },
