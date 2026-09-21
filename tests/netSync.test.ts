@@ -101,6 +101,22 @@ describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트�
     expect(s.net.trace.some((e) => e.nodeId === byName(t, "gw-1").id && e.kind === "ip.no-route")).toBe(true);
   });
 
+  it("백본: 집 세 곳이 스위치 하나에서 만나고, 경로 하나를 지우면 그 집만 못 간다", () => {
+    const { s, t } = load("backbone");
+    expect(ping(s, t, "pc-1", "192.168.2.10")).toMatchObject({ status: "ok" });
+    expect(ping(s, t, "pc-1", "192.168.3.10")).toMatchObject({ status: "ok" });
+    expect(ping(s, t, "pc-4", "192.168.1.11")).toMatchObject({ status: "ok" });
+    const pc1 = byName(t, "pc-1").id;
+    s.net.scheduleAction(s.net.now, { kind: "traceroute", nodeId: pc1, dst: "192.168.3.10" });
+    s.net.runToIdle();
+    expect(host(s, t, "pc-1").traceroutes.at(-1)).toMatchObject({ status: "done", hops: [{ ip: "192.168.1.1" }, { ip: "10.0.0.3" }, { ip: "192.168.3.10" }] });
+    // gw-1 에서 3번 집 경로만 지우면 2번 집은 되고 3번 집은 경로 없음
+    const broken = patch(t, "gw-1", (d) => ({ ...d, l3: { ...d.l3!, routes: d.l3!.routes.filter((r) => r.dest !== "192.168.3.0") } }));
+    s.sync(broken);
+    expect(ping(s, broken, "pc-1", "192.168.2.10")).toMatchObject({ status: "ok" });
+    expect(ping(s, broken, "pc-1", "192.168.3.10")).toMatchObject({ status: "failed" });
+  });
+
   it("게이트웨이 2단: 옆 서브넷은 정적 경로로 바로, 인터넷은 NAT 로. NAT 의 되돌아오는 경로를 지우면 응답이 끊긴다", () => {
     const { s, t } = load("gateways");
     expect(ping(s, t, "pc-1", "192.168.5.10")).toMatchObject({ status: "ok" });

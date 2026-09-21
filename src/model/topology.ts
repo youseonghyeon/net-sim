@@ -959,6 +959,48 @@ export function exampleTwoHomesTopology(): Topology {
   return { devices, cables };
 }
 
+/** 백본: 집 세 곳의 게이트웨이 if0 을 스위치 하나(10.0.0.0/24, 라우터만 사는 서브넷)에 모은다. 인터넷 없음 */
+export function exampleBackboneTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const bb = add("switch", 368, 40);
+  bb.name = "sw-backbone";
+  const homes = [
+    { x: 48, link: "10.0.0.1", lan: "192.168.1", bbPort: 0 },
+    { x: 368, link: "10.0.0.2", lan: "192.168.2", bbPort: 3 },
+    { x: 688, link: "10.0.0.3", lan: "192.168.3", bbPort: 7 },
+  ];
+  const cables: Cable[] = [];
+  homes.forEach((h, i) => {
+    const gw = add("gateway", h.x, 216);
+    gw.l3 = {
+      interfaces: [
+        { ipMode: "static", ip: h.link, prefix: 24, gateway: "" }, // if0: 백본 쪽. 인터넷이 없으니 기본 경로 없음
+        { ipMode: "static", ip: `${h.lan}.1`, prefix: 24, gateway: "" },
+        { ipMode: "static", ip: "", prefix: 24, gateway: "" },
+      ],
+      // 다른 집 서브넷마다 그 집 게이트웨이의 백본 주소로
+      routes: homes.filter((o) => o !== h).map((o) => ({ dest: `${o.lan}.0`, prefix: 24, via: o.link })),
+    };
+    const sw = add("switch", h.x, 392);
+    const a = add(i === 2 ? "server" : "pc", h.x - 40, 560);
+    const b = add("pc", h.x + 120, 560);
+    a.host = { ipMode: "static", ip: `${h.lan}.10`, prefix: 24, gateway: `${h.lan}.1`, services: i === 2 ? [80] : [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+    b.host = { ipMode: "static", ip: `${h.lan}.11`, prefix: 24, gateway: `${h.lan}.1`, services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+    cables.push(
+      { id: newId("cable"), a: { device: gw.id, port: 0 }, b: { device: bb.id, port: h.bbPort } },
+      { id: newId("cable"), a: { device: gw.id, port: 1 }, b: { device: sw.id, port: 3 } },
+      { id: newId("cable"), a: { device: sw.id, port: 0 }, b: { device: a.id, port: 0 } },
+      { id: newId("cable"), a: { device: sw.id, port: 6 }, b: { device: b.id, port: 0 } },
+    );
+  });
+  return { devices, cables };
+}
+
 /** 허브 vs 스위치: 같은 공유기 아래 한쪽은 허브, 한쪽은 스위치. ping 이 어디까지 퍼지는지 비교 */
 export function exampleHubTopology(): Topology {
   const devices: Device[] = [];
@@ -1043,7 +1085,7 @@ export function exampleRoamingTopology(): Topology {
   return { devices, cables };
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "gateways" | "hub" | "vlan" | "firewall" | "roaming";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "gateways" | "hub" | "vlan" | "firewall" | "roaming";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -1065,6 +1107,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "집 두 곳 잇기 (게이트웨이 ↔ 게이트웨이, 인터넷 없음)",
     blurb: "pc-1 → 192.168.2.10 은 gw-1 → gw-2 두 홉을 지납니다. \"경로\" 로 홉을 확인하고, gw-1 의 정적 경로를 지우면 '경로 없음' 으로 바뀝니다.",
     build: exampleTwoHomesTopology,
+  },
+  backbone: {
+    id: "backbone",
+    group: "기능 단위",
+    label: "백본 스위치로 집 세 곳 잇기 (라우터 전용 서브넷)",
+    blurb: "게이트웨이 셋의 if0 이 sw-backbone(10.0.0.0/24) 에서 만납니다. 게이트웨이마다 다른 두 집으로 가는 정적 경로가 있고, 하나를 지우면 그 집만 못 갑니다.",
+    build: exampleBackboneTopology,
   },
   gateways: { id: "gateways", group: "기능 단위", label: "게이트웨이 2단 (라우터 전용 서브넷 + 정적 경로)", blurb: "pc-1 → 192.168.5.10 은 gw-1 이 정적 경로로 gw-2 에 바로 넘기고, 인터넷은 NAT 로 올라갑니다. NAT 의 정적 경로를 지우면 응답이 돌아오지 못합니다.", build: exampleTwoGatewaysTopology },
   hub: { id: "hub", group: "L2", label: "허브 vs 스위치", blurb: "pc-1 → pc-2 ping 이 허브의 모든 포트(공유기까지)로 복제되는 것과, pc-3 → pc-4 가 스위치에서 그 포트로만 가는 것을 비교하세요.", build: exampleHubTopology },
