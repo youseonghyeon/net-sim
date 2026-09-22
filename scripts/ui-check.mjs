@@ -115,7 +115,7 @@ await page.screenshot({ path: `${OUT}/18-firewall.png` });
 await fwSection.locator(".toggle").first().click(); // 다시 끔 (첫 토글 = 켜짐/꺼짐)
 await page.waitForTimeout(100);
 async function wanOf() {
-  return (await device("rt-1").locator("text.addr, text.status").nth(1).textContent()) ?? "";
+  return (await device("rt-1").locator("text.uplink").textContent()) ?? "";
 }
 for (let i = 0; i < 100 && !/WAN 203\.0\.113\./.test(await wanOf()); i++) await page.waitForTimeout(100);
 console.log("rt-1 wan →", await wanOf());
@@ -247,7 +247,7 @@ console.log("parts example devices:", await page.locator("[data-device]").count(
 console.log("pc-1 (DHCP from dhcp-srv) →", await waitAddr("pc-1", /^192\.168\.1\.\d+\/24$/));
 console.log("laptop-1 (DHCP via gateway relay) →", await waitAddr("laptop-1", /^192\.168\.2\.\d+\/24$/));
 console.log("badges:", await page.locator(".badge text").allTextContents());
-const natLine = () => device("nat-1").locator("text.addr, text.status").nth(1).textContent();
+const natLine = () => device("nat-1").locator("text.uplink").textContent();
 for (let i = 0; i < 100 && !/outside 203\.0\.113\./.test((await natLine()) ?? ""); i++) await page.waitForTimeout(100);
 console.log("nat-1 outside →", await natLine());
 await clickDevice("pc-1");

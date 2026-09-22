@@ -460,14 +460,15 @@ function DeviceView({ d, used, selected, targeted, source, issues }: { d: Device
           <text class="name" x={50} y={addr ? 20 : spec.height / 2 + 5}>
             {d.name}
           </text>
-          {addr && (
-            <text class={`${addr.mono ? "addr" : "status"} ${addr.tone}`} x={50} y={35}>
-              {addr.text}
+          {/* 위 포트(WAN/if0/outside)가 위에, 아래 포트(LAN/if1·if2/inside)가 아래 — 타일의 포트 배치와 같은 순서 */}
+          {wan && (
+            <text class={`${wan.mono ? "addr" : "status"} ${wan.tone} uplink`} x={50} y={35}>
+              {wan.text}
             </text>
           )}
-          {wan && (
-            <text class={`${wan.mono ? "addr" : "status"} ${wan.tone}`} x={50} y={50}>
-              {wan.text}
+          {addr && (
+            <text class={`${addr.mono ? "addr" : "status"} ${addr.tone}`} x={50} y={wan ? 50 : 35}>
+              {addr.text}
             </text>
           )}
         </>
