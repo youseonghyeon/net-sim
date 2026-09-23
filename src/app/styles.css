@@ -37,7 +37,7 @@
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --radius: 8px;
   --topbar-h: 44px;
-  --palette-w: 72px;
+  --palette-w: 140px;
   --inspector-w: 304px;
 }
 :root[data-theme="dark"] {
@@ -294,22 +294,45 @@ select.btn.example {
   overflow-y: auto;
   scrollbar-width: none;
 }
+/* 도구(선택·케이블·영역)는 맨 위 가로 한 줄 */
+.palette-tools {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.palette-tools .tool {
+  font-size: 10px;
+}
+/* 장치 묶음: 작은 회색 캡션 + 2열 격자 */
 .palette-group {
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-.palette-sep {
-  height: 1px;
+  padding-top: 6px;
   flex-shrink: 0;
-  background: var(--line);
-  margin: 4px 4px;
+}
+.palette-caption {
+  margin: 0;
+  padding: 0 4px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.palette-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
 }
 .tool {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
+  min-width: 0;
+  white-space: nowrap;
   padding: 6px 0 5px;
   border: 0;
   border-radius: var(--radius);

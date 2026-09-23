@@ -1,7 +1,7 @@
 import { useSignal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 import { addDevice, tool, viewport } from "../model/store";
-import { DEVICE_SPECS, PALETTE_ORDER, type DeviceKind } from "../model/topology";
+import { DEVICE_SPECS, PALETTE_GROUPS, type DeviceKind } from "../model/topology";
 import { Icon } from "./Icons";
 
 interface Ghost {
@@ -72,7 +72,7 @@ export function Palette() {
   const g = ghost.value;
   return (
     <aside class="palette">
-      <div class="palette-group">
+      <div class="palette-tools">
         <button class={`tool${tool.value === "select" ? " on" : ""}`} onClick={() => (tool.value = "select")} title="선택 · 이동 (V)">
           <Icon name="cursor" />
           <span>선택</span>
@@ -86,15 +86,19 @@ export function Palette() {
           <span>영역</span>
         </button>
       </div>
-      <div class="palette-sep" />
-      <div class="palette-group">
-        {PALETTE_ORDER.map((kind) => (
-          <button key={kind} class="tool item" onPointerDown={(e) => onPointerDown(kind, e)} title={`${DEVICE_SPECS[kind].label} 추가 — 캔버스로 끌어다 놓기`}>
-            <Icon name={kind} />
-            <span>{DEVICE_SPECS[kind].label}</span>
-          </button>
-        ))}
-      </div>
+      {PALETTE_GROUPS.map((g) => (
+        <section key={g.label} class="palette-group">
+          <h4 class="palette-caption">{g.label}</h4>
+          <div class="palette-grid">
+            {g.kinds.map((kind) => (
+              <button key={kind} class="tool item" onPointerDown={(e) => onPointerDown(kind, e)} title={`${DEVICE_SPECS[kind].label} 추가 — 캔버스로 끌어다 놓기`}>
+                <Icon name={kind} />
+                <span>{DEVICE_SPECS[kind].label}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
       {g && (
         <div class="drag-ghost" style={{ left: g.x, top: g.y }}>
           <Icon name={g.kind} size={24} />

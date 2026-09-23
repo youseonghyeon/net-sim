@@ -121,7 +121,13 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
   },
 };
 
-export const PALETTE_ORDER: DeviceKind[] = ["pc", "laptop", "phone", "server", "hub", "switch", "ap", "router", "gateway", "nat", "firewall", "internet"];
+/** 팔레트 묶음: 패킷이 나가는 순서(단말 → 스위칭 → 라우팅·경계 → 인터넷) */
+export const PALETTE_GROUPS: { label: string; kinds: DeviceKind[] }[] = [
+  { label: "단말", kinds: ["pc", "laptop", "phone", "server"] },
+  { label: "스위칭", kinds: ["hub", "switch", "ap"] },
+  { label: "라우팅·경계", kinds: ["router", "gateway", "nat", "firewall", "internet"] },
+];
+export const PALETTE_ORDER: DeviceKind[] = PALETTE_GROUPS.flatMap((g) => g.kinds);
 
 export interface DhcpPoolSettings {
   start: string;
