@@ -574,6 +574,15 @@ select.btn.example {
   stroke: var(--tile-line);
   stroke-width: 1;
 }
+.device .port-hit {
+  fill: transparent;
+  cursor: crosshair;
+}
+/* 케이블을 긋는 중 시작/목표 포트 강조 */
+.device .port-slot.marked .port {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
 .device .port.used {
   fill: var(--ink);
   stroke: var(--ink);

@@ -12,6 +12,7 @@ import {
   exportJson,
   importJson,
   loadExample,
+  moveCableEnd,
   moveDevices,
   moveZoneWithContents,
   paste,
@@ -225,5 +226,35 @@ describe("영역", () => {
     clearAll();
     importJson(text);
     expect(topology.value.zones![0]!.label).toBe("집");
+  });
+});
+
+describe("케이블 포트 지정", () => {
+  it("원하는 포트끼리 잇고, 쓰는 중·없는·무선 포트는 이유와 함께 거부한다", () => {
+    const sw = addDevice("switch", 0, 0);
+    const pc = addDevice("pc", 0, 200);
+    const pc2 = addDevice("pc", 200, 200);
+    const phone = addDevice("phone", 400, 200);
+    const r = connectDevices(pc.id, sw.id, 0, 5);
+    expect(r.cable?.b).toEqual({ device: sw.id, port: 5 });
+    expect(connectDevices(pc2.id, sw.id, 0, 5).error).toContain("이미 케이블이 꽂혀");
+    expect(connectDevices(pc2.id, sw.id, 0, 99).error).toContain("포트가 없습니다");
+    expect(connectDevices(phone.id, sw.id).error).toContain("무선 전용");
+    // 포트를 안 주면 예전처럼 빈 포트 자동 선택
+    expect(connectDevices(pc2.id, sw.id).cable?.b.port).not.toBe(5);
+  });
+
+  it("케이블 한쪽 끝을 다른 포트로 옮기고, 되돌리기가 된다", () => {
+    const sw = addDevice("switch", 0, 0);
+    const pc = addDevice("pc", 0, 200);
+    const pc2 = addDevice("pc", 200, 200);
+    const c = connectDevices(pc.id, sw.id, 0, 1).cable!;
+    connectDevices(pc2.id, sw.id, 0, 2);
+    const swEnd = c.a.device === sw.id ? "a" : "b";
+    expect(moveCableEnd(c.id, swEnd, 2)).toContain("이미 케이블이 꽂혀");
+    expect(moveCableEnd(c.id, swEnd, 6)).toBeUndefined();
+    expect(topology.value.cables.find((x) => x.id === c.id)![swEnd].port).toBe(6);
+    undo();
+    expect(topology.value.cables.find((x) => x.id === c.id)![swEnd].port).toBe(1);
   });
 });

@@ -16,6 +16,7 @@ import {
   normalizeTopology,
   parseTopology,
   planCable,
+  portProblem,
   serializeTopology,
   snap,
   type AlignMode,
@@ -356,10 +357,22 @@ export function duplicateSelected(): Device[] {
 }
 
 /** 두 장치를 잇는다. 포트는 상대를 향한 빈 포트를 자동 선택. 실패 사유를 문자열로 돌려준다 */
-export function connectDevices(aId: string, bId: string): { cable?: Cable; error?: string } {
-  const plan = planCable(topology.value, aId, bId);
+export function connectDevices(aId: string, bId: string, aPort?: number, bPort?: number): { cable?: Cable; error?: string } {
+  const plan = planCable(topology.value, aId, bId, aPort, bPort);
   if ("error" in plan) return { error: plan.error };
   return { cable: addCable(plan.a, plan.b) };
+}
+
+/** 케이블 한쪽 끝을 같은 장치의 다른 포트로 옮긴다. 실패 이유를 돌려준다 */
+export function moveCableEnd(id: string, end: "a" | "b", port: number): string | undefined {
+  const t = topology.value;
+  const c = t.cables.find((x) => x.id === id);
+  if (!c) return "케이블을 찾을 수 없습니다";
+  if (c[end].port === port) return undefined;
+  const why = portProblem(t, { device: c[end].device, port }, id);
+  if (why) return why;
+  setTopology({ ...t, cables: t.cables.map((x) => (x.id === id ? { ...x, [end]: { device: x[end].device, port } } : x)) });
+  return undefined;
 }
 
 export function addCable(a: PortRef, b: PortRef): Cable {

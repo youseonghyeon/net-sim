@@ -18,6 +18,7 @@ import {
   inspectorOpen,
   inspectorWidth,
   lintIssues,
+  moveCableEnd,
   removeCable,
   removeDevice,
   removeDevices,
@@ -51,6 +52,7 @@ import {
   DEFAULT_WIFI_BASE,
   defaultL3,
   peerOf,
+  portProblem,
   specOf,
   type Cable,
   type Device,
@@ -278,7 +280,7 @@ function NetworkPanel() {
       <Section title="사용법">
         <ul class="hints">
           <li>팔레트의 장치를 캔버스로 끌어다 놓습니다.</li>
-          <li>케이블 도구(C)로 장치에서 장치로 끌면 빈 포트끼리 연결됩니다. Shift 를 누른 채 끌어도 됩니다.</li>
+          <li>케이블 도구(C)로 장치에서 장치로 끌면 빈 포트끼리 연결됩니다. Shift 를 누른 채 끌어도 됩니다. 포트 칸을 잡고 끌어 상대 포트 칸에 놓으면 그 포트끼리 연결됩니다.</li>
           <li>빈 곳을 끌면 영역 선택, Shift+클릭으로 선택에 더하거나 뺍니다. 선택한 묶음은 함께 옮기고 ⌘C · ⌘V · ⌘D 로 복제합니다.</li>
           <li>⌘Z 되돌리기, ⌘⇧Z 다시 실행. 상단의 화살표 버튼도 같습니다.</li>
           <li>휠로 이동, ⌘ + 휠로 확대·축소, ⌥ 를 누른 채 끌어도 이동합니다.</li>
@@ -346,6 +348,38 @@ function ZonePanel({ z }: { z: Zone }) {
   );
 }
 
+/** 케이블 한쪽 끝: 장치 이름 + 포트 선택 (쓰는 중인 포트는 비활성) */
+function CableEndField({ c, end }: { c: Cable; end: "a" | "b" }) {
+  const t = topology.value;
+  const ref = c[end];
+  const d = t.devices.find((x) => x.id === ref.device);
+  if (!d) return null;
+  const spec = specOf(d);
+  return (
+    <Field label={d.name}>
+      <select
+        class="input mono"
+        value={String(ref.port)}
+        onChange={(e) => {
+          const err = moveCableEnd(c.id, end, Number(e.currentTarget.value));
+          if (err) e.currentTarget.value = String(ref.port);
+        }}
+      >
+        {spec.ports.map((p, i) => {
+          if (p.radio) return null;
+          const busy = i !== ref.port && portProblem(t, { device: d.id, port: i }, c.id) !== undefined;
+          return (
+            <option key={i} value={String(i)} disabled={busy}>
+              {p.name}
+              {busy ? " (사용 중)" : ""}
+            </option>
+          );
+        })}
+      </select>
+    </Field>
+  );
+}
+
 function CablePanel({ c }: { c: Cable }) {
   return (
     <>
@@ -357,14 +391,9 @@ function CablePanel({ c }: { c: Cable }) {
         </div>
       </header>
       <Section title="연결">
-        <div class="stat-row">
-          <span>{deviceName(c.a.device)}</span>
-          <b class="mono">{portName(c.a.device, c.a.port)}</b>
-        </div>
-        <div class="stat-row">
-          <span>{deviceName(c.b.device)}</span>
-          <b class="mono">{portName(c.b.device, c.b.port)}</b>
-        </div>
+        <CableEndField c={c} end="a" />
+        <CableEndField c={c} end="b" />
+        <p class="note">포트를 바꾸면 케이블이 그 포트로 옮겨 꽂힙니다. 이미 다른 케이블이 꽂힌 포트는 고를 수 없습니다. 캔버스에서 포트 칸을 잡고 끌어도 원하는 포트끼리 이을 수 있습니다.</p>
       </Section>
       <Section title="실험: 패킷 손실">
         <Field label="손실률">

@@ -656,7 +656,23 @@ export function parseTopology(text: string): { topology?: Topology; error?: stri
 }
 
 /** 두 장치를 잇는 케이블의 양 끝 포트를 정한다. 못 잇는 이유는 사용자에게 보일 문장으로 돌려준다 */
-export function planCable(t: Topology, aId: string, bId: string): { a: PortRef; b: PortRef } | { error: string } {
+/** 이 포트에 케이블을 꽂을 수 있는지. 안 되면 이유 (except: 옮기는 중인 케이블은 자기 자리를 비운 것으로 본다) */
+export function portProblem(t: Topology, ref: PortRef, except?: string): string | undefined {
+  const d = t.devices.find((x) => x.id === ref.device);
+  if (!d) return "장치를 찾을 수 없습니다";
+  const p = DEVICE_SPECS[d.kind].ports[ref.port];
+  if (!p) return `${d.name} 에는 ${ref.port + 1}번째 포트가 없습니다`;
+  if (p.radio) return `${d.name} ${p.name} 은(는) 무선 슬롯이라 케이블을 꽂을 수 없습니다`;
+  const busy = t.cables.find((c) => c.id !== except && ((c.a.device === ref.device && c.a.port === ref.port) || (c.b.device === ref.device && c.b.port === ref.port)));
+  if (busy) return `${d.name} ${p.name} 에는 이미 케이블이 꽂혀 있습니다. 다른 포트를 고르거나 그 케이블을 먼저 빼세요`;
+  return undefined;
+}
+
+/**
+ * 두 장치를 잇는 케이블의 양 끝 포트를 정한다. aPort/bPort 를 주면 그 포트를 쓰고(포트 칸 위에 놓은 경우), 없으면 상대를 향한 빈 포트를 고른다.
+ * 못 잇는 이유는 사용자에게 보일 문장으로 돌려준다
+ */
+export function planCable(t: Topology, aId: string, bId: string, aPort?: number, bPort?: number): { a: PortRef; b: PortRef } | { error: string } {
   if (aId === bId) return { error: "같은 장치끼리는 연결할 수 없습니다" };
   const a = t.devices.find((d) => d.id === aId);
   const b = t.devices.find((d) => d.id === bId);
@@ -667,11 +683,15 @@ export function planCable(t: Topology, aId: string, bId: string): { a: PortRef; 
   if (t.cables.some((c) => (c.a.device === aId && c.b.device === bId) || (c.a.device === bId && c.b.device === aId))) {
     return { error: `${a.name} 와 ${b.name} 는 이미 연결되어 있습니다. 두 번째 케이블은 L2 루프(브로드캐스트 폭주)를 만듭니다` };
   }
-  const pa = freePort(t, aId, b.y);
-  const pb = freePort(t, bId, a.y);
+  const pa = aPort ?? freePort(t, aId, b.y);
+  const pb = bPort ?? freePort(t, bId, a.y);
   if (pa === undefined) return { error: `${a.name} 에 빈 포트가 없습니다` };
   if (pb === undefined) return { error: `${b.name} 에 빈 포트가 없습니다` };
-  return { a: { device: aId, port: pa }, b: { device: bId, port: pb } };
+  const ra = { device: aId, port: pa };
+  const rb = { device: bId, port: pb };
+  const why = portProblem(t, ra) ?? portProblem(t, rb);
+  if (why) return { error: why };
+  return { a: ra, b: rb };
 }
 
 export function freePort(topology: Topology, deviceId: string, peerY?: number): number | undefined {

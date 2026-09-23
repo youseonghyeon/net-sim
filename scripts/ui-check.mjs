@@ -487,6 +487,35 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("tcp srv through fw:", await tcpRows().first().innerText());
   await page.screenshot({ path: `${OUT}/31-firewall-box.png` });
 }
+// 14) 케이블 포트 지정: 스위치의 6번째 포트 칸을 잡고 PC 로 끌기 → 패널에서 포트 바꾸기
+{
+  await page.click("text=비우기");
+  await page.click(".palette .tool.item:has-text('스위치')");
+  await page.click(".palette .tool.item:has-text('PC')");
+  await page.waitForTimeout(150);
+  const slot = page.locator("[data-device]", { hasText: "sw-1" }).locator("[data-port='5'] .port-hit");
+  const sb = await slot.boundingBox();
+  const pcTile = await device("pc-1").locator(".tile").boundingBox();
+  await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(pcTile.x + pcTile.width / 2, pcTile.y + pcTile.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  const cab = await page.evaluate(() => JSON.parse(localStorage.getItem("net-sim.topology.v1")).cables);
+  console.log("cable ports:", cab.map((c) => `${c.a.port}-${c.b.port}`).join(","), "| selected:", await page.locator(".inspector h2").textContent());
+  const sel = page.locator(".inspector select.mono").first();
+  const opts = await sel.locator("option").allTextContents();
+  // 스위치 쪽 select 를 찾아 eth3 로 바꾼다
+  const selects = page.locator(".inspector select.mono");
+  for (let i = 0; i < (await selects.count()); i++) {
+    const s = selects.nth(i);
+    if ((await s.locator("option").count()) > 2) await s.selectOption({ label: "eth3" });
+  }
+  await page.waitForTimeout(150);
+  const cab2 = await page.evaluate(() => JSON.parse(localStorage.getItem("net-sim.topology.v1")).cables);
+  console.log("after panel change:", cab2.map((c) => `${c.a.port}-${c.b.port}`).join(","), "| options:", opts.length);
+  await page.screenshot({ path: `${OUT}/36-cable-port.png` });
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

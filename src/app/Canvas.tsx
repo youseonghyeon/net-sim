@@ -51,7 +51,8 @@ type Drag =
   /** 선택된 장치들을 함께 옮긴다. starts = 드래그 시작 시 각 장치 위치 */
   | { type: "move"; starts: Map<string, { x: number; y: number }>; sx: number; sy: number; moved: boolean }
   | { type: "pan"; sx: number; sy: number; vx: number; vy: number; moved: boolean }
-  | { type: "cable"; from: string; target?: string; sx: number; sy: number; moved: boolean }
+  /** 케이블 긋기. fromPort/targetPort 가 있으면 포트 칸에서 시작/포트 칸에 놓은 것 → 그 포트를 쓴다 */
+  | { type: "cable"; from: string; fromPort?: number; target?: string; targetPort?: number; sx: number; sy: number; moved: boolean }
   /** 빈 곳에서 끌어 영역 선택 (캔버스 좌표) */
   | { type: "marquee"; x0: number; y0: number; x1: number; y1: number }
   /** 영역 도구: 빈 곳에서 끌어 영역(주석 네모) 그리기 */
@@ -71,9 +72,11 @@ function devicesInRect(devices: Device[], x0: number, y0: number, x1: number, y1
 
 interface Draft {
   from: string;
+  fromPort?: number;
   x: number;
   y: number;
   target?: string;
+  targetPort?: number;
 }
 
 export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
@@ -91,6 +94,16 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     const rect = svgRef.current!.getBoundingClientRect();
     const vp = viewport.value;
     return { x: (clientX - rect.left - vp.x) / vp.k, y: (clientY - rect.top - vp.y) / vp.k };
+  }
+
+  /** 포인터 아래의 포트 칸 (장치 id + 포트 번호) */
+  function portAt(clientX: number, clientY: number): { device: string; port: number } | undefined {
+    for (const el of document.elementsFromPoint(clientX, clientY)) {
+      const pe = el.closest?.("[data-port]") as SVGGElement | null;
+      const de = pe?.closest("[data-device]") as SVGGElement | null;
+      if (pe && de) return { device: de.dataset.device!, port: Number(pe.dataset.port) };
+    }
+    return undefined;
   }
 
   function deviceAt(clientX: number, clientY: number): string | undefined {
@@ -134,6 +147,16 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
         for (const d of topology.value.devices) if (members.has(d.id)) starts.set(d.id, { x: d.x, y: d.y });
         dragRef.current = { type: "zone-move", id, zoneStart: { x: z.x, y: z.y }, starts, sx: e.clientX, sy: e.clientY, moved: false };
       }
+      return;
+    }
+    // 포트 칸을 잡고 끌면 도구와 상관없이 그 포트에서 케이블을 긋는다
+    const portEl = target.closest("[data-port]") as SVGGElement | null;
+    if (deviceEl && portEl && e.button === 0 && !panning) {
+      const id = deviceEl.dataset.device!;
+      const fromPort = Number(portEl.dataset.port);
+      const p = toCanvas(e.clientX, e.clientY);
+      dragRef.current = { type: "cable", from: id, fromPort, sx: e.clientX, sy: e.clientY, moved: false };
+      draft.value = { from: id, fromPort, x: p.x, y: p.y };
       return;
     }
     if (deviceEl && e.button === 0 && !panning) {
@@ -214,9 +237,11 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     } else {
       if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) d.moved = true;
       const p = toCanvas(e.clientX, e.clientY);
-      const over = deviceAt(e.clientX, e.clientY);
+      const overPort = portAt(e.clientX, e.clientY);
+      const over = overPort?.device ?? deviceAt(e.clientX, e.clientY);
       d.target = over && over !== d.from ? over : undefined;
-      draft.value = { from: d.from, x: p.x, y: p.y, target: d.target };
+      d.targetPort = d.target && overPort?.device === d.target ? overPort.port : undefined;
+      draft.value = { from: d.from, fromPort: d.fromPort, x: p.x, y: p.y, target: d.target, targetPort: d.targetPort };
     }
   }
 
@@ -261,8 +286,10 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     if (d.type === "cable") {
       draft.value = null;
       if (d.target) {
-        const r = connectDevices(d.from, d.target);
+        const r = connectDevices(d.from, d.target, d.fromPort, d.targetPort);
         if (r.error) onNotice(r.error);
+      } else if (!d.moved && d.fromPort !== undefined) {
+        selection.value = { type: "device", id: d.from }; // 포트를 그냥 클릭하면 장치 선택
       } else if (!d.moved && tool.value !== "cable") {
         toggleDeviceSelection(d.from);
       }
@@ -386,6 +413,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
                 selected={selectedIds.has(d.id)}
                 targeted={dr?.target === d.id}
                 source={dr?.from === d.id}
+                markPort={dr?.target === d.id ? dr.targetPort : dr?.from === d.id ? dr.fromPort : undefined}
                 issues={issuesByDevice.get(d.id)}
               />
             ))}
@@ -453,7 +481,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
   );
 }
 
-function DeviceView({ d, used, selected, targeted, source, issues }: { d: Device; used: Set<number>; selected: boolean; targeted: boolean; source: boolean; issues?: LintIssue[] }) {
+function DeviceView({ d, used, selected, targeted, source, issues, markPort }: { d: Device; used: Set<number>; selected: boolean; targeted: boolean; source: boolean; issues?: LintIssue[]; markPort?: number }) {
   const spec = specOf(d);
   const wide = spec.role !== "host";
   const glyph = wide ? 24 : 28;
@@ -481,10 +509,15 @@ function DeviceView({ d, used, selected, targeted, source, issues }: { d: Device
         const v = portVlanOf(d, i);
         const vlanStyle = v !== undefined && v !== 1 && v !== "trunk" ? { fill: vlanColor(v), stroke: vlanColor(v) } : undefined;
         const title = v === undefined ? p.name : v === "trunk" ? `${p.name} · 트렁크` : `${p.name} · VLAN ${v}`;
+        // 보이는 포트는 8×6 으로 작아서, 바깥쪽으로 넉넉한 투명 히트 영역을 둔다 (잡고 끌면 그 포트에서 케이블)
+        const hitH = 14;
+        const hy = p.side === "top" ? ly - (hitH - PORT_DEPTH) : ly;
         return (
-          <rect key={p.name} class={`port${used.has(i) ? " used" : ""}${v === "trunk" ? " trunk" : ""}`} x={lx} y={ly} width={PORT_WIDTH} height={PORT_DEPTH} rx={1.5} style={vlanStyle}>
-            <title>{title}</title>
-          </rect>
+          <g key={p.name} data-port={i} class={`port-slot${markPort === i ? " marked" : ""}`}>
+            <rect class="port-hit" x={lx - 3} y={hy} width={PORT_WIDTH + 6} height={hitH} />
+            <rect class={`port${used.has(i) ? " used" : ""}${v === "trunk" ? " trunk" : ""}`} x={lx} y={ly} width={PORT_WIDTH} height={PORT_DEPTH} rx={1.5} style={vlanStyle} />
+            <title>{`${title}${used.has(i) ? " · 연결됨" : " · 끌어서 이 포트로 케이블 연결"}`}</title>
+          </g>
         );
       })}
       {wide ? (
@@ -701,12 +734,12 @@ function draftCablePath(dr: Draft, byId: Map<string, Device>): string | null {
   const from = byId.get(dr.from);
   if (!from) return null;
   const t = topology.value;
-  const port = freePort(t, dr.from, dr.y);
+  const port = dr.fromPort ?? freePort(t, dr.from, dr.y);
   const start: Anchor = port !== undefined ? portAnchor(from, port) : { x: from.x + specOf(from).width / 2, y: from.y + specOf(from).height / 2, side: "bottom" };
   let end: Anchor = { x: dr.x, y: dr.y, side: dr.y < start.y ? "bottom" : "top" };
   if (dr.target) {
     const target = byId.get(dr.target);
-    const tp = target ? freePort(t, dr.target, from.y) : undefined;
+    const tp = target ? (dr.targetPort ?? freePort(t, dr.target, from.y)) : undefined;
     if (target && tp !== undefined) end = portAnchor(target, tp);
   }
   return cablePath(start, end);
