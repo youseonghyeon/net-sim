@@ -26,7 +26,7 @@ export class Switch implements SimNode {
   /** 포트별 VLAN 설정. 없으면 액세스 VLAN 1 */
   readonly portVlan = new Map<number, PortVlan>();
   /** 최근 본 프레임 id → 수신 포트. 같은 프레임이 다시 오면 L2 루프 */
-  private readonly seen = new Map<number, number>();
+  private readonly seen = new Map<number | string, number>();
 
   /** ports: 포트 개수(이름은 port N) 또는 포트 이름 목록 */
   constructor(id: string, ports: number | string[] = 4) {
@@ -74,7 +74,9 @@ export class Switch implements SimNode {
     const pn = this.portName(port);
     const mode = this.vlanOf(port);
     ctx.trace("frame.receive", "L2", `${pn} 수신: ${label} [${frame.src} → ${frame.dst}]${frame.vlan !== undefined ? ` (VLAN ${frame.vlan} 태그)` : ""}`, { port, src: frame.src, dst: frame.dst, vlan: frame.vlan }, frame.id);
-    if (!guardLoop(this.seen, port, frame, ctx, pn)) return;
+    // 같은 프레임이 다른 VLAN 으로 돌아오는 건 루프가 아니다 (예: 투명 방화벽이 VLAN 10 과 20 을 이음). VLAN 별로 본다
+    const scope = mode === "trunk" ? `t${frame.vlan ?? "-"}` : `a${mode}`;
+    if (!guardLoop(this.seen, port, frame, ctx, pn, scope)) return;
     frame = { ...frame, hops: (frame.hops ?? 0) + 1 };
 
     // 이 프레임이 속한 VLAN 결정
@@ -158,7 +160,7 @@ export class Switch implements SimNode {
   onLink(port: number, up: boolean, ctx: NodeContext): void {
     if (up) return;
     for (const [k, e] of this.macTable) if (e.port === port) this.macTable.delete(k);
-    ctx.trace("link.down", "L1", `${this.portName(port)} 링크 끊김 → 그 포트의 MAC 학습 정보 삭제`, { port });
+    ctx.trace("link.down", "L1", `${this.portName(port)} 링크 다운 → 그 포트의 MAC 학습 정보 삭제`, { port });
   }
 
   onTimer(): void {}
@@ -195,17 +197,18 @@ export class Switch implements SimNode {
  * L2 루프 안전장치. 같은 프레임을 두 번째 보거나 홉 수가 한도를 넘으면 버린다.
  * 실제 이더넷에는 이런 장치가 없어서(TTL 없음) STP 로 루프를 미리 끊어야 한다 — 그 점을 로그로 알려준다.
  */
-export function guardLoop(seen: Map<number, number>, port: number, frame: EthernetFrame, ctx: NodeContext, portName: string): boolean {
+export function guardLoop(seen: Map<number | string, number>, port: number, frame: EthernetFrame, ctx: NodeContext, portName: string, scope?: string): boolean {
   if ((frame.hops ?? 0) >= MAX_L2_HOPS) {
     ctx.trace("switch.loop", "L2", `프레임이 스위치 ${MAX_L2_HOPS}개를 넘게 돌았음 → L2 루프로 판단해 드롭. 실제 이더넷엔 TTL 이 없어 STP 가 없으면 브로드캐스트 폭주가 난다`, { port }, frame.id);
     return false;
   }
-  const prev = seen.get(frame.id);
+  const key = scope === undefined ? frame.id : `${frame.id}:${scope}`;
+  const prev = seen.get(key);
   if (prev !== undefined) {
     ctx.trace("switch.loop", "L2", `같은 프레임을 ${portName} 에서 다시 받음 (처음은 다른 포트) → L2 루프 감지, 드롭. 케이블이 두 경로로 이어져 있음`, { port, first: prev }, frame.id);
     return false;
   }
-  seen.set(frame.id, port);
+  seen.set(key, port);
   if (seen.size > 512) {
     const oldest = seen.keys().next().value;
     if (oldest !== undefined) seen.delete(oldest);

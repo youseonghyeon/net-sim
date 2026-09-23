@@ -68,7 +68,17 @@ function save(key: string, value: unknown): void {
 }
 
 const saved = load<Topology>(TOPOLOGY_KEY);
-export const topology = signal<Topology>(saved ? normalizeTopology(saved) : EMPTY_TOPOLOGY);
+/** 저장본이 깨져 있어도(모르는 장치 종류 등) 앱은 빈 캔버스로 시작한다 */
+function loadSaved(): Topology {
+  if (!saved) return EMPTY_TOPOLOGY;
+  try {
+    return normalizeTopology(saved);
+  } catch (e) {
+    console.warn("saved topology is broken; starting empty", e);
+    return EMPTY_TOPOLOGY;
+  }
+}
+export const topology = signal<Topology>(loadSaved());
 export const selection = signal<Selection>(null);
 export const tool = signal<Tool>("select");
 // 브라우저 API 는 있을 때만 (vitest 에서는 없다)
@@ -121,7 +131,9 @@ export function requestFit(ids?: string[]): void {
 
 /** 선택한 장치가 있으면 그것만, 없으면 전체를 화면에 맞춘다 */
 export function fitSelectionOrAll(): void {
-  const ids = selectedDeviceIds(selection.peek());
+  const s = selection.peek();
+  if (s?.type === "zone") return requestFit([s.id]);
+  const ids = selectedDeviceIds(s);
   requestFit(ids.length > 0 ? ids : undefined);
 }
 
@@ -142,6 +154,7 @@ function refreshHistoryFlags(): void {
 
 /** 모든 편집은 여기를 거친다: 이전 상태를 기록하고 다시 실행 스택은 비운다 */
 function setTopology(next: Topology): void {
+  if (next === topology.peek()) return;
   if (!coalescing) {
     past.push(topology.peek());
     if (past.length > HISTORY_CAP) past.shift();
@@ -162,10 +175,15 @@ export function beginCoalesce(): void {
 }
 
 export function endCoalesce(): void {
+  if (!coalescing) return;
   coalescing = false;
+  // 드래그·입력이 실제로 아무것도 바꾸지 않았으면 빈 되돌리기 단계를 남기지 않는다
+  if (past[past.length - 1] === topology.peek()) past.pop();
+  refreshHistoryFlags();
 }
 
 export function undo(): void {
+  if (coalescing) return; // 드래그 도중에는 되돌리지 않는다 (시작 스냅숏이 꼬인다)
   const prev = past.pop();
   if (!prev) return;
   future.push(topology.peek());
@@ -175,6 +193,7 @@ export function undo(): void {
 }
 
 export function redo(): void {
+  if (coalescing) return;
   const next = future.pop();
   if (!next) return;
   past.push(topology.peek());
@@ -276,6 +295,7 @@ export function removeDevices(ids: string[]): void {
   const t = topology.value;
   const set = new Set(ids);
   setTopology({
+    ...t,
     devices: t.devices.filter((d) => !set.has(d.id)),
     cables: t.cables.filter((c) => !set.has(c.a.device) && !set.has(c.b.device)),
   });
@@ -321,9 +341,10 @@ export function paste(): Device[] {
   pasteCount += 1;
   const offset = PASTE_OFFSET * pasteCount;
   const t = topology.value;
-  const { devices, cables } = cloneDevices(clipboard.topology, clipboard.ids, { x: offset, y: offset });
+  // 이름·MAC 은 지금 토폴로지 기준으로 골라야 여러 번 붙여 넣어도 겹치지 않는다
+  const { devices, cables } = cloneDevices(clipboard.topology, clipboard.ids, { x: offset, y: offset }, t.devices);
   if (devices.length === 0) return [];
-  setTopology({ devices: [...t.devices, ...devices], cables: [...t.cables, ...cables] });
+  setTopology({ ...t, devices: [...t.devices, ...devices], cables: [...t.cables, ...cables] });
   selection.value = selectionOf(devices.map((d) => d.id));
   return devices;
 }
@@ -435,7 +456,12 @@ export function exportJson(): string {
 
 /** JSON 파일 내용으로 토폴로지를 바꾼다. 실패 사유를 돌려준다 */
 export function importJson(text: string): { error?: string; devices?: number } {
-  const r = parseTopology(text);
+  let r: ReturnType<typeof parseTopology>;
+  try {
+    r = parseTopology(text);
+  } catch (e) {
+    return { error: `파일 내용을 해석하지 못했습니다 (${e instanceof Error ? e.message : String(e)}). net-sim 에서 내려받은 파일인지 확인하세요` };
+  }
   if (!r.topology) return { error: r.error };
   setTopology(r.topology);
   selection.value = null;

@@ -148,7 +148,7 @@ export class Firewall {
       ctx.trace(
         "fw.established",
         "L3",
-        `방화벽: ${dirLabel} ${what} 은(는) ${rule ? `규칙 ${idx + 1}(${describeRule(rule)})` : "기본 정책"} 상 차단이지만, 안에서 시작한 통신의 ${isTimeExceeded(pkt.payload) ? "오류 통지" : "응답"}라 Stateful 검사으로 허용`,
+        `방화벽: ${dirLabel} ${what} 은(는) ${rule ? `규칙 ${idx + 1}(${describeRule(rule)})` : "기본 정책"} 상 차단이지만, 안에서 시작한 통신의 ${isTimeExceeded(pkt.payload) ? "오류 통지라" : "응답이라"} Stateful 검사로 허용`,
         { rule: idx, dir },
         frameId,
       );

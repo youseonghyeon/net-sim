@@ -266,7 +266,7 @@ describe("DNS 리뷰 반영", () => {
     const link = [...net.links.values()].find((l) => l.a.node === "c1" || l.b.node === "c1")!;
     net.disconnect(link.id);
     net.runToIdle();
-    expect(net.getHost("c1").pings.at(-1)).toMatchObject({ status: "failed", reason: "링크 끊김" });
+    expect(net.getHost("c1").pings.at(-1)).toMatchObject({ status: "failed", reason: "링크 다운" });
   });
 
   it("업스트림 DNS 무응답이면 SERVFAIL 이 리졸버가 포기하기 전에 도착해 원인이 정확히 남는다", () => {

@@ -27,7 +27,7 @@ export class AccessPoint implements SimNode {
   readonly stations = new Map<Mac, StationEntry>();
   /** 유선 쪽에서 배운 MAC (라우터 등) */
   readonly wired = new Map<Mac, StationEntry>();
-  private readonly seen = new Map<number, number>();
+  private readonly seen = new Map<number | string, number>();
 
   constructor(id: string, ssid: string, slots = AP_RADIO_SLOTS) {
     this.id = id;
@@ -47,7 +47,7 @@ export class AccessPoint implements SimNode {
 
   onLink(port: number, up: boolean, ctx: NodeContext): void {
     if (port === AccessPoint.ETH_PORT) {
-      ctx.trace(up ? "link.up" : "link.down", "L1", up ? `eth0 링크 연결됨` : `eth0 링크 끊김`, { port });
+      ctx.trace(up ? "link.up" : "link.down", "L1", up ? `eth0 링크 연결됨` : `eth0 링크 다운`, { port });
       if (!up) this.wired.clear();
       return;
     }

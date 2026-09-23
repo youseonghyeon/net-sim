@@ -19,7 +19,7 @@ describe("타일 상태 문구", () => {
     net.runUntil(0);
     expect(hostStatusOf(h, false)).toMatchObject({ text: "DHCP 요청 중 (1/3)", tone: "warn" });
     net.runToIdle();
-    expect(hostStatusOf(h, false)).toMatchObject({ text: "DHCP 실패 · IP 없음", tone: "warn" });
+    expect(hostStatusOf(h, false)).toMatchObject({ text: "DHCP 실패 · IP 미설정", tone: "warn" });
     h.configure({ ipMode: "static", ip: "10.0.0.5", prefix: 24 }, net.contextFor("a"));
     expect(hostStatusOf(h, false)).toMatchObject({ text: "10.0.0.5/24", tone: "ok", mono: true });
     h.configure({ ipMode: "static" }, net.contextFor("a"));

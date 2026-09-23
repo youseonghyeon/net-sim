@@ -23,10 +23,16 @@ export function Palette() {
       if (!dragging && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > 4) dragging = true;
       if (dragging) ghost.value = { kind, x: ev.clientX, y: ev.clientY };
     };
-    const up = (ev: PointerEvent) => {
+    const cleanup = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
       ghost.value = null;
+    };
+    // 취소(터치 취소·창 전환)되면 아무것도 추가하지 않고 고스트만 치운다
+    const cancel = () => cleanup();
+    const up = (ev: PointerEvent) => {
+      cleanup();
       const svg = document.getElementById("canvas-svg")!;
       const rect = svg.getBoundingClientRect();
       const v = viewport.value;
@@ -45,16 +51,19 @@ export function Palette() {
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
   }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
-      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return;
-      if (e.key === "v" || e.key === "V") tool.value = "select";
-      if (e.key === "c" || e.key === "C") tool.value = "cable";
-      if (e.key === "z" || e.key === "Z") if (!e.metaKey && !e.ctrlKey) tool.value = "zone";
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable) return;
       if (e.key === "Escape") tool.value = "select";
+      // ⌘C/⌘V/⌘Z 는 복사·붙여넣기·되돌리기라 도구를 바꾸지 않는다. e.code 로 판정해 한글 입력 상태(ㅍ/ㅊ/ㅋ)에서도 동작
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.code === "KeyV") tool.value = "select";
+      else if (e.code === "KeyC") tool.value = "cable";
+      else if (e.code === "KeyZ") tool.value = "zone";
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

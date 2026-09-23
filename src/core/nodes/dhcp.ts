@@ -61,7 +61,7 @@ export class DhcpClient {
   release(ctx: NodeContext, emit: Emit): void {
     if (this.state !== "bound" || !this.iface.ip) return;
     const msg: DhcpMessage = { kind: "dhcp", op: "release", xid: this.xid, clientMac: this.iface.mac, requestedIp: this.iface.ip, serverId: this.serverId };
-    ctx.trace("dhcp.release", "app", this.tag(`DHCP Release: ${this.iface.ip} 를 서버 ${this.serverId ?? "?"} 에게 반납`), { ...msg });
+    ctx.trace("dhcp.release", "app", this.tag(`DHCP Release: ${this.iface.ip} 를 서버 ${this.serverId ?? "?"} 에게 돌려줌 (임대 해제)`), { ...msg });
     const pkt: Ipv4Packet = {
       kind: "ipv4",
       src: this.iface.ip,

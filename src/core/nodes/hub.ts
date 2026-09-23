@@ -18,7 +18,7 @@ export class Hub implements SimNode {
   readonly portCount: number;
   private readonly portNames: string[];
   /** 최근 본 프레임 id → 수신 포트. 같은 프레임이 다시 오면 L2 루프 (스위치와 동일한 안전장치) */
-  private readonly seen = new Map<number, number>();
+  private readonly seen = new Map<number | string, number>();
 
   /** ports: 포트 개수(이름은 port N) 또는 포트 이름 목록 */
   constructor(id: string, ports: number | string[] = 4) {
@@ -59,7 +59,7 @@ export class Hub implements SimNode {
 
   onLink(port: number, up: boolean, ctx: NodeContext): void {
     if (up) return;
-    ctx.trace("link.down", "L1", `${this.portName(port)} 링크 끊김`, { port });
+    ctx.trace("link.down", "L1", `${this.portName(port)} 링크 다운`, { port });
   }
 
   onTimer(): void {}

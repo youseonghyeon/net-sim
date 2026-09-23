@@ -556,9 +556,9 @@ export function usedPorts(topology: Topology, deviceId: string): Set<number> {
  * 장치 묶음을 복제한다: 새 id·이름·MAC, 설정은 깊은 복사, 묶음 안에서 서로 잇는 케이블만 따라온다.
  * @returns 붙여 넣을 장치·케이블 (원본 토폴로지에는 아직 없음)
  */
-export function cloneDevices(t: Topology, ids: string[], offset: { x: number; y: number }): { devices: Device[]; cables: Cable[] } {
+export function cloneDevices(t: Topology, ids: string[], offset: { x: number; y: number }, existing: Device[] = t.devices): { devices: Device[]; cables: Cable[] } {
   const picked = t.devices.filter((d) => ids.includes(d.id));
-  const pool = [...t.devices];
+  const pool = [...existing];
   const idMap = new Map<string, string>();
   const devices: Device[] = [];
   for (const d of picked) {
@@ -700,9 +700,12 @@ export function snap(v: number, grid = 8): number {
 /** 저장된 토폴로지의 누락 필드 보정 (이전 버전에서 저장한 데이터) */
 export function normalizeTopology(t: Topology): Topology {
   const devices: Device[] = [];
-  for (const d of t.devices) {
+  // 모르는 장치 종류(다른 버전의 저장본)는 버린다
+  const known = t.devices.filter((d) => d && typeof d.kind === "string" && d.kind in DEVICE_SPECS);
+  for (const d of known) {
     const fixed: Device = { ...d };
-    if (!fixed.mac) fixed.mac = nextMac(devices);
+    // MAC 이 비어 있으면 입력 전체(뒤 장치 포함)와 겹치지 않게
+    if (!fixed.mac) fixed.mac = nextMac([...known, ...devices]);
     const spec = DEVICE_SPECS[fixed.kind];
     if (spec.role === "host") {
       if (!fixed.host) fixed.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: fixed.kind === "server" ? [80] : [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
@@ -715,17 +718,36 @@ export function normalizeTopology(t: Topology): Topology {
       }
     }
     if (spec.role === "ap" && !fixed.ap) fixed.ap = { ...DEFAULT_WIFI_BASE };
-    if (spec.role === "firewall" && !fixed.firewall) fixed.firewall = { ...DEFAULT_FIREWALL_SETTINGS, enabled: true, rules: [] };
+    if (spec.role === "firewall") fixed.firewall = fixed.firewall ? { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.firewall, rules: fixed.firewall.rules ?? [] } : { ...DEFAULT_FIREWALL_SETTINGS, enabled: true, rules: [] };
     if (spec.role === "switch" && !fixed.switch) fixed.switch = { vlans: {} };
     if (fixed.kind === "phone" && !fixed.wifi) fixed.wifi = { ssid: "home" };
     if (spec.role === "l3") {
       const def = defaultL3(fixed.kind);
       if (!fixed.l3) fixed.l3 = def;
-      else fixed.l3 = { ...fixed.l3, interfaces: def.interfaces.map((d, i) => fixed.l3!.interfaces[i] ?? d), routes: fixed.l3.routes ?? [] };
+      else {
+        const ifs = fixed.l3.interfaces ?? [];
+        fixed.l3 = {
+          ...fixed.l3,
+          interfaces: def.interfaces.map((d, i) => (ifs[i] ? { ...d, ...ifs[i] } : d)),
+          routes: fixed.l3.routes ?? [],
+          ...(fixed.l3.firewall ? { firewall: { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.l3.firewall, rules: fixed.l3.firewall.rules ?? [] } } : {}),
+        };
+      }
     }
     if (spec.role === "router") {
       if (!fixed.router) fixed.router = { lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" }, wan: { ...DEFAULT_WAN } };
-      else if (!fixed.router.wan) fixed.router = { ...fixed.router, wan: { ...DEFAULT_WAN } };
+      else {
+        const r = fixed.router;
+        fixed.router = {
+          ...r,
+          lanIp: r.lanIp ?? "192.168.0.1",
+          lanPrefix: r.lanPrefix ?? 24,
+          // 예전/손상 저장본에는 dhcp 가 없을 수 있다 (타입상 필수지만 JSON 은 믿을 수 없다)
+          dhcp: (r.dhcp as RouterSettings["dhcp"] | undefined) ?? { enabled: true, start: "192.168.0.100", end: "192.168.0.199" },
+          wan: r.wan ?? { ...DEFAULT_WAN },
+          ...(r.firewall ? { firewall: { ...DEFAULT_FIREWALL_SETTINGS, ...r.firewall, rules: r.firewall.rules ?? [] } } : {}),
+        };
+      }
     }
     devices.push(fixed);
   }
@@ -736,7 +758,9 @@ export function normalizeTopology(t: Topology): Topology {
     if (!ids.has(c.a.device) || !ids.has(c.b.device)) continue;
     const da = devices.find((d) => d.id === c.a.device)!;
     const db = devices.find((d) => d.id === c.b.device)!;
-    if (c.a.port >= DEVICE_SPECS[da.kind].ports.length || c.b.port >= DEVICE_SPECS[db.kind].ports.length) continue; // 예전 스펙의 포트
+    // 없는 포트(예전 스펙·음수)와 무선 포트(케이블 금지)는 버린다
+    const portOk = (d: Device, port: number) => Number.isInteger(port) && port >= 0 && port < DEVICE_SPECS[d.kind].ports.length && !DEVICE_SPECS[d.kind].ports[port]!.radio;
+    if (!portOk(da, c.a.port) || !portOk(db, c.b.port) || c.a.device === c.b.device) continue;
     const ka = `${c.a.device}:${c.a.port}`;
     const kb = `${c.b.device}:${c.b.port}`;
     if (usedPort.has(ka) || usedPort.has(kb) || ka === kb) continue; // 같은 포트에 두 케이블: 앞의 것만 남긴다
@@ -946,7 +970,7 @@ export function exampleTwoGatewaysTopology(): Topology {
       { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" },
       { ipMode: "static", ip: "10.0.0.1", prefix: 24, gateway: "" },
     ],
-    // 게이트웨이마다 그 뒤 서브넷으로 돌아가는 경로. 이게 없으면 응답이 여기서 버려진다
+    // 게이트웨이마다 그 뒤 서브넷으로 돌아가는 경로. 이게 없으면 응답이 여기서 드롭된다
     routes: [
       { dest: "192.168.1.0", prefix: 24, via: "10.0.0.2" },
       { dest: "192.168.5.0", prefix: 24, via: "10.0.0.3" },
@@ -1309,12 +1333,12 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
   gateways: { id: "gateways", group: "기능 단위", label: "게이트웨이 2단 (라우터 전용 서브넷 + 스태틱 라우팅)", blurb: "pc-1 → 192.168.5.10 은 gw-1 이 스태틱 라우팅으로 gw-2 에 바로 넘기고, 인터넷은 NAT 로 올라갑니다. NAT 의 스태틱 라우팅을 지우면 응답이 돌아오지 못합니다.", build: exampleTwoGatewaysTopology },
   hub: { id: "hub", group: "L2", label: "허브 vs 스위치", blurb: "pc-1 → pc-2 ping 이 허브의 모든 포트(공유기까지)로 복제되는 것과, pc-3 → pc-4 가 스위치에서 그 포트로만 가는 것을 비교하세요.", build: exampleHubTopology },
   vlan: { id: "vlan", group: "L2", label: "VLAN 으로 나눈 사무실 (트렁크 + 서브 인터페이스)", blurb: "같은 스위치인데 VLAN 10 과 20 은 게이트웨이 서브 인터페이스를 거쳐야 통신됩니다.", build: exampleVlanTopology },
-  firewall: { id: "firewall", group: "서비스", label: "방화벽 (ping 은 되고 웹은 막힘)", blurb: "pc-1 에서 example.com 으로 ping 은 되지만 TCP 80 연결은 공유기 방화벽 규칙 1 에서 차단됩니다. 인터넷 쪽 클라이언트의 ping 도 막힙니다.", build: exampleFirewallTopology },
+  firewall: { id: "firewall", group: "서비스", label: "방화벽 (ping 은 되고 웹은 막힘)", blurb: "pc-1 에서 example.com 으로 ping 은 되지만 TCP 80 연결은 공유기 방화벽 규칙 1 에서 차단됩니다. 규칙 2(인바운드 ICMP 차단)는 바깥에서 먼저 시작한 ping 을 막는 규칙이고, 안에서 시작한 ping 의 응답은 Stateful 검사로 통과합니다.", build: exampleFirewallTopology },
   fwbox: {
     id: "fwbox",
     group: "서비스",
     label: "방화벽 장비 (서버 앞에 끼운 투명 방화벽)",
-    blurb: "pc-1 → srv-1 ping 은 fw-1 에서 차단되지만 TCP 80 연결은 됩니다. fw-1 은 IP 가 없어 traceroute 홉에도 안 보입니다. srv-1 → pc-1 ping 은 응답이 Stateful 로 돌아옵니다.",
+    blurb: "pc-1 → srv-1 ping 은 fw-1 에서 차단되지만 TCP 80 연결은 됩니다. srv-1 → pc-1 ping 은 응답이 Stateful 검사로 돌아오고, srv-1 → pc-1 traceroute 는 1홉 — fw-1 은 IP 가 없어 홉에 안 보입니다.",
     build: exampleFirewallApplianceTopology,
   },
   docker: {
@@ -1324,7 +1348,7 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     blurb: "pc-1 에서 172.18.0.2 로 ping 은 실패하지만(호스트 뒤 사설망), docker-host 의 LAN 주소:8080 으로 TCP 연결은 -p 포워딩으로 web 에 닿습니다. web 에서 db 는 이름으로, google.com 은 MASQUERADE 로 나갑니다.",
     build: exampleDockerTopology,
   },
-  roaming: { id: "roaming", group: "무선", label: "무선 로밍 (같은 SSID 의 AP 두 대)", blurb: "phone-1 을 오른쪽 AP 쪽으로 끌면 가까운 AP 로 갈아타고 DHCP 를 다시 합니다.", build: exampleRoamingTopology },
+  roaming: { id: "roaming", group: "무선", label: "무선 로밍 (같은 SSID 의 AP 두 대)", blurb: "phone-1 을 오른쪽 AP 쪽으로 끌면 가까운 AP 로 갈아타고 DHCP 로 새로 임대받습니다.", build: exampleRoamingTopology },
 };
 
 export const EXAMPLE_LIST: ExampleSpec[] = Object.values(EXAMPLES);

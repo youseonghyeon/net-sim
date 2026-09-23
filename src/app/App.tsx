@@ -66,7 +66,7 @@ export function App() {
     a.href = url;
     a.download = `net-sim-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 0); // 바로 해제하면 일부 브라우저에서 다운로드가 취소된다
   }
 
   function upload(file: File): void {
@@ -83,25 +83,29 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
-      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable) return;
+      // 토글 스위치 위에서 Space 는 토글이 처리한다 (재생까지 같이 바뀌지 않게)
+      if (e.defaultPrevented || el.getAttribute?.("role") === "switch") return;
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key === "\\") {
+      // 문자 키는 e.code 로 판정 (한글 입력 상태에서도 동작, ₩ 로 바뀌는 \ 포함)
+      const code = e.code;
+      if (mod && code === "Backslash") {
         e.preventDefault();
         toggleInspector();
-      } else if (mod && e.key.toLowerCase() === "z") {
+      } else if (mod && code === "KeyZ") {
         e.preventDefault();
         if (e.shiftKey) redo();
         else undo();
-      } else if (mod && e.key.toLowerCase() === "c") {
+      } else if (mod && code === "KeyC") {
         const n = copySelected();
         if (n) showNotice(`장치 ${n}개를 복사했습니다. ⌘V 로 붙여 넣습니다.`);
-      } else if (mod && e.key.toLowerCase() === "v") {
+      } else if (mod && code === "KeyV") {
         e.preventDefault();
         paste();
-      } else if (mod && e.key.toLowerCase() === "d") {
+      } else if (mod && code === "KeyD") {
         e.preventDefault();
         duplicateSelected();
-      } else if (mod && e.key.toLowerCase() === "a") {
+      } else if (mod && code === "KeyA") {
         e.preventDefault();
         selectAll();
       } else if (e.shiftKey && !mod && e.code === "Digit1") {

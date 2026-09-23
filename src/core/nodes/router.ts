@@ -140,8 +140,11 @@ export class Router implements SimNode {
     if (cfg.lanIp !== this.lan.ip || cfg.lanPrefix !== this.lan.prefix) {
       this.lan.configure(cfg.lanIp, cfg.lanPrefix, undefined);
       this.lan.arpCache.clear();
+      this.lan.clearPending();
       ctx.trace("ip.config", "sys", `LAN 인터페이스 주소 변경: ${cfg.lanIp}/${cfg.lanPrefix} (ARP 캐시 비움)`, { ...cfg });
       this.dhcpServer.onInterfaceChanged(ctx);
+      // 호스트·게이트웨이와 같이 새 주소를 Gratuitous ARP 로 알린다
+      this.lan.announce(ctx, this.emitLan(ctx));
     }
     const d = this.dhcpServer.config;
     if (cfg.dhcp.enabled !== d.enabled) {
@@ -164,7 +167,10 @@ export class Router implements SimNode {
       if (w.mode === "static") {
         this.wanClient.stop();
         this.wan.configure(w.ip || undefined, w.prefix ?? 24, w.gateway || undefined);
+        this.wan.arpCache.clear();
+        this.wan.clearPending();
         ctx.trace("ip.config", "sys", w.ip ? `[wan] 수동 설정 적용: ${w.ip}/${w.prefix ?? 24}, 게이트웨이 ${w.gateway ?? "없음"}` : `[wan] 수동 설정으로 전환 (주소 미입력)`, { ...w });
+        if (w.ip && this.wanLinkUp) this.wan.announce(ctx, this.emitWan(ctx));
       } else {
         this.wan.clearAddress();
         ctx.trace("ip.config", "sys", `[wan] 자동(DHCP) 로 전환 → ISP 에서 공인 주소를 받는다`, { ...w });
@@ -199,13 +205,13 @@ export class Router implements SimNode {
         if (this.wanMode === "dhcp") this.wanClient.start(ctx, this.emitWan(ctx));
         return;
       }
-      ctx.trace("link.down", "L1", `wan 포트 링크 끊김`, { port });
+      ctx.trace("link.down", "L1", `wan 포트 링크 다운`, { port });
       this.wan.clearPending();
       if (this.wanMode === "dhcp") {
         const had = this.wan.ip;
         this.wan.clearAddress();
         this.wanClient.stop();
-        if (had) ctx.trace("dhcp.release", "app", `[wan] 링크가 끊겨 공인 주소 ${had} 해제`, { ip: had });
+        if (had) ctx.trace("dhcp.release", "app", `[wan] 링크 다운으로 공인 주소 ${had} 해제`, { ip: had });
       }
       return;
     }
@@ -217,7 +223,7 @@ export class Router implements SimNode {
       ctx.trace("link.up", "L1", `lan${port} 포트 링크 연결됨`, { port });
       return;
     }
-    ctx.trace("link.down", "L1", `lan${port} 포트 링크 끊김`, { port });
+    ctx.trace("link.down", "L1", `lan${port} 포트 링크 다운`, { port });
     for (const [mac, e] of this.macTable) if (e.port === port) this.macTable.delete(mac);
   }
 

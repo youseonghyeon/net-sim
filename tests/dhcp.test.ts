@@ -70,7 +70,7 @@ describe("DHCP", () => {
     // IP 없이 ping → 즉시 실패
     net.scheduleAction(net.now, { kind: "ping", nodeId: "pc1", dst: "192.168.0.1" });
     net.runToIdle();
-    expect(pc1.pings.at(-1)).toMatchObject({ status: "failed", reason: "IP 주소 없음" });
+    expect(pc1.pings.at(-1)).toMatchObject({ status: "failed", reason: "IP 미설정" });
 
     // 수동 설정 후 라우터 ping 성공
     pc1.configure({ ipMode: "static", ip: "192.168.0.50", prefix: 24, gateway: "192.168.0.1" }, net.contextFor("pc1"));

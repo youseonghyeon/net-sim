@@ -85,7 +85,7 @@ export class DnsResolver {
     }
     if (!this.iface.ip) {
       ctx.trace("dns.no-server", "app", `${name} 을(를) 찾을 수 없음: 내 IP 주소가 없음`, { name });
-      done(undefined, "IP 주소 없음");
+      done(undefined, "IP 미설정");
       return;
     }
     const id = ++this.idSeq;

@@ -366,8 +366,9 @@ select.btn.example {
 .grid-dot {
   fill: var(--grid-dot);
 }
+/* 빈 곳 끌기는 영역 선택이라 grab 커서는 잘못된 신호 (팬은 ⌥/가운데 버튼) */
 .grid-bg {
-  cursor: grab;
+  cursor: default;
 }
 .legend {
   position: absolute;
@@ -786,8 +787,16 @@ select.btn.example {
   font-weight: 600;
   color: var(--ink-2);
   margin-bottom: 8px;
-  cursor: pointer;
   user-select: none;
+}
+/* 접을 수 있는 섹션 제목만 손가락 커서 (h3.sub 같은 소제목은 클릭 동작이 없다) */
+.section h3.collapsible {
+  cursor: pointer;
+}
+.section h3.collapsible:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 .section h3 .chev {
   color: var(--ink-3);
@@ -850,7 +859,8 @@ select.btn.example {
 .has-error .input {
   border-color: var(--danger);
 }
-.error {
+/* 입력 칸 아래 검증 오류 (전역 .error 는 lint-item/lint-badge 의 severity 클래스와 겹쳐 쓰지 않는다) */
+.field-error {
   color: var(--danger);
   font-size: 11px;
   margin-top: 4px;

@@ -223,16 +223,16 @@ export class Host implements SimNode {
       else if (this.iface.ip) this.iface.announce(ctx, this.emit(ctx));
       return;
     }
-    ctx.trace("link.down", "L1", `링크 끊김`);
+    ctx.trace("link.down", "L1", `링크 다운`);
     this.iface.clearPending();
-    this.tcp.abortAll("링크 끊김", ctx);
-    this.cancelTraceroute("링크 끊김", ctx);
-    this.resolver.clear("링크 끊김");
+    this.tcp.abortAll("링크 다운", ctx);
+    this.cancelTraceroute("링크 다운", ctx);
+    this.resolver.clear("링크 다운");
     if (this.ipMode === "dhcp") {
       const had = this.iface.ip;
       this.iface.clearAddress();
       this.dhcp.stop();
-      if (had) ctx.trace("dhcp.release", "app", `링크가 끊겨 임대 주소 ${had} 해제 → 주소 없음`, { ip: had });
+      if (had) ctx.trace("dhcp.release", "app", `링크 다운으로 임대 주소 ${had} 해제 → IP 미설정`, { ip: had });
     }
   }
 
@@ -244,7 +244,7 @@ export class Host implements SimNode {
     this.pings.push(rec);
     if (!this.iface.ip) {
       rec.status = "failed";
-      rec.reason = "IP 주소 없음";
+      rec.reason = "IP 미설정";
       ctx.trace("ip.no-address", "L3", `ping ${target} 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)`, { dst: target });
       return;
     }
@@ -313,7 +313,7 @@ export class Host implements SimNode {
     this.traceroutes.push(rec);
     while (this.traceroutes.length > Host.TRACEROUTE_KEEP) this.traceroutes.shift();
     if (!this.iface.ip) {
-      this.failTrace(rec, "IP 주소 없음", ctx, "DHCP 로 받거나 수동 설정 필요");
+      this.failTrace(rec, "IP 미설정", ctx, "DHCP 로 받거나 수동 설정 필요");
       return;
     }
     if (!looksLikeName(target) && !isValidIp(target)) {
@@ -433,7 +433,7 @@ export class Host implements SimNode {
         ctx.trace(
           "icmp.ttl-received",
           "app",
-          `${pkt.src} 로부터 Time Exceeded 수신 (원래 ${describeOriginal(o)}) → ping ${rec.dst} 실패: 경로 위에서 TTL 이 다 됨 (라우팅 루프 의심 — 라우터들의 정적·디폴트 라우트가 서로를 가리키는지 확인)`,
+          `${pkt.src} 로부터 Time Exceeded 수신 (원래 ${describeOriginal(o)}) → ping ${rec.dst} 실패: 경로 위에서 TTL 이 다 됨 (라우팅 루프 의심 — 라우터들의 스태틱 라우팅·디폴트 라우트가 서로를 가리키는지 확인)`,
           { from: pkt.src, dst: rec.dst, seq },
           frameId,
         );
@@ -447,7 +447,7 @@ export class Host implements SimNode {
   connect(target: string, port: number, ctx: NodeContext): void {
     if (!this.iface.ip) {
       ctx.trace("ip.no-address", "L3", `${target}:${port} 연결 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)`, { dst: target, port });
-      this.tcp.recordFailure("0.0.0.0", target, port, "IP 주소 없음", ctx);
+      this.tcp.recordFailure("0.0.0.0", target, port, "IP 미설정", ctx);
       return;
     }
     if (!looksLikeName(target) && !isValidIp(target)) {
@@ -646,7 +646,7 @@ export class Host implements SimNode {
           ? [["DHCP 서버", `켜짐 · ${this.dhcpServer.config.start} ~ ${this.dhcpServer.config.end}`] as [string, string]]
           : []),
         ...(this.dnsServer.config.enabled
-          ? [["DNS 서버", `켜짐 · 레코드 ${this.dnsServer.config.records.length}개${this.dnsServer.config.upstream ? ` · 상위 ${this.dnsServer.config.upstream}` : ""}`] as [string, string]]
+          ? [["DNS 서버", `켜짐 · 레코드 ${this.dnsServer.config.records.length}개${this.dnsServer.config.upstream ? ` · 업스트림 DNS ${this.dnsServer.config.upstream}` : ""}`] as [string, string]]
           : []),
       ],
       tables: [

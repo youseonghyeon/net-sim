@@ -218,7 +218,7 @@ describe("traceroute", () => {
     expect(net.getHost("pc1").traceroutes.at(-1)).toMatchObject({ status: "done", hops: [{ ttl: 1, ip: "192.168.0.100", rtt: 0 }] });
     net.scheduleAction(net.now, { kind: "traceroute", nodeId: "pc2", dst: "8.8.8.8" }); // pc2 는 케이블이 없어 주소 없음
     net.runToIdle();
-    expect(net.getHost("pc2").traceroutes.at(-1)).toMatchObject({ status: "failed", reason: "IP 주소 없음" });
+    expect(net.getHost("pc2").traceroutes.at(-1)).toMatchObject({ status: "failed", reason: "IP 미설정" });
   });
 
   it("첫 홉(게이트웨이)이 ARP 에 응답하지 않으면 16 홉을 기다리지 않고 바로 실패한다", () => {

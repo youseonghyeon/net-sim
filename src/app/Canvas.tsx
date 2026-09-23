@@ -103,6 +103,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
 
   function onPointerDown(e: PointerEvent): void {
     if (e.button !== 0 && e.button !== 1) return;
+    endCoalesce(); // 이전 드래그가 pointerup 없이 끝났어도 되돌리기 기록이 멈춰 있지 않게
     const target = e.target as Element;
     const deviceEl = target.closest("[data-device]") as SVGGElement | null;
     const cableEl = target.closest("[data-cable]") as SVGGElement | null;
@@ -112,7 +113,9 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     const panning = e.button === 1 || e.altKey;
     const zoneHandle = target.closest("[data-zone-handle]") as SVGElement | null;
     const zoneEl = target.closest("[data-zone]") as SVGGElement | null;
-    if (zoneHandle && e.button === 0 && !panning) {
+    // 영역 도구일 때는 기존 영역을 잡지 않고 새로 그린다 (겹친 영역을 그릴 수 있게)
+    const zoneTool = tool.value === "zone";
+    if (zoneHandle && e.button === 0 && !panning && !zoneTool) {
       const id = zoneHandle.dataset.zoneHandle!;
       const z = topology.value.zones?.find((x) => x.id === id);
       if (z) {
@@ -121,7 +124,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
       }
       return;
     }
-    if (zoneEl && e.button === 0 && !panning) {
+    if (zoneEl && e.button === 0 && !panning && !zoneTool) {
       const id = zoneEl.dataset.zone!;
       const z = topology.value.zones?.find((x) => x.id === id);
       if (z) {
@@ -166,6 +169,11 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
   function onPointerMove(e: PointerEvent): void {
     const d = dragRef.current;
     if (!d) return;
+    // 버튼이 이미 떼어졌는데 pointerup 을 놓친 경우(컨텍스트 메뉴·포커스 잃음): 여기서 끝낸다
+    if (e.buttons === 0) {
+      onPointerUp(e);
+      return;
+    }
     if (d.type === "move") {
       const k = viewport.value.k;
       const dx = (e.clientX - d.sx) / k;
@@ -212,6 +220,15 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     }
   }
 
+  /** 취소: 그리던 것(케이블·영역 선택·새 영역)은 확정하지 않고 치운다. 옮긴 것은 그대로 한 단계로 남긴다 */
+  function onPointerCancel(): void {
+    const d = dragRef.current;
+    dragRef.current = null;
+    draft.value = null;
+    marquee.value = null;
+    if (d && (d.type === "move" || d.type === "zone-move" || d.type === "zone-resize") && d.moved) endCoalesce();
+  }
+
   function onPointerUp(e: PointerEvent): void {
     const d = dragRef.current;
     dragRef.current = null;
@@ -255,11 +272,20 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
   // 내용에 맞춰 보기: 장치(전체 또는 요청된 것들)의 경계 상자를 화면 중앙에, 필요하면 축소
   useEffect(() => {
     const req = fitRequest.value;
-    const all = topology.peek().devices;
+    const tp = topology.peek();
+    const all = tp.devices;
     const devices = req.ids ? all.filter((d) => req.ids!.includes(d.id)) : all;
-    if (devices.length === 0) return;
+    // 전체 맞추기는 영역(이름표 포함)도 화면에 넣는다. 특정 영역만 요청되면 그 영역을
+    const zones = (tp.zones ?? []).filter((z) => (req.ids ? req.ids.includes(z.id) : true));
+    if (devices.length === 0 && zones.length === 0) return;
     const rect = svgRef.current!.getBoundingClientRect();
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const z of zones) {
+      minX = Math.min(minX, z.x);
+      minY = Math.min(minY, z.y - 12);
+      maxX = Math.max(maxX, z.x + z.w);
+      maxY = Math.max(maxY, z.y + z.h);
+    }
     for (const d of devices) {
       const s = specOf(d);
       minX = Math.min(minX, d.x);
@@ -281,14 +307,19 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const vp = viewport.value;
+      // 줄/페이지 단위 휠(Firefox 등)을 픽셀로 맞춘다
+      const rect = svg.getBoundingClientRect();
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? rect.height : 1;
+      const dx = e.deltaX * unit;
+      const dy = e.deltaY * unit;
       if (e.ctrlKey || e.metaKey) {
-        const rect = svg.getBoundingClientRect();
         const cx = e.clientX - rect.left;
         const cy = e.clientY - rect.top;
-        const k = Math.min(3, Math.max(0.25, vp.k * Math.exp(-e.deltaY * 0.01)));
+        // 마우스 휠 한 칸(≈100px)에 배율이 3배 가까이 튀지 않도록 한 번의 변화량을 제한
+        const k = Math.min(3, Math.max(0.25, vp.k * Math.exp(-Math.max(-60, Math.min(60, dy)) * 0.01)));
         viewport.value = { k, x: cx - (cx - vp.x) * (k / vp.k), y: cy - (cy - vp.y) * (k / vp.k) };
       } else {
-        viewport.value = { ...vp, x: vp.x - e.deltaX, y: vp.y - e.deltaY };
+        viewport.value = { ...vp, x: vp.x - dx, y: vp.y - dy };
       }
     };
     svg.addEventListener("wheel", onWheel, { passive: false });
@@ -315,7 +346,8 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        onLostPointerCapture={onPointerCancel}
       >
         <defs>
           <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse" patternTransform={`translate(${v.x},${v.y}) scale(${v.k})`}>

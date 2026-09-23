@@ -25,9 +25,9 @@ export function hostStatusOf(node: SimNode | undefined, wireless: boolean): Stat
       case "requesting":
         return { text: `DHCP 요청 중 (${node.dhcp.attempts}/${DHCP_MAX_ATTEMPTS})`, tone: "warn", mono: false };
       case "failed":
-        return { text: "DHCP 실패 · IP 없음", tone: "warn", mono: false };
+        return { text: "DHCP 실패 · IP 미설정", tone: "warn", mono: false };
       default:
-        return { text: "IP 없음", tone: "warn", mono: false };
+        return { text: "IP 미설정", tone: "warn", mono: false };
     }
   }
   if (node instanceof Router) return { text: `${node.lan.ip}/${node.lan.prefix}`, tone: "ok", mono: true };

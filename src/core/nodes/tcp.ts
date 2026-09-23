@@ -291,12 +291,12 @@ export class TcpStack {
 
   private receiveData(conn: TcpConn, seg: TcpSegment, ctx: NodeContext): void {
     if (seg.seq < conn.rcvNxt) {
-      ctx.trace("tcp.dup", "L4", `이미 받은 데이터 (seq ${seg.seq} < 기대 ${conn.rcvNxt}) → 버리고 ACK ${conn.rcvNxt} 다시 보냄`, { conn: conn.id });
+      ctx.trace("tcp.dup", "L4", `이미 받은 데이터 (seq ${seg.seq} < 기대 ${conn.rcvNxt}) → 드롭하고 ACK ${conn.rcvNxt} 다시 보냄`, { conn: conn.id });
       this.transmit(conn, { ackFlag: true }, ctx, `ACK 재전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
       return;
     }
     if (seg.seq > conn.rcvNxt) {
-      ctx.trace("tcp.out-of-order", "L4", `순서가 어긋난 데이터 (seq ${seg.seq}, 기대 ${conn.rcvNxt}) → 중간 세그먼트가 손실됨. 버리고 ACK ${conn.rcvNxt} 로 재요청`, { conn: conn.id });
+      ctx.trace("tcp.out-of-order", "L4", `순서가 어긋난 데이터 (seq ${seg.seq}, 기대 ${conn.rcvNxt}) → 중간 세그먼트가 손실됨. 드롭하고 중복 ACK ${conn.rcvNxt} 로 재요청`, { conn: conn.id });
       this.transmit(conn, { ackFlag: true }, ctx, `중복 ACK 전송 (ack=${conn.rcvNxt}): "여기부터 다시 보내라"`, "tcp.ack.sent");
       return;
     }

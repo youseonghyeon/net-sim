@@ -236,7 +236,7 @@ export class L3Node implements SimNode {
   onLink(port: number, up: boolean, ctx: NodeContext): void {
     const name = this.names[port]!;
     if (up) ctx.trace("link.up", "L1", `${name} 링크 연결됨`, { port });
-    else ctx.trace("link.down", "L1", `${name} 링크 끊김`, { port });
+    else ctx.trace("link.down", "L1", `${name} 링크 다운`, { port });
     this.meta.forEach((m, i) => {
       if (m.port !== port) return;
       this.linkUp[i] = up;
@@ -251,7 +251,7 @@ export class L3Node implements SimNode {
         const had = iface.ip;
         iface.clearAddress();
         this.clients[i]!.stop();
-        if (had) ctx.trace("dhcp.release", "app", `[${this.names[i]}] 링크가 끊겨 주소 ${had} 해제`, { ip: had });
+        if (had) ctx.trace("dhcp.release", "app", `[${this.names[i]}] 링크 다운으로 주소 ${had} 해제`, { ip: had });
       }
     });
   }
@@ -293,6 +293,19 @@ export class L3Node implements SimNode {
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
       const m = udp.payload;
+      const toMe = pkt.dst === "255.255.255.255" || this.ifaces.some((i) => i.ip !== undefined && i.ip === pkt.dst);
+      // 내 DHCP 클라이언트로 온 응답(Offer/Ack 는 아직 내 것이 아닌 주소로 올 수 있다)은 목적지와 무관하게 받는다
+      const forMyClient = m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT && this.clients[port] !== undefined;
+      if (!toMe && !forMyClient) {
+        // NAT 박스: 바깥에서 안쪽 사설 주소로 직접 온 UDP 는 TCP·ICMP 와 똑같이 막는다 (NAT 우회 방지)
+        if (this.nat && port === this.outside) {
+          ctx.trace("ip.drop", "L3", `[${name}] 바깥에서 내 공인 주소가 아닌 ${pkt.dst} 로 온 UDP → 드롭. NAT 뒤의 주소는 바깥에서 직접 닿을 수 없음`, { dst: pkt.dst }, frameId);
+          return;
+        }
+        // 다른 라우터를 거쳐 가는 릴레이된 DHCP 를 포함해, 나에게 온 게 아닌 UDP 는 일반 패킷처럼 전달한다
+        this.forward(pkt, port, frameId, ctx);
+        return;
+      }
       if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT && this.clients[port]) this.clients[port]!.handle(m, frameId, ctx, this.emit(port, ctx));
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) this.handleRelay(port, pkt, m, frameId, ctx);
       else if (m.kind !== "dhcp" && this.nat && port === this.outside && pkt.dst === this.ifaces[port]!.ip) {

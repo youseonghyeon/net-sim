@@ -280,16 +280,39 @@ function analyze(t: Topology): Model {
     ...wirelessLinks(t).map((l) => ({ a: { device: l.client, port: 0 }, b: { device: l.base, port: l.slot } })),
   ];
   const links: { a: PortRef; b: PortRef }[] = [];
-  const fwEnds = new Map<string, PortRef[]>(); // 방화벽 id → 양쪽 끝 (outside 쪽, inside 쪽)
+  const isFw = (id: string) => byId.get(id)?.kind === "firewall";
+  // 포트 → 케이블 반대편 (방화벽 체인을 따라가기 위해)
+  const peerOfPort = new Map<string, PortRef>();
   for (const l of rawLinks) {
-    const fa = byId.get(l.a.device)?.kind === "firewall";
-    const fb = byId.get(l.b.device)?.kind === "firewall";
-    if (fa && fb) continue; // 방화벽끼리 직결: 보수적으로 무시
-    if (fa) (fwEnds.get(l.a.device) ?? fwEnds.set(l.a.device, []).get(l.a.device)!)[l.a.port] = l.b;
-    else if (fb) (fwEnds.get(l.b.device) ?? fwEnds.set(l.b.device, []).get(l.b.device)!)[l.b.port] = l.a;
-    else links.push(l);
+    peerOfPort.set(`${l.a.device}:${l.a.port}`, l.b);
+    peerOfPort.set(`${l.b.device}:${l.b.port}`, l.a);
   }
-  for (const ends of fwEnds.values()) if (ends[0] && ends[1]) links.push({ a: ends[0], b: ends[1] });
+  /** 방화벽으로 들어간 끝을 반대 포트로 계속 따라가 방화벽이 아닌 첫 장치를 찾는다. 끊기거나 루프면 undefined */
+  const through = (end: PortRef): PortRef | undefined => {
+    const seen = new Set<string>();
+    let cur: PortRef | undefined = end;
+    while (cur && isFw(cur.device)) {
+      if (seen.has(cur.device)) return undefined;
+      seen.add(cur.device);
+      cur = peerOfPort.get(`${cur.device}:${cur.port === 0 ? 1 : 0}`);
+    }
+    return cur;
+  };
+  const folded = new Set<string>();
+  for (const l of rawLinks) {
+    if (!isFw(l.a.device) && !isFw(l.b.device)) {
+      links.push(l);
+      continue;
+    }
+    // 방화벽이 낀 케이블: 방화벽 쪽 끝은 반대 포트 너머(체인이면 끝까지)로 바꿔 한 번만 잇는다
+    const left = isFw(l.a.device) ? through(peerOfPort.get(`${l.a.device}:${l.a.port === 0 ? 1 : 0}`) ?? { device: "", port: -1 }) : l.a;
+    const right = isFw(l.b.device) ? through(peerOfPort.get(`${l.b.device}:${l.b.port === 0 ? 1 : 0}`) ?? { device: "", port: -1 }) : l.b;
+    if (!left || !right || !byId.has(left.device) || !byId.has(right.device)) continue;
+    const key = [`${left.device}:${left.port}`, `${right.device}:${right.port}`].sort().join("|");
+    if (folded.has(key)) continue;
+    folded.add(key);
+    links.push({ a: left, b: right });
+  }
   const mark = (a: Attach) => {
     if (a.kind === "end" || a.kind === "bridge" || a.kind === "access") linked.add(a.key);
     if (a.kind === "end") for (const s of a.subifs ?? []) linked.add(s.key);
@@ -316,7 +339,7 @@ function analyze(t: Topology): Model {
       } else if (o.kind === "access") {
         // 트렁크 ↔ 액세스: 양쪽 다 상대 프레임을 버린다 → 잇지 않음
       } else if (o.kind === "end" && DEVICE_SPECS[other.device.kind].role === "l3") {
-        // 서브 인터페이스 없는 L3 물리 포트가 트렁크에: 태그 없는 프레임은 버려진다 → 고립
+        // 서브 인터페이스 없는 L3 물리 포트가 트렁크에: 태그 없는 프레임은 드롭된다 → 고립
         stranded.add(o.key);
       } else {
         // 호스트·공유기·허브·AP·인터넷: 태그 프레임을 이해하지 못함
@@ -675,7 +698,7 @@ export function lintTopology(t: Topology): LintIssue[] {
       deviceId: x.id,
       severity: "error",
       code: "l3.no-return-route",
-      message: `${names(ys)} 뒤 ${list} 로 돌아가는 경로가 없어 그쪽에서 나온 통신의 응답이 ${x.name} 에서 버려짐`,
+      message: `${names(ys)} 뒤 ${list} 로 돌아가는 경로가 없어 그쪽에서 나온 통신의 응답이 ${x.name} 에서 드롭됨`,
       fix:
         role === "router"
           ? `공유기는 스태틱 라우팅이 없음 → ${x.name} 자리에 게이트웨이나 NAT 박스를 쓰거나, ${names(ys)} 를 없애고 스위치로 바꾸기`
@@ -788,7 +811,7 @@ export function lintTopology(t: Topology): LintIssue[] {
         deviceId: d.id,
         severity: "warn",
         code: "relay.unreachable",
-        message: `${tgt.ifName} 의 DHCP 릴레이 대상 ${tgt.relay} 로 가는 경로가 없음 (어느 인터페이스 서브넷에도 없고 정적·디폴트 라우트도 없음)`,
+        message: `${tgt.ifName} 의 DHCP 릴레이 대상 ${tgt.relay} 로 가는 경로가 없음 (어느 인터페이스 서브넷에도 없고 스태틱 라우팅·디폴트 라우트도 없음)`,
         fix: `${d.name} → 스태틱 라우팅에 ${tgt.relay}/32 를 추가하거나, ${tgt.ifName} 의 릴레이 칸을 이 장치 인터페이스 서브넷 안의 DHCP 서버 주소로`,
       });
     }
@@ -812,7 +835,7 @@ export function lintTopology(t: Topology): LintIssue[] {
       deviceId: device.id,
       severity: "error",
       code: "vlan.subif-not-trunk",
-      message: `${portName(device, port)} 에 VLAN 서브 인터페이스가 있는데 상대 ${peer.name} ${portName(peer, peerPort)} 가 트렁크가 아님 → 태그 프레임이 버려짐`,
+      message: `${portName(device, port)} 에 VLAN 서브 인터페이스가 있는데 상대 ${peer.name} ${portName(peer, peerPort)} 가 트렁크가 아님 → 태그 프레임이 드롭됨`,
       fix: isSwitch ? `${peer.name} → VLAN → ${portName(peer, peerPort)} 를 트렁크로 바꾸기` : `${portName(device, port)} 을 스위치의 트렁크 포트에 연결하거나 서브 인터페이스를 지우기`,
       related: [peer.id],
     });

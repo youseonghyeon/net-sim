@@ -9,7 +9,9 @@ import { Router } from "../core/nodes/router";
 import { sim, simVersion } from "../model/sim";
 import {
   alignSelected,
+  beginCoalesce,
   collapsedSections,
+  endCoalesce,
   duplicateSelected,
   INSPECTOR_MIN,
   INSPECTOR_WIDE,
@@ -115,7 +117,18 @@ export function Inspector() {
   return (
     <aside class={`inspector${wide ? " wide" : ""}`}>
       <div class="inspector-resize" onPointerDown={onResizeDown} onPointerMove={onResizeMove} onPointerUp={onResizeUp} onPointerCancel={onResizeUp} title="끌어서 폭 조절" />
-      <div class="inspector-scroll">
+      {/* 입력칸 하나를 편집하는 동안의 변경은 되돌리기 한 단계로 묶는다 (한 글자마다 한 단계가 쌓이지 않게) */}
+      <div
+        class="inspector-scroll"
+        onFocusIn={(e) => {
+          const el = e.target as HTMLElement;
+          if (el.tagName === "INPUT" || el.tagName === "SELECT") beginCoalesce();
+        }}
+        onFocusOut={(e) => {
+          const el = e.target as HTMLElement;
+          if (el.tagName === "INPUT" || el.tagName === "SELECT") endCoalesce();
+        }}
+      >
         <div class="inspector-tools">
           <button class="icon-btn" onClick={toggleInspectorWide} title={wide ? "보통 폭" : "넓게"}>
             <Icon name="widen" size={16} />
@@ -124,7 +137,7 @@ export function Inspector() {
             <Icon name="panel" size={16} />
           </button>
         </div>
-        {sel?.type === "devices" ? <MultiPanel ids={sel.ids} /> : device ? <DevicePanel d={device} /> : cable ? <CablePanel c={cable} /> : zone ? <ZonePanel z={zone} /> : <NetworkPanel />}
+        {sel?.type === "devices" ? <MultiPanel key={sel.ids.join()} ids={sel.ids} /> : device ? <DevicePanel key={device.id} d={device} /> : cable ? <CablePanel c={cable} /> : zone ? <ZonePanel z={zone} /> : <NetworkPanel />}
       </div>
     </aside>
   );
@@ -139,7 +152,20 @@ function Section({ title, id, children }: { title?: string; id?: string; childre
   const collapsed = collapsedSections.value.includes(key);
   return (
     <section class={`section${collapsed ? " collapsed" : ""}`}>
-      <h3 onClick={() => toggleSection(key)} title={collapsed ? "펼치기" : "접기"}>
+      <h3
+        class="collapsible"
+        role="button"
+        tabIndex={0}
+        aria-expanded={!collapsed}
+        onClick={() => toggleSection(key)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggleSection(key);
+          }
+        }}
+        title={collapsed ? "펼치기" : "접기"}
+      >
         <span>{title}</span>
         <Icon name="chevron" size={14} class="chev" />
       </h3>
@@ -157,7 +183,7 @@ function Field({ label, hint, children, error }: { label: string; hint?: string;
       </label>
       <div class="control">
         {children}
-        {error && <div class="error">{error}</div>}
+        {error && <div class="field-error">{error}</div>}
       </div>
     </div>
   );
@@ -213,7 +239,7 @@ function LintSection({ issues, withNames }: { issues: LintIssue[]; withNames: bo
   const t = topology.value;
   const name = (id: string) => t.devices.find((d) => d.id === id)?.name ?? id;
   return (
-    <Section id="lint" title={`구성 검사${issues.length ? ` · ${issues.length}` : ""}`}>
+    <Section id={withNames ? "lint" : "lint-device"} title={`구성 검사${issues.length ? ` · ${issues.length}` : ""}`}>
       {issues.length === 0 ? (
         <p class="note">설정에서 빠진 칸이나 어긋난 값이 없습니다. 통신이 안 되면 로그를 보세요.</p>
       ) : (
@@ -444,7 +470,7 @@ function MultiPanel({ ids }: { ids: string[] }) {
                     max={32}
                     value={prefix ?? ""}
                     placeholder="여러 값"
-                    onInput={(e) => setHosts({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) })}
+                    onInput={(e) => { if (e.currentTarget.value === "") return; setHosts({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) }); }}
                   />
                 </div>
               </Field>
@@ -631,7 +657,7 @@ function HostSection({ d, h }: { d: Device; h: HostSettings }) {
                 min={0}
                 max={32}
                 value={h.prefix}
-                onInput={(e) => set({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) })}
+                onInput={(e) => { if (e.currentTarget.value === "") return; set({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) }); }}
               />
               <span class="mono muted">{intToIp(prefixToMask(h.prefix))}</span>
             </div>
@@ -695,7 +721,7 @@ function IfaceFields({ value, onChange, gatewayLabel = "게이트웨이", dhcpNo
                 min={0}
                 max={32}
                 value={value.prefix}
-                onInput={(e) => onChange({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) })}
+                onInput={(e) => { if (e.currentTarget.value === "") return; onChange({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) }); }}
               />
               <span class="mono muted">{intToIp(prefixToMask(value.prefix))}</span>
             </div>
@@ -778,7 +804,7 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
             <span class="muted">목적지</span>
             <input class="input mono" value={r.dest} placeholder="192.168.0.0" title="목적지 네트워크" onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, dest: e.currentTarget.value } : x)))} />
             <span class="mono">/</span>
-            <input class="input mono prefix-in" type="number" min={0} max={32} value={r.prefix} onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) } : x)))} />
+            <input class="input mono prefix-in" type="number" min={0} max={32} value={r.prefix} onInput={(e) => { if (e.currentTarget.value === "") return; setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) } : x))); }} />
             <span class="muted">넥스트 홉</span>
             <input class="input mono via" value={r.via} placeholder="연결된 서브넷 안의 주소" title="넥스트 홉 주소 (연결된 서브넷 안)" onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, via: e.currentTarget.value } : x)))} />
             <button class="icon-btn" title="경로 삭제" onClick={() => setRoutes(l3.routes.filter((_, k) => k !== i))}>
@@ -894,7 +920,7 @@ function SubIfaceSection({ d, l3 }: { d: Device; l3: L3Settings }) {
               ))}
             </select>
             <span class="muted">. VLAN</span>
-            <input class="input mono port" type="number" min={1} max={4094} value={sIf.vlan} onInput={(e) => setSub(i, { vlan: Number(e.currentTarget.value) || 0 })} />
+            <input class="input mono port" type="number" min={1} max={4094} value={sIf.vlan} onInput={(e) => { if (e.currentTarget.value === "") return; setSub(i, { vlan: Number(e.currentTarget.value) || 0 }); }} />
             <button class="icon-btn" title="삭제" onClick={() => setSubs(subs.filter((_, k) => k !== i))}>
               <Icon name="trash" size={15} />
             </button>
@@ -907,7 +933,7 @@ function SubIfaceSection({ d, l3 }: { d: Device; l3: L3Settings }) {
           <Field label="DHCP 릴레이" error={undefined}>
             <input class="input mono" value={sIf.relay} placeholder="서버 주소 (비우면 없음)" onInput={(e) => setSub(i, { relay: e.currentTarget.value })} />
           </Field>
-          {err(sIf) && <div class="error">{err(sIf)}</div>}
+          {err(sIf) && <div class="field-error">{err(sIf)}</div>}
         </div>
       ))}
       <button class="btn wide" onClick={() => setSubs([...subs, { port: ports[0]?.i ?? 1, vlan: subs.length ? Math.max(...subs.map((x) => x.vlan)) + 10 : 10, ip: "", prefix: 24, relay: "" }])}>
@@ -1069,7 +1095,7 @@ function FirewallSection({ value, onChange, uplinkName }: { value: FirewallSetti
                   <Icon name="trash" size={15} />
                 </button>
               </div>
-              {err(r) && <div class="error">{err(r)}</div>}
+              {err(r) && <div class="field-error">{err(r)}</div>}
             </div>
           ))}
           <button class="btn wide" onClick={() => set({ rules: [...value.rules, { action: "deny", proto: "any", direction: "in", src: "", dst: "", dstPort: "" }] })}>
@@ -1087,16 +1113,16 @@ function ForwardSection({ rules, onChange, lanHint }: { rules: PortForwardSettin
   const setRule = (i: number, patch: Partial<PortForwardSettings>) => onChange(rules.map((r, k) => (k === i ? { ...r, ...patch } : r)));
   const port = (v: string, fallback: number) => Math.min(65535, Math.max(1, Number(v) || fallback));
   return (
-    <Section title="포트 포워딩">
-      {rules.length === 0 && <p class="note">바깥에서 시작한 연결은 NAT 테이블에 없어 버려집니다. 규칙을 추가하면 공인 포트로 온 연결을 안쪽 서버로 들여보냅니다. {lanHint}</p>}
+    <Section id="forward-edit" title="포트 포워딩">
+      {rules.length === 0 && <p class="note">바깥에서 시작한 연결은 NAT 테이블에 없어 드롭됩니다. 규칙을 추가하면 공인 포트로 온 연결을 안쪽 서버로 들여보냅니다. {lanHint}</p>}
       {rules.map((r, i) => (
         <div key={i} class="fwd-row">
           <span class="muted">공인 :</span>
-          <input class="input mono port" type="number" min={1} max={65535} value={r.publicPort} onInput={(e) => setRule(i, { publicPort: port(e.currentTarget.value, 80) })} />
+          <input class="input mono port" type="number" min={1} max={65535} value={r.publicPort} onInput={(e) => { if (e.currentTarget.value === "") return; setRule(i, { publicPort: port(e.currentTarget.value, 80) }); }} />
           <span class="muted">→</span>
           <input class="input mono" value={r.lanIp} placeholder="192.168.0.20" onInput={(e) => setRule(i, { lanIp: e.currentTarget.value })} />
           <span class="muted">:</span>
-          <input class="input mono port" type="number" min={1} max={65535} value={r.lanPort} onInput={(e) => setRule(i, { lanPort: port(e.currentTarget.value, 80) })} />
+          <input class="input mono port" type="number" min={1} max={65535} value={r.lanPort} onInput={(e) => { if (e.currentTarget.value === "") return; setRule(i, { lanPort: port(e.currentTarget.value, 80) }); }} />
           <button class="icon-btn" title="규칙 삭제" onClick={() => onChange(rules.filter((_, k) => k !== i))}>
             <Icon name="trash" size={15} />
           </button>
@@ -1271,7 +1297,7 @@ function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
               min={0}
               max={32}
               value={r.lanPrefix}
-              onInput={(e) => setLan(r.lanIp, Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)))}
+              onInput={(e) => { if (e.currentTarget.value === "") return; setLan(r.lanIp, Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0))); }}
             />
             <span class="mono muted">{intToIp(prefixToMask(r.lanPrefix))}</span>
           </div>
@@ -1359,7 +1385,7 @@ function WanSection({ d, w }: { d: Device; w: WanSettings }) {
                 min={0}
                 max={32}
                 value={w.prefix}
-                onInput={(e) => set({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) })}
+                onInput={(e) => { if (e.currentTarget.value === "") return; set({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) }); }}
               />
               <span class="mono muted">{intToIp(prefixToMask(w.prefix))}</span>
             </div>
@@ -1397,7 +1423,7 @@ function InternetDiagSection({ d }: { d: Device }) {
   };
   return (
     <Section title="외부에서 접속">
-      <p class="note">인터넷 저편의 클라이언트(198.51.100.7)가 우리 공인 주소로 TCP 연결을 시도합니다. 포트 포워딩 규칙이 없으면 NAT 에서 버려집니다.</p>
+      <p class="note">인터넷 저편의 클라이언트(198.51.100.7)가 우리 공인 주소로 TCP 연결을 시도합니다. 포트 포워딩 규칙이 없으면 NAT 에서 드롭됩니다.</p>
       <div class="ping-row tcp-row">
         <input ref={target} class="input mono" list={`publics-${d.id}`} placeholder="공인 주소" defaultValue={publics[0]?.ip ?? ""} onKeyDown={(e) => e.key === "Enter" && go()} />
         <datalist id={`publics-${d.id}`}>
@@ -1564,8 +1590,8 @@ function DiagSection({ d }: { d: Device }) {
               {t.name}
             </option>
           ))}
-          {names.map((t) => (
-            <option key={`n-${t.name}`} value={t.name}>
+          {names.map((t, i) => (
+            <option key={`n-${t.name}-${t.ip}-${i}`} value={t.name}>
               {t.ip}
             </option>
           ))}
@@ -1633,8 +1659,8 @@ function DiagSection({ d }: { d: Device }) {
               {t.name}
             </option>
           ))}
-          {names.map((t) => (
-            <option key={`n-${t.name}`} value={t.name}>
+          {names.map((t, i) => (
+            <option key={`n-${t.name}-${t.ip}-${i}`} value={t.name}>
               {t.ip}
             </option>
           ))}
