@@ -453,7 +453,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.mouse.up();
   await page.waitForTimeout(100);
   const after = await device("web").locator(".tile").boundingBox();
-  console.log("zone drag moved web by:", Math.round(after.x - before.x));
+  console.log("zone drag moved web by (영역만 이동이라 0):", Math.round(after.x - before.x));
   await page.screenshot({ path: `${OUT}/29-zone.png` });
   // 영역 도구로 빈 곳에 그리기
   await page.click(".palette .tool:has-text('영역')");

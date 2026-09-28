@@ -258,3 +258,35 @@ describe("케이블 포트 지정", () => {
     expect(topology.value.cables.find((x) => x.id === c.id)![swEnd].port).toBe(1);
   });
 });
+
+describe("영역 복사", () => {
+  it("장치를 복사할 때 안의 장치가 모두 선택된 영역만 함께 복사된다", () => {
+    const a = addDevice("pc", 0, 0);
+    const b = addDevice("pc", 200, 0);
+    const c = addDevice("pc", 800, 0);
+    selection.value = { type: "devices", ids: [a.id, b.id] };
+    zoneAroundSelected("집 A");
+    selection.value = { type: "devices", ids: [a.id, b.id, c.id] };
+    zoneAroundSelected("전체");
+    // a, b 만 복사: "집 A" 는 따라오고 "전체"(c 가 빠짐)는 안 따라온다
+    selection.value = { type: "devices", ids: [a.id, b.id] };
+    expect(copySelected()).toBe(2);
+    paste();
+    const labels = (topology.value.zones ?? []).map((z) => z.label);
+    expect(labels.filter((l) => l === "집 A")).toHaveLength(2);
+    expect(labels.filter((l) => l === "전체")).toHaveLength(1);
+    expect(topology.value.devices).toHaveLength(5);
+  });
+
+  it("영역을 선택하고 복제하면 영역과 안의 장치가 통째로 복사된다", () => {
+    const a = addDevice("pc", 0, 0);
+    selection.value = { type: "device", id: a.id };
+    const z = zoneAroundSelected("집")!;
+    selection.value = { type: "zone", id: z.id };
+    duplicateSelected();
+    expect(topology.value.zones).toHaveLength(2);
+    expect(topology.value.devices).toHaveLength(2);
+    const [z1, z2] = topology.value.zones!;
+    expect(z2!.x - z1!.x).toBeGreaterThan(0);
+  });
+});

@@ -324,17 +324,40 @@ export function toggleDeviceSelection(id: string): void {
 
 /** 붙여넣기 비켜 놓는 거리: 호스트 타일(64) + 이름 줄(46) 보다 크게 */
 const PASTE_OFFSET = 112;
-let clipboard: { topology: Topology; ids: string[] } | null = null;
+let clipboard: { topology: Topology; ids: string[]; zoneIds: string[] } | null = null;
 let pasteCount = 0;
 
-/** 선택한 장치를 클립보드에 담는다. 담은 개수를 돌려준다 */
+/**
+ * 선택을 클립보드에 담는다. 영역을 선택했으면 그 영역과 안의 장치를,
+ * 장치들을 선택했으면 그 장치들과 "안의 장치가 전부 선택된" 영역을 함께 담는다. 담은 장치 수를 돌려준다
+ */
 export function copySelected(): number {
-  const ids = selectedDeviceIds(selection.value);
-  if (ids.length === 0) return 0;
-  clipboard = { topology: topology.value, ids };
+  const t = topology.value;
+  const s = selection.value;
+  let ids: string[];
+  let zoneIds: string[];
+  if (s?.type === "zone") {
+    const z = t.zones?.find((x) => x.id === s.id);
+    if (!z) return 0;
+    ids = devicesInZone(t, z);
+    zoneIds = [z.id];
+  } else {
+    ids = selectedDeviceIds(s);
+    if (ids.length === 0) return 0;
+    const set = new Set(ids);
+    zoneIds = (t.zones ?? []).filter((z) => {
+      const members = devicesInZone(t, z);
+      return members.length > 0 && members.every((id) => set.has(id));
+    }).map((z) => z.id);
+  }
+  clipboard = { topology: t, ids, zoneIds };
   pasteCount = 0;
-  return ids.length;
+  lastCopy = { devices: ids.length, zones: zoneIds.length };
+  return ids.length + (ids.length === 0 ? zoneIds.length : 0);
 }
+
+/** 방금 복사한 것의 개수 (알림 문구용) */
+export let lastCopy = { devices: 0, zones: 0 };
 
 /** 클립보드의 장치를 조금 비켜서 붙여 넣고 그것들을 선택한다 */
 export function paste(): Device[] {
@@ -344,9 +367,13 @@ export function paste(): Device[] {
   const t = topology.value;
   // 이름·MAC 은 지금 토폴로지 기준으로 골라야 여러 번 붙여 넣어도 겹치지 않는다
   const { devices, cables } = cloneDevices(clipboard.topology, clipboard.ids, { x: offset, y: offset }, t.devices);
-  if (devices.length === 0) return [];
-  setTopology({ ...t, devices: [...t.devices, ...devices], cables: [...t.cables, ...cables] });
-  selection.value = selectionOf(devices.map((d) => d.id));
+  const zones: Zone[] = (clipboard.topology.zones ?? [])
+    .filter((z) => clipboard!.zoneIds.includes(z.id))
+    .map((z) => ({ ...z, id: newId("zone"), x: snap(z.x + offset), y: snap(z.y + offset) }));
+  if (devices.length === 0 && zones.length === 0) return [];
+  setTopology({ ...t, devices: [...t.devices, ...devices], cables: [...t.cables, ...cables], zones: [...(t.zones ?? []), ...zones] });
+  // 장치가 있으면 장치들을, 영역만 복사했으면 그 영역을 선택
+  selection.value = devices.length > 0 ? selectionOf(devices.map((d) => d.id)) : { type: "zone", id: zones[0]!.id };
   return devices;
 }
 

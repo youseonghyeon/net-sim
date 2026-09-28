@@ -22,7 +22,6 @@ import {
   topology,
   updateZone,
   viewport,
-  zoneMembers,
 } from "../model/store";
 import type { LintIssue } from "../model/lint";
 import {
@@ -142,10 +141,8 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
       const z = topology.value.zones?.find((x) => x.id === id);
       if (z) {
         selection.value = { type: "zone", id };
-        const starts = new Map<string, { x: number; y: number }>();
-        const members = new Set(zoneMembers(id));
-        for (const d of topology.value.devices) if (members.has(d.id)) starts.set(d.id, { x: d.x, y: d.y });
-        dragRef.current = { type: "zone-move", id, zoneStart: { x: z.x, y: z.y }, starts, sx: e.clientX, sy: e.clientY, moved: false };
+        // 영역만 옮긴다 (안의 장치는 그대로 — 영역을 다시 맞추기 쉽게)
+        dragRef.current = { type: "zone-move", id, zoneStart: { x: z.x, y: z.y }, starts: new Map(), sx: e.clientX, sy: e.clientY, moved: false };
       }
       return;
     }
@@ -562,7 +559,7 @@ function DeviceView({ d, used, selected, targeted, source, issues, markPort }: {
 
 /**
  * 영역(주석 네모). 몸통은 포인터를 받지 않아 그 위에서도 영역 선택·팬이 되고,
- * 라벨과 테두리만 잡을 수 있다. 라벨을 끌면 안의 장치가 함께 움직이고, 선택하면 오른쪽 아래 손잡이로 크기를 바꾼다.
+ * 라벨과 테두리만 잡을 수 있다. 라벨을 끌면 영역만 옮겨지고(안의 장치는 그대로), 선택하면 오른쪽 아래 손잡이로 크기를 바꾼다.
  */
 function ZoneView({ z, selected }: { z: Zone; selected: boolean }) {
   const labelW = Math.round(textWidth(z.label)) + 16;

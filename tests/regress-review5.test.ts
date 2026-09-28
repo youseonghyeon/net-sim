@@ -161,7 +161,8 @@ describe("5차 리뷰 회귀: 모델", () => {
     selection.value = { type: "device", id: b.id };
     copySelected();
     paste();
-    expect(topology.value.zones).toHaveLength(1);
+    // 영역이 사라지지 않는다 (b 가 영역의 유일한 장치라 영역도 함께 복사되어 2개)
+    expect(topology.value.zones).toHaveLength(2);
   });
 
   it("한 번 복사해 여러 번 붙여 넣어도 이름·MAC 이 겹치지 않는다 (중간에 장치를 추가해도)", () => {

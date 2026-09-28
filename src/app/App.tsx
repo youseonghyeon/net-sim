@@ -10,6 +10,7 @@ import {
   exportJson,
   fitSelectionOrAll,
   importJson,
+  lastCopy,
   INSPECTOR_RAIL,
   inspectorOpen,
   inspectorWidth,
@@ -98,7 +99,7 @@ export function App() {
         else undo();
       } else if (mod && code === "KeyC") {
         const n = copySelected();
-        if (n) showNotice(`장치 ${n}개를 복사했습니다. ⌘V 로 붙여 넣습니다.`);
+        if (n) showNotice(`${lastCopy.devices ? `장치 ${lastCopy.devices}개` : ""}${lastCopy.devices && lastCopy.zones ? ", " : ""}${lastCopy.zones ? `영역 ${lastCopy.zones}개` : ""}를 복사했습니다. ⌘V 로 붙여 넣습니다.`);
       } else if (mod && code === "KeyV") {
         e.preventDefault();
         paste();
