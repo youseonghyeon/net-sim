@@ -163,6 +163,10 @@ describe("게이트웨이 서브 인터페이스 (router-on-a-stick)", () => {
       ],
       net.contextFor("gw"),
     );
+    // 먼저 ARP Probe(보낸이 0.0.0.0), 아무도 답하지 않으면 Gratuitous ARP — 둘 다 VLAN 10 태그로
+    const probe = net.transmissions.find((t) => t.from.node === "gw" && t.frame.payload.kind === "arp" && t.frame.payload.senderIp === "0.0.0.0" && t.frame.payload.targetIp === "192.168.10.254");
+    expect(probe?.frame.vlan).toBe(10);
+    net.runToIdle();
     const garp = net.transmissions.find((t) => t.from.node === "gw" && t.frame.payload.kind === "arp" && t.frame.payload.senderIp === "192.168.10.254");
     expect(garp?.frame.vlan).toBe(10);
     expect(gw.names).toEqual(["if0", "if1", "if2", "if1.10", "if1.20"]);

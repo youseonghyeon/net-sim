@@ -144,7 +144,7 @@ export class Router implements SimNode {
       ctx.trace("ip.config", "sys", `LAN 인터페이스 주소 변경: ${cfg.lanIp}/${cfg.lanPrefix} (ARP 캐시 비움)`, { ...cfg });
       this.dhcpServer.onInterfaceChanged(ctx);
       // 호스트·게이트웨이와 같이 새 주소를 Gratuitous ARP 로 알린다
-      this.lan.announce(ctx, this.emitLan(ctx));
+      this.lan.claim(ctx, this.emitLan(ctx));
     }
     const d = this.dhcpServer.config;
     if (cfg.dhcp.enabled !== d.enabled) {
@@ -170,7 +170,7 @@ export class Router implements SimNode {
         this.wan.arpCache.clear();
         this.wan.clearPending();
         ctx.trace("ip.config", "sys", w.ip ? `[wan] 수동 설정 적용: ${w.ip}/${w.prefix ?? 24}, 게이트웨이 ${w.gateway ?? "없음"}` : `[wan] 수동 설정으로 전환 (주소 미입력)`, { ...w });
-        if (w.ip && this.wanLinkUp) this.wan.announce(ctx, this.emitWan(ctx));
+        if (w.ip && this.wanLinkUp) this.wan.claim(ctx, this.emitWan(ctx));
       } else {
         this.wan.clearAddress();
         ctx.trace("ip.config", "sys", `[wan] 자동(DHCP) 로 전환 → ISP 에서 공인 주소를 받는다`, { ...w });
@@ -412,6 +412,12 @@ export class Router implements SimNode {
     if (tag === "arp-timeout") {
       this.lan.onArpTimeout(data, ctx);
       this.wan.onArpTimeout(data, ctx);
+      return;
+    }
+    if (tag === "arp-probe") {
+      const mac = (data as { mac: string }).mac;
+      if (mac === this.lan.mac) this.lan.finishProbe(ctx, this.emitLan(ctx));
+      else if (mac === this.wan.mac) this.wan.finishProbe(ctx, this.emitWan(ctx));
       return;
     }
     if (tag === DHCP_TIMER_TAG && this.wanClient.ownsTimer(data)) this.wanClient.onTimeout(data, ctx, this.emitWan(ctx));

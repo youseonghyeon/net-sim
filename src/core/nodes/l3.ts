@@ -124,7 +124,7 @@ export class L3Node implements SimNode {
           iface.arpCache.clear();
           iface.clearPending();
           ctx?.trace("ip.config", "sys", `[${name}] 서브 인터페이스 주소 변경: ${sub.ip ?? "없음"}/${sub.prefix ?? 24}`, { ...sub });
-          if (ctx && iface.ip && this.linkUp[sub.port]) iface.announce(ctx, this.emit(existing, ctx));
+          if (ctx && iface.ip && this.linkUp[sub.port]) iface.claim(ctx, this.emit(existing, ctx));
         }
         keep.push(existing);
       } else {
@@ -216,7 +216,7 @@ export class L3Node implements SimNode {
         this.clients[i] = undefined;
         iface.configure(c.ip || undefined, c.prefix ?? 24, c.gateway || undefined);
         ctx.trace("ip.config", "sys", c.ip ? `[${name}] 수동 설정 적용: ${c.ip}/${c.prefix ?? 24}${c.gateway ? `, 게이트웨이 ${c.gateway}` : ""}` : `[${name}] 수동 설정으로 전환 (주소 미입력)`, { iface: name, ...c });
-        if (this.linkUp[i] && iface.ip) iface.announce(ctx, this.emit(i, ctx));
+        if (this.linkUp[i] && iface.ip) iface.claim(ctx, this.emit(i, ctx));
       } else {
         iface.clearAddress();
         const client = new DhcpClient(iface, hashCode(this.id) + i * 13, name);
@@ -243,7 +243,7 @@ export class L3Node implements SimNode {
       const iface = this.ifaces[i]!;
       if (up) {
         if (this.clients[i]) this.clients[i]!.start(ctx, this.emit(i, ctx));
-        else if (iface.ip) iface.announce(ctx, this.emit(i, ctx));
+        else if (iface.ip) iface.claim(ctx, this.emit(i, ctx));
         return;
       }
       iface.clearPending();
@@ -490,6 +490,11 @@ export class L3Node implements SimNode {
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
     if (tag === "arp-timeout") {
       for (const iface of this.ifaces) iface.onArpTimeout(data, ctx);
+      return;
+    }
+    if (tag === "arp-probe") {
+      const i = this.ifaces.findIndex((f) => f.mac === (data as { mac: string }).mac);
+      if (i >= 0) this.ifaces[i]!.finishProbe(ctx, this.emit(i, ctx));
       return;
     }
     if (tag === DHCP_TIMER_TAG) {

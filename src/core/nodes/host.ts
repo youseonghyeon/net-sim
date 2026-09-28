@@ -190,7 +190,7 @@ export class Host implements SimNode {
         this.iface.clearPending();
         this.tcp.abortAll("주소 변경", ctx);
         this.cancelTraceroute("주소 변경", ctx);
-        if (this.linkUp && this.iface.ip) this.iface.announce(ctx, this.emit(ctx));
+        if (this.linkUp && this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
       }
       ctx.trace(
         "ip.config",
@@ -220,7 +220,7 @@ export class Host implements SimNode {
     if (up) {
       ctx.trace("link.up", "L1", `링크 연결됨`);
       if (this.ipMode === "dhcp") this.dhcp.start(ctx, this.emit(ctx));
-      else if (this.iface.ip) this.iface.announce(ctx, this.emit(ctx));
+      else if (this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
       return;
     }
     ctx.trace("link.down", "L1", `링크 다운`);
@@ -574,6 +574,9 @@ export class Host implements SimNode {
 
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
     switch (tag) {
+      case "arp-probe":
+        if ((data as { mac: string }).mac === this.iface.mac) this.iface.finishProbe(ctx, this.emit(ctx));
+        return;
       case "arp-timeout": {
         const { ip: nextHop } = data as { ip: Ip };
         const dropped = this.iface.onArpTimeout(data, ctx);

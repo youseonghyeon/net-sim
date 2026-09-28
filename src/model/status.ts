@@ -4,6 +4,7 @@ import { FirewallBridge } from "../core/nodes/fwbridge";
 import { DHCP_MAX_ATTEMPTS, DHCP_STATE_LABEL, Host } from "../core/nodes/host";
 import { Internet } from "../core/nodes/internet";
 import { L3Node } from "../core/nodes/l3";
+import type { NetInterface } from "../core/nodes/iface";
 import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { Switch } from "../core/nodes/switch";
@@ -15,8 +16,16 @@ export interface StatusLine {
 }
 
 /** 호스트의 화면 표시용 주소 상태 */
+/** 인터페이스가 주소 충돌 중이면 경고 줄 (포기한 주소는 "사용 안 함") */
+function conflictLine(label: string, iface: NetInterface): StatusLine | null {
+  if (!iface.conflict || !iface.ip) return null;
+  return { text: `${label}${iface.ip} 충돌${iface.conflict.refused ? " · 사용 안 함" : ""}`, tone: "warn", mono: false };
+}
+
 export function hostStatusOf(node: SimNode | undefined, wireless: boolean): StatusLine | null {
   if (node instanceof Host) {
+    const c = conflictLine("IP ", node.iface);
+    if (c) return c;
     if (node.ip) return { text: `${node.ip}/${node.iface.prefix}`, tone: "ok", mono: true };
     if (!node.linkUp) return { text: wireless ? "무선 연결 없음" : "링크 다운", tone: "muted", mono: false };
     if (node.ipMode === "static") return { text: "IP 미설정", tone: "warn", mono: false };
@@ -30,7 +39,7 @@ export function hostStatusOf(node: SimNode | undefined, wireless: boolean): Stat
         return { text: "IP 미설정", tone: "warn", mono: false };
     }
   }
-  if (node instanceof Router) return { text: `${node.lan.ip}/${node.lan.prefix}`, tone: "ok", mono: true };
+  if (node instanceof Router) return conflictLine("LAN ", node.lan) ?? { text: `${node.lan.ip}/${node.lan.prefix}`, tone: "ok", mono: true };
   if (node instanceof Internet) return { text: `ISP ${node.iface.ip}/${node.iface.prefix}`, tone: "ok", mono: true };
   if (node instanceof AccessPoint) return { text: `SSID ${node.ssid} · 단말 ${node.stations.size}대`, tone: "ok", mono: false };
   if (node instanceof FirewallBridge) {
@@ -45,7 +54,10 @@ export function hostStatusOf(node: SimNode | undefined, wireless: boolean): Stat
     for (let p = 1; p < node.portCount; p++) {
       const iface = node.ifaces[p]!;
       const subs = node.meta.map((m, i) => ({ m, i })).filter(({ m, i }) => i >= node.portCount && m.port === p);
-      if (iface.ip) parts.push(iface.ip);
+      if (iface.ip && iface.conflict) {
+        parts.push(`${iface.ip} 충돌`);
+        ok = false;
+      } else if (iface.ip) parts.push(iface.ip);
       else if (subs.length) parts.push(`${node.names[p]}.${subs.map(({ m }) => m.vlan).join("/")}`);
       else {
         parts.push(`${node.names[p]} 없음`);
@@ -89,12 +101,16 @@ export function wanStatusOf(node: SimNode | undefined): StatusLine | null {
   if (node instanceof L3Node) {
     const name = node.names[0]!;
     const up = node.ifaces[0]!;
+    const c = conflictLine(`${name} `, up);
+    if (c) return c;
     if (up.ip) return { text: `${name} ${up.ip}`, tone: "ok", mono: true };
     if (!node.linkUp[0]) return { text: `${name} 연결 없음`, tone: "muted", mono: false };
     if (!node.clients[0]) return { text: `${name} 주소 수동 입력 필요`, tone: "warn", mono: false };
     return { text: `${name} ${DHCP_STATE_LABEL[node.clients[0].state]}`, tone: node.clients[0].state === "failed" ? "warn" : "muted", mono: false };
   }
   if (!(node instanceof Router)) return null;
+  const wc = conflictLine("WAN ", node.wan);
+  if (wc) return wc;
   if (node.wan.ip) return { text: `WAN ${node.wan.ip}`, tone: "ok", mono: true };
   if (!node.wanLinkUp) return { text: "WAN 연결 없음", tone: "muted", mono: false };
   if (node.wanMode === "static") return { text: "WAN 주소 수동 입력 필요", tone: "warn", mono: false };

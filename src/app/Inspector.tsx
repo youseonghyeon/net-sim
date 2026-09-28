@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useRef } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import { ipToInt, prefixToMask, intToIp, sameSubnet } from "../core/addr";
 import { Host } from "../core/nodes/host";
 import { Internet, KNOWN_SERVERS } from "../core/nodes/internet";
@@ -74,6 +74,8 @@ import {
   type Zone,
 } from "../model/topology";
 import { Icon } from "./Icons";
+import { TargetPicker } from "./TargetPicker";
+import { probeTargetsCached } from "../model/reach";
 
 export function Inspector() {
   const device = selectedDevice.value;
@@ -1433,8 +1435,8 @@ function WanSection({ d, w }: { d: Device; w: WanSettings }) {
 /** 인터넷 노드: 바깥의 클라이언트가 우리 공인 주소로 접속을 시도 (포트 포워딩 실험) */
 function InternetDiagSection({ d }: { d: Device }) {
   void simVersion.value;
-  const target = useRef<HTMLInputElement>(null);
-  const port = useRef<HTMLInputElement>(null);
+  const [inetDst, setInetDst] = useDiagField(d.id, "inet", "");
+  const [inetPort, setInetPort] = useDiagField(d.id, "inetPort", "80");
   const publics: { ip: string; name: string }[] = [];
   for (const other of topology.value.devices) {
     const n = sim.node(other.id);
@@ -1442,19 +1444,16 @@ function InternetDiagSection({ d }: { d: Device }) {
     if (n instanceof L3Node && n.nat && n.ifaces[0]?.ip) publics.push({ ip: n.ifaces[0].ip, name: `${other.name} outside` });
   }
   const go = () => {
-    const dst = target.current?.value.trim();
-    const p = Number(port.current?.value) || 80;
-    if (!dst || !validIp(dst)) {
-      target.current?.focus();
-      return;
-    }
+    const dst = (inetDst || publics[0]?.ip || "").trim();
+    const p = Math.min(65535, Math.max(1, Number(inetPort) || 80));
+    if (!dst || !validIp(dst)) return;
     sim.act({ kind: "inet-connect", nodeId: d.id, dst, port: p });
   };
   return (
     <Section title="외부에서 접속">
       <p class="note">인터넷 저편의 클라이언트(198.51.100.7)가 우리 공인 주소로 TCP 연결을 시도합니다. 포트 포워딩 규칙이 없으면 NAT 에서 드롭됩니다.</p>
       <div class="ping-row tcp-row">
-        <input ref={target} class="input mono" list={`publics-${d.id}`} placeholder="공인 주소" defaultValue={publics[0]?.ip ?? ""} onKeyDown={(e) => e.key === "Enter" && go()} />
+        <input class="input mono" list={`publics-${d.id}`} placeholder="공인 주소" value={inetDst || publics[0]?.ip || ""} onInput={(e) => setInetDst(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && go()} />
         <datalist id={`publics-${d.id}`}>
           {publics.map((p) => (
             <option key={p.ip} value={p.ip}>
@@ -1462,7 +1461,7 @@ function InternetDiagSection({ d }: { d: Device }) {
             </option>
           ))}
         </datalist>
-        <input ref={port} class="input mono port" type="number" min={1} max={65535} defaultValue="80" title="포트" />
+        <input class="input mono port" type="number" min={1} max={65535} value={inetPort} onInput={(e) => setInetPort(e.currentTarget.value)} title="포트" />
         <button class="btn" onClick={go} title="외부 접속 (인바운드) 테스트">
           <Icon name="send" size={14} />
           접속
@@ -1540,91 +1539,48 @@ function SnapshotTable({ t }: { t: SnapshotTableData }) {
 }
 
 /** ping, TCP 연결, DHCP 임대 갱신 */
+/** 진단 입력값을 장치별로 기억 (다른 장치에 갔다 와도 마지막 값이 남는다) */
+const diagMemory = new Map<string, { ping?: string; tcp?: string; port?: string; inet?: string; inetPort?: string }>();
+function useDiagField(deviceId: string, key: "ping" | "tcp" | "port" | "inet" | "inetPort", initial: string): [string, (v: string) => void] {
+  const mem = diagMemory.get(deviceId) ?? {};
+  const [v, setV] = useState(mem[key] ?? initial);
+  const set = (next: string) => {
+    diagMemory.set(deviceId, { ...(diagMemory.get(deviceId) ?? {}), [key]: next });
+    setV(next);
+  };
+  return [v, set];
+}
+
 function DiagSection({ d }: { d: Device }) {
   void simVersion.value;
   const node = sim.node(d.id);
-  const input = useRef<HTMLInputElement>(null);
-  const tcpInput = useRef<HTMLInputElement>(null);
-  const portInput = useRef<HTMLInputElement>(null);
+  const [pingDst, setPingDst] = useDiagField(d.id, "ping", "");
+  const [tcpDst, setTcpDst] = useDiagField(d.id, "tcp", "");
+  const [tcpPort, setTcpPort] = useDiagField(d.id, "port", "80");
   if (!(node instanceof Host)) return null;
 
-  const targets: { ip: string; name: string }[] = [];
-  const servers: { ip: string; name: string }[] = [];
-  let hasInternet = false;
-  for (const other of topology.value.devices) {
-    if (other.id === d.id) continue;
-    const n = sim.node(other.id);
-    if (n instanceof Internet) hasInternet = true;
-    const ip = n instanceof Host ? n.ip : n instanceof Router ? n.lan.ip : undefined;
-    if (ip) targets.push({ ip, name: other.name });
-    if (n instanceof L3Node) n.ifaces.forEach((f, k) => f.ip && targets.push({ ip: f.ip, name: `${other.name} ${n.names[k]}` }));
-    if (n instanceof Host && ip && n.tcp.listening.size > 0) servers.push({ ip, name: other.name });
-  }
-  if (hasInternet) {
-    for (const [ip, name] of Object.entries(KNOWN_SERVERS)) {
-      targets.push({ ip, name });
-      servers.push({ ip, name });
-    }
-  }
-  // 이름 후보: LAN 의 DNS 서버 레코드 + 인터넷이 있으면 공개 이름
-  const names: { ip: string; name: string }[] = [];
-  for (const other of topology.value.devices) {
-    const n = sim.node(other.id);
-    if (n instanceof Host && n.dnsServer.config.enabled) for (const r of n.dnsServer.config.records) names.push({ ip: r.ip, name: r.name });
-  }
-  if (hasInternet) for (const r of PUBLIC_ZONE) names.push({ ip: r.ip, name: r.name });
   const okTarget = (v: string) => validIp(v) || (looksLikeName(v) && /^[a-z0-9.-]+$/i.test(v));
   const send = () => {
-    const dst = input.current?.value.trim();
-    if (!dst || !okTarget(dst)) {
-      input.current?.focus();
-      return;
-    }
+    const dst = pingDst.trim();
+    if (!dst || !okTarget(dst)) return;
     sim.act({ kind: "ping", nodeId: d.id, dst });
   };
   const trace = () => {
-    const dst = input.current?.value.trim();
-    if (!dst || !okTarget(dst)) {
-      input.current?.focus();
-      return;
-    }
+    const dst = pingDst.trim();
+    if (!dst || !okTarget(dst)) return;
     sim.act({ kind: "traceroute", nodeId: d.id, dst });
   };
   const tr = node.traceroutes.at(-1);
+  const port = Math.min(65535, Math.max(1, Number(tcpPort) || 80));
   const connect = () => {
-    const dst = tcpInput.current?.value.trim();
-    const port = Number(portInput.current?.value) || 80;
-    if (!dst || !okTarget(dst)) {
-      tcpInput.current?.focus();
-      return;
-    }
+    const dst = tcpDst.trim();
+    if (!dst || !okTarget(dst)) return;
     sim.act({ kind: "tcp-connect", nodeId: d.id, dst, port });
   };
   return (
     <Section title="진단">
       <div class="ping-row">
-        <input
-          ref={input}
-          class="input mono"
-          list={`targets-${d.id}`}
-          placeholder="ping 보낼 주소 또는 이름"
-          defaultValue={targets[0]?.ip ?? ""}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") send();
-          }}
-        />
-        <datalist id={`targets-${d.id}`}>
-          {targets.map((t) => (
-            <option key={`${t.ip}-${t.name}`} value={t.ip}>
-              {t.name}
-            </option>
-          ))}
-          {names.map((t, i) => (
-            <option key={`n-${t.name}-${t.ip}-${i}`} value={t.name}>
-              {t.ip}
-            </option>
-          ))}
-        </datalist>
+        <TargetPicker value={pingDst} onInput={setPingDst} onSubmit={send} placeholder="ping 보낼 주소 또는 이름" load={() => probeTargetsCached(topology.peek(), d.id, "ping")} />
         <button class="btn" onClick={send}>
           <Icon name="send" size={14} />
           ping
@@ -1672,29 +1628,8 @@ function DiagSection({ d }: { d: Device }) {
         </div>
       )}
       <div class="ping-row tcp-row">
-        <input
-          ref={tcpInput}
-          class="input mono"
-          list={`servers-${d.id}`}
-          placeholder="서버 주소 또는 이름"
-          defaultValue={servers[0]?.ip ?? ""}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") connect();
-          }}
-        />
-        <datalist id={`servers-${d.id}`}>
-          {servers.map((t) => (
-            <option key={`${t.ip}-${t.name}`} value={t.ip}>
-              {t.name}
-            </option>
-          ))}
-          {names.map((t, i) => (
-            <option key={`n-${t.name}-${t.ip}-${i}`} value={t.name}>
-              {t.ip}
-            </option>
-          ))}
-        </datalist>
-        <input ref={portInput} class="input mono port" type="number" min={1} max={65535} defaultValue="80" title="포트" />
+        <TargetPicker value={tcpDst} onInput={setTcpDst} onSubmit={connect} placeholder="서버 주소 또는 이름" load={() => probeTargetsCached(topology.peek(), d.id, "tcp", port)} />
+        <input class="input mono port" type="number" min={1} max={65535} value={tcpPort} onInput={(e) => setTcpPort(e.currentTarget.value)} title="포트" />
         <button class="btn" onClick={connect} title="TCP 연결 (3-way handshake → 요청 → 응답 → 종료)">
           <Icon name="send" size={14} />
           연결

@@ -1235,6 +1235,102 @@ select.btn.example {
   color: var(--accent);
   cursor: pointer;
 }
+/* 진단 대상 자동완성: 위치별 그룹 + 홉 수, 닿지 않는 후보는 접어서 이유와 함께 */
+.picker {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.picker .input {
+  width: 100%;
+}
+.picker-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  width: max(100%, 300px);
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 4px 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 12px;
+}
+.picker-list h5 {
+  margin: 0;
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.picker-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.picker-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "label meta" "value meta";
+  column-gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.picker-item.active {
+  background: var(--accent-soft);
+}
+.picker-label {
+  grid-area: label;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.picker-value {
+  grid-area: value;
+  color: var(--ink-2);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.picker-meta {
+  grid-area: meta;
+  align-self: center;
+  color: var(--ink-3);
+  font-size: 11px;
+  text-align: right;
+  max-width: 140px;
+}
+.picker-item.bad .picker-label,
+.picker-item.bad .picker-value {
+  color: var(--ink-3);
+}
+.picker-item.bad .picker-meta {
+  color: var(--danger);
+}
+.picker-bad {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding-top: 2px;
+}
+.picker-toggle {
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 11px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.picker-note {
+  padding: 6px 10px;
+  margin: 0;
+  color: var(--ink-3);
+}
 /* traceroute 결과: 홉 번호 · 주소 · 장치 이름 · RTT */
 .trace-result {
   margin-top: 8px;

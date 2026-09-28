@@ -516,6 +516,28 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("after panel change:", cab2.map((c) => `${c.a.port}-${c.b.port}`).join(","), "| options:", opts.length);
   await page.screenshot({ path: `${OUT}/36-cable-port.png` });
 }
+// 15) 진단 자동완성 + 장치별 기억: 도커 예제의 pc-1 에서 목록 열기 → 그룹·닿지 않는 후보 → 다른 장치 갔다 와도 값 유지
+{
+  await page.selectOption("select.example", "docker");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 });
+  await clickDevice("pc-1");
+  await waitAddr("pc-1", /^192\.168\.0\.\d+\/24$/);
+  await page.locator(".ping-row .picker .input").first().click();
+  await page.waitForTimeout(150);
+  const groups = await page.locator(".picker-list h5").allTextContents();
+  console.log("picker groups:", groups.join(" / "), "| bad toggle:", await page.locator(".picker-toggle").textContent().catch(() => "none"));
+  await page.locator(".picker-toggle").dispatchEvent("mousedown");
+  await page.waitForTimeout(100);
+  console.log("bad rows:", (await page.locator(".picker-item.bad").allInnerTexts()).slice(0, 2).map((x) => x.replace(/\s+/g, " ")).join(" | "));
+  await page.screenshot({ path: `${OUT}/37-picker.png` });
+  await page.keyboard.press("Escape");
+  await page.locator(".ping-row .picker .input").first().fill("google.com");
+  await clickDevice("web");
+  await page.waitForTimeout(100);
+  await clickDevice("pc-1");
+  await page.waitForTimeout(100);
+  console.log("remembered ping target:", await page.locator(".ping-row .picker .input").first().inputValue());
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

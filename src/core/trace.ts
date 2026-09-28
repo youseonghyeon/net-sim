@@ -17,6 +17,9 @@ export type TraceKind =
   | "arp.reply.sent"
   | "arp.reply.received"
   | "arp.cache.update"
+  | "arp.probe"
+  | "ip.conflict"
+  | "ip.conflict.clear"
   | "arp.timeout"
   | "timer.stale"
   | "switch.learn"
@@ -147,6 +150,7 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "tcp.refused",
   "tcp.out-of-order",
   "arp.timeout",
+  "ip.conflict",
   "link.unconnected",
   "link.lost",
   "link.loss",

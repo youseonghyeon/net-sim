@@ -79,4 +79,17 @@ describe("타일 상태 문구", () => {
     expect(serviceBadgesOf(sw)).toEqual(["VLAN"]);
     expect(serviceBadgesOf(undefined)).toEqual([]);
   });
+
+  it("주소 충돌이면 타일에 경고 (포기한 주소는 사용 안 함)", () => {
+    const net = new Network();
+    const a = net.addNode(new Host({ id: "a", mac: "02:00:00:00:00:0a", ipMode: "static", ip: "10.0.0.5", prefix: 24 }));
+    const b = net.addNode(new Host({ id: "b", mac: "02:00:00:00:00:0b", ipMode: "static", ip: "10.0.0.5", prefix: 24 }));
+    net.addNode(new Switch("sw", 4));
+    net.connect("a", 0, "sw", 0);
+    net.runToIdle();
+    net.connect("b", 0, "sw", 1);
+    net.runToIdle();
+    expect(hostStatusOf(a, false)).toMatchObject({ text: "10.0.0.5/24", tone: "ok" });
+    expect(hostStatusOf(b, false)).toMatchObject({ text: "IP 10.0.0.5 충돌 · 사용 안 함", tone: "warn" });
+  });
 });
