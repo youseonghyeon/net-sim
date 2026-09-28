@@ -1,4 +1,5 @@
-import { signal } from "@preact/signals";
+import { effect, signal } from "@preact/signals";
+import { Component } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import type { Layer } from "../core/packet";
 import { BAD_KINDS, type TraceEvent } from "../core/trace";
@@ -15,7 +16,30 @@ const LAYER_HINT: Record<Layer, string> = {
   app: "DHCP · DNS · ping",
   sys: "설정 · 사용자 동작",
 };
-const MAX_ROWS = 400;
+/**
+ * 로그 창에 그리는 줄 수. 처음엔 최근 500줄, "이전 기록 더 보기" 로 2000줄씩 늘린다 (보관은 sim.ts 의 TRACE_CAP 까지).
+ * 패킷이 폭주하면 로그가 초당 수천 줄씩 바뀌므로, 기본 창을 크게 잡으면 화면이 밀린다 (perf-check --log)
+ */
+const FIRST_ROWS = 500;
+const PAGE_ROWS = 2000;
+const shownRows = signal(FIRST_ROWS);
+
+/**
+ * 로그 창 갱신 신호: 시뮬레이션은 한 프레임에도 여러 번 바뀌지만 로그는 200ms 에 한 번이면 충분하다.
+ * 이벤트마다 수천 줄을 다시 그리면 패킷이 많을 때 화면이 버벅인다 (perf-check --log 로 측정)
+ */
+const LOG_REFRESH_MS = 200;
+const logTick = signal(0);
+let refreshPending = false;
+effect(() => {
+  void simVersion.value;
+  if (refreshPending) return;
+  refreshPending = true;
+  setTimeout(() => {
+    refreshPending = false;
+    logTick.value++;
+  }, LOG_REFRESH_MS);
+});
 
 const enabledLayers = signal<Set<Layer>>(new Set<Layer>(["L2", "L3", "L4", "app", "sys"]));
 /** 선택한 장치의 로그만 보기 */
@@ -33,15 +57,20 @@ function categoryOf(e: TraceEvent): "arp" | "dhcp" | "icmp" | "tcp" | "dns" | "r
 }
 
 export function LogDrawer() {
-  void simVersion.value;
+  void logTick.value;
   const open = logOpen.value;
   const layers = enabledLayers.value;
   const names = new Map(topology.value.devices.map((d) => [d.id, d.name]));
   const all = sim.net.trace;
   const picked = new Set(selectedDeviceIds(selection.value));
   const filterByDevice = onlySelected.value && picked.size > 0;
-  const rows = all.filter((e) => layers.has(e.layer) && (!filterByDevice || picked.has(e.nodeId))).slice(-MAX_ROWS);
+  // 접혀 있으면 거르지도 않는다 (이벤트마다 다시 그려지므로)
+  const matched = open ? all.filter((e) => layers.has(e.layer) && (!filterByDevice || picked.has(e.nodeId))) : [];
+  const rows = matched.slice(-shownRows.value);
+  const hidden = matched.length - rows.length;
   const listRef = useRef<HTMLOListElement>(null);
+  /** "더 보기" 로 위에 줄이 붙을 때 보던 자리를 유지하기 위한 이전 높이 */
+  const keepFrom = useRef<number | null>(null);
   const stick = useRef(true);
   // 위쪽 가장자리를 끌어 높이 조절. 최소보다 한참 아래로 끌면 접는다 (인스펙터 폭 조절과 같은 방식)
   const resizing = useRef<{ y: number; h: number } | null>(null);
@@ -70,20 +99,24 @@ export function LogDrawer() {
 
   useEffect(() => {
     const el = listRef.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    if (keepFrom.current !== null) {
+      el.scrollTop += el.scrollHeight - keepFrom.current;
+      keepFrom.current = null;
+      return;
+    }
+    if (stick.current) el.scrollTop = el.scrollHeight;
   }, [rows.length, open]);
+  const showMore = () => {
+    keepFrom.current = listRef.current?.scrollHeight ?? null;
+    shownRows.value += PAGE_ROWS;
+  };
 
   const toggleLayer = (l: Layer) => {
     const next = new Set(layers);
     if (next.has(l)) next.delete(l);
     else next.add(l);
     enabledLayers.value = next;
-  };
-  const toggleRow = (seq: number) => {
-    const next = new Set(expanded.value);
-    if (next.has(seq)) next.delete(seq);
-    else next.add(seq);
-    expanded.value = next;
   };
 
   return (
@@ -127,38 +160,63 @@ export function LogDrawer() {
             stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
           }}
         >
+          {hidden > 0 && (
+            <li class="log-more">
+              <button class="btn ghost small" onClick={showMore}>
+                이전 기록 {Math.min(hidden, PAGE_ROWS).toLocaleString()}개 더 보기 (남은 {hidden.toLocaleString()}개)
+              </button>
+            </li>
+          )}
           {rows.length === 0 ? (
             <li class="log-empty">{filterByDevice ? "선택한 장치의 기록이 없습니다." : "아직 기록이 없습니다. 장치를 연결하거나 ping 을 보내면 각 장치가 무엇을 보고 어떤 결정을 내렸는지 순서대로 남습니다."}</li>
           ) : (
-            rows.map((e) => {
-              const cat = categoryOf(e);
-              const bad = BAD_KINDS.has(e.kind);
-              const isOpen = expanded.value.has(e.seq);
-              return (
-                <li key={e.seq} class={`row${bad ? " bad" : ""}${e.kind === "action" ? " action" : ""}${isOpen ? " open" : ""}`} onClick={() => toggleRow(e.seq)}>
-                  <span class="t mono">{e.time}ms</span>
-                  <button
-                    class="who"
-                    title="캔버스에서 이 장치 선택"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      if (names.has(e.nodeId)) selection.value = { type: "device", id: e.nodeId };
-                    }}
-                  >
-                    {names.get(e.nodeId) ?? e.nodeId}
-                  </button>
-                  <span class="layer mono">{e.layer}</span>
-                  <span class="summary">
-                    {cat && <i class={`cat ${cat}`} />}
-                    {e.summary}
-                  </span>
-                  {isOpen && <pre class="details">{JSON.stringify({ kind: e.kind, packetId: e.packetId, ...e.details }, null, 2)}</pre>}
-                </li>
-              );
-            })
+            rows.map((e) => <LogRow key={e.seq} e={e} name={names.get(e.nodeId)} open={expanded.value.has(e.seq)} />)
           )}
         </ol>
       )}
     </footer>
   );
+}
+
+function toggleRow(seq: number): void {
+  const next = new Set(expanded.value);
+  if (next.has(seq)) next.delete(seq);
+  else next.add(seq);
+  expanded.value = next;
+}
+
+/**
+ * 로그 한 줄. 이벤트는 한 번 기록되면 바뀌지 않으므로, 이름·펼침이 그대로면 다시 그리지 않는다.
+ * (수천 줄을 갱신마다 전부 비교하면 패킷이 많을 때 프레임이 밀린다 — perf-check --log)
+ */
+class LogRow extends Component<{ e: TraceEvent; name: string | undefined; open: boolean }> {
+  override shouldComponentUpdate(next: { e: TraceEvent; name: string | undefined; open: boolean }): boolean {
+    return next.e !== this.props.e || next.name !== this.props.name || next.open !== this.props.open;
+  }
+  override render() {
+    const { e, name, open } = this.props;
+    const cat = categoryOf(e);
+    const bad = BAD_KINDS.has(e.kind);
+    return (
+      <li class={`row${bad ? " bad" : ""}${e.kind === "action" ? " action" : ""}${open ? " open" : ""}`} onClick={() => toggleRow(e.seq)}>
+        <span class="t mono">{e.time}ms</span>
+        <button
+          class="who"
+          title="캔버스에서 이 장치 선택"
+          onClick={(ev) => {
+            ev.stopPropagation();
+            if (name !== undefined) selection.value = { type: "device", id: e.nodeId };
+          }}
+        >
+          {name ?? e.nodeId}
+        </button>
+        <span class="layer mono">{e.layer}</span>
+        <span class="summary">
+          {cat && <i class={`cat ${cat}`} />}
+          {e.summary}
+        </span>
+        {open && <pre class="details">{JSON.stringify({ kind: e.kind, packetId: e.packetId, ...e.details }, null, 2)}</pre>}
+      </li>
+    );
+  }
 }

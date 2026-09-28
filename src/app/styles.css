@@ -1597,12 +1597,20 @@ select.btn.example {
   border-top: 1px solid var(--line);
   font-size: 12px;
 }
+.log-more {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 8px;
+}
 .log-empty {
   padding: 12px 16px;
   color: var(--ink-3);
 }
 .row {
   display: grid;
+  /* 로그는 수천 줄이라 화면 밖 줄은 레이아웃·페인트를 건너뛴다 (보통 한 줄 22px) */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 22px;
   grid-template-columns: 72px 88px 34px minmax(0, 1fr);
   gap: 10px;
   padding: 3px 16px;

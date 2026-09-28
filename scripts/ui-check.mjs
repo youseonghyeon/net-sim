@@ -648,6 +648,31 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.mouse.move(hb3.x + 200, 895, { steps: 10 });
   await page.mouse.up();
   console.log("log collapsed by drag:", (await page.locator(".log.open").count()) === 0 ? "yes" : "NO");
+  // 로그 "이전 기록 더 보기": 처음엔 최근 500줄, 누르면 더 많이 (이벤트가 많은 예제로)
+  await loadEx("publish");
+  await waitAddr("맥북", /^192\.168\.0\.1\d\d/);
+  await clickDevice("맥북");
+  await page.locator(".inspector .picker .input").nth(1).fill("nexus.com");
+  await page.keyboard.press("Escape");
+  for (let k = 0; k < 3; k++) {
+    await page.click(".inspector .btn:has-text('연결')");
+    await page.waitForTimeout(1500);
+  }
+  for (let i = 0; i < 120; i++) {
+    const n = Number(((await page.locator(".log-toggle .count").textContent()) ?? "0").replace(/,/g, ""));
+    if (n > 1500) break;
+    await page.waitForTimeout(250);
+  }
+  await page.click(".log-toggle");
+  await page.click(".layer-filters .chip:has-text('L1')"); // 링크 전송까지 보이게 (기본은 꺼짐)
+  await page.waitForTimeout(400);
+  const rowsBefore = await page.locator(".log-list .row").count();
+  const more = page.locator(".log-more button");
+  if (await more.count()) {
+    await more.click();
+    await page.waitForTimeout(300);
+    console.log("log more:", rowsBefore, "→", await page.locator(".log-list .row").count(), "| total:", await page.locator(".log-toggle .count").textContent());
+  } else console.log("log more: (500줄 이하라 버튼 없음)", rowsBefore);
 }
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 

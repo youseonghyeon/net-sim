@@ -3,6 +3,7 @@
 // 실행: npm run perf-check                 (헤드리스, CPU 4배 감속 — 느린 노트북 흉내)
 //       npm run perf-check -- --headed      (실제 창·GPU 로 그리기)
 //       npm run perf-check -- --throttle 1  (감속 없이)
+//       npm run perf-check -- --log         (이벤트 로그를 연 채로)
 import { chromium } from "playwright";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +15,8 @@ const headed = args.includes("--headed");
 const ti = args.indexOf("--throttle");
 const throttle = ti >= 0 ? Number(args[ti + 1]) : 4;
 const only = args.find((a) => a.startsWith("--only="))?.slice(7);
+/** 이벤트 로그를 연 채로 잰다 (로그 렌더 비용 포함) */
+const withLog = args.includes("--log");
 const WINDOW_MS = 6000;
 /** 이 이상이면 실패로 본다 (감속 적용 기준). 60fps 한 프레임 16.7ms, 두 프레임 33ms */
 const BUDGET = { p95: 34, longFrames: 3 };
@@ -76,6 +79,7 @@ async function measure(scenario) {
   await page.reload();
   await page.waitForSelector("[data-device]");
   await page.keyboard.press("Shift+Digit1"); // 전체 보기 — 모든 장치가 화면 안에서 그려지게
+  if (withLog) await page.click(".log-toggle");
   await cdp.send("Performance.enable");
   const metrics = async () => Object.fromEntries((await cdp.send("Performance.getMetrics")).metrics.map((x) => [x.name, x.value]));
   const m0 = await metrics();
@@ -132,7 +136,7 @@ async function measure(scenario) {
 
 const ids = [...Object.keys(EXAMPLES), "stress"].filter((id) => !only || only.split(",").includes(id));
 
-console.log(`perf-check: ${headed ? "headed" : "headless"}, CPU ${throttle}x 감속, 구간 ${WINDOW_MS / 1000}s`);
+console.log(`perf-check: ${headed ? "headed" : "headless"}, CPU ${throttle}x 감속, 구간 ${WINDOW_MS / 1000}s${withLog ? ", 로그 열림" : ""}`);
 const rows = [];
 for (const id of ids) rows.push(await measure(id));
 console.table(rows);

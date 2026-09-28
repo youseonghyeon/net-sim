@@ -9,7 +9,8 @@ import { hostStatusOf, serviceBadgesOf, wanStatusOf, type StatusLine } from "./s
 import { topology } from "./store";
 import { DEVICE_SPECS, type Topology } from "./topology";
 
-const TRACE_CAP = 4000;
+/** 보관하는 이벤트 로그 상한. 넘으면 오래된 것부터 지운다 (로그 창은 이 중 최근 일부만 그리고, "더 보기" 로 늘린다) */
+const TRACE_CAP = 50_000;
 
 /** 화면에 보이는 시뮬레이션 시각. 이벤트 사이를 부드럽게 이동하며, 조용할 때는 멈춘다 */
 export const simTime = signal(0);
