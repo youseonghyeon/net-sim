@@ -46,6 +46,8 @@ describe("포트 포워딩 — 가정용 라우터", () => {
     const client = remoteClientConns(net)[0]!;
     expect(client.localIp).toBe(Internet.REMOTE_CLIENT);
     expect(client.state).toBe("FAILED");
+    // RST 거부가 아니라 무응답 → 타임아웃으로 표시
+    expect(client.reason).toBe("타임아웃 · SYN 에 응답 없음 (재전송 3회)");
     const miss = net.trace.filter((e) => e.nodeId === "rt" && e.kind === "nat.miss");
     expect(miss.length).toBeGreaterThan(0);
     expect(miss[0]!.summary).toContain("포트 포워딩");

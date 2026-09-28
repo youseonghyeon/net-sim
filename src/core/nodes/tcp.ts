@@ -379,11 +379,20 @@ export class TcpStack {
     const u = conn.unacked.find((x) => x.seg.seq === seq);
     if (!u) return;
     if (u.retries >= TCP_MAX_RETRIES) {
+      // 연결 시작(SYN)에 아무 응답이 없으면: 중간에서 조용히 드롭된 것 (방화벽 차단·포워딩 규칙 없음·경로 없음). 거부라면 RST 가 온다
+      const handshake = conn.state === "SYN_SENT";
       conn.state = "FAILED";
-      conn.reason = `${TCP_MAX_RETRIES}회 재전송에도 응답 없음`;
+      conn.reason = handshake ? `타임아웃 · SYN 에 응답 없음 (재전송 ${TCP_MAX_RETRIES}회)` : `타임아웃 · ACK 없음 (재전송 ${TCP_MAX_RETRIES}회)`;
       conn.closedAt = ctx.now;
       this.cancelAll(conn);
-      ctx.trace("tcp.failed", "L4", `TCP 실패: seq ${seq} 를 ${TCP_MAX_RETRIES}번 다시 보냈지만 ACK 없음 → 연결 포기 (${endpoint(conn.remoteIp, conn.remotePort)})`, { conn: conn.id, seq });
+      ctx.trace(
+        "tcp.failed",
+        "L4",
+        handshake
+          ? `TCP 타임아웃: SYN 을 ${TCP_MAX_RETRIES}번 다시 보냈지만 SYN-ACK 없음 → 연결 포기 (${endpoint(conn.remoteIp, conn.remotePort)}). 거부(RST)가 아니라 무응답이므로 중간에서 드롭된 것 — 방화벽·포트 포워딩·경로를 확인`
+          : `TCP 타임아웃: seq ${seq} 를 ${TCP_MAX_RETRIES}번 다시 보냈지만 ACK 없음 → 연결 포기 (${endpoint(conn.remoteIp, conn.remotePort)})`,
+        { conn: conn.id, seq },
+      );
       return;
     }
     u.retries += 1;
