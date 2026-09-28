@@ -13,7 +13,7 @@ Packet Tracer 식으로 직접 구성하는 네트워크 학습 시뮬레이터.
   - 영역(`Zone`): 장치 뒤에 그리는 주석 네모(`topology.zones`, 없으면 []). 시뮬레이션·구성 검사와 무관. 몸통은 포인터를 안 받고 이름표·테두리만 잡히며, 끌면 영역만 옮긴다(안의 장치는 그대로 — 사용자 요청). 복사: 영역 선택 시 영역 + 안의 장치(타일 중심 기준 `devicesInZone`), 장치 선택 시 안의 장치가 전부 선택된 영역도 함께. 예제에 넣을 땐 `zoneAround` 로 계산한다.
   - `lint.ts` — 구성 검사(순수). 토폴로지만 보고 "설정 한 칸 빠짐" 을 `LintIssue[]` 로. 오탐이 미탐보다 나쁘므로 주소를 모르는(DHCP) 인터페이스가 끼면 침묵. 규칙 추가 시 `tests/lint.test.ts` 에 걸리는/안 걸리는 케이스 + 모든 예제 이슈 0 유지(`tests/topology.test.ts`).
   - 순수(테스트 가능) 층: `netSync.ts`(`NetworkSync`: 토폴로지 → `Network` diff 동기화, `effective*` 입력 정리, `makeNode`/`applyConfig`), `simClock.ts`(`advanceClock`: 애니메이션 시계), `status.ts`(타일 문구·서비스 배지). `sim.ts` 는 이 셋을 신호·rAF 로 감싸기만 한다. 새 동기화 로직은 `sim.ts` 가 아니라 `netSync.ts` 에 넣고 `tests/netSync.test.ts` 로 고정한다.
-- `src/app/` — Preact UI. `Canvas.tsx`(SVG 캔버스: 빈 곳 드래그 = 영역 선택, ⌥/가운데 버튼 = 팬, Shift+클릭 토글, 묶음 이동, 케이블 드래그 — 포트 칸(`[data-port]`, 투명 히트 영역)을 잡고 끌면 어느 도구든 그 포트에서 시작하고 포트 칸에 놓으면 그 포트로(`planCable(t,a,b,aPort,bPort)`, 검증 `portProblem`), 구성 검사 배지), `Palette.tsx`(140px, 맨 위 도구 3개 가로 + `PALETTE_GROUPS` 묶음별 캡션·2열 격자. 새 장치는 알맞은 묶음에 넣는다), `Inspector.tsx`(우측 속성: 단일 장치 패널·다중 선택 `MultiPanel`·케이블·네트워크 요약 + 구성 검사 목록. 패널은 접기(⌘\, 28px 레일)·넓게(480)·끌어서 폭 조절, 섹션은 제목 클릭으로 접힘 — 상태는 `store.ts` 의 `inspectorOpen/inspectorWidth/collapsedSections`, localStorage. 동적 제목 섹션은 `id` 를 준다. 머리 줄(`.panel-head`)은 sticky 라 스크롤해도 편집 중인 장치가 보이고, 넓게·접기 버튼은 그 위에 겹쳐 고정), `LogDrawer.tsx`(계층 칩 + "선택한 장치만" 필터, 장치 이름을 누르면 캔버스에서 선택), `App.tsx`(상단바: 재생·되돌리기·예제 메뉴·JSON 저장/불러오기·단축키), `styles.css`(토큰 + 컴포넌트).
+- `src/app/` — Preact UI. `Canvas.tsx`(SVG 캔버스: 빈 곳 드래그 = 영역 선택, ⌥/가운데 버튼 = 팬, Shift+클릭 토글, 묶음 이동, 케이블 드래그 — 포트 칸(`[data-port]`, 투명 히트 영역)을 잡고 끌면 어느 도구든 그 포트에서 시작하고 포트 칸에 놓으면 그 포트로(`planCable(t,a,b,aPort,bPort)`, 검증 `portProblem`), 구성 검사 배지), `Palette.tsx`(140px, 맨 위 도구 3개 가로 + `PALETTE_GROUPS` 묶음별 캡션·2열 격자. 새 장치는 알맞은 묶음에 넣는다), `Inspector.tsx`(우측 속성: 단일 장치 패널(탭 `개요/설정/진단/표`, 신호 `deviceTab` — 장치를 바꿔도 탭 유지, 없는 탭이면 개요)·다중 선택 `MultiPanel`·케이블·네트워크 요약 + 구성 검사 목록. 패널은 접기(⌘\, 28px 레일)·넓게(480)·끌어서 폭 조절, 섹션은 제목 클릭으로 접힘 — 상태는 `store.ts` 의 `inspectorOpen/inspectorWidth/collapsedSections`, localStorage. 동적 제목 섹션은 `id` 를 준다. 머리 줄(`.panel-head`)은 sticky 라 스크롤해도 편집 중인 장치가 보이고, 넓게·접기 버튼은 그 위에 겹쳐 고정), `LogDrawer.tsx`(계층 칩 + "선택한 장치만" 필터, 장치 이름을 누르면 캔버스에서 선택), `App.tsx`(상단바: 재생·되돌리기·`FileMenu`(예제·JSON 내려받기/불러오기·비우기)·단축키), `styles.css`(토큰 + 컴포넌트).
 - `tests/` — vitest. 코어는 트레이스 순서(`nodeId:kind` 시퀀스)를 그대로 단언하는 방식을 유지한다.
 
 ## 규칙
@@ -31,7 +31,7 @@ Packet Tracer 식으로 직접 구성하는 네트워크 학습 시뮬레이터.
 ```
 npm run typecheck   # tsc
 npm test            # vitest (코어)
-npm run ui-check    # Playwright 스모크 (개발 서버 자동 기동, .shots/ 에 스크린샷)
+npm run ui-check    # Playwright 스모크 (개발 서버 자동 기동, .shots/ 에 스크린샷. 헬퍼 goTab/loadEx/clearUi — 인스펙터 탭·파일 메뉴를 거친다)
 ```
 코어 변경은 `npm test`, UI 변경은 `npm run ui-check` 까지 통과해야 완료.
 

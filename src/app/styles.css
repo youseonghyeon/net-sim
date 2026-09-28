@@ -33,6 +33,14 @@
   --zone-amber: rgba(201, 138, 16, 0.09);
   --zone-amber-line: rgba(201, 138, 16, 0.55);
 
+  /* 역할 묶음 색 (단말 / 스위칭 / 라우팅·경계) — 패킷 색과 겹치지 않게 채도를 낮춘 톤 */
+  --role-end: #5b6cff;
+  --role-switching: #0f9f8f;
+  --role-routing: #c2410c;
+  --role-end-soft: rgba(91, 108, 255, 0.1);
+  --role-switching-soft: rgba(15, 159, 143, 0.1);
+  --role-routing-soft: rgba(194, 65, 12, 0.09);
+
   --font: "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --radius: 8px;
@@ -67,6 +75,12 @@
   --zone-green-line: rgba(74, 194, 130, 0.55);
   --zone-amber: rgba(201, 138, 16, 0.1);
   --zone-amber-line: rgba(230, 170, 50, 0.55);
+  --role-end: #8b97ff;
+  --role-switching: #3cc7b6;
+  --role-routing: #f28a55;
+  --role-end-soft: rgba(139, 151, 255, 0.14);
+  --role-switching-soft: rgba(60, 199, 182, 0.13);
+  --role-routing-soft: rgba(242, 138, 85, 0.13);
 }
 
 /* ---------- 기본 ---------- */
@@ -473,7 +487,8 @@ select.btn.example {
   color: var(--ink-2);
   pointer-events: none;
 }
-.canvas-empty .btn {
+.canvas-empty .btn,
+.canvas-empty .start-card {
   pointer-events: auto;
 }
 
@@ -1656,3 +1671,287 @@ select.btn.example {
     transition: none !important;
   }
 }
+
+
+/* ================= 디자인 고도화 (2026-09-28) ================= */
+
+/* ---- 상단 파일 메뉴 ---- */
+.menu-wrap {
+  position: relative;
+}
+.menu-btn {
+  gap: 4px;
+}
+.menu-btn.on {
+  background: var(--surface-2);
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 320px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+}
+.menu-caption {
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.menu-group-label {
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.menu-item:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.menu-item:disabled {
+  color: var(--ink-3);
+  cursor: default;
+}
+.menu-item.danger {
+  color: var(--danger);
+}
+.menu-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--line);
+}
+
+/* ---- 인스펙터: 장치 머리 + 탭 ---- */
+.device-head .head-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+.device-head p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.state-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  flex-shrink: 0;
+}
+.state-dot.ok {
+  background: var(--up);
+}
+.state-dot.warn {
+  background: var(--warn);
+}
+.state-dot.error {
+  background: var(--danger);
+}
+.tabs {
+  position: sticky;
+  top: 61px;
+  z-index: 2;
+  display: flex;
+  gap: 2px;
+  padding: 6px 12px 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.tabs button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px 8px;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.tabs button:hover {
+  color: var(--ink);
+}
+.tabs button.on {
+  color: var(--ink);
+  font-weight: 600;
+}
+.tabs button.on::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.tab-count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  color: #fff;
+  background: var(--warn);
+}
+.tab-count.error {
+  background: var(--danger);
+}
+
+/* ---- 개요 요약 ---- */
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.summary-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.summary-line.primary {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.summary-line.warn {
+  color: var(--warn);
+}
+.summary-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 2px;
+}
+.pill {
+  padding: 1px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--ink-2);
+  background: var(--surface);
+}
+
+/* ---- 캔버스: 패킷 라벨 알약, 흐르는 케이블, 상태 점 ---- */
+.packet-label rect {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+.packet .packet-label text {
+  font-size: 11px;
+  stroke: none;
+  fill: var(--ink);
+}
+.cable-active {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  opacity: 0.4;
+  pointer-events: none;
+}
+.cable-active.arp { stroke: var(--pkt-arp); }
+.cable-active.dhcp { stroke: var(--pkt-dhcp); }
+.cable-active.icmp { stroke: var(--pkt-icmp); }
+.cable-active.tcp { stroke: var(--pkt-tcp); }
+.cable-active.dns { stroke: var(--pkt-dns); }
+.tile-dot {
+  stroke: var(--tile);
+  stroke-width: 1.5;
+  fill: var(--ink-3);
+}
+.tile-dot.ok { fill: var(--up); }
+.tile-dot.warn { fill: var(--warn); }
+.tile-dot.error { fill: var(--danger); }
+/* 정상은 점을 숨기고 문제(주황·빨강)만 표시 — 캔버스가 조용해야 패킷이 보인다 */
+.tile-dot.ok,
+.tile-dot.muted {
+  display: none;
+}
+
+/* ---- 빈 화면: 시작 카드 ---- */
+.canvas-empty h3 {
+  margin: 0 0 4px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.start-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 240px));
+  gap: 10px;
+  margin-top: 14px;
+}
+.start-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink);
+}
+.start-card:hover {
+  border-color: var(--accent);
+}
+.start-card b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.start-group {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.start-blurb {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---- 역할 힌트: 아이콘에만 아주 옅게 (타일·팔레트는 무채색 유지) ---- */
+.device.role-end .glyph { color: color-mix(in srgb, var(--role-end) 45%, var(--ink-2)); }
+.device.role-switching .glyph { color: color-mix(in srgb, var(--role-switching) 45%, var(--ink-2)); }
+.device.role-routing .glyph { color: color-mix(in srgb, var(--role-routing) 45%, var(--ink-2)); }
+.device-head.role-end .head-icon { color: color-mix(in srgb, var(--role-end) 55%, var(--ink-2)); }
+.device-head.role-switching .head-icon { color: color-mix(in srgb, var(--role-switching) 55%, var(--ink-2)); }
+.device-head.role-routing .head-icon { color: color-mix(in srgb, var(--role-routing) 55%, var(--ink-2)); }

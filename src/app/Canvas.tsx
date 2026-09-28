@@ -43,7 +43,17 @@ import {
   type WirelessLink,
   type Zone,
   ZONE_MIN,
+  EXAMPLES,
+  type ExampleId,
+  type Role,
 } from "../model/topology";
+
+/** 역할 묶음 (팔레트와 같은 분류): 단말 / 스위칭 / 라우팅·경계 */
+function roleGroup(role: Role): "end" | "switching" | "routing" {
+  if (role === "host") return "end";
+  if (role === "switch" || role === "hub" || role === "ap") return "switching";
+  return "routing";
+}
 import { GlyphInSvg, Icon } from "./Icons";
 
 type Drag =
@@ -395,6 +405,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
             {t.cables.map((c) => (
               <CableView key={c.id} cable={c} byId={byId} selected={sel?.type === "cable" && sel.id === c.id} />
             ))}
+            <ActiveCables byId={byId} cables={t.cables} />
             {wl.map((l) => {
               const seg = wirelessSegment(l, byId);
               if (!seg) return null;
@@ -434,16 +445,24 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
       </svg>
       {t.devices.length === 0 && (
         <div class="canvas-empty">
-          <p>왼쪽 팔레트에서 장치를 끌어다 놓거나, 예제로 시작하세요.</p>
-          <button
-            class="btn"
-            onClick={() => {
-              loadExample();
-              sim.reset();
-            }}
-          >
-            예제 네트워크 불러오기
-          </button>
+          <h3>무엇부터 볼까요?</h3>
+          <p>왼쪽 팔레트에서 장치를 끌어다 놓거나, 예제로 시작하세요. 예제는 불러오자마자 패킷이 흐릅니다.</p>
+          <div class="start-cards">
+            {(["starter", "router", "parts", "vlan"] as ExampleId[]).map((id) => (
+              <button
+                key={id}
+                class="start-card"
+                onClick={() => {
+                  loadExample(id);
+                  sim.reset();
+                }}
+              >
+                <span class="start-group">{EXAMPLES[id].group}</span>
+                <b>{EXAMPLES[id].label}</b>
+                <span class="start-blurb">{EXAMPLES[id].blurb}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
       <div class="legend">
@@ -494,7 +513,7 @@ function DeviceView({ d, used, selected, targeted, source, issues, markPort }: {
   return (
     <g
       data-device={d.id}
-      class={`device ${spec.role}${wide ? " wide" : ""}${selected ? " selected" : ""}${targeted ? " targeted" : ""}${source ? " source" : ""}`}
+      class={`device ${spec.role} role-${roleGroup(spec.role)}${wide ? " wide" : ""}${selected ? " selected" : ""}${targeted ? " targeted" : ""}${source ? " source" : ""}`}
       transform={`translate(${d.x},${d.y})`}
     >
       <g transform={dx ? `translate(${-dx},0)` : undefined}>
@@ -502,6 +521,12 @@ function DeviceView({ d, used, selected, targeted, source, issues, markPort }: {
         <g class="glyph">
           <GlyphInSvg name={d.kind} x={wide ? 14 : (spec.width - glyph) / 2} y={(spec.height - glyph) / 2} size={glyph} />
         </g>
+        {(() => {
+          // 상태 점: 구성 검사 오류/주의 > 주소 상태. 정상이면 초록 (절제형 룩에선 숨김)
+          const tone = issues?.some((i) => i.severity === "error") ? "error" : issues?.length ? "warn" : addr?.tone === "warn" || wan?.tone === "warn" ? "warn" : addr?.tone === "muted" || wan?.tone === "muted" ? "muted" : addr || wan ? "ok" : "none";
+          if (tone === "none") return null;
+          return <circle class={`tile-dot ${tone}`} cx={tileW - 9} cy={9} r={3.5} />;
+        })()}
         {badges.length > 0 && <ServiceBadges badges={badges} width={tileW} below={wide ? undefined : spec.height + 46} />}
         {issues && issues.length > 0 && <LintBadge issues={issues} />}
       </g>
@@ -713,11 +738,41 @@ function wirelessSegment(l: WirelessLink, byId: Map<string, Device>): { a: { x: 
   return { a: { x: c.x + cs.width / 2, y: c.y - PORT_DEPTH }, b: { x: b.x + bs.width / 2, y: b.y + bs.height / 2 } };
 }
 
+/** 패킷이 지나가는 케이블을 그 패킷 색으로 잠깐 밝힌다 (케이블 층에 그려 타일 뒤로 간다) */
+function ActiveCables({ byId, cables }: { byId: Map<string, Device>; cables: Cable[] }) {
+  void simTime.value;
+  const cableById = new Map(cables.map((c) => [c.id, c]));
+  const active = new Map<string, string>();
+  for (const tx of sim.inFlight()) if (!tx.lost && !active.has(tx.linkId)) active.set(tx.linkId, frameCategory(tx.frame));
+  const paths: preact.JSX.Element[] = [];
+  for (const [id, cat] of active) {
+    const c = cableById.get(id);
+    if (!c) continue;
+    const a = byId.get(c.a.device);
+    const b = byId.get(c.b.device);
+    if (!a || !b) continue;
+    paths.push(<path key={id} class={`cable-active ${cat}`} d={cablePath(portAnchor(a, c.a.port), portAnchor(b, c.b.port))} />);
+  }
+  return <g class="cables-active">{paths}</g>;
+}
+
 /** 링크 위를 이동 중인 패킷. 매 프레임 simTime 을 구독한다 */
 function PacketLayer({ byId, cables, wireless }: { byId: Map<string, Device>; cables: Cable[]; wireless: WirelessLink[] }) {
   const now = simTime.value;
   const cableById = new Map(cables.map((c) => [c.id, c]));
   const wlById = new Map(wireless.map((l) => [l.id, l]));
+  // 라벨 자리 잡기: 이미 놓인 라벨과 겹치면 위로 한 칸씩 올린다
+  const placed: { x: number; y: number; w: number }[] = [];
+  const labelDy = (x: number, y: number, w: number): number => {
+    let dy = 0;
+    for (let k = 0; k < 4; k++) {
+      const hit = placed.some((q) => Math.abs(q.x - x) < (q.w + w) / 2 + 4 && Math.abs(q.y - (y + dy)) < 19);
+      if (!hit) break;
+      dy -= 20;
+    }
+    placed.push({ x, y: y + dy, w });
+    return dy;
+  };
   const items = sim.inFlight().map((tx) => {
     const frac = Math.min(1, Math.max(0, (now - tx.departAt) / (tx.arriveAt - tx.departAt)));
     let p: { x: number; y: number };
@@ -742,7 +797,17 @@ function PacketLayer({ byId, cables, wireless }: { byId: Map<string, Device>; ca
       <g key={tx.id} class={`packet ${frameCategory(tx.frame)}${lost ? " lost" : ""}`} transform={`translate(${p.x},${p.y})`} opacity={fade}>
         <circle r={7} />
         {lost && <path d="M-3.5,-3.5 L3.5,3.5 M3.5,-3.5 L-3.5,3.5" />}
-        <text y={-13}>{lost ? `${shortLabel(tx.frame)} 손실` : shortLabel(tx.frame)}</text>
+        {(() => {
+          const label = lost ? `${shortLabel(tx.frame)} 손실` : shortLabel(tx.frame);
+          const w = Math.round(textWidth(label) * 1.02) + 12;
+          const dy = labelDy(p.x, p.y, w);
+          return (
+            <g class="packet-label" transform={`translate(0,${-25 + dy})`}>
+              <rect x={-w / 2} width={w} height={17} rx={8.5} />
+              <text y={12}>{label}</text>
+            </g>
+          );
+        })()}
       </g>
     );
   });

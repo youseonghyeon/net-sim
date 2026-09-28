@@ -170,39 +170,21 @@ export function App() {
           <button class="icon-btn" onClick={redo} disabled={!canRedo.value} title="다시 실행 (⌘⇧Z)">
             <Icon name="redo" size={18} />
           </button>
-          <span class="select-wrap">
-            <select
-              class="btn ghost example"
-              value=""
-              onChange={(e) => {
-                const v = e.currentTarget.value as "" | ExampleId;
-                e.currentTarget.value = "";
-                if (!v) return;
-                loadExample(v);
-                sim.reset();
-                showNotice(EXAMPLES[v].blurb);
-              }}
-              title="예제 네트워크 불러오기"
-            >
-              <option value="">예제 불러오기</option>
-              {[...new Set(EXAMPLE_LIST.map((x) => x.group))].map((g) => (
-                <optgroup key={g} label={g}>
-                  {EXAMPLE_LIST.filter((x) => x.group === g).map((x) => (
-                    <option key={x.id} value={x.id}>
-                      {x.label}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-            <Icon name="chevron" size={14} class="select-chev" />
-          </span>
-          <button class="icon-btn" onClick={download} disabled={t.devices.length === 0} title="JSON 으로 내려받기">
-            <Icon name="download" size={18} />
-          </button>
-          <button class="icon-btn" onClick={() => fileInput.current?.click()} title="JSON 불러오기">
-            <Icon name="upload" size={18} />
-          </button>
+          <FileMenu
+            hasDevices={t.devices.length > 0}
+            onExample={(v) => {
+              loadExample(v);
+              sim.reset();
+              showNotice(EXAMPLES[v].blurb);
+            }}
+            onDownload={download}
+            onUpload={() => fileInput.current?.click()}
+            onClear={() => {
+              clearAll();
+              sim.reset();
+              showNotice("비웠습니다. ⌘Z 로 되돌릴 수 있습니다.");
+            }}
+          />
           <input
             ref={fileInput}
             type="file"
@@ -214,16 +196,6 @@ export function App() {
               if (f) upload(f);
             }}
           />
-          <button
-            class="btn ghost"
-            onClick={() => {
-              clearAll();
-              sim.reset();
-            }}
-            disabled={t.devices.length === 0}
-          >
-            비우기
-          </button>
           <button class="icon-btn" onClick={toggleTheme} title={theme.value === "dark" ? "라이트 테마" : "다크 테마"}>
             <Icon name={theme.value === "dark" ? "sun" : "moon"} size={18} />
           </button>
@@ -236,6 +208,81 @@ export function App() {
       </div>
       <LogDrawer />
       {notice.value && <div class="toast">{notice.value}</div>}
+    </div>
+  );
+}
+
+/** 상단 "파일" 메뉴: 예제 불러오기 · JSON 내려받기/불러오기 · 비우기 */
+function FileMenu({
+  hasDevices,
+  onExample,
+  onDownload,
+  onUpload,
+  onClear,
+}: {
+  hasDevices: boolean;
+  onExample: (id: ExampleId) => void;
+  onDownload: () => void;
+  onUpload: () => void;
+  onClear: () => void;
+}) {
+  const open = useSignal(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open.value) return;
+    const onDown = (e: PointerEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) open.value = false;
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") open.value = false;
+    };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open.value]);
+  const act = (f: () => void) => () => {
+    open.value = false;
+    f();
+  };
+  const groups = [...new Set(EXAMPLE_LIST.map((x) => x.group))];
+  return (
+    <div class="menu-wrap" ref={wrap}>
+      <button class={`btn ghost menu-btn${open.value ? " on" : ""}`} onClick={() => (open.value = !open.value)} aria-haspopup="menu" aria-expanded={open.value}>
+        파일
+        <Icon name="chevron" size={14} />
+      </button>
+      {open.value && (
+        <div class="menu" role="menu">
+          <div class="menu-caption">예제 불러오기</div>
+          {groups.map((g) => (
+            <div key={g} class="menu-group">
+              <div class="menu-group-label">{g}</div>
+              {EXAMPLE_LIST.filter((x) => x.group === g).map((x) => (
+                <button key={x.id} role="menuitem" class="menu-item" data-example={x.id} onClick={act(() => onExample(x.id))}>
+                  {x.label}
+                </button>
+              ))}
+            </div>
+          ))}
+          <div class="menu-sep" />
+          <button role="menuitem" class="menu-item" onClick={act(onDownload)} disabled={!hasDevices}>
+            <Icon name="download" size={15} />
+            JSON 으로 내려받기
+          </button>
+          <button role="menuitem" class="menu-item" onClick={act(onUpload)}>
+            <Icon name="upload" size={15} />
+            JSON 불러오기…
+          </button>
+          <div class="menu-sep" />
+          <button role="menuitem" class="menu-item danger" onClick={act(onClear)} disabled={!hasDevices}>
+            <Icon name="trash" size={15} />
+            비우기
+          </button>
+        </div>
+      )}
     </div>
   );
 }
