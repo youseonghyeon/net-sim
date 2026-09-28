@@ -169,30 +169,33 @@ export function App() {
           <button class="icon-btn" onClick={redo} disabled={!canRedo.value} title="다시 실행 (⌘⇧Z)">
             <Icon name="redo" size={18} />
           </button>
-          <select
-            class="btn ghost example"
-            value=""
-            onChange={(e) => {
-              const v = e.currentTarget.value as "" | ExampleId;
-              e.currentTarget.value = "";
-              if (!v) return;
-              loadExample(v);
-              sim.reset();
-              showNotice(EXAMPLES[v].blurb);
-            }}
-            title="예제 네트워크 불러오기"
-          >
-            <option value="">예제 불러오기</option>
-            {[...new Set(EXAMPLE_LIST.map((x) => x.group))].map((g) => (
-              <optgroup key={g} label={g}>
-                {EXAMPLE_LIST.filter((x) => x.group === g).map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.label}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+          <span class="select-wrap">
+            <select
+              class="btn ghost example"
+              value=""
+              onChange={(e) => {
+                const v = e.currentTarget.value as "" | ExampleId;
+                e.currentTarget.value = "";
+                if (!v) return;
+                loadExample(v);
+                sim.reset();
+                showNotice(EXAMPLES[v].blurb);
+              }}
+              title="예제 네트워크 불러오기"
+            >
+              <option value="">예제 불러오기</option>
+              {[...new Set(EXAMPLE_LIST.map((x) => x.group))].map((g) => (
+                <optgroup key={g} label={g}>
+                  {EXAMPLE_LIST.filter((x) => x.group === g).map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <Icon name="chevron" size={14} class="select-chev" />
+          </span>
           <button class="icon-btn" onClick={download} disabled={t.devices.length === 0} title="JSON 으로 내려받기">
             <Icon name="download" size={18} />
           </button>

@@ -3,7 +3,7 @@ import { useEffect, useRef } from "preact/hooks";
 import type { Layer } from "../core/packet";
 import { BAD_KINDS, type TraceEvent } from "../core/trace";
 import { sim, simVersion } from "../model/sim";
-import { logOpen, topology } from "../model/store";
+import { logOpen, selectedDeviceIds, selection, topology } from "../model/store";
 import { Icon } from "./Icons";
 
 const LAYERS: Layer[] = ["L1", "L2", "L3", "L4", "app", "sys"];
@@ -18,6 +18,8 @@ const LAYER_HINT: Record<Layer, string> = {
 const MAX_ROWS = 400;
 
 const enabledLayers = signal<Set<Layer>>(new Set<Layer>(["L2", "L3", "L4", "app", "sys"]));
+/** 선택한 장치의 로그만 보기 */
+const onlySelected = signal(false);
 const expanded = signal<Set<number>>(new Set());
 
 function categoryOf(e: TraceEvent): "arp" | "dhcp" | "icmp" | "tcp" | "dns" | "" {
@@ -35,7 +37,9 @@ export function LogDrawer() {
   const layers = enabledLayers.value;
   const names = new Map(topology.value.devices.map((d) => [d.id, d.name]));
   const all = sim.net.trace;
-  const rows = all.filter((e) => layers.has(e.layer)).slice(-MAX_ROWS);
+  const picked = new Set(selectedDeviceIds(selection.value));
+  const filterByDevice = onlySelected.value && picked.size > 0;
+  const rows = all.filter((e) => layers.has(e.layer) && (!filterByDevice || picked.has(e.nodeId))).slice(-MAX_ROWS);
   const listRef = useRef<HTMLOListElement>(null);
   const stick = useRef(true);
 
@@ -74,6 +78,14 @@ export function LogDrawer() {
                 </button>
               ))}
             </div>
+            <button
+              class={`chip${filterByDevice ? " on" : ""}`}
+              onClick={() => (onlySelected.value = !onlySelected.value)}
+              disabled={picked.size === 0}
+              title={picked.size === 0 ? "캔버스에서 장치를 선택하면 그 장치의 로그만 볼 수 있습니다" : "선택한 장치의 로그만 보기"}
+            >
+              {picked.size === 0 ? "선택한 장치만" : `선택한 장치만 (${[...picked].map((id) => names.get(id) ?? id).slice(0, 2).join(", ")}${picked.size > 2 ? ` 외 ${picked.size - 2}` : ""})`}
+            </button>
             <button class="btn ghost small" onClick={() => sim.clearLog()} disabled={all.length === 0}>
               지우기
             </button>
@@ -90,7 +102,7 @@ export function LogDrawer() {
           }}
         >
           {rows.length === 0 ? (
-            <li class="log-empty">아직 기록이 없습니다. 장치를 연결하거나 ping 을 보내면 각 장치가 무엇을 보고 어떤 결정을 내렸는지 순서대로 남습니다.</li>
+            <li class="log-empty">{filterByDevice ? "선택한 장치의 기록이 없습니다." : "아직 기록이 없습니다. 장치를 연결하거나 ping 을 보내면 각 장치가 무엇을 보고 어떤 결정을 내렸는지 순서대로 남습니다."}</li>
           ) : (
             rows.map((e) => {
               const cat = categoryOf(e);
@@ -99,7 +111,16 @@ export function LogDrawer() {
               return (
                 <li key={e.seq} class={`row${bad ? " bad" : ""}${e.kind === "action" ? " action" : ""}${isOpen ? " open" : ""}`} onClick={() => toggleRow(e.seq)}>
                   <span class="t mono">{e.time}ms</span>
-                  <span class="who">{names.get(e.nodeId) ?? e.nodeId}</span>
+                  <button
+                    class="who"
+                    title="캔버스에서 이 장치 선택"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      if (names.has(e.nodeId)) selection.value = { type: "device", id: e.nodeId };
+                    }}
+                  >
+                    {names.get(e.nodeId) ?? e.nodeId}
+                  </button>
                   <span class="layer mono">{e.layer}</span>
                   <span class="summary">
                     {cat && <i class={`cat ${cat}`} />}

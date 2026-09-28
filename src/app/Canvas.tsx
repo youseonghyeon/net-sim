@@ -489,18 +489,25 @@ function DeviceView({ d, used, selected, targeted, source, issues, markPort }: {
   const addr = hostStatus(d.id);
   const wan = wanStatus(d.id);
   const badges = serviceBadges(d.id);
+  // 넓은 타일은 글자(이름·주소 줄)가 길면 양옆으로 대칭으로 넓힌다. 포트는 가운데 기준이라 위치가 그대로다
+  const textRight = wide ? Math.max(labelWidth(d.name, 13), addr ? lineWidth(addr) : 0, wan ? lineWidth(wan) : 0) : 0;
+  const extra = wide ? Math.max(0, Math.ceil(50 + textRight + 12 - spec.width)) : 0;
+  const dx = extra / 2;
+  const tileW = spec.width + extra;
   return (
     <g
       data-device={d.id}
       class={`device ${spec.role}${wide ? " wide" : ""}${selected ? " selected" : ""}${targeted ? " targeted" : ""}${source ? " source" : ""}`}
       transform={`translate(${d.x},${d.y})`}
     >
-      <rect class="tile" width={spec.width} height={spec.height} rx={10} />
-      <g class="glyph">
-        <GlyphInSvg name={d.kind} x={wide ? 14 : (spec.width - glyph) / 2} y={(spec.height - glyph) / 2} size={glyph} />
+      <g transform={dx ? `translate(${-dx},0)` : undefined}>
+        <rect class="tile" width={tileW} height={spec.height} rx={10} />
+        <g class="glyph">
+          <GlyphInSvg name={d.kind} x={wide ? 14 : (spec.width - glyph) / 2} y={(spec.height - glyph) / 2} size={glyph} />
+        </g>
+        {badges.length > 0 && <ServiceBadges badges={badges} width={tileW} below={wide ? undefined : spec.height + 46} />}
+        {issues && issues.length > 0 && <LintBadge issues={issues} />}
       </g>
-      {badges.length > 0 && <ServiceBadges badges={badges} width={spec.width} below={wide ? undefined : spec.height + 46} />}
-      {issues && issues.length > 0 && <LintBadge issues={issues} />}
       {spec.ports.map((p, i) => {
         if (p.radio) return null;
         const a = portAnchor(d, i);
@@ -521,7 +528,7 @@ function DeviceView({ d, used, selected, targeted, source, issues, markPort }: {
         );
       })}
       {wide ? (
-        <>
+        <g transform={dx ? `translate(${-dx},0)` : undefined}>
           <text class="name" x={50} y={addr ? 20 : spec.height / 2 + 5}>
             {d.name}
           </text>
@@ -536,7 +543,7 @@ function DeviceView({ d, used, selected, targeted, source, issues, markPort }: {
               {addr.text}
             </text>
           )}
-        </>
+        </g>
       ) : (
         <>
           <text class="name" x={spec.width / 2} y={spec.height + 24}>
@@ -629,6 +636,21 @@ function badge(label: string, x: number, y: number, w: number, h: number) {
       </text>
     </g>
   );
+}
+
+/** 타일 글자 폭 어림 (px): 한글은 넓고 라틴은 좁다 */
+function labelWidth(s: string, px: number): number {
+  let w = 0;
+  for (const ch of s) w += ch.charCodeAt(0) > 0x2e80 ? px : ch === " " ? px * 0.3 : px * 0.58;
+  return w;
+}
+
+/** 주소 줄(고정폭 11px) 또는 상태 문구(11px) 폭 */
+function lineWidth(line: { text: string; mono: boolean }): number {
+  if (!line.mono) return labelWidth(line.text, 11);
+  let w = 0;
+  for (const ch of line.text) w += ch.charCodeAt(0) > 0x2e80 ? 11 : 6.7;
+  return w;
 }
 
 function textWidth(s: string): number {
