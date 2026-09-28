@@ -22,6 +22,7 @@ const BUDGET = { p95: 34, longFrames: 3 };
 // 개발 서버는 preact 디버그 훅이 붙어 렌더가 눈에 띄게 느려 사용자 체감과 다르다
 const dev = await createServer({ server: { middlewareMode: true }, appType: "custom", logLevel: "silent" });
 const topo = await dev.ssrLoadModule("/src/model/topology.ts");
+const { EXAMPLES } = await dev.ssrLoadModule("/src/model/examples.ts");
 await dev.close();
 
 /** 인터넷 ─ 공유기 ─ LAN 포트 4개마다 스위치 ─ (자식 스위치 + PC 6대), 자식 스위치에 노트북 7대 → 단말 52대 */
@@ -64,7 +65,7 @@ async function measure(scenario) {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(URL);
-  const t = scenario === "stress" ? stressTopology() : topo.EXAMPLES[scenario].build();
+  const t = scenario === "stress" ? stressTopology() : EXAMPLES[scenario].build();
   await page.evaluate((json) => {
     localStorage.clear();
     localStorage.setItem("net-sim.theme", JSON.stringify("dark"));
@@ -129,7 +130,7 @@ async function measure(scenario) {
   };
 }
 
-const ids = [...Object.keys(topo.EXAMPLES), "stress"].filter((id) => !only || only.split(",").includes(id));
+const ids = [...Object.keys(EXAMPLES), "stress"].filter((id) => !only || only.split(",").includes(id));
 
 console.log(`perf-check: ${headed ? "headed" : "headless"}, CPU ${throttle}x 감속, 구간 ${WINDOW_MS / 1000}s`);
 const rows = [];

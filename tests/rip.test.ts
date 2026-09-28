@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { Host } from "../src/core/nodes/host";
 import { L3Node } from "../src/core/nodes/l3";
 import { NetworkSync } from "../src/model/netSync";
-import { createDevice, exampleBackboneTopology, examplePartsTopology, exampleRipTopology, newId, type Cable, type Device, type DeviceKind, type Topology } from "../src/model/topology";
+import { createDevice, newId, type Cable, type Device, type DeviceKind, type Topology } from "../src/model/topology";
+import { exampleBackboneTopology, examplePartsTopology, exampleRipTopology } from "../src/model/examples";
 
 function byName(t: Topology, name: string): Device {
   const d = t.devices.find((x) => x.name === name);

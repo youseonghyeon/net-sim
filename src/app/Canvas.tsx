@@ -46,10 +46,9 @@ import {
   type WirelessLink,
   type Zone,
   ZONE_MIN,
-  EXAMPLES,
-  type ExampleId,
   type Role,
 } from "../model/topology";
+import { EXAMPLES, type ExampleId } from "../model/examples";
 
 /** 역할 묶음 (팔레트와 같은 분류): 단말 / 스위칭 / 라우팅·경계 */
 function roleGroup(role: Role): "end" | "switching" | "routing" {

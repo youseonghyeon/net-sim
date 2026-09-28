@@ -27,7 +27,7 @@ import {
   topology,
   undo,
 } from "../model/store";
-import { EXAMPLE_LIST, EXAMPLES, type ExampleId } from "../model/topology";
+import { EXAMPLE_LIST, EXAMPLES, type ExampleId } from "../model/examples";
 import { Canvas } from "./Canvas";
 import { Icon } from "./Icons";
 import { Inspector } from "./Inspector";

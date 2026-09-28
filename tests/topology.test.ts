@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { effectiveDnsServer, effectiveFirewall, effectiveForwards, effectiveL3, effectiveSwitchVlans } from "../src/model/netSync";
 import { lintTopology } from "../src/model/lint";
-import { createDevice, devicesInZone, EXAMPLE_LIST, normalizeTopology, planCable, zoneAround, type Device, type Topology } from "../src/model/topology";
+import { createDevice, devicesInZone, normalizeTopology, planCable, zoneAround, type Device, type Topology } from "../src/model/topology";
+import { EXAMPLE_LIST } from "../src/model/examples";
 
 describe("normalizeTopology", () => {
   it("저장된 게이트웨이의 서브 인터페이스·방화벽·포워딩 설정을 잃지 않는다", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { probeTargets } from "../src/model/reach";
-import { EXAMPLES } from "../src/model/topology";
+import { EXAMPLES } from "../src/model/examples";
 
 const byName = (t: ReturnType<(typeof EXAMPLES)["router"]["build"]>, n: string) => t.devices.find((d) => d.name === n)!.id;
 

@@ -3,7 +3,8 @@ import { Host } from "../src/core/nodes/host";
 import { L3Node } from "../src/core/nodes/l3";
 import { Router } from "../src/core/nodes/router";
 import { NetworkSync } from "../src/model/netSync";
-import { createDevice, EXAMPLES, exampleTopology, examplePartsTopology, exampleVlanTopology, newId, type Device, type Topology } from "../src/model/topology";
+import { createDevice, newId, type Device, type Topology } from "../src/model/topology";
+import { EXAMPLES, exampleTopology, examplePartsTopology, exampleVlanTopology } from "../src/model/examples";
 
 function byName(t: Topology, name: string): Device {
   const d = t.devices.find((x) => x.name === name);

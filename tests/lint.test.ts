@@ -3,9 +3,6 @@ import { l2Segments, lintTopology, type LintIssue } from "../src/model/lint";
 import {
   DEFAULT_DHCP_SERVER,
   createDevice,
-  exampleTopology,
-  examplePartsTopology,
-  exampleVlanTopology,
   newId,
   type Cable,
   type Device,
@@ -13,6 +10,7 @@ import {
   type HostSettings,
   type Topology,
 } from "../src/model/topology";
+import { exampleTopology, examplePartsTopology, exampleVlanTopology } from "../src/model/examples";
 
 /** createDevice + newId("cable") 로 토폴로지를 조립하는 도우미 */
 function build() {

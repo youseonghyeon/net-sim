@@ -11,7 +11,6 @@ import {
   type ZoneTint,
   DEVICE_SPECS,
   EMPTY_TOPOLOGY,
-  EXAMPLES,
   newId,
   normalizeTopology,
   parseTopology,
@@ -23,10 +22,10 @@ import {
   type Cable,
   type Device,
   type DeviceKind,
-  type ExampleId,
   type PortRef,
   type Topology,
 } from "./topology";
+import { EXAMPLES, type ExampleId } from "./examples";
 
 /** 선택: 장치 하나 / 장치 여러 개 / 케이블 하나 / 영역 하나. 장치 선택에는 함께 움직일 영역(붙여 넣은 영역 등)이 딸릴 수 있다 */
 export type Selection =
@@ -501,7 +500,7 @@ export function zoneMembers(id: string): string[] {
   return z ? devicesInZone(t, z) : [];
 }
 
-export type { ExampleId } from "./topology";
+export type { ExampleId } from "./examples";
 
 export function loadExample(which: ExampleId = "router"): void {
   setTopology(EXAMPLES[which].build());
