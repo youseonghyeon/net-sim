@@ -1,4 +1,4 @@
-// 예제 토폴로지 13종과 레지스트리. 파일 메뉴의 "예제" 와 테스트가 쓴다.
+// 예제 토폴로지 14종과 레지스트리. 파일 메뉴의 "예제" 와 테스트가 쓴다.
 // 새 예제는 여기에 함수를 추가하고 EXAMPLES 에 등록한다 (구성 검사 이슈 0 은 tests/topology.test.ts 가 확인).
 import {
   type Cable,
@@ -587,7 +587,108 @@ export function exampleRoamingTopology(): Topology {
   return { devices, cables };
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "roaming" | "docker";
+/**
+ * 도메인으로 회사 웹 서버 접속: 집(DHCP·DNS 서버를 따로 둔 기능 단위 공유기)과 회사(NAT → 투명 방화벽 → 게이트웨이 → 서버 서브넷 2개)가
+ * 공인 구간(203.0.113.0/24, 스위치로 단순화)으로 이어진다. 인터넷 노드 없이 두 NAT 가 같은 공인 서브넷에 있다.
+ * 맥북 → nexus.com:80 = 집 DNS 가 회사 공인 주소를 알려 줌 → 집 NAT(출발지 변환) → 회사 NAT 포트 포워딩(목적지 변환) → 방화벽(80 만 허용) → 웹 서버
+ */
+export function examplePublishTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, name: string, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    d.name = name;
+    devices.push(d);
+    return d;
+  };
+  const staticHost = (d: Device, ip: string, gw: string, services: number[] = []) => {
+    d.host = { ipMode: "static", ip, prefix: 24, gateway: gw, services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  const iface = (ip: string, gateway = "") => ({ ipMode: "static" as const, ip, prefix: 24, gateway });
+
+  // 공인 구간: 통신사 장비 두 대 (집 NAT 와 회사 NAT 가 같은 203.0.113.0/24 에 있다)
+  const ispHome = add("switch", "통신사 (집 쪽)", 160, -128);
+  const ispCo = add("switch", "통신사 (회사 쪽)", 720, -128);
+
+  // 집: NAT → 게이트웨이 → 스위치 → 맥북 · DHCP 서버 · DNS 서버 · 홈 서버
+  const homeNat = add("nat", "집 NAT", 160, 32);
+  homeNat.l3 = { interfaces: [iface("203.0.113.108"), iface("10.0.0.1")], routes: [{ dest: "192.168.0.0", prefix: 24, via: "10.0.0.2" }] };
+  const homeGw = add("gateway", "집 게이트웨이", 160, 176);
+  homeGw.l3 = { interfaces: [iface("10.0.0.2", "10.0.0.1"), iface("192.168.0.1"), iface("")], routes: [] };
+  const homeSw = add("switch", "집 스위치", 160, 320);
+  const macbook = add("laptop", "맥북", 40, 464); // DHCP
+  const dhcp = add("server", "DHCP 서버", 160, 464);
+  staticHost(dhcp, "192.168.0.2", "192.168.0.1");
+  dhcp.host!.dhcpServer = { enabled: true, start: "192.168.0.100", end: "192.168.0.199", router: "192.168.0.1", dns: "192.168.0.3" };
+  const dns = add("server", "DNS 서버", 280, 464);
+  staticHost(dns, "192.168.0.3", "192.168.0.1");
+  // 집 안 이름(web.home)과 회사 공개 이름(nexus.com → 회사 공인 주소). 인터넷이 없으니 업스트림은 비운다
+  dns.host!.dnsServer = { enabled: true, records: [{ name: "web.home", ip: "192.168.0.20" }, { name: "nexus.com", ip: "203.0.113.109" }], upstream: "" };
+  const homeSrv = add("server", "홈 서버", 400, 464);
+  staticHost(homeSrv, "192.168.0.20", "192.168.0.1", [80]);
+
+  // 회사: NAT(포트 포워딩 80 → 웹 서버) → 투명 방화벽 → 게이트웨이 → 서브넷 두 개
+  const coNat = add("nat", "회사 NAT", 720, 32);
+  coNat.l3 = {
+    interfaces: [iface("203.0.113.109"), iface("10.10.0.1")],
+    routes: [
+      { dest: "192.168.1.0", prefix: 24, via: "10.10.0.2" },
+      { dest: "192.168.2.0", prefix: 24, via: "10.10.0.2" },
+    ],
+    forwards: [{ publicPort: 80, lanIp: "192.168.1.2", lanPort: 80 }],
+  };
+  const fw = add("firewall", "회사 방화벽", 720, 144);
+  // NAT 안쪽이라 규칙은 변환된 뒤의 사설 주소로 쓴다. 바깥에서 들어오는 건 웹 서버 80 만, 안에서 시작한 통신의 응답은 Stateful 로 통과
+  fw.firewall = {
+    enabled: true,
+    defaultPolicy: "allow",
+    stateful: true,
+    rules: [
+      { action: "allow", proto: "tcp", direction: "in", src: "", dst: "192.168.1.2", dstPort: "80" },
+      { action: "deny", proto: "any", direction: "in", src: "", dst: "", dstPort: "" },
+    ],
+  };
+  const coGw = add("gateway", "회사 게이트웨이", 720, 256);
+  coGw.l3 = { interfaces: [iface("10.10.0.2", "10.10.0.1"), iface("192.168.1.1"), iface("192.168.2.1")], routes: [] };
+  const sw1 = add("switch", "sw-1", 584, 400);
+  const sw2 = add("switch", "sw-2", 856, 400);
+  const web = add("server", "웹 서버", 552, 544);
+  staticHost(web, "192.168.1.2", "192.168.1.1", [80]);
+  const srv1 = add("server", "srv-1", 680, 544);
+  staticHost(srv1, "192.168.1.3", "192.168.1.1", [80]);
+  const srv2 = add("server", "srv-2", 832, 544);
+  staticHost(srv2, "192.168.2.2", "192.168.2.1", [80]);
+  const srv3 = add("server", "srv-3", 960, 544);
+  staticHost(srv3, "192.168.2.3", "192.168.2.1", [80]);
+
+  const cable = (a: Device, ap: number, b: Device, bp: number): Cable => ({ id: newId("cable"), a: { device: a.id, port: ap }, b: { device: b.id, port: bp } });
+  const cables: Cable[] = [
+    cable(ispHome, 7, ispCo, 0),
+    cable(ispHome, 1, homeNat, 0),
+    cable(homeNat, 1, homeGw, 0),
+    cable(homeGw, 1, homeSw, 3),
+    cable(homeSw, 0, macbook, 0),
+    cable(homeSw, 2, dhcp, 0),
+    cable(homeSw, 5, dns, 0),
+    cable(homeSw, 7, homeSrv, 0),
+    cable(ispCo, 6, coNat, 0),
+    cable(coNat, 1, fw, 0),
+    cable(fw, 1, coGw, 0),
+    cable(coGw, 1, sw1, 4),
+    cable(coGw, 2, sw2, 3),
+    cable(sw1, 0, web, 0),
+    cable(sw1, 6, srv1, 0),
+    cable(sw2, 1, srv2, 0),
+    cable(sw2, 7, srv3, 0),
+  ];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "집 192.168.0.0/24", tint: "blue", ...zoneAround(t, [homeNat.id, homeGw.id, homeSw.id, macbook.id, dhcp.id, dns.id, homeSrv.id], 24)! },
+    { id: newId("zone"), label: "회사 (nexus.com = 203.0.113.109)", tint: "green", ...zoneAround(t, [coNat.id, fw.id, coGw.id, sw1.id, sw2.id, web.id, srv1.id, srv2.id, srv3.id], 24)! },
+  ];
+  return t;
+}
+
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "publish" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -634,6 +735,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "방화벽 장비 (서버 앞에 끼운 투명 방화벽)",
     blurb: "pc-1 → srv-1 ping 은 fw-1 에서 차단되지만 TCP 80 연결은 됩니다. srv-1 → pc-1 ping 은 응답이 Stateful 검사로 돌아오고, srv-1 → pc-1 traceroute 는 1홉 — fw-1 은 IP 가 없어 홉에 안 보입니다.",
     build: exampleFirewallApplianceTopology,
+  },
+  publish: {
+    id: "publish",
+    group: "서비스",
+    label: "도메인으로 회사 웹 서버 접속 (DNS + NAT 양쪽 + 포트 포워딩)",
+    blurb: "맥북에서 nexus.com:80 으로 TCP 연결을 보내 보세요. 집 DNS 가 회사 공인 주소를 알려 주고, 집 NAT(출발지 변환) → 회사 NAT 포트 포워딩(목적지 변환) → 방화벽(웹 서버 80 만 허용) → 웹 서버로 갑니다. srv-1(192.168.1.3)은 사설 주소라 밖에서 직접 닿지 않습니다.",
+    build: examplePublishTopology,
   },
   docker: {
     id: "docker",

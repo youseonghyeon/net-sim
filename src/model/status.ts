@@ -59,11 +59,13 @@ export function hostStatusOf(node: SimNode | undefined, wireless: boolean): Stat
         ok = false;
       } else if (iface.ip) parts.push(iface.ip);
       else if (subs.length) parts.push(`${node.names[p]}.${subs.map(({ m }) => m.vlan).join("/")}`);
-      else {
+      else if (node.linkUp[p]) {
+        // 케이블이 꽂혔는데 주소가 없으면 경고. 케이블 없는 빈 인터페이스는 쓰지 않는 포트라 요약에서 뺀다
         parts.push(`${node.names[p]} 없음`);
         ok = false;
       }
     }
+    if (parts.length === 0) return { text: "연결 없음", tone: "muted", mono: false };
     return { text: parts.join(" · "), tone: ok ? "ok" : "warn", mono: true };
   }
   return null;

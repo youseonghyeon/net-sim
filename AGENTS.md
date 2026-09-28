@@ -9,7 +9,7 @@ Packet Tracer 식으로 직접 구성하는 네트워크 학습 시뮬레이터.
   - `packet.ts` — 계층별 패킷 모델 (학습에 필요한 필드만)
   - `trace.ts` — `TraceKind` 목록. 새 이벤트 종류를 추가하면 여기에 먼저 등록
   - `scenarios/` — 테스트용 고정 토폴로지
-- `src/model/` — 편집 가능한 토폴로지 모델(`topology.ts`: 장치 종류·포트·앵커 좌표·무선 파생·`planCable` 검증·`cloneDevices`/`alignDevices`·JSON 직렬화 `serializeTopology`/`parseTopology`), 예제 13종과 레지스트리는 `examples.ts`(`EXAMPLES`, 새 예제는 여기에)과 앱 상태(`store.ts`: Preact signals, localStorage 저장, 되돌리기 스택 — 모든 편집은 `setTopology` 를 거치고 드래그는 `beginCoalesce/endCoalesce` 로 한 단계, 선택은 단일/다중/케이블, 클립보드). `store.ts` 는 브라우저 API 를 `typeof` 로 감싸 vitest 에서도 import 된다(`tests/store.test.ts`). 시뮬레이션 실행 시 코어 `Network` 로 변환한다.
+- `src/model/` — 편집 가능한 토폴로지 모델(`topology.ts`: 장치 종류·포트·앵커 좌표·무선 파생·`planCable` 검증·`cloneDevices`/`alignDevices`·JSON 직렬화 `serializeTopology`/`parseTopology`), 예제 14종과 레지스트리는 `examples.ts`(`EXAMPLES`, 새 예제는 여기에)과 앱 상태(`store.ts`: Preact signals, localStorage 저장, 되돌리기 스택 — 모든 편집은 `setTopology` 를 거치고 드래그는 `beginCoalesce/endCoalesce` 로 한 단계, 선택은 단일/다중/케이블, 클립보드). `store.ts` 는 브라우저 API 를 `typeof` 로 감싸 vitest 에서도 import 된다(`tests/store.test.ts`). 시뮬레이션 실행 시 코어 `Network` 로 변환한다.
   - 영역(`Zone`): 장치 뒤에 그리는 주석 네모(`topology.zones`, 없으면 []). 시뮬레이션·구성 검사와 무관. 몸통은 포인터를 안 받고 이름표·테두리만 잡히며, 끌면 영역만 옮긴다(안의 장치는 그대로 — 사용자 요청). 복사: 영역 선택 시 영역 + 안의 장치(타일 중심 기준 `devicesInZone`), 장치 선택 시 안의 장치가 전부 선택된 영역도 함께. 붙여 넣으면 장치 선택에 영역이 딸려(`Selection.zoneIds`, `selectedZoneIds`) 끌기·삭제를 함께 한다. 예제에 넣을 땐 `zoneAround` 로 계산한다.
   - `lint.ts` — 구성 검사(순수). 토폴로지만 보고 "설정 한 칸 빠짐" 을 `LintIssue[]` 로. 오탐이 미탐보다 나쁘므로 주소를 모르는(DHCP) 인터페이스가 끼면 침묵. 규칙 추가 시 `tests/lint.test.ts` 에 걸리는/안 걸리는 케이스 + 모든 예제 이슈 0 유지(`tests/topology.test.ts`).
   - 순수(테스트 가능) 층: `netSync.ts`(`NetworkSync`: 토폴로지 → `Network` diff 동기화, `effective*` 입력 정리, `makeNode`/`applyConfig`), `simClock.ts`(`advanceClock`: 애니메이션 시계), `status.ts`(타일 문구·서비스 배지). `sim.ts` 는 이 셋을 신호·rAF 로 감싸기만 한다. 새 동기화 로직은 `sim.ts` 가 아니라 `netSync.ts` 에 넣고 `tests/netSync.test.ts` 로 고정한다.
@@ -72,5 +72,5 @@ npm run perf-check  # 프로덕션 빌드로 예제 전부 + 단말 52대 스트
 9. ✅ VLAN (액세스/트렁크, 게이트웨이 서브 인터페이스)
 10. 실제 네트워크 연결은 하지 않기로 결정(2026-09-19). 이후 작업은 품질(리뷰·테스트·문서)과 사용자가 새로 요청하는 것
 11. ✅ 편집 도구 묶음(2026-09-20): JSON 저장/불러오기, 되돌리기, 다중 선택/복사, 일괄 설정·ping, 구성 검사, traceroute, 예제 12종
-12. ✅ 동적 라우팅 RIP + DHCP INIT-REBOOT(2026-09-28), 예제 13종
+12. ✅ 동적 라우팅 RIP + DHCP INIT-REBOOT(2026-09-28), 예제 14종
 13. 심화 학습(사용자 결정, 나중에): IPv6, VPN, 로드밸런서 — `docs/ROADMAP.md`

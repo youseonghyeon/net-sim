@@ -50,6 +50,9 @@ describe("타일 상태 문구", () => {
     expect(hostStatusOf(gw, false)).toMatchObject({ text: "192.168.1.1 · if2.10/20", tone: "ok" });
     expect(wanStatusOf(gw)).toMatchObject({ text: "if0 연결 없음", tone: "muted" });
     const bare = new L3Node({ id: "g2", kind: "gateway", interfaces: [{ name: "if0", mac: "02:00:00:10:00:02", mode: "static" }, { name: "if1", mac: "02:00:00:11:00:02", mode: "static" }] });
+    // 케이블 없는 빈 인터페이스는 경고가 아니다 (쓰지 않는 포트). 꽂혔는데 주소가 없으면 경고
+    expect(hostStatusOf(bare, false)).toMatchObject({ text: "연결 없음", tone: "muted" });
+    bare.linkUp[1] = true;
     expect(hostStatusOf(bare, false)).toMatchObject({ text: "if1 없음", tone: "warn" });
   });
 
