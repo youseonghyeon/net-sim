@@ -159,7 +159,7 @@ function DevicePanel({ d }: { d: Device }) {
       </nav>
       {tab === "overview" && (
         <>
-          <section class="summary">
+          <section class="device-summary">
             {wan && <SummaryLine line={wan} />}
             {addr && <SummaryLine line={addr} primary={!wan} />}
             {badges.length > 0 && (

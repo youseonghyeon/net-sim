@@ -615,6 +615,40 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.locator(".inspector .ping-log li.ok, .inspector .ping-log li.failed").first().waitFor({ timeout: 30000 });
   console.log("pc-a → 192.168.3.10 via RIP:", (await page.locator(".inspector .ping-log li").first().textContent())?.replace(/\s+/g, " "));
 }
+// 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
+{
+  if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");
+  const handle = page.locator(".log-resize");
+  const hb = await handle.boundingBox();
+  await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hb.x + hb.width / 2, 0, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+  const top = (await page.locator(".log").boundingBox()).y;
+  const bar = await page.locator(".topbar").boundingBox();
+  console.log("log max: top", Math.round(top), "| topbar bottom", Math.round(bar.y + bar.height), "| layout ok:", await page.evaluate(() => (document.body.scrollHeight <= window.innerHeight ? "yes" : "no")));
+  await page.screenshot({ path: `${OUT}/41-log-max.png` });
+  // 중간 높이로 내려 두고 새로고침 → 유지
+  const hb2 = await handle.boundingBox();
+  await page.mouse.move(hb2.x + 200, hb2.y + 3);
+  await page.mouse.down();
+  await page.mouse.move(hb2.x + 200, 500, { steps: 8 });
+  await page.mouse.up();
+  const before = Math.round((await page.locator(".log-list").boundingBox()).height);
+  await page.reload();
+  await page.waitForSelector("[data-device]");
+  if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");
+  const after = Math.round((await page.locator(".log-list").boundingBox()).height);
+  console.log("log height persisted:", before, "→", after);
+  // 아래로 한참 끌면 접힌다
+  const hb3 = await page.locator(".log-resize").boundingBox();
+  await page.mouse.move(hb3.x + 200, hb3.y + 3);
+  await page.mouse.down();
+  await page.mouse.move(hb3.x + 200, 895, { steps: 10 });
+  await page.mouse.up();
+  console.log("log collapsed by drag:", (await page.locator(".log.open").count()) === 0 ? "yes" : "NO");
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

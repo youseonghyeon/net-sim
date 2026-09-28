@@ -136,6 +136,24 @@ export function toggleSection(key: string): void {
 }
 
 export const logOpen = signal(false);
+/** 로그 목록 높이(px). 위쪽 가장자리를 끌어 조절하고, 최대는 상단바 바로 아래까지 (styles.css 의 .log-list 가 창 높이로 한 번 더 자른다) */
+export const LOG_MIN = 96;
+export const LOG_DEFAULT = 240;
+export const logHeight = signal<number>(clampLogHeight(load<number>("net-sim.log.height") ?? LOG_DEFAULT));
+
+function clampLogHeight(h: number): number {
+  const max = typeof window === "undefined" ? Infinity : logMaxHeight();
+  return Math.min(max, Math.max(LOG_MIN, Math.round(Number.isFinite(h) ? h : LOG_DEFAULT)));
+}
+
+/** 로그를 끝까지 올렸을 때 목록 높이: 창 높이 - 상단바(44) - 로그 머리 줄(34) - 테두리 */
+export function logMaxHeight(): number {
+  return Math.max(LOG_MIN, window.innerHeight - 44 - 34 - 2);
+}
+
+export function setLogHeight(h: number): void {
+  logHeight.value = clampLogHeight(h);
+}
 /** 증가할 때마다 캔버스가 내용에 맞춰 뷰포트를 다시 잡는다. ids 가 있으면 그 장치들만 화면에 맞춘다 */
 export const fitRequest = signal<{ seq: number; ids?: string[] }>({ seq: 0 });
 
@@ -255,6 +273,7 @@ effect(() => save(TOPOLOGY_KEY, topology.value));
 effect(() => save("net-sim.inspector.open", inspectorOpen.value));
 effect(() => save("net-sim.inspector.width", inspectorWidth.value));
 effect(() => save("net-sim.inspector.collapsed", collapsedSections.value));
+effect(() => save("net-sim.log.height", logHeight.value));
 effect(() => {
   save(THEME_KEY, theme.value);
   if (typeof document !== "undefined") document.documentElement.dataset.theme = theme.value;

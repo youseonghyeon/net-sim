@@ -1503,10 +1503,24 @@ select.btn.example {
 
 /* ---------- 로그 서랍 ---------- */
 .log {
+  position: relative;
   background: var(--surface);
   border-top: 1px solid var(--line);
   display: flex;
   flex-direction: column;
+}
+/* 위쪽 가장자리 끌기 손잡이 (높이 조절) */
+.log-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -3px;
+  height: 6px;
+  cursor: row-resize;
+  z-index: 3;
+}
+.log-resize:hover {
+  background: var(--accent-soft);
 }
 .log-head {
   display: flex;
@@ -1577,7 +1591,8 @@ select.btn.example {
   list-style: none;
   margin: 0;
   padding: 4px 0;
-  height: 240px;
+  /* 저장된 높이, 단 창이 작아져도 상단바 아래를 넘지 않게 (상단바 + 로그 머리 줄 + 테두리) */
+  height: min(var(--log-h, 240px), calc(100vh - var(--topbar-h) - 36px));
   overflow-y: auto;
   border-top: 1px solid var(--line);
   font-size: 12px;
@@ -1846,8 +1861,8 @@ select.btn.example {
   background: var(--danger);
 }
 
-/* ---- 개요 요약 ---- */
-.summary {
+/* ---- 개요 요약 (로그 줄의 .row .summary 와 겹치지 않게 이름을 구분) ---- */
+.device-summary {
   display: flex;
   flex-direction: column;
   gap: 6px;

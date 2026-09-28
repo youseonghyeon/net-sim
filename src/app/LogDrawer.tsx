@@ -3,7 +3,7 @@ import { useEffect, useRef } from "preact/hooks";
 import type { Layer } from "../core/packet";
 import { BAD_KINDS, type TraceEvent } from "../core/trace";
 import { sim, simVersion } from "../model/sim";
-import { logOpen, selectedDeviceIds, selection, topology } from "../model/store";
+import { LOG_MIN, logHeight, logOpen, selectedDeviceIds, selection, setLogHeight, topology } from "../model/store";
 import { Icon } from "./Icons";
 
 const LAYERS: Layer[] = ["L1", "L2", "L3", "L4", "app", "sys"];
@@ -43,6 +43,30 @@ export function LogDrawer() {
   const rows = all.filter((e) => layers.has(e.layer) && (!filterByDevice || picked.has(e.nodeId))).slice(-MAX_ROWS);
   const listRef = useRef<HTMLOListElement>(null);
   const stick = useRef(true);
+  // 위쪽 가장자리를 끌어 높이 조절. 최소보다 한참 아래로 끌면 접는다 (인스펙터 폭 조절과 같은 방식)
+  const resizing = useRef<{ y: number; h: number } | null>(null);
+  const onResizeDown = (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    resizing.current = { y: e.clientY, h: logHeight.peek() };
+  };
+  const onResizeMove = (e: PointerEvent) => {
+    const r = resizing.current;
+    if (!r) return;
+    const h = r.h + (r.y - e.clientY);
+    if (h < LOG_MIN - 70) {
+      resizing.current = null;
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      setLogHeight(r.h); // 다시 열면 끌기 전 높이로
+      logOpen.value = false;
+      return;
+    }
+    setLogHeight(h);
+  };
+  const onResizeUp = () => {
+    resizing.current = null;
+  };
 
   useEffect(() => {
     const el = listRef.current;
@@ -63,7 +87,8 @@ export function LogDrawer() {
   };
 
   return (
-    <footer class={`log${open ? " open" : ""}`}>
+    <footer class={`log${open ? " open" : ""}`} style={{ "--log-h": `${logHeight.value}px` }}>
+      {open && <div class="log-resize" onPointerDown={onResizeDown} onPointerMove={onResizeMove} onPointerUp={onResizeUp} onPointerCancel={onResizeUp} title="끌어서 높이 조절 (끝까지 올리면 상단바 아래까지)" />}
       <div class="log-head">
         <button class="log-toggle" onClick={() => (logOpen.value = !open)}>
           <Icon name="chevron" size={16} class="chev" />
