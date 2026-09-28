@@ -10,12 +10,14 @@ import {
   connectDevices,
   endCoalesce,
   fitRequest,
+  inspectorOpen,
   lintIssues,
   loadExample,
   moveDevices,
   moveZoneWithContents,
   requestFit,
   selectedDeviceIds,
+  selectedZoneIds,
   selection,
   selectionOf,
   toggleDeviceSelection,
@@ -59,7 +61,7 @@ import { GlyphInSvg, Icon } from "./Icons";
 
 type Drag =
   /** 선택된 장치들을 함께 옮긴다. starts = 드래그 시작 시 각 장치 위치 */
-  | { type: "move"; starts: Map<string, { x: number; y: number }>; sx: number; sy: number; moved: boolean }
+  | { type: "move"; starts: Map<string, { x: number; y: number }>; zoneStarts: Map<string, { x: number; y: number }>; sx: number; sy: number; moved: boolean }
   | { type: "pan"; sx: number; sy: number; vx: number; vy: number; moved: boolean }
   /** 케이블 긋기. fromPort/targetPort 가 있으면 포트 칸에서 시작/포트 칸에 놓은 것 → 그 포트를 쓴다 */
   | { type: "cable"; from: string; fromPort?: number; target?: string; targetPort?: number; sx: number; sy: number; moved: boolean }
@@ -99,6 +101,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
   const v = viewport.value;
   const sel = selection.value;
   const selectedIds = new Set(selectedDeviceIds(sel));
+  const selectedZoneSet = new Set(selectedZoneIds(sel));
 
   function toCanvas(clientX: number, clientY: number): { x: number; y: number } {
     const rect = svgRef.current!.getBoundingClientRect();
@@ -180,7 +183,11 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
         if (!selectedIds.has(id)) selection.value = { type: "device", id };
         const starts = new Map<string, { x: number; y: number }>();
         for (const d of topology.value.devices) if (ids.includes(d.id)) starts.set(d.id, { x: d.x, y: d.y });
-        dragRef.current = { type: "move", starts, sx: e.clientX, sy: e.clientY, moved: false };
+        // 선택에 딸린 영역(붙여 넣은 영역 등)도 같이 옮긴다
+        const zoneIds = selectedIds.has(id) ? selectedZoneIds(sel) : [];
+        const zoneStarts = new Map<string, { x: number; y: number }>();
+        for (const z of topology.value.zones ?? []) if (zoneIds.includes(z.id)) zoneStarts.set(z.id, { x: z.x, y: z.y });
+        dragRef.current = { type: "move", starts, zoneStarts, sx: e.clientX, sy: e.clientY, moved: false };
       }
       return;
     }
@@ -214,7 +221,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
         d.moved = true;
         beginCoalesce(); // 드래그 한 번 = 되돌리기 한 단계
       }
-      moveDevices(d.starts, dx, dy);
+      moveDevices(d.starts, dx, dy, d.zoneStarts);
     } else if (d.type === "marquee" || d.type === "zone-draw") {
       const p = toCanvas(e.clientX, e.clientY);
       d.x1 = p.x;
@@ -379,6 +386,14 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
         ref={svgRef}
         class="canvas"
         onPointerDown={onPointerDown}
+        onDblClick={(e) => {
+          // 장치 더블클릭 = 그 장치를 선택하고 접힌 속성 패널을 연다
+          // 포인터 캡처 때문에 e.target 이 svg 로 바뀌므로 좌표로 찾는다
+          const id = deviceAt(e.clientX, e.clientY);
+          if (!id) return;
+          selection.value = { type: "device", id };
+          inspectorOpen.value = true;
+        }}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
@@ -393,7 +408,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
         <g transform={`translate(${v.x},${v.y}) scale(${v.k})`}>
           <g class="zones">
             {(t.zones ?? []).map((z) => (
-              <ZoneView key={z.id} z={z} selected={sel?.type === "zone" && sel.id === z.id} />
+              <ZoneView key={z.id} z={z} selected={selectedZoneSet.has(z.id)} />
             ))}
           </g>
           <g class="coverage">

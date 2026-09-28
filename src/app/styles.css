@@ -772,15 +772,15 @@ select.btn.example {
   min-height: 0;
   overflow-y: auto;
 }
-/* 접힌 상태: 레일 하나에 펼치기 버튼만. 버튼이 레일보다 넓으면 가로 스크롤이 생기므로 24px 로 */
+/* 접힌 상태: 레일 하나에 펼치기 버튼만. 레일 40px 에 버튼 28px 이라 벽에 붙지 않고, 가로 스크롤도 생기지 않는다 */
 .inspector.collapsed {
   align-items: center;
-  padding-top: 6px;
+  padding-top: 10px;
   overflow: hidden;
 }
 .inspector.collapsed .icon-btn {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
 }
 /* 왼쪽 가장자리 끌기 손잡이 */
 .inspector-resize {

@@ -28,8 +28,13 @@ import {
   type Topology,
 } from "./topology";
 
-/** 선택: 장치 하나 / 장치 여러 개 / 케이블 하나 / 영역 하나 */
-export type Selection = { type: "device"; id: string } | { type: "devices"; ids: string[] } | { type: "cable"; id: string } | { type: "zone"; id: string } | null;
+/** 선택: 장치 하나 / 장치 여러 개 / 케이블 하나 / 영역 하나. 장치 선택에는 함께 움직일 영역(붙여 넣은 영역 등)이 딸릴 수 있다 */
+export type Selection =
+  | { type: "device"; id: string; zoneIds?: string[] }
+  | { type: "devices"; ids: string[]; zoneIds?: string[] }
+  | { type: "cable"; id: string }
+  | { type: "zone"; id: string }
+  | null;
 
 /** 선택된 장치 id 목록 (단일·다중 공통) */
 export function selectedDeviceIds(sel: Selection): string[] {
@@ -39,11 +44,20 @@ export function selectedDeviceIds(sel: Selection): string[] {
   return [];
 }
 
-/** 장치 id 목록을 선택 상태로: 0개 → 없음, 1개 → 단일, 여러 개 → 다중 */
-export function selectionOf(ids: string[]): Selection {
+/** 선택된 영역 id 목록 (영역 선택, 또는 장치 선택에 딸린 영역) */
+export function selectedZoneIds(sel: Selection): string[] {
+  if (!sel) return [];
+  if (sel.type === "zone") return [sel.id];
+  if (sel.type === "device" || sel.type === "devices") return sel.zoneIds ?? [];
+  return [];
+}
+
+/** 장치 id 목록을 선택 상태로: 0개 → 없음, 1개 → 단일, 여러 개 → 다중. zoneIds 는 함께 움직일 영역 */
+export function selectionOf(ids: string[], zoneIds: string[] = []): Selection {
   if (ids.length === 0) return null;
-  if (ids.length === 1) return { type: "device", id: ids[0]! };
-  return { type: "devices", ids };
+  const zones = zoneIds.length > 0 ? { zoneIds } : {};
+  if (ids.length === 1) return { type: "device", id: ids[0]!, ...zones };
+  return { type: "devices", ids, ...zones };
 }
 export type Tool = "select" | "cable" | "zone";
 export type Theme = "light" | "dark";
@@ -93,8 +107,8 @@ export const INSPECTOR_MIN = 280;
 export const INSPECTOR_MAX = 640;
 export const INSPECTOR_DEFAULT = 304;
 export const INSPECTOR_WIDE = 480;
-/** 접힌 상태에서는 28px 레일만 남긴다 */
-export const INSPECTOR_RAIL = 28;
+/** 접힌 상태에서는 40px 레일만 남긴다 (펼치기 버튼 28px + 양옆 여백) */
+export const INSPECTOR_RAIL = 40;
 export const inspectorOpen = signal<boolean>(load<boolean>("net-sim.inspector.open") ?? true);
 export const inspectorWidth = signal<number>(clampWidth(load<number>("net-sim.inspector.width") ?? INSPECTOR_DEFAULT));
 /** 접어 둔 섹션 키 (제목 또는 명시한 id) */
@@ -217,7 +231,8 @@ function pruneSelection(): void {
     return;
   }
   const alive = selectedDeviceIds(s).filter((id) => t.devices.some((d) => d.id === id));
-  if (alive.length !== selectedDeviceIds(s).length) selection.value = selectionOf(alive);
+  const zones = selectedZoneIds(s).filter((id) => t.zones?.some((z) => z.id === id));
+  if (alive.length !== selectedDeviceIds(s).length || zones.length !== selectedZoneIds(s).length) selection.value = selectionOf(alive, zones);
 }
 
 export const selectedDevice = computed<Device | undefined>(() => {
@@ -271,9 +286,16 @@ export function addDevice(kind: DeviceKind, x: number, y: number, avoidOverlap =
 }
 
 /** 여러 장치를 같은 양만큼 옮긴다 (드래그 시작 위치 기준) */
-export function moveDevices(starts: Map<string, { x: number; y: number }>, dx: number, dy: number): void {
+/** 장치들을 (드래그 시작 위치 기준으로) 옮긴다. zoneStarts 가 있으면 그 영역들도 같이 */
+export function moveDevices(starts: Map<string, { x: number; y: number }>, dx: number, dy: number, zoneStarts?: Map<string, { x: number; y: number }>): void {
   const t = topology.value;
-  setTopology({ ...t, devices: t.devices.map((d) => (starts.has(d.id) ? { ...d, x: snap(starts.get(d.id)!.x + dx), y: snap(starts.get(d.id)!.y + dy) } : d)) });
+  const move = <T extends { id: string; x: number; y: number }>(o: T, from: Map<string, { x: number; y: number }> | undefined): T =>
+    from?.has(o.id) ? { ...o, x: snap(from.get(o.id)!.x + dx), y: snap(from.get(o.id)!.y + dy) } : o;
+  setTopology({
+    ...t,
+    devices: t.devices.map((d) => move(d, starts)),
+    ...(zoneStarts?.size ? { zones: (t.zones ?? []).map((z) => move(z, zoneStarts)) } : {}),
+  });
 }
 
 export function updateDevice(id: string, patch: (d: Device) => Device): void {
@@ -292,13 +314,15 @@ export function removeDevice(id: string): void {
   removeDevices([id]);
 }
 
-export function removeDevices(ids: string[]): void {
+/** 장치들(과 함께 선택된 영역들)을 한 단계로 지운다 */
+export function removeDevices(ids: string[], zoneIds: string[] = []): void {
   const t = topology.value;
   const set = new Set(ids);
   setTopology({
     ...t,
     devices: t.devices.filter((d) => !set.has(d.id)),
     cables: t.cables.filter((c) => !set.has(c.a.device) && !set.has(c.b.device)),
+    ...(zoneIds.length ? { zones: (t.zones ?? []).filter((z) => !zoneIds.includes(z.id)) } : {}),
   });
   const remaining = selectedDeviceIds(selection.value).filter((id) => !set.has(id));
   if (selection.value && (selection.value.type === "device" || selection.value.type === "devices")) selection.value = selectionOf(remaining);
@@ -317,7 +341,7 @@ export function selectAll(): void {
 /** Shift+클릭: 선택에 넣거나 뺀다 */
 export function toggleDeviceSelection(id: string): void {
   const ids = selectedDeviceIds(selection.value);
-  selection.value = selectionOf(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
+  selection.value = selectionOf(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id], selectedZoneIds(selection.value));
 }
 
 // ---------- 복사·붙여넣기 ----------
@@ -345,7 +369,9 @@ export function copySelected(): number {
     ids = selectedDeviceIds(s);
     if (ids.length === 0) return 0;
     const set = new Set(ids);
+    const picked = new Set(selectedZoneIds(s));
     zoneIds = (t.zones ?? []).filter((z) => {
+      if (picked.has(z.id)) return true;
       const members = devicesInZone(t, z);
       return members.length > 0 && members.every((id) => set.has(id));
     }).map((z) => z.id);
@@ -372,8 +398,8 @@ export function paste(): Device[] {
     .map((z) => ({ ...z, id: newId("zone"), x: snap(z.x + offset), y: snap(z.y + offset) }));
   if (devices.length === 0 && zones.length === 0) return [];
   setTopology({ ...t, devices: [...t.devices, ...devices], cables: [...t.cables, ...cables], zones: [...(t.zones ?? []), ...zones] });
-  // 장치가 있으면 장치들을, 영역만 복사했으면 그 영역을 선택
-  selection.value = devices.length > 0 ? selectionOf(devices.map((d) => d.id)) : { type: "zone", id: zones[0]!.id };
+  // 장치가 있으면 장치들을(붙여 넣은 영역도 함께 움직이도록 딸려서), 영역만 복사했으면 그 영역을 선택
+  selection.value = devices.length > 0 ? selectionOf(devices.map((d) => d.id), zones.map((z) => z.id)) : { type: "zone", id: zones[0]!.id };
   return devices;
 }
 
@@ -426,7 +452,7 @@ export function removeSelected(): void {
   if (!s) return;
   if (s.type === "cable") removeCable(s.id);
   else if (s.type === "zone") removeZone(s.id);
-  else removeDevices(selectedDeviceIds(s));
+  else removeDevices(selectedDeviceIds(s), selectedZoneIds(s));
 }
 
 // ---------- 영역 (주석 네모) ----------

@@ -492,6 +492,34 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.keyboard.press("Delete");
   await page.waitForTimeout(100);
   console.log("zones after delete:", await page.locator("[data-zone]").count(), "| devices intact:", await page.locator("[data-device]").count());
+  // 영역 복제(⌘D) 후 붙여 넣은 장치를 끌면 붙여 넣은 영역도 같이 움직인다
+  const src = page.locator("[data-zone]", { hasText: "컨테이너들" }).locator(".zone-label rect");
+  const sb = await src.boundingBox();
+  await page.mouse.click(sb.x + sb.width / 2, sb.y + sb.height / 2);
+  await page.keyboard.press("Meta+KeyD");
+  await page.waitForTimeout(150);
+  const pz = page.locator("[data-zone].selected");
+  const pzCount = await pz.count();
+  const z0 = await pz.locator(".zone-edge").boundingBox();
+  const tile = await page.locator("[data-device].selected .tile").first().boundingBox();
+  await page.mouse.move(tile.x + tile.width / 2, tile.y + tile.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(tile.x + tile.width / 2 + 96, tile.y + tile.height / 2 + 48, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+  const z1 = await pz.locator(".zone-edge").boundingBox();
+  console.log("pasted zone selected:", pzCount, "| moved with devices:", Math.round(z1.x - z0.x) > 0 && Math.round(z1.y - z0.y) > 0 ? "yes" : "NO");
+  // 속성 패널 접기 → 레일 여백 → 장치 더블클릭으로 다시 열기
+  await page.keyboard.press("Meta+Backslash");
+  await page.waitForTimeout(100);
+  const rail = await page.locator(".inspector.collapsed").boundingBox();
+  const btn = await page.locator(".inspector.collapsed .icon-btn").boundingBox();
+  console.log("rail width:", Math.round(rail.width), "| button gap right:", Math.round(rail.x + rail.width - (btn.x + btn.width)));
+  await page.screenshot({ path: `${OUT}/29b-rail.png`, clip: { x: rail.x - 200, y: 0, width: rail.width + 200, height: 120 } });
+  const web = await device("web").locator(".tile").boundingBox();
+  await page.mouse.dblclick(web.x + web.width / 2, web.y + web.height / 2);
+  await page.waitForTimeout(100);
+  console.log("dblclick opens inspector:", (await page.locator(".inspector.collapsed").count()) === 0 ? "yes" : "NO", "|", await page.locator(".inspector .device-head").first().textContent().catch(() => "?"));
 }
 // 13) 방화벽 장비 예제: ping 차단, TCP 80 통과, 장치 패널에 규칙 편집기
 {

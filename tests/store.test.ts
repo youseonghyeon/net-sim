@@ -20,6 +20,7 @@ import {
   removeSelected,
   selectAll,
   selectedDeviceIds,
+  selectedZoneIds,
   selection,
   toggleDeviceSelection,
   topology,
@@ -288,5 +289,44 @@ describe("영역 복사", () => {
     expect(topology.value.devices).toHaveLength(2);
     const [z1, z2] = topology.value.zones!;
     expect(z2!.x - z1!.x).toBeGreaterThan(0);
+  });
+
+  it("붙여 넣은 영역은 장치 선택에 딸려 함께 옮겨지고, 함께 지워진다(한 단계)", () => {
+    const a = addDevice("pc", 0, 0);
+    const b = addDevice("pc", 200, 0);
+    selection.value = { type: "devices", ids: [a.id, b.id] };
+    zoneAroundSelected("집");
+    selection.value = { type: "devices", ids: [a.id, b.id] };
+    duplicateSelected();
+    const pasted = selectedDeviceIds(selection.value);
+    const zoneIds = selectedZoneIds(selection.value);
+    expect(pasted).toHaveLength(2);
+    expect(zoneIds).toHaveLength(1);
+    const z0 = topology.value.zones!.find((z) => z.id === zoneIds[0])!;
+    const starts = new Map(topology.value.devices.filter((d) => pasted.includes(d.id)).map((d) => [d.id, { x: d.x, y: d.y }]));
+    moveDevices(starts, 160, 80, new Map([[z0.id, { x: z0.x, y: z0.y }]]));
+    const z1 = topology.value.zones!.find((z) => z.id === z0.id)!;
+    expect([z1.x - z0.x, z1.y - z0.y]).toEqual([160, 80]);
+    // 원래 영역은 그대로
+    expect(topology.value.zones!.filter((z) => z.id !== z0.id).map((z) => z.x)).toEqual([topology.value.zones![0]!.x]);
+    removeSelected();
+    expect(topology.value.devices).toHaveLength(2);
+    expect(topology.value.zones).toHaveLength(1);
+    undo();
+    expect(topology.value.devices).toHaveLength(4);
+    expect(topology.value.zones).toHaveLength(2);
+  });
+
+  it("Shift+클릭으로 선택을 바꿔도 딸린 영역은 유지된다", () => {
+    const a = addDevice("pc", 0, 0);
+    selection.value = { type: "device", id: a.id };
+    zoneAroundSelected("집");
+    selection.value = { type: "device", id: a.id };
+    duplicateSelected();
+    const c = addDevice("pc", 900, 0);
+    const pasted = topology.value.devices[1]!.id;
+    selection.value = { type: "device", id: pasted, zoneIds: selectedZoneIds({ type: "zone", id: topology.value.zones![1]!.id }) };
+    toggleDeviceSelection(c.id);
+    expect(selectedZoneIds(selection.value)).toEqual([topology.value.zones![1]!.id]);
   });
 });
