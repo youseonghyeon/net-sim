@@ -71,7 +71,7 @@ await page.evaluate(() => document.fonts.ready);
 await page.selectOption(".transport .speed", "4");
 console.log("start cards:", await page.locator(".start-card").count());
 await page.screenshot({ path: `${OUT}/00-start.png` });
-await page.locator(".start-card", { hasText: "공유기 하나로" }).click();
+await page.locator(".start-card", { hasText: "집 공유기" }).click();
 await page.waitForTimeout(500);
 await page.screenshot({ path: `${OUT}/10-dhcp-in-progress.png` });
 console.log("packets visible during DHCP:", await page.locator(".packet").count());

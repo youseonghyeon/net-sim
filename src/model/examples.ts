@@ -1,4 +1,4 @@
-// 예제 토폴로지 14종과 레지스트리. 파일 메뉴의 "예제" 와 테스트가 쓴다.
+// 예제 토폴로지 15종과 레지스트리. 파일 메뉴의 "예제" 와 테스트가 쓴다.
 // 새 예제는 여기에 함수를 추가하고 EXAMPLES 에 등록한다 (구성 검사 이슈 0 은 tests/topology.test.ts 가 확인).
 import {
   type Cable,
@@ -588,9 +588,9 @@ export function exampleRoamingTopology(): Topology {
 }
 
 /**
- * 도메인으로 회사 웹 서버 접속: 집(DHCP·DNS 서버를 따로 둔 기능 단위 공유기)과 회사(NAT → 투명 방화벽 → 게이트웨이 → 서버 서브넷 2개)가
- * 공인 구간(203.0.113.0/24, 스위치로 단순화)으로 이어진다. 인터넷 노드 없이 두 NAT 가 같은 공인 서브넷에 있다.
- * 맥북 → nexus.com:80 = 집 DNS 가 회사 공인 주소를 알려 줌 → 집 NAT(출발지 변환) → 회사 NAT 포트 포워딩(목적지 변환) → 방화벽(80 만 허용) → 웹 서버
+ * 도메인으로 회사 웹 서버 접속: 집(DHCP 서버를 따로 둔 기능 단위 공유기)과 회사(NAT → 투명 방화벽 → 게이트웨이 → 서버 서브넷 2개)가
+ * 공인 구간(203.0.113.0/24)으로 이어지고, 공인 DNS(8.8.8.8)는 ISP 라우터 너머 다른 네트워크에 있다. 인터넷 노드 없이 직접 조립한 인터넷.
+ * 맥북 → nexus.com:80 = 8.8.8.8 에 질의(집 NAT → ISP 라우터) → 회사 공인 주소 → 집 NAT(출발지 변환) → 회사 NAT 포트 포워딩(목적지 변환) → 방화벽(80 만 허용) → 웹 서버
  */
 export function examplePublishTopology(): Topology {
   const devices: Device[] = [];
@@ -605,38 +605,40 @@ export function examplePublishTopology(): Topology {
   };
   const iface = (ip: string, gateway = "") => ({ ipMode: "static" as const, ip, prefix: 24, gateway });
 
-  // 공인 구간: 통신사 장비 두 대 (집 NAT 와 회사 NAT 가 같은 203.0.113.0/24 에 있다)
+  // 공인 구간: 통신사 장비 두 대 (집 NAT·회사 NAT·ISP 라우터가 같은 203.0.113.0/24)
   const ispHome = add("switch", "통신사 (집 쪽)", 160, -128);
-  const ispCo = add("switch", "통신사 (회사 쪽)", 720, -128);
+  const ispCo = add("switch", "통신사 (회사 쪽)", 928, -128);
+  // ISP 라우터: 공인 구간과 공인 DNS 네트워크(8.8.8.0/24)를 잇는다. 두 NAT 의 디폴트 라우트가 여기
+  const ispRt = add("gateway", "ISP 라우터", 520, -24);
+  ispRt.l3 = { interfaces: [iface("203.0.113.1"), iface("8.8.8.1"), iface("")], routes: [] };
+  const pubDns = add("server", "공인 DNS", 488, 168);
+  staticHost(pubDns, "8.8.8.8", "8.8.8.1");
+  pubDns.host!.dnsServer = { enabled: true, records: [{ name: "nexus.com", ip: "203.0.113.109" }], upstream: "" };
 
-  // 집: NAT → 게이트웨이 → 스위치 → 맥북 · DHCP 서버 · DNS 서버 · 홈 서버
+  // 집: NAT → 게이트웨이 → 스위치 → 맥북 · DHCP 서버 · 홈 서버. DNS 는 DHCP 가 8.8.8.8 로 안내
   const homeNat = add("nat", "집 NAT", 160, 32);
-  homeNat.l3 = { interfaces: [iface("203.0.113.108"), iface("10.0.0.1")], routes: [{ dest: "192.168.0.0", prefix: 24, via: "10.0.0.2" }] };
+  homeNat.l3 = { interfaces: [iface("203.0.113.108", "203.0.113.1"), iface("10.0.0.1")], routes: [{ dest: "192.168.0.0", prefix: 24, via: "10.0.0.2" }] };
   const homeGw = add("gateway", "집 게이트웨이", 160, 176);
   homeGw.l3 = { interfaces: [iface("10.0.0.2", "10.0.0.1"), iface("192.168.0.1"), iface("")], routes: [] };
   const homeSw = add("switch", "집 스위치", 160, 320);
-  const macbook = add("laptop", "맥북", 40, 464); // DHCP
-  const dhcp = add("server", "DHCP 서버", 160, 464);
+  const macbook = add("laptop", "맥북", 56, 464); // DHCP
+  const dhcp = add("server", "DHCP 서버", 200, 464);
   staticHost(dhcp, "192.168.0.2", "192.168.0.1");
-  dhcp.host!.dhcpServer = { enabled: true, start: "192.168.0.100", end: "192.168.0.199", router: "192.168.0.1", dns: "192.168.0.3" };
-  const dns = add("server", "DNS 서버", 280, 464);
-  staticHost(dns, "192.168.0.3", "192.168.0.1");
-  // 집 안 이름(web.home)과 회사 공개 이름(nexus.com → 회사 공인 주소). 인터넷이 없으니 업스트림은 비운다
-  dns.host!.dnsServer = { enabled: true, records: [{ name: "web.home", ip: "192.168.0.20" }, { name: "nexus.com", ip: "203.0.113.109" }], upstream: "" };
-  const homeSrv = add("server", "홈 서버", 400, 464);
+  dhcp.host!.dhcpServer = { enabled: true, start: "192.168.0.100", end: "192.168.0.199", router: "192.168.0.1", dns: "8.8.8.8" };
+  const homeSrv = add("server", "홈 서버", 344, 464);
   staticHost(homeSrv, "192.168.0.20", "192.168.0.1", [80]);
 
   // 회사: NAT(포트 포워딩 80 → 웹 서버) → 투명 방화벽 → 게이트웨이 → 서브넷 두 개
-  const coNat = add("nat", "회사 NAT", 720, 32);
+  const coNat = add("nat", "회사 NAT", 928, 32);
   coNat.l3 = {
-    interfaces: [iface("203.0.113.109"), iface("10.10.0.1")],
+    interfaces: [iface("203.0.113.109", "203.0.113.1"), iface("10.10.0.1")],
     routes: [
       { dest: "192.168.1.0", prefix: 24, via: "10.10.0.2" },
       { dest: "192.168.2.0", prefix: 24, via: "10.10.0.2" },
     ],
     forwards: [{ publicPort: 80, lanIp: "192.168.1.2", lanPort: 80 }],
   };
-  const fw = add("firewall", "회사 방화벽", 720, 144);
+  const fw = add("firewall", "회사 방화벽", 928, 144);
   // NAT 안쪽이라 규칙은 변환된 뒤의 사설 주소로 쓴다. 바깥에서 들어오는 건 웹 서버 80 만, 안에서 시작한 통신의 응답은 Stateful 로 통과
   fw.firewall = {
     enabled: true,
@@ -647,29 +649,30 @@ export function examplePublishTopology(): Topology {
       { action: "deny", proto: "any", direction: "in", src: "", dst: "", dstPort: "" },
     ],
   };
-  const coGw = add("gateway", "회사 게이트웨이", 720, 256);
+  const coGw = add("gateway", "회사 게이트웨이", 928, 256);
   coGw.l3 = { interfaces: [iface("10.10.0.2", "10.10.0.1"), iface("192.168.1.1"), iface("192.168.2.1")], routes: [] };
-  const sw1 = add("switch", "sw-1", 584, 400);
-  const sw2 = add("switch", "sw-2", 856, 400);
-  const web = add("server", "웹 서버", 552, 544);
+  const sw1 = add("switch", "sw-1", 792, 400);
+  const sw2 = add("switch", "sw-2", 1064, 400);
+  const web = add("server", "웹 서버", 760, 544);
   staticHost(web, "192.168.1.2", "192.168.1.1", [80]);
-  const srv1 = add("server", "srv-1", 680, 544);
+  const srv1 = add("server", "srv-1", 888, 544);
   staticHost(srv1, "192.168.1.3", "192.168.1.1", [80]);
-  const srv2 = add("server", "srv-2", 832, 544);
+  const srv2 = add("server", "srv-2", 1040, 544);
   staticHost(srv2, "192.168.2.2", "192.168.2.1", [80]);
-  const srv3 = add("server", "srv-3", 960, 544);
+  const srv3 = add("server", "srv-3", 1168, 544);
   staticHost(srv3, "192.168.2.3", "192.168.2.1", [80]);
 
   const cable = (a: Device, ap: number, b: Device, bp: number): Cable => ({ id: newId("cable"), a: { device: a.id, port: ap }, b: { device: b.id, port: bp } });
   const cables: Cable[] = [
     cable(ispHome, 7, ispCo, 0),
     cable(ispHome, 1, homeNat, 0),
+    cable(ispHome, 5, ispRt, 0),
+    cable(ispRt, 1, pubDns, 0),
     cable(homeNat, 1, homeGw, 0),
     cable(homeGw, 1, homeSw, 3),
     cable(homeSw, 0, macbook, 0),
     cable(homeSw, 2, dhcp, 0),
-    cable(homeSw, 5, dns, 0),
-    cable(homeSw, 7, homeSrv, 0),
+    cable(homeSw, 6, homeSrv, 0),
     cable(ispCo, 6, coNat, 0),
     cable(coNat, 1, fw, 0),
     cable(fw, 1, coGw, 0),
@@ -682,13 +685,88 @@ export function examplePublishTopology(): Topology {
   ];
   const t: Topology = { devices, cables };
   t.zones = [
-    { id: newId("zone"), label: "집 192.168.0.0/24", tint: "blue", ...zoneAround(t, [homeNat.id, homeGw.id, homeSw.id, macbook.id, dhcp.id, dns.id, homeSrv.id], 24)! },
+    { id: newId("zone"), label: "집 192.168.0.0/24", tint: "blue", ...zoneAround(t, [homeNat.id, homeGw.id, homeSw.id, macbook.id, dhcp.id, homeSrv.id], 24)! },
+    { id: newId("zone"), label: "공인 DNS 8.8.8.0/24", tint: "amber", ...zoneAround(t, [pubDns.id], 24)! },
     { id: newId("zone"), label: "회사 (nexus.com = 203.0.113.109)", tint: "green", ...zoneAround(t, [coNat.id, fw.id, coGw.id, sw1.id, sw2.id, web.id, srv1.id, srv2.id, srv3.id], 24)! },
   ];
   return t;
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "publish" | "roaming" | "docker";
+/**
+ * 인터넷의 뼈대: 가장자리는 트리, 중심은 그물.
+ * - 가장자리: 집 공유기·회사 NAT 는 디폴트 라우트 한 줄로 동네 국사에, 국사는 다시 통신사 백본에 붙는다 ("모르면 위로").
+ * - 중심: KT 백본·SK 백본·구글 망이 삼각형으로 서로 잇고 RIP 로 경로를 주고받는다 (실제 인터넷에서는 BGP 가 하는 일).
+ * - 공인 DNS 8.8.8.8 은 구글 망 안에 있고, 집 공유기의 DNS 포워더가 여기로 묻는다. 인터넷 노드 없이 직접 조립한다.
+ */
+export function exampleInternetTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, name: string, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    d.name = name;
+    devices.push(d);
+    return d;
+  };
+  const iface = (ip: string, gateway = "") => ({ ipMode: "static" as const, ip, prefix: 24, gateway });
+  const rip = { enabled: true };
+  const staticHost = (d: Device, ip: string, gw: string, services: number[] = []) => {
+    d.host = { ipMode: "static", ip, prefix: 24, gateway: gw, services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+
+  // 중심: 구글 망 (공인 DNS 8.8.8.8 이 사는 곳)
+  const gSw = add("switch", "구글 망 스위치", 520, -216);
+  const dns = add("server", "공인 DNS", 400, -72);
+  staticHost(dns, "8.8.8.8", "8.8.8.1");
+  dns.host!.dnsServer = { enabled: true, records: [{ name: "nexus.com", ip: "198.51.100.2" }], upstream: "" };
+  const google = add("gateway", "구글 라우터", 592, 24);
+  google.l3 = { interfaces: [iface("8.8.8.1"), iface("198.18.11.1"), iface("198.18.12.1")], routes: [], rip };
+  // 중심: 통신사 백본 둘. 셋이 삼각형(그물)이라 한 줄이 끊겨도 돌아갈 길이 있다. 백본에는 디폴트 라우트가 없다 — 위가 없으므로
+  const kt = add("gateway", "KT 백본", 240, 200);
+  kt.l3 = { interfaces: [iface("198.18.11.2"), iface("198.18.1.1"), iface("198.18.10.1")], routes: [], rip };
+  const sk = add("gateway", "SK 백본", 944, 200);
+  sk.l3 = { interfaces: [iface("198.18.12.2"), iface("198.18.10.2"), iface("198.18.2.1")], routes: [], rip };
+
+  // 가장자리: 동네 국사 → 고객. 국사는 백본으로 디폴트 라우트 + 자기 고객 대역을 RIP 로 알린다
+  const ktLocal = add("gateway", "KT 국사", 240, 376);
+  ktLocal.l3 = { interfaces: [iface("198.18.1.2", "198.18.1.1"), iface("203.0.113.1"), iface("")], routes: [], rip };
+  const skLocal = add("gateway", "SK 국사", 944, 376);
+  skLocal.l3 = { interfaces: [iface("198.18.2.2", "198.18.2.1"), iface("198.51.100.1"), iface("")], routes: [], rip };
+
+  // 집(KT 가입): 공유기 WAN 은 고정 공인 주소 + 디폴트 라우트 = KT 국사. DNS 포워더는 8.8.8.8 로
+  const home = add("router", "집 공유기", 240, 536);
+  home.router = { ...home.router!, wan: { ipMode: "static", ip: "203.0.113.2", prefix: 24, gateway: "203.0.113.1" }, dns: { enabled: true, upstream: "8.8.8.8" } };
+  const pc = add("pc", "pc-1", 184, 712);
+  const laptop = add("laptop", "laptop-1", 344, 712);
+  // 회사(SK 가입): NAT 박스 outside = 고정 공인 주소, 웹 서버는 포트 포워딩 80 으로 공개 (nexus.com)
+  const coNat = add("nat", "회사 NAT", 944, 536);
+  coNat.l3 = { interfaces: [iface("198.51.100.2", "198.51.100.1"), iface("10.0.0.1")], routes: [], forwards: [{ publicPort: 80, lanIp: "10.0.0.10", lanPort: 80 }] };
+  const web = add("server", "회사 웹 서버", 988, 712);
+  staticHost(web, "10.0.0.10", "10.0.0.1", [80]);
+
+  const cable = (a: Device, ap: number, b: Device, bp: number): Cable => ({ id: newId("cable"), a: { device: a.id, port: ap }, b: { device: b.id, port: bp } });
+  const cables: Cable[] = [
+    cable(gSw, 1, dns, 0),
+    cable(gSw, 6, google, 0),
+    cable(google, 1, kt, 0),
+    cable(google, 2, sk, 0),
+    cable(kt, 2, sk, 1),
+    cable(kt, 1, ktLocal, 0),
+    cable(sk, 2, skLocal, 0),
+    cable(ktLocal, 1, home, 0),
+    cable(skLocal, 1, coNat, 0),
+    cable(home, 1, pc, 0),
+    cable(home, 4, laptop, 0),
+    cable(coNat, 1, web, 0),
+  ];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "중심: 백본 그물 (RIP, 실제로는 BGP)", tint: "amber", ...zoneAround(t, [gSw.id, dns.id, google.id, kt.id, sk.id], 32)! },
+    { id: newId("zone"), label: "가장자리: KT 쪽 (디폴트 라우트로 위로)", tint: "blue", ...zoneAround(t, [ktLocal.id, home.id, pc.id, laptop.id], 24)! },
+    { id: newId("zone"), label: "가장자리: SK 쪽", tint: "green", ...zoneAround(t, [skLocal.id, coNat.id, web.id], 24)! },
+  ];
+  return t;
+}
+
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "publish" | "internet" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -700,57 +778,113 @@ export interface ExampleSpec {
   build: () => Topology;
 }
 
+// 메뉴 순서 = 학습 순서: 기본 → 기능 단위 → 라우팅 → L2 → 보안 → 인터넷 → 무선. 이름은 짧게, 괄호에는 배우는 것만
 export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
-  starter: { id: "starter", group: "기본", label: "PC 2대 + 스위치 (수동 IP)", blurb: "pc-1 에서 pc-2 로 ping 하면 ARP 로 MAC 을 찾은 뒤 ICMP 가 오갑니다.", build: exampleStarterTopology },
-  router: { id: "router", group: "기본", label: "공유기 하나로 (DHCP + NAT + 포트 포워딩 + Wi-Fi)", blurb: "케이블만 꽂으면 DHCP 로 주소를 받고, google.com 으로 ping 하면 DNS → NAT 를 거칩니다.", build: exampleTopology },
-  parts: { id: "parts", group: "기능 단위", label: "기능 단위로 (NAT 박스 + 게이트웨이 + DHCP/DNS 서버)", blurb: "공유기를 상자별로 뜯은 구성. 노트북은 게이트웨이 릴레이로 다른 서브넷의 DHCP 서버에서 주소를 받습니다.", build: examplePartsTopology },
+  starter: {
+    id: "starter",
+    group: "기본",
+    label: "PC 두 대 잇기 (ARP·ping)",
+    blurb: "pc-1 에서 pc-2 로 ping 하면 ARP 로 MAC 을 찾은 뒤 ICMP 가 오갑니다.",
+    build: exampleStarterTopology,
+  },
+  router: {
+    id: "router",
+    group: "기본",
+    label: "집 공유기 (DHCP·NAT·Wi-Fi)",
+    blurb: "케이블만 꽂으면 DHCP 로 주소를 받고, google.com 으로 ping 하면 DNS → NAT 를 거칩니다.",
+    build: exampleTopology,
+  },
+  parts: {
+    id: "parts",
+    group: "기능 단위",
+    label: "공유기를 부품으로 (NAT·게이트웨이·DHCP/DNS 서버)",
+    blurb: "공유기를 상자별로 뜯은 구성. 노트북은 게이트웨이 릴레이로 다른 서브넷의 DHCP 서버에서 주소를 받습니다.",
+    build: examplePartsTopology,
+  },
+  docker: {
+    id: "docker",
+    group: "기능 단위",
+    label: "도커 호스트를 부품으로 (브리지·MASQUERADE·포트 공개)",
+    blurb: "pc-1 에서 172.18.0.2 로 ping 은 실패하지만(호스트 뒤 사설망), docker-host 의 LAN 주소:8080 으로 TCP 연결은 -p 포워딩으로 web 에 닿습니다. web 에서 db 는 이름으로, google.com 은 MASQUERADE 로 나갑니다.",
+    build: exampleDockerTopology,
+  },
+  gateways: {
+    id: "gateways",
+    group: "라우팅",
+    label: "게이트웨이 2단 (스태틱 라우팅)",
+    blurb: "pc-1 → 192.168.5.10 은 gw-1 이 스태틱 라우팅으로 gw-2 에 바로 넘기고, 인터넷은 NAT 로 올라갑니다. NAT 의 스태틱 라우팅을 지우면 응답이 돌아오지 못합니다.",
+    build: exampleTwoGatewaysTopology,
+  },
   homes: {
     id: "homes",
-    group: "기능 단위",
-    label: "집 두 곳 잇기 (게이트웨이 ↔ 게이트웨이, 인터넷 없음)",
+    group: "라우팅",
+    label: "두 집 직접 잇기 (인터넷 없음)",
     blurb: "pc-1 → 192.168.2.10 은 gw-1 → gw-2 두 홉을 지납니다. \"경로\" 로 홉을 확인하고, gw-1 의 스태틱 라우팅을 지우면 No route 로 실패합니다.",
     build: exampleTwoHomesTopology,
   },
   backbone: {
     id: "backbone",
-    group: "기능 단위",
-    label: "백본 스위치로 집 세 곳 잇기 (라우터 전용 서브넷)",
+    group: "라우팅",
+    label: "백본 스위치로 세 집 잇기",
     blurb: "게이트웨이 셋의 if0 이 sw-backbone(10.0.0.0/24) 에서 만납니다. 게이트웨이마다 다른 두 집으로 가는 스태틱 라우팅이 있고, 하나를 지우면 그 집만 못 갑니다.",
     build: exampleBackboneTopology,
   },
   rip: {
     id: "rip",
-    group: "기능 단위",
-    label: "동적 라우팅 RIP (게이트웨이 3대 삼각형)",
+    group: "라우팅",
+    label: "동적 라우팅 RIP (끊기면 우회)",
     blurb: "스태틱 라우팅 없이 RIP 로 서로의 LAN 을 배웁니다(게이트웨이 → 표 탭의 라우팅 테이블). pc-a 에서 192.168.3.10 으로 \"경로\" 를 본 뒤 gw-a ↔ gw-c 케이블을 지우면, RIP 가 경로를 철회하고 gw-b 를 거치는 길로 다시 수렴합니다.",
     build: exampleRipTopology,
   },
-  gateways: { id: "gateways", group: "기능 단위", label: "게이트웨이 2단 (라우터 전용 서브넷 + 스태틱 라우팅)", blurb: "pc-1 → 192.168.5.10 은 gw-1 이 스태틱 라우팅으로 gw-2 에 바로 넘기고, 인터넷은 NAT 로 올라갑니다. NAT 의 스태틱 라우팅을 지우면 응답이 돌아오지 못합니다.", build: exampleTwoGatewaysTopology },
-  hub: { id: "hub", group: "L2", label: "허브 vs 스위치", blurb: "pc-1 → pc-2 ping 이 허브의 모든 포트(공유기까지)로 복제되는 것과, pc-3 → pc-4 가 스위치에서 그 포트로만 가는 것을 비교하세요.", build: exampleHubTopology },
-  vlan: { id: "vlan", group: "L2", label: "VLAN 으로 나눈 사무실 (트렁크 + 서브 인터페이스)", blurb: "같은 스위치인데 VLAN 10 과 20 은 게이트웨이 서브 인터페이스를 거쳐야 통신됩니다.", build: exampleVlanTopology },
-  firewall: { id: "firewall", group: "서비스", label: "방화벽 (ping 은 되고 웹은 막힘)", blurb: "pc-1 에서 example.com 으로 ping 은 되지만 TCP 80 연결은 공유기 방화벽 규칙 1 에서 차단됩니다. 규칙 2(인바운드 ICMP 차단)는 바깥에서 먼저 시작한 ping 을 막는 규칙이고, 안에서 시작한 ping 의 응답은 Stateful 검사로 통과합니다.", build: exampleFirewallTopology },
+  hub: {
+    id: "hub",
+    group: "L2",
+    label: "허브 vs 스위치",
+    blurb: "pc-1 → pc-2 ping 이 허브의 모든 포트(공유기까지)로 복제되는 것과, pc-3 → pc-4 가 스위치에서 그 포트로만 가는 것을 비교하세요.",
+    build: exampleHubTopology,
+  },
+  vlan: {
+    id: "vlan",
+    group: "L2",
+    label: "VLAN 으로 나눈 사무실 (트렁크)",
+    blurb: "같은 스위치인데 VLAN 10 과 20 은 게이트웨이 서브 인터페이스를 거쳐야 통신됩니다.",
+    build: exampleVlanTopology,
+  },
+  firewall: {
+    id: "firewall",
+    group: "보안",
+    label: "공유기 방화벽 (ping 은 되고 웹은 막힘)",
+    blurb: "pc-1 에서 example.com 으로 ping 은 되지만 TCP 80 연결은 공유기 방화벽 규칙 1 에서 차단됩니다. 규칙 2(인바운드 ICMP 차단)는 바깥에서 먼저 시작한 ping 을 막는 규칙이고, 안에서 시작한 ping 의 응답은 Stateful 검사로 통과합니다.",
+    build: exampleFirewallTopology,
+  },
   fwbox: {
     id: "fwbox",
-    group: "서비스",
-    label: "방화벽 장비 (서버 앞에 끼운 투명 방화벽)",
+    group: "보안",
+    label: "투명 방화벽 장비 (서버 앞)",
     blurb: "pc-1 → srv-1 ping 은 fw-1 에서 차단되지만 TCP 80 연결은 됩니다. srv-1 → pc-1 ping 은 응답이 Stateful 검사로 돌아오고, srv-1 → pc-1 traceroute 는 1홉 — fw-1 은 IP 가 없어 홉에 안 보입니다.",
     build: exampleFirewallApplianceTopology,
   },
+  internet: {
+    id: "internet",
+    group: "인터넷",
+    label: "인터넷의 뼈대 (가장자리 트리 · 중심 그물)",
+    blurb: "pc-1 에서 nexus.com 으로 \"경로\" 와 TCP 연결을 보내 보세요. 집 공유기 → KT 국사 → KT 백본 → SK 백본 → SK 국사 → 회사 NAT. 가장자리는 디폴트 라우트로 위로만 올라가고(트리), 백본 셋은 RIP 로 경로를 주고받습니다(그물, 실제로는 BGP). KT 백본 ↔ SK 백본 케이블을 지우면 구글 망을 돌아가는 길로 다시 수렴합니다.",
+    build: exampleInternetTopology,
+  },
   publish: {
     id: "publish",
-    group: "서비스",
-    label: "도메인으로 회사 웹 서버 접속 (DNS + NAT 양쪽 + 포트 포워딩)",
-    blurb: "맥북에서 nexus.com:80 으로 TCP 연결을 보내 보세요. 집 DNS 가 회사 공인 주소를 알려 주고, 집 NAT(출발지 변환) → 회사 NAT 포트 포워딩(목적지 변환) → 방화벽(웹 서버 80 만 허용) → 웹 서버로 갑니다. srv-1(192.168.1.3)은 사설 주소라 밖에서 직접 닿지 않습니다.",
+    group: "인터넷",
+    label: "도메인으로 회사 웹 서버 접속 (DNS·NAT·포트 포워딩)",
+    blurb: "맥북에서 nexus.com:80 으로 TCP 연결을 보내 보세요. 공인 DNS 8.8.8.8(ISP 라우터 너머)이 회사 공인 주소를 알려 주고, 집 NAT(출발지 변환) → 회사 NAT 포트 포워딩(목적지 변환) → 방화벽(웹 서버 80 만 허용) → 웹 서버로 갑니다. srv-1(192.168.1.3)은 사설 주소라 밖에서 직접 닿지 않습니다.",
     build: examplePublishTopology,
   },
-  docker: {
-    id: "docker",
-    group: "서비스",
-    label: "도커 호스트를 부품으로 (브리지 + MASQUERADE + -p + embedded DNS)",
-    blurb: "pc-1 에서 172.18.0.2 로 ping 은 실패하지만(호스트 뒤 사설망), docker-host 의 LAN 주소:8080 으로 TCP 연결은 -p 포워딩으로 web 에 닿습니다. web 에서 db 는 이름으로, google.com 은 MASQUERADE 로 나갑니다.",
-    build: exampleDockerTopology,
+  roaming: {
+    id: "roaming",
+    group: "무선",
+    label: "무선 로밍 (AP 두 대)",
+    blurb: "phone-1 을 오른쪽 AP 쪽으로 끌면 가까운 AP 로 갈아탑니다. 주소는 새로 받지 않고, 쓰던 주소를 DHCP Request 로 확인만 하고 그대로 씁니다(INIT-REBOOT).",
+    build: exampleRoamingTopology,
   },
-  roaming: { id: "roaming", group: "무선", label: "무선 로밍 (같은 SSID 의 AP 두 대)", blurb: "phone-1 을 오른쪽 AP 쪽으로 끌면 가까운 AP 로 갈아타고 DHCP 로 새로 임대받습니다.", build: exampleRoamingTopology },
 };
 
 export const EXAMPLE_LIST: ExampleSpec[] = Object.values(EXAMPLES);
