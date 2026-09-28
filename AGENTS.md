@@ -32,8 +32,9 @@ Packet Tracer 식으로 직접 구성하는 네트워크 학습 시뮬레이터.
 npm run typecheck   # tsc
 npm test            # vitest (코어)
 npm run ui-check    # Playwright 스모크 (개발 서버 자동 기동, .shots/ 에 스크린샷. 헬퍼 goTab/loadEx/clearUi — 인스펙터 탭·파일 메뉴를 거친다)
+npm run perf-check  # 프로덕션 빌드로 예제 전부 + 단말 52대 스트레스를 CPU 4배 감속에서 6초씩: fps·p95·긴 프레임·점유율·라벨 깜빡임. --headed, --throttle N, --only=id
 ```
-코어 변경은 `npm test`, UI 변경은 `npm run ui-check` 까지 통과해야 완료.
+코어 변경은 `npm test`, UI 변경은 `npm run ui-check` 까지 통과해야 완료. 캔버스 매 프레임 코드(PacketLayer·ActiveCables·sim tick)를 건드리면 `npm run perf-check` 도 (개발 서버는 preact 디버그 훅 때문에 느려 측정에 쓰지 않는다).
 
 ## 배포 (porta-hub 와 같은 방식)
 - `Dockerfile`: node:24-alpine 에서 `vite build` → `nginxinc/nginx-unprivileged`(8080, uid 101) 가 `dist/` 서빙. 설정은 `deploy/nginx.conf`(`/healthz`, `/assets/` 영구 캐시, 나머지는 `index.html` 폴백).

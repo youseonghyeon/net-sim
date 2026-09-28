@@ -2,6 +2,7 @@ import type * as preact from "preact";
 import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
 import { frameCategory, shortLabel } from "../core/packet";
+import type { Transmission } from "../core/network";
 import { hostStatus, serviceBadges, sim, simTime, simVersion, wanStatus } from "../model/sim";
 import {
   addZone,
@@ -756,58 +757,64 @@ function ActiveCables({ byId, cables }: { byId: Map<string, Device>; cables: Cab
   return <g class="cables-active">{paths}</g>;
 }
 
+/** 직전 프레임에 라벨이 보이던 패킷 — 이번 프레임에도 자리를 먼저 잡아 라벨이 켜졌다 꺼졌다 하지 않게 한다 */
+let labelledLastFrame = new Set<number>();
+/** 동시에 나는 패킷이 이보다 많으면 라벨을 아예 그리지 않는다 (읽을 수 없고, 요소 수가 곧 프레임 비용) */
+const LABEL_LIMIT = 120;
+
 /** 링크 위를 이동 중인 패킷. 매 프레임 simTime 을 구독한다 */
 function PacketLayer({ byId, cables, wireless }: { byId: Map<string, Device>; cables: Cable[]; wireless: WirelessLink[] }) {
   const now = simTime.value;
   const cableById = new Map(cables.map((c) => [c.id, c]));
   const wlById = new Map(wireless.map((l) => [l.id, l]));
-  // 라벨 자리 잡기: 이미 놓인 라벨과 겹치면 위로 한 칸씩 올린다
-  const placed: { x: number; y: number; w: number }[] = [];
-  const labelDy = (x: number, y: number, w: number): number => {
-    let dy = 0;
-    for (let k = 0; k < 4; k++) {
-      const hit = placed.some((q) => Math.abs(q.x - x) < (q.w + w) / 2 + 4 && Math.abs(q.y - (y + dy)) < 19);
-      if (!hit) break;
-      dy -= 20;
-    }
-    placed.push({ x, y: y + dy, w });
-    return dy;
-  };
-  const items = sim.inFlight().map((tx) => {
+  const packets: { tx: Transmission; p: { x: number; y: number }; label: string; w: number }[] = [];
+  for (const tx of sim.inFlight()) {
     const frac = Math.min(1, Math.max(0, (now - tx.departAt) / (tx.arriveAt - tx.departAt)));
     let p: { x: number; y: number };
     const wlink = wlById.get(tx.linkId);
     if (wlink) {
       const seg = wirelessSegment(wlink, byId);
-      if (!seg) return null;
+      if (!seg) continue;
       const f = tx.from.node === wlink.client ? frac : 1 - frac;
       p = { x: seg.a.x + (seg.b.x - seg.a.x) * f, y: seg.a.y + (seg.b.y - seg.a.y) * f };
     } else {
       const cable = cableById.get(tx.linkId);
-      if (!cable) return null;
+      if (!cable) continue;
       const a = byId.get(cable.a.device);
       const b = byId.get(cable.b.device);
-      if (!a || !b) return null;
+      if (!a || !b) continue;
       const curve = cableCurve(portAnchor(a, cable.a.port), portAnchor(b, cable.b.port));
       p = pointOn(curve, tx.from.node === cable.a.device ? frac : 1 - frac);
     }
+    const label = tx.lost && tx.lostAt !== undefined ? `${shortLabel(tx.frame)} 손실` : shortLabel(tx.frame);
+    packets.push({ tx, p, label, w: Math.round(textWidth(label) * 1.02) + 12 });
+  }
+  // 라벨 자리 잡기: 겹치면 위로 비켜 쌓지 않고 숨긴다 (쌓으면 패킷이 스칠 때마다 라벨이 20px 씩 튄다).
+  // 직전 프레임에 보이던 라벨이 먼저, 그다음 보낸 순서로 자리를 잡는다
+  const shown = new Set<number>();
+  if (packets.length <= LABEL_LIMIT) {
+    const placed: { x: number; y: number; w: number }[] = [];
+    const order = [...packets.filter((k) => labelledLastFrame.has(k.tx.id)), ...packets.filter((k) => !labelledLastFrame.has(k.tx.id))];
+    for (const { tx, p, w } of order) {
+      if (placed.some((q) => Math.abs(q.x - p.x) < (q.w + w) / 2 + 4 && Math.abs(q.y - p.y) < 19)) continue;
+      placed.push({ x: p.x, y: p.y, w });
+      shown.add(tx.id);
+    }
+  }
+  labelledLastFrame = shown;
+  const items = packets.map(({ tx, p, label, w }) => {
     const lost = tx.lost && tx.lostAt !== undefined;
     const fade = lost ? Math.max(0.15, 1 - (now - tx.departAt) / (tx.lostAt! - tx.departAt)) : 1;
     return (
       <g key={tx.id} class={`packet ${frameCategory(tx.frame)}${lost ? " lost" : ""}`} transform={`translate(${p.x},${p.y})`} opacity={fade}>
         <circle r={7} />
         {lost && <path d="M-3.5,-3.5 L3.5,3.5 M3.5,-3.5 L-3.5,3.5" />}
-        {(() => {
-          const label = lost ? `${shortLabel(tx.frame)} 손실` : shortLabel(tx.frame);
-          const w = Math.round(textWidth(label) * 1.02) + 12;
-          const dy = labelDy(p.x, p.y, w);
-          return (
-            <g class="packet-label" transform={`translate(0,${-25 + dy})`}>
-              <rect x={-w / 2} width={w} height={17} rx={8.5} />
-              <text y={12}>{label}</text>
-            </g>
-          );
-        })()}
+        {packets.length <= LABEL_LIMIT && (
+          <g class={`packet-label${shown.has(tx.id) ? "" : " hidden"}`} transform="translate(0,-25)">
+            <rect x={-w / 2} width={w} height={17} rx={8.5} />
+            <text y={12}>{label}</text>
+          </g>
+        )}
       </g>
     );
   });

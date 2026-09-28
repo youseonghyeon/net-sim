@@ -1871,6 +1871,12 @@ select.btn.example {
   stroke: var(--line-strong);
   stroke-width: 1;
 }
+.packet-label {
+  transition: opacity 0.12s;
+}
+.packet-label.hidden {
+  opacity: 0;
+}
 .packet .packet-label text {
   font-size: 11px;
   stroke: none;
