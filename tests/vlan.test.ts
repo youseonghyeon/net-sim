@@ -31,10 +31,10 @@ describe("VLAN 스위치", () => {
     net.scheduleAction(net.now, { kind: "ping", nodeId: "a", dst: "192.168.10.11" });
     net.runToIdle();
     expect(net.getHost("a").pings.at(-1)?.status).toBe("ok");
-    // d 는 같은 서브넷 주소지만 VLAN 20 포트 → 브로드캐스트 도메인이 달라 ARP 응답 없음
+    // d 는 같은 서브넷 주소지만 VLAN 20 포트 → 브로드캐스트 도메인이 달라 ARP timeout
     net.scheduleAction(net.now, { kind: "ping", nodeId: "a", dst: "192.168.10.12" });
     net.runToIdle();
-    expect(net.getHost("a").pings.at(-1)).toMatchObject({ status: "failed", reason: "ARP 응답 없음" });
+    expect(net.getHost("a").pings.at(-1)).toMatchObject({ status: "failed", reason: "ARP timeout · 응답 없음" });
     expect(net.trace.some((e) => e.nodeId === "sw" && e.kind === "switch.flood" && e.summary.includes("다른 VLAN 포트"))).toBe(true);
     // d 는 같은 VLAN 20 의 c 프레임은 받지만 a(VLAN 10) 의 프레임은 한 번도 받지 않는다
     expect(net.transmissions.some((t) => t.to.node === "d" && t.frame.src === "02:00:00:00:00:0a")).toBe(false);

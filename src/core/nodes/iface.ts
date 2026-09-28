@@ -360,7 +360,7 @@ export class NetInterface {
     const queue = this.pending.get(ip);
     if (!queue || this.arpCache.has(ip)) return [];
     this.pending.delete(ip);
-    ctx.trace("arp.timeout", "L2", `ARP 응답 없음 (${ip}, ${NetInterface.ARP_TIMEOUT}ms) → 대기 패킷 ${queue.length}개 드롭`, { ip, dropped: queue.length });
+    ctx.trace("arp.timeout", "L2", `ARP timeout: ${ip} 가 ${NetInterface.ARP_TIMEOUT}ms 동안 응답 없음 → 대기 패킷 ${queue.length}개 드롭`, { ip, dropped: queue.length });
     return queue.map((q) => q.pkt);
   }
 

@@ -617,7 +617,7 @@ export function lintTopology(t: Topology): LintIssue[] {
           deviceId: d.id,
           severity: "warn",
           code: "host.no-gateway-in-segment",
-          message: `게이트웨이 ${gw} 가 같은 세그먼트의 라우터 주소(${gws.map((g) => g.ip).join(", ")})와 다름 → ARP 응답 없음`,
+          message: `게이트웨이 ${gw} 가 같은 세그먼트의 라우터 주소(${gws.map((g) => g.ip).join(", ")})와 다름 → ARP timeout`,
           fix: `${d.name} → IP 설정 → 게이트웨이 칸을 ${pick?.ip ?? gws[0]!.ip} (${pick?.label ?? gws[0]!.label}) 로 바꾸거나, 케이블을 ${gw} 를 가진 라우터 쪽 스위치로 옮기기`,
           related: uniqueDevices(gws).map((x) => x.id),
         });

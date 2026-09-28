@@ -160,7 +160,7 @@ export class DhcpClient {
     if (this.attempts < DHCP_MAX_ATTEMPTS) {
       this.attempts += 1;
       this.state = "discovering";
-      ctx.trace("dhcp.timeout", "app", this.tag(`DHCP 응답 없음 (${DHCP_TIMEOUT}ms) → 재시도 ${this.attempts}/${DHCP_MAX_ATTEMPTS}`), { attempt: this.attempts });
+      ctx.trace("dhcp.timeout", "app", this.tag(`DHCP timeout: ${DHCP_TIMEOUT}ms 동안 응답 없음 → 재시도 ${this.attempts}/${DHCP_MAX_ATTEMPTS}`), { attempt: this.attempts });
       this.sendDiscover(ctx, emit);
       return;
     }
@@ -169,7 +169,7 @@ export class DhcpClient {
     ctx.trace(
       "dhcp.failed",
       "app",
-      this.tag(`DHCP 실패: 서버 응답 없음 (${DHCP_MAX_ATTEMPTS}회 시도) → 주소 없음. DHCP 서비스를 켠 뒤 "DHCP 임대 갱신" 을 누르거나, IP 를 수동 설정하세요`),
+      this.tag(`DHCP 실패: timeout (${DHCP_MAX_ATTEMPTS}회 시도해도 서버 응답 없음) → 주소 없음. DHCP 서비스를 켠 뒤 "DHCP 임대 갱신" 을 누르거나, IP 를 수동 설정하세요`),
       {},
     );
   }
@@ -324,7 +324,7 @@ export class DhcpServer {
     if (msg.op === "discover") {
       ctx.trace("dhcp.discover.received", "app", `DHCP Discover 수신 (클라이언트 ${msg.clientMac})${via}`, { ...msg }, frameId);
       if (!this.config.enabled) {
-        ctx.trace("dhcp.disabled", "app", `DHCP 서비스가 꺼져 있음 → 응답하지 않음 (클라이언트는 타임아웃 후 실패)`, {}, frameId);
+        ctx.trace("dhcp.disabled", "app", `DHCP 서비스가 꺼져 있음 → 응답하지 않음 (클라이언트는 timeout 후 실패)`, {}, frameId);
         return;
       }
       const problem = this.rangeProblem();

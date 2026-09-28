@@ -409,7 +409,7 @@ function CablePanel({ c }: { c: Cable }) {
         <button class="btn wide" onClick={() => sim.dropNext(c.id)}>
           다음 패킷 1개 손실시키기
         </button>
-        <p class="note">손실된 패킷은 케이블 중간에서 사라집니다. TCP 는 ACK 가 안 오면 재전송하고, ping 은 시간 초과로 실패합니다.</p>
+        <p class="note">손실된 패킷은 케이블 중간에서 사라집니다. TCP 는 ACK 가 안 오면 재전송하고, ping 은 timeout 으로 실패합니다.</p>
       </Section>
       <Section>
         <button class="btn danger" onClick={() => removeCable(c.id)}>

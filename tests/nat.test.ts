@@ -65,7 +65,7 @@ describe("WAN + NAT", () => {
     net.scheduleAction(net.now, { kind: "ping", nodeId: "pc1", dst: "8.8.8.8" });
     net.runToIdle();
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "ip.no-route")).toBe(true);
-    expect(net.getHost("pc1").pings.at(-1)).toMatchObject({ status: "failed", reason: "응답 시간 초과" });
+    expect(net.getHost("pc1").pings.at(-1)).toMatchObject({ status: "failed", reason: "timeout · 응답 없음" });
   });
 
   it("사설 주소로 향하는 패킷은 인터넷에서 버려진다", () => {

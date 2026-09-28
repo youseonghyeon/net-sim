@@ -145,13 +145,13 @@ export class DnsResolver {
     if (q.attempts < DNS_MAX_ATTEMPTS) {
       q.attempts += 1;
       q.timer = ctx.timer(DNS_TIMEOUT, DNS_TIMER_TAG, { id });
-      ctx.trace("dns.timeout", "app", `DNS 응답 없음 (${DNS_TIMEOUT}ms) → 재시도`, { id, name: q.name });
+      ctx.trace("dns.timeout", "app", `DNS timeout: ${DNS_TIMEOUT}ms 동안 응답 없음 → 재시도`, { id, name: q.name });
       this.send(id, q.name, q.attempts, ctx, emit);
       return;
     }
     this.pending.delete(id);
-    ctx.trace("dns.timeout", "app", `DNS 실패: 서버 ${this.iface.dns} 가 ${DNS_MAX_ATTEMPTS}번 물어도 응답 없음 → ${q.name} 해석 실패 (서버 주소·경로 확인)`, { id, name: q.name });
-    q.done(undefined, "DNS 응답 없음");
+    ctx.trace("dns.timeout", "app", `DNS timeout: 서버 ${this.iface.dns} 가 ${DNS_MAX_ATTEMPTS}번 물어도 응답 없음 → ${q.name} 해석 실패 (서버 주소·경로 확인)`, { id, name: q.name });
+    q.done(undefined, "DNS timeout · 응답 없음");
   }
 
   private fail(id: number, reason: string, ctx: NodeContext): void {
@@ -290,7 +290,7 @@ export class DnsServer {
     const p = this.pendingUpstream.get(id);
     if (!p) return;
     this.pendingUpstream.delete(id);
-    ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS ${this.config.upstream} 응답 없음 → 클라이언트에게 SERVFAIL`, { name: p.name });
+    ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS ${this.config.upstream} timeout (응답 없음) → 클라이언트에게 SERVFAIL`, { name: p.name });
     this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, rcode: "SERVFAIL" }, ctx, emit);
   }
 

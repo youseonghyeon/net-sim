@@ -229,7 +229,7 @@ describe("traceroute", () => {
     net.runToIdle();
     net.scheduleAction(net.now, { kind: "traceroute", nodeId: "h", dst: "8.8.8.8" });
     net.runToIdle();
-    expect(net.getHost("h").traceroutes.at(-1)).toMatchObject({ status: "failed", reason: "ARP 응답 없음", hops: [] });
+    expect(net.getHost("h").traceroutes.at(-1)).toMatchObject({ status: "failed", reason: "ARP timeout · 응답 없음", hops: [] });
     expect(net.trace.find((e) => e.kind === "trace.failed")!.summary).toContain("10.0.0.254");
     expect(net.pendingEvents).toBe(0);
   });

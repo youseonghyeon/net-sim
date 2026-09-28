@@ -585,12 +585,12 @@ export class Host implements SimNode {
           const icmp = pkt.payload;
           if (icmp.id === this.trId) {
             const a = this.activeTrace;
-            if (a && a.seq === icmp.seq) this.failTrace(a.rec, "ARP 응답 없음", ctx, `첫 홉 ${nextHop} 이(가) 응답하지 않음 — 케이블과 게이트웨이 주소를 확인`);
+            if (a && a.seq === icmp.seq) this.failTrace(a.rec, "ARP timeout · 응답 없음", ctx, `첫 홉 ${nextHop} 이(가) 응답하지 않음 — 케이블과 게이트웨이 주소를 확인`);
             continue;
           }
           const rec = this.pings.find((p) => p.seq === icmp.seq && p.status === "pending");
           if (!rec) continue;
-          this.finishPing(rec, "failed", { reason: "ARP 응답 없음" });
+          this.finishPing(rec, "failed", { reason: "ARP timeout · 응답 없음" });
           ctx.trace("icmp.failed", "app", `ping ${rec.dst} 실패: 그 주소를 가진 장치가 응답하지 않음 (Destination Host Unreachable)`, { dst: rec.dst, seq: rec.seq });
         }
         return;
@@ -601,7 +601,7 @@ export class Host implements SimNode {
         if (!a || a.seq !== seq) return;
         a.timer = undefined;
         a.rec.hops.push({ ttl: a.ttl });
-        ctx.trace("trace.timeout", "app", `traceroute ${a.rec.dst}: TTL=${a.ttl} 에 ${Host.TRACEROUTE_TIMEOUT}ms 동안 응답 없음 → ${a.ttl} 번째 홉 = * (다음 TTL 로 계속)`, { dst: a.rec.dst, ttl: a.ttl, seq });
+        ctx.trace("trace.timeout", "app", `traceroute ${a.rec.dst}: TTL=${a.ttl} timeout (${Host.TRACEROUTE_TIMEOUT}ms 동안 응답 없음) → ${a.ttl} 번째 홉 = * (다음 TTL 로 계속)`, { dst: a.rec.dst, ttl: a.ttl, seq });
         this.nextProbe(ctx);
         return;
       }
@@ -610,8 +610,8 @@ export class Host implements SimNode {
         this.pingTimers.delete(seq);
         const rec = this.pings.find((p) => p.seq === seq && p.status === "pending");
         if (!rec) return;
-        this.finishPing(rec, "failed", { reason: "응답 시간 초과" });
-        ctx.trace("icmp.timeout", "app", `ping ${rec.dst} 실패: ${Host.PING_TIMEOUT}ms 동안 응답 없음 (Request timed out)`, { dst: rec.dst, seq });
+        this.finishPing(rec, "failed", { reason: "timeout · 응답 없음" });
+        ctx.trace("icmp.timeout", "app", `ping ${rec.dst} timeout: ${Host.PING_TIMEOUT}ms 동안 응답 없음 (Request timed out)`, { dst: rec.dst, seq });
         return;
       }
       case DHCP_TIMER_TAG:

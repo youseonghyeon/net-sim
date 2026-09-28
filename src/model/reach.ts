@@ -55,7 +55,7 @@ function failureReason(net: Network, fromIndex: number, fallback: string | undef
   if (vlan) return "다른 VLAN";
   const conflict = recent.find((e) => e.kind === "ip.conflict");
   if (conflict) return `주소 충돌 (${at(conflict.nodeId)})`;
-  return fallback ?? "응답 없음";
+  return fallback ?? "timeout";
 }
 
 /**

@@ -76,7 +76,7 @@ describe("DNS", () => {
     const net = build("192.168.0.99");
     net.scheduleAction(net.now, { kind: "ping", nodeId: "c1", dst: "srv.local" });
     net.runToIdle();
-    expect(net.getHost("c1").pings.at(-1)).toMatchObject({ status: "failed", reason: "DNS 응답 없음" });
+    expect(net.getHost("c1").pings.at(-1)).toMatchObject({ status: "failed", reason: "DNS timeout · 응답 없음" });
     expect(net.trace.filter((e) => e.nodeId === "c1" && e.kind === "dns.query.sent")).toHaveLength(2);
   });
 
