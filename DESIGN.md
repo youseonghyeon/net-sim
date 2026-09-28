@@ -15,7 +15,7 @@
 | accent | #3457D5 | #7A93FF | 선택, 연결 중 케이블, 주요 버튼 |
 
 상태: up #1E9E5A · 주소 없음 #C98A10 · 오류 #D64541
-패킷: ARP #E0A526 · DHCP #2BA84A · ICMP #2B8FD6 · TCP #8B5CF6
+패킷: ARP #E0A526 · DHCP #2BA84A · ICMP #2B8FD6 · TCP #8B5CF6 · DNS #14B8A6 · RIP #D6589B (RIP 범례는 RIP 를 켠 장치가 있을 때만)
 
 ## 타이포
 - Pretendard Variable: UI 전체(한글+라틴). 13px 기본, 12px 보조, 11px 캡션. 제목은 크기보다 굵기(600)로 구분.

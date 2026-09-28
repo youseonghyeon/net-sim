@@ -111,8 +111,30 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage;
+  payload: DhcpMessage | DnsMessage | RipMessage;
 }
+
+/**
+ * RIPv2 메시지 (RFC 2453 축소판). 경로마다 목적지·프리픽스·메트릭(홉 수, 16 = 도달 불가)만 담는다.
+ * Request: "당신의 경로를 전부 알려 주세요" (시작할 때), Response: 내 라우팅 테이블 광고
+ */
+export interface RipMessage {
+  kind: "rip";
+  command: "request" | "response";
+  entries: RipEntry[];
+}
+
+export interface RipEntry {
+  dest: Ip;
+  prefix: number;
+  metric: number;
+}
+
+export const RIP_PORT = 520;
+/** RIPv2 는 224.0.0.9 멀티캐스트로 보낸다 (MAC 01:00:5e:00:00:09). 라우터만 가입하므로 호스트 NIC 는 조용히 거른다 */
+export const RIP_MULTICAST_IP: Ip = "224.0.0.9";
+export const RIP_MULTICAST_MAC: Mac = "01:00:5e:00:00:09";
+export const RIP_INFINITY = 16;
 
 export interface DnsMessage {
   kind: "dns";
@@ -154,7 +176,7 @@ export const LIMITED_BROADCAST_IP: Ip = "255.255.255.255";
 
 export type Layer = "L1" | "L2" | "L3" | "L4" | "app" | "sys";
 
-export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns";
+export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns" | "rip";
 
 const DHCP_LABEL: Record<DhcpOp, string> = { discover: "Discover", offer: "Offer", request: "Request", ack: "Ack", nak: "Nak", release: "Release" };
 
@@ -172,6 +194,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (inner.kind === "tcp") return `TCP ${tcpFlags(inner)} seq=${inner.seq} ack=${inner.ack}${inner.len ? ` len=${inner.len}` : ""}`;
   const d = inner.payload;
   if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}?)` : `DNS 응답 (${d.name} = ${d.answer ?? d.rcode})`;
+  if (d.kind === "rip") return d.command === "request" ? "RIP Request (전체 경로 요청)" : `RIP Response (경로 ${d.entries.length}개)`;
   return `DHCP ${DHCP_LABEL[d.op]}${d.yiaddr ? ` (${d.yiaddr})` : ""}`;
 }
 
@@ -192,6 +215,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.kind === "icmp") return inner.type === "echo-request" ? "ping 요청" : inner.type === "echo-reply" ? "ping 응답" : "TTL 초과";
   if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
+  if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   return `DHCP ${DHCP_LABEL[inner.payload.op]}`;
 }
 
@@ -201,5 +225,6 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.kind === "arp") return "arp";
   if (p.payload.kind === "icmp") return "icmp";
   if (p.payload.kind === "tcp") return "tcp";
-  return p.payload.payload.kind === "dns" ? "dns" : "dhcp";
+  const k = p.payload.payload.kind;
+  return k === "dns" ? "dns" : k === "rip" ? "rip" : "dhcp";
 }

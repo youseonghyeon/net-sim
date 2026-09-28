@@ -929,6 +929,7 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
           경로 추가
         </button>
       </Section>
+      <RipSection d={d} l3={l3} />
       {isNat && (
         <ForwardSection
           rules={l3.forwards ?? []}
@@ -942,6 +943,45 @@ function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
         uplinkName={isNat ? "outside" : "if0"}
       />
     </>
+  );
+}
+
+/** 동적 라우팅 (RIP): 켜기 + 디폴트 라우트 광고 */
+function RipSection({ d, l3 }: { d: Device; l3: L3Settings }) {
+  const rip = l3.rip ?? { enabled: false };
+  const set = (patch: Partial<NonNullable<L3Settings["rip"]>>) =>
+    updateDevice(d.id, (x) => {
+      const cur = x.l3 ?? defaultL3(x.kind);
+      return { ...x, l3: { ...cur, rip: { ...(cur.rip ?? { enabled: false }), ...patch } } };
+    });
+  const isNat = d.kind === "nat";
+  return (
+    <Section title="동적 라우팅 (RIP)">
+      <label class="toggle-row">
+        <span>{rip.enabled ? "켜짐" : "꺼짐"}</span>
+        <Toggle on={rip.enabled} onToggle={() => set({ enabled: !rip.enabled })} />
+      </label>
+      {!rip.enabled && (
+        <p class="note">
+          켜면 이웃 라우터와 "내가 아는 네트워크와 홉 수" 를 주고받아 라우팅 테이블을 자동으로 채웁니다. 이웃 라우터도 RIP 를 켜야 합니다. 스태틱 라우팅을 하나하나 넣는 대신 쓸 수 있습니다.
+        </p>
+      )}
+      {rip.enabled && (
+        <>
+          <label class="toggle-row">
+            <span>
+              디폴트 라우트 광고
+              <small class="muted">내 디폴트 라우트를 이웃에게 0.0.0.0/0 으로 알림</small>
+            </span>
+            <Toggle on={rip.defaultRoute === true} onToggle={() => set({ defaultRoute: !rip.defaultRoute })} />
+          </label>
+          <p class="note">
+            {isNat ? "outside 쪽으로는 광고하지 않습니다(사설 경로를 바깥에 알리지 않음). " : ""}
+            배운 경로는 "표" 탭의 라우팅 테이블에 "RIP n홉" 으로 보입니다. 같은 목적지에 스태틱 라우팅이 있으면 스태틱이 우선합니다. 실제 RIP 의 30초 주기 광고 대신 변화가 있을 때만 광고하므로, 스위치 너머 이웃이 사라진 것(내 링크는 살아 있음)은 알아채지 못합니다.
+          </p>
+        </>
+      )}
+    </Section>
   );
 }
 

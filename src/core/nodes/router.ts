@@ -1,4 +1,4 @@
-import { BROADCAST_MAC, sameSubnet, type Ip, type Mac } from "../addr";
+import { BROADCAST_MAC, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
 import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_UPSTREAM_TIMER_TAG, DnsServer, type DnsServerConfig } from "./dns";
@@ -231,6 +231,8 @@ export class Router implements SimNode {
 
   receive(port: number, frame: EthernetFrame, ctx: NodeContext): void {
     if (port === Router.WAN_PORT) {
+      // 가입하지 않은 멀티캐스트(예: 라우터끼리 주고받는 RIP)는 NIC 가 하드웨어에서 조용히 거른다
+      if (isMulticastMac(frame.dst)) return;
       if (!this.wan.accepts(frame)) {
         ctx.trace("frame.drop", "L2", `wan 수신: 목적지 MAC ${frame.dst} 가 내 WAN MAC 아님 → 드롭`, { dst: frame.dst }, frame.id);
         return;

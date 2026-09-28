@@ -122,7 +122,14 @@ export type TraceKind =
   | "wifi.no-base"
   | "vlan.tag"
   | "vlan.untag"
-  | "vlan.drop";
+  | "vlan.drop"
+  | "rip.config"
+  | "rip.request"
+  | "rip.response"
+  | "rip.receive"
+  | "rip.learn"
+  | "rip.withdraw"
+  | "rip.ignore";
 
 export interface TraceEvent {
   seq: number;

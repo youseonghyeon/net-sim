@@ -1,4 +1,4 @@
-import { isPrivateIp, type Ip, type Mac } from "../addr";
+import { isMulticastMac, isPrivateIp, type Ip, type Mac } from "../addr";
 import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, type DnsMessage, type EthernetFrame, type Ipv4Packet } from "../packet";
 import { DhcpServer } from "./dhcp";
 import { normalizeName, PUBLIC_ZONE } from "./dns";
@@ -72,6 +72,8 @@ export class Internet implements SimNode {
   }
 
   receive(_port: number, frame: EthernetFrame, ctx: NodeContext): void {
+    // 가입하지 않은 멀티캐스트(예: 라우터끼리 주고받는 RIP)는 NIC 가 하드웨어에서 조용히 거른다
+    if (isMulticastMac(frame.dst)) return;
     if (!this.iface.accepts(frame)) {
       ctx.trace("frame.drop", "L2", `목적지 MAC ${frame.dst} 가 ISP 게이트웨이 MAC 아님 → 드롭`, { dst: frame.dst }, frame.id);
       return;

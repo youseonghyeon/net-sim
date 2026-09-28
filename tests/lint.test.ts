@@ -325,6 +325,27 @@ describe("규칙 6 l3.uplink-no-default", () => {
   });
 });
 
+describe("RIP 를 켜면 경로 규칙은 침묵한다 (광고로 배울 경로는 토폴로지만으로 알 수 없음)", () => {
+  it("NAT 와 아래 게이트웨이 둘 다 RIP 면 no-return-route 가 사라지고, 한쪽만 켜면 그대로", () => {
+    const c = twoTier();
+    c.nat.l3!.routes = [];
+    c.nat.l3!.rip = { enabled: true };
+    expect(codes(lintTopology(c.t), c.nat.id)).toContain("l3.no-return-route"); // 게이트웨이는 아직 꺼짐
+    c.gw.l3!.rip = { enabled: true };
+    expect(codes(lintTopology(c.t), c.nat.id)).not.toContain("l3.no-return-route");
+  });
+
+  it("업링크 디폴트 라우트가 없어도 위쪽 라우터가 모두 RIP 면 경고하지 않는다", () => {
+    const c = twoTier();
+    c.gw.l3!.interfaces[0]!.gateway = "";
+    expect(codes(lintTopology(c.t), c.gw.id)).toContain("l3.uplink-no-default");
+    c.gw.l3!.rip = { enabled: true };
+    expect(codes(lintTopology(c.t), c.gw.id)).toContain("l3.uplink-no-default"); // 위쪽 NAT 는 RIP 꺼짐
+    c.nat.l3!.rip = { enabled: true, defaultRoute: true };
+    expect(codes(lintTopology(c.t), c.gw.id)).not.toContain("l3.uplink-no-default");
+  });
+});
+
 describe("규칙 7 l3.no-return-route", () => {
   it("NAT 안쪽에 게이트웨이가 있는데 그 뒤 서브넷 스태틱 라우팅이 없으면 NAT 에 error, 커버되지 않은 서브넷만 나열", () => {
     const c = twoTier();

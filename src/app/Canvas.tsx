@@ -502,6 +502,12 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
           <i class="dns" />
           DNS
         </span>
+        {t.devices.some((d) => d.l3?.rip?.enabled) && (
+          <span>
+            <i class="rip" />
+            RIP
+          </span>
+        )}
       </div>
       <div class="zoom">
         <button class="icon-btn" onClick={() => requestFit()} title="전체를 화면에 맞추기 (⇧1). 선택한 것만 맞추기는 ⇧2" disabled={t.devices.length === 0}>

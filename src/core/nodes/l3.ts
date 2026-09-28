@@ -1,12 +1,25 @@
 // 순수 L3 장치: 인터페이스 N개 사이를 라우팅한다. 게이트웨이(NAT 없음)와 NAT 박스(outside 인터페이스에서 변환)가 이 클래스다.
-import { networkOf, sameSubnet, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, describeFrame, icmpLabel, LIMITED_BROADCAST_IP, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
+import { isMulticastMac, networkOf, sameSubnet, type Ip, type Mac } from "../addr";
+import {
+  DHCP_CLIENT_PORT,
+  DHCP_SERVER_PORT,
+  describeFrame,
+  icmpLabel,
+  LIMITED_BROADCAST_IP,
+  RIP_MULTICAST_MAC,
+  RIP_PORT,
+  type DhcpMessage,
+  type EthernetFrame,
+  type IcmpPacket,
+  type Ipv4Packet,
+} from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient } from "./dhcp";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
 import { Firewall, type FirewallConfig, type FlowDirection } from "./firewall";
 import { NatTable, type PortForward } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
+import { Rip, RIP_TIMER_TAG, type RipConfig } from "./rip";
 
 export interface L3IfaceConfig {
   name: string;
@@ -45,12 +58,16 @@ export interface L3Config {
   firewall?: FirewallConfig;
   /** NAT 박스 전용: 포트 포워딩 규칙 (TCP). kind 가 "gateway" 면 무시 */
   forwards?: PortForward[];
+  /** 동적 라우팅 (RIPv2 축소판) */
+  rip?: RipConfig;
 }
 
 interface Route {
   out: number;
   nextHop: Ip;
-  kind: "connected" | "static" | "default";
+  kind: "connected" | "static" | "default" | "rip";
+  /** RIP 경로의 홉 수 */
+  metric?: number;
 }
 
 export class L3Node implements SimNode {
@@ -68,6 +85,8 @@ export class L3Node implements SimNode {
   /** 인터페이스별 DHCP 릴레이 대상 서버 */
   relays: (Ip | undefined)[];
   readonly firewall: Firewall;
+  /** 동적 라우팅 (RIP). 꺼져 있으면 아무것도 보내지 않는다 */
+  readonly rip: Rip;
   /** 인터페이스 i 가 붙은 물리 포트와 VLAN 태그. 물리 인터페이스는 i === port, 서브 인터페이스는 그 뒤에 붙는다 */
   meta: { port: number; vlan?: number }[];
   private readonly macBase: Mac;
@@ -90,6 +109,33 @@ export class L3Node implements SimNode {
     if (this.nat && cfg.forwards) this.nat.setForwards(cfg.forwards);
     this.firewall = new Firewall(cfg.firewall);
     if (cfg.subinterfaces) this.setSubinterfaces(cfg.subinterfaces);
+    const self = this; // 객체 리터럴 getter 안의 this 는 그 객체라 별칭으로 잡는다
+    this.rip = new Rip({
+      get ifaceCount() {
+        return self.ifaces.length;
+      },
+      ifaceName: (i) => this.names[i]!,
+      ifaceIp: (i) => this.ifaces[i]?.ip,
+      ifacePrefix: (i) => this.ifaces[i]?.prefix ?? 24,
+      participates: (i) => this.ripParticipates(i),
+      staticDefaultOut: () => {
+        const d = this.staticDefault();
+        return d && this.linkUp[d.out] && this.ifaces[d.out]!.usable ? d.out : undefined;
+      },
+      send: (i, pkt, ctx) => this.ifaces[i]!.sendToMac(RIP_MULTICAST_MAC, pkt, ctx, this.emit(i, ctx)),
+    });
+    if (cfg.rip) this.rip.config = { ...cfg.rip };
+  }
+
+  /** RIP 를 주고받는 인터페이스: 주소가 확정됨(Probe 끝·충돌 없음)·링크 업·NAT outside 아님 */
+  private ripParticipates(i: number): boolean {
+    const iface = this.ifaces[i];
+    if (!iface?.ip || !iface.usable || iface.probing || !this.linkUp[i]) return false;
+    return !(this.nat && i === this.outside);
+  }
+
+  setRip(cfg: RipConfig, ctx: NodeContext): void {
+    this.rip.setConfig(cfg, ctx);
   }
 
   /** 물리 포트 + VLAN 태그로 인터페이스 인덱스 찾기 */
@@ -109,6 +155,8 @@ export class L3Node implements SimNode {
     const nextLinkUp = this.linkUp.slice(0, physical);
     const nextRelays = this.relays.slice(0, physical);
     const seen = new Set<string>();
+    /** 서브 인터페이스 옛 번호 → 새 번호 (RIP 경로의 나가는 인터페이스를 다시 매기기 위해) */
+    const moved = new Map<number, number>();
     for (const sub of subs) {
       if (sub.port < 0 || sub.port >= physical) continue;
       const dupKey = `${sub.port}:${sub.vlan}`;
@@ -120,6 +168,7 @@ export class L3Node implements SimNode {
       if (existing >= 0) {
         iface = this.ifaces[existing]!;
         if (iface.ip !== sub.ip || iface.prefix !== (sub.prefix ?? 24)) {
+          if (ctx && iface.ip) this.rip?.retire(existing, ctx);
           iface.configure(sub.ip, sub.prefix ?? 24, undefined);
           iface.arpCache.clear();
           iface.clearPending();
@@ -127,6 +176,7 @@ export class L3Node implements SimNode {
           if (ctx && iface.ip && this.linkUp[sub.port]) iface.claim(ctx, this.emit(existing, ctx));
         }
         keep.push(existing);
+        moved.set(existing, nextMeta.length);
       } else {
         // 장치 식별 옥텟(XX:YY)은 그대로 두고 앞 세 옥텟에 포트·VLAN 을 넣어 장치 간 충돌을 막는다
         const mac = this.macBase.replace(/^[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}/i, `06:${((sub.vlan >> 8) & 0xff).toString(16).padStart(2, "0")}:${(sub.vlan & 0xff).toString(16).padStart(2, "0")}:${(0x20 + sub.port).toString(16).padStart(2, "0")}`);
@@ -142,8 +192,11 @@ export class L3Node implements SimNode {
       nextRelays.push(sub.relay);
     }
     for (let i = physical; i < this.meta.length; i++) {
-      if (!keep.includes(i)) ctx?.trace("ip.config", "sys", `[${this.names[i]}] 서브 인터페이스 삭제`, { index: i });
+      if (keep.includes(i)) continue;
+      if (ctx) this.rip?.retire(i, ctx); // 사라지기 전에 옛 주소로 철회
+      ctx?.trace("ip.config", "sys", `[${this.names[i]}] 서브 인터페이스 삭제`, { index: i });
     }
+    this.rip?.remap((old) => (old < physical ? old : moved.get(old)));
     this.meta = nextMeta;
     this.ifaces = nextIfaces;
     this.names = nextNames;
@@ -151,6 +204,7 @@ export class L3Node implements SimNode {
     this.clients = nextClients;
     this.linkUp = nextLinkUp;
     this.relays = nextRelays;
+    if (ctx) this.rip?.kick(ctx);
   }
 
   setFirewall(cfg: FirewallConfig, ctx: NodeContext): void {
@@ -208,6 +262,7 @@ export class L3Node implements SimNode {
       const changed =
         c.mode !== this.modes[i] || (c.mode === "static" && (c.ip !== iface.ip || (c.prefix ?? 24) !== iface.prefix || c.gateway !== iface.gateway));
       if (!changed) return;
+      if (iface.ip && (c.mode !== "static" || c.ip !== iface.ip || (c.prefix ?? 24) !== iface.prefix)) this.rip?.retire(i, ctx);
       this.modes[i] = c.mode;
       iface.arpCache.clear();
       iface.clearPending();
@@ -225,9 +280,11 @@ export class L3Node implements SimNode {
         if (this.linkUp[i]) client.start(ctx, this.emit(i, ctx));
       }
     });
+    this.rip.kick(ctx);
   }
 
   onRemove(ctx: NodeContext): void {
+    this.rip.shutdown(ctx);
     this.clients.forEach((c, i) => {
       if (c && this.linkUp[i]) c.release(ctx, this.emit(i, ctx));
     });
@@ -254,6 +311,7 @@ export class L3Node implements SimNode {
         if (had) ctx.trace("dhcp.release", "app", `[${this.names[i]}] 링크 다운으로 주소 ${had} 해제`, { ip: had });
       }
     });
+    this.rip.kick(ctx); // 링크가 죽으면 그쪽 경로를 철회, 살아나면 이웃에게 묻는다
   }
 
   // ---------- 수신 ----------
@@ -276,7 +334,10 @@ export class L3Node implements SimNode {
     const frame = rawFrame.vlan !== undefined ? { ...rawFrame, vlan: undefined } : rawFrame;
     const iface = this.ifaces[i]!;
     const name = this.names[i]!;
-    if (!iface.accepts(frame)) {
+    // 멀티캐스트: RIP 를 켰으면 RIP 그룹(224.0.0.9)만 받고, 나머지는 NIC 가 조용히 거른다
+    const ripFrame = frame.dst === RIP_MULTICAST_MAC && this.rip.config.enabled;
+    if (isMulticastMac(frame.dst) && !ripFrame) return;
+    if (!ripFrame && !iface.accepts(frame)) {
       ctx.trace("frame.drop", "L2", `${name} 수신: 목적지 MAC ${frame.dst} 가 내 MAC 아님 → 드롭`, { dst: frame.dst }, frame.id);
       return;
     }
@@ -293,6 +354,10 @@ export class L3Node implements SimNode {
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
       const m = udp.payload;
+      if (m.kind === "rip") {
+        if (udp.dstPort === RIP_PORT) this.rip.handle(port, pkt.src, m, frameId, ctx);
+        return;
+      }
       const toMe = pkt.dst === "255.255.255.255" || this.ifaces.some((i) => i.ip !== undefined && i.ip === pkt.dst);
       // 내 DHCP 클라이언트로 온 응답(Offer/Ack 는 아직 내 것이 아닌 주소로 올 수 있다)은 목적지와 무관하게 받는다
       const forMyClient = m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT && this.clients[port] !== undefined;
@@ -306,7 +371,10 @@ export class L3Node implements SimNode {
         this.forward(pkt, port, frameId, ctx);
         return;
       }
-      if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT && this.clients[port]) this.clients[port]!.handle(m, frameId, ctx, this.emit(port, ctx));
+      if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT && this.clients[port]) {
+        this.clients[port]!.handle(m, frameId, ctx, this.emit(port, ctx));
+        this.rip.kick(ctx); // 주소를 받았으면 RIP 가 그 네트워크를 광고한다
+      }
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) this.handleRelay(port, pkt, m, frameId, ctx);
       else if (m.kind !== "dhcp" && this.nat && port === this.outside && pkt.dst === this.ifaces[port]!.ip) {
         // 바깥에서 공인 주소로 돌아온 UDP 응답(예: DNS) → NAT 테이블로 내부 호스트를 찾아 전달
@@ -403,23 +471,43 @@ export class L3Node implements SimNode {
     return this.ifaces.findIndex((i) => i.ip !== undefined && sameSubnet(nextHop, i.ip, i.prefix));
   }
 
-  /** 라우팅 테이블 조회: 연결된 서브넷 → 스태틱 라우팅(긴 마스크 우선) → 디폴트 라우트 */
+  /**
+   * 라우팅 테이블 조회: 연결된 서브넷 → 스태틱 라우팅·RIP 중 긴 마스크(같으면 스태틱이 우선, 관리 거리 1 < 120)
+   * → 디폴트 라우트(업링크 게이트웨이) → RIP 로 배운 디폴트 라우트
+   */
   route(dst: Ip): Route | undefined {
     for (let i = 0; i < this.ifaces.length; i++) {
       const iface = this.ifaces[i]!;
       if (iface.ip && sameSubnet(dst, iface.ip, iface.prefix)) return { out: i, nextHop: dst, kind: "connected" };
     }
-    for (const r of [...this.routes].sort((a, b) => b.prefix - a.prefix)) {
-      let match = false;
+    const matches = (dest: Ip, prefix: number) => {
       try {
-        match = sameSubnet(dst, r.dest, r.prefix);
+        return sameSubnet(dst, dest, prefix);
       } catch {
-        match = false;
+        return false;
       }
-      if (!match) continue;
+    };
+    let best: (Route & { prefix: number }) | undefined;
+    for (const r of this.routes) {
+      if (!matches(r.dest, r.prefix) || (best && best.prefix >= r.prefix)) continue;
       const out = this.ifaceFor(r.via);
-      if (out >= 0) return { out, nextHop: r.via, kind: "static" };
+      if (out >= 0) best = { out, nextHop: r.via, kind: "static", prefix: r.prefix };
     }
+    for (const r of this.rip.rows()) {
+      if (r.prefix === 0 || !matches(r.dest, r.prefix)) continue;
+      if (best && (best.prefix > r.prefix || (best.prefix === r.prefix && (best.kind === "static" || (best.metric ?? 99) <= r.metric)))) continue;
+      best = { out: r.out, nextHop: r.nextHop, kind: "rip", metric: r.metric, prefix: r.prefix };
+    }
+    if (best) return { out: best.out, nextHop: best.nextHop, kind: best.kind, metric: best.metric };
+    const def = this.staticDefault();
+    if (def) return def;
+    const ripDefault = this.rip.rows().find((r) => r.prefix === 0);
+    if (ripDefault) return { out: ripDefault.out, nextHop: ripDefault.nextHop, kind: "rip", metric: ripDefault.metric };
+    return undefined;
+  }
+
+  /** 업링크 게이트웨이로 가는 디폴트 라우트 (NAT 박스는 outside 가 먼저) */
+  private staticDefault(): Route | undefined {
     const order = this.outside !== undefined ? [this.outside, ...this.ifaces.map((_, i) => i).filter((i) => i !== this.outside)] : this.ifaces.map((_, i) => i);
     for (const i of order) {
       const iface = this.ifaces[i]!;
@@ -458,7 +546,9 @@ export class L3Node implements SimNode {
       const hint =
         noAddr >= 0
           ? `${this.names[noAddr]} 에 주소가 없음 (케이블과 DHCP, 또는 수동 주소를 확인)`
-          : "스태틱 라우팅을 추가하거나 디폴트 라우트(업링크 게이트웨이)를 설정하세요";
+          : this.rip.config.enabled
+            ? "RIP 이웃에게서 이 경로를 배우지 못함 — 이웃 라우터도 RIP 를 켰는지, 그 네트워크를 가진 라우터까지 이어지는지 확인하세요"
+            : "스태틱 라우팅을 추가하거나 디폴트 라우트(업링크 게이트웨이)를 설정하세요. 라우터가 여럿이면 RIP(동적 라우팅)를 켜도 됩니다";
       ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 로 가는 경로가 없음 (연결된 서브넷·스태틱 라우팅·디폴트 라우트 모두 해당 없음) → 드롭. ${hint}`, { dst: pkt.dst }, frameId);
       return;
     }
@@ -480,7 +570,9 @@ export class L3Node implements SimNode {
         ? `${networkOf(outIface.ip!, outIface.prefix)}/${outIface.prefix} 에 직접 연결`
         : r.kind === "static"
           ? `스태틱 라우팅, 넥스트 홉 ${r.nextHop}`
-          : `디폴트 라우트, 넥스트 홉 ${r.nextHop}`;
+          : r.kind === "rip"
+            ? `RIP 로 배운 경로 ${r.metric}홉, 넥스트 홉 ${r.nextHop}`
+            : `디폴트 라우트, 넥스트 홉 ${r.nextHop}`;
     ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} → ${outName} (${via}), TTL ${pkt.ttl} → ${out.ttl}`, { dst: pkt.dst, out: outName, kind: r.kind }, frameId);
     outIface.sendIp(out, ctx, this.emit(r.out, ctx), r.nextHop);
   }
@@ -495,6 +587,11 @@ export class L3Node implements SimNode {
     if (tag === "arp-probe") {
       const i = this.ifaces.findIndex((f) => f.mac === (data as { mac: string }).mac);
       if (i >= 0) this.ifaces[i]!.finishProbe(ctx, this.emit(i, ctx));
+      this.rip.kick(ctx);
+      return;
+    }
+    if (tag === RIP_TIMER_TAG) {
+      this.rip.onTimer(ctx);
       return;
     }
     if (tag === DHCP_TIMER_TAG) {
@@ -517,15 +614,16 @@ export class L3Node implements SimNode {
   snapshot(): NodeSnapshot {
     const routes: string[][] = [];
     this.ifaces.forEach((iface, i) => {
-      if (iface.ip) routes.push([`${networkOf(iface.ip, iface.prefix)}/${iface.prefix}`, this.names[i]!, "직접 연결"]);
+      if (iface.ip) routes.push([`${networkOf(iface.ip, iface.prefix)}/${iface.prefix}`, this.names[i]!, "-", "직접 연결"]);
     });
     for (const r of this.routes) {
       const out = this.ifaceFor(r.via);
-      routes.push([`${r.dest}/${r.prefix}`, out >= 0 ? this.names[out]! : "(넥스트 홉에 닿는 인터페이스 없음)", `via ${r.via}`]);
+      routes.push([`${r.dest}/${r.prefix}`, out >= 0 ? this.names[out]! : "(넥스트 홉에 닿는 인터페이스 없음)", r.via, "스태틱"]);
     }
-    const def = this.route("0.0.0.1");
-    if (def && def.kind === "default") routes.push(["0.0.0.0/0", this.names[def.out]!, `via ${def.nextHop}`]);
-    const tables: NodeSnapshot["tables"] = [{ title: "라우팅 테이블", columns: ["목적지", "인터페이스", "넥스트 홉"], rows: routes }];
+    for (const r of this.rip.rows()) routes.push([`${r.dest}/${r.prefix}`, this.names[r.out]!, r.nextHop, `RIP ${r.metric}홉`]);
+    const def = this.staticDefault();
+    if (def) routes.push(["0.0.0.0/0", this.names[def.out]!, def.nextHop, "디폴트 라우트"]);
+    const tables: NodeSnapshot["tables"] = [{ title: "라우팅 테이블", columns: ["목적지", "인터페이스", "넥스트 홉", "출처"], rows: routes }];
     if (this.firewall.config.enabled) tables.push({ title: "방화벽 규칙", columns: ["#", "규칙"], rows: this.firewall.rows() });
     if (this.nat) {
       const publicIp = this.ifaces[this.outside!]!.ip;
@@ -539,6 +637,7 @@ export class L3Node implements SimNode {
       label: this.id,
       info: [
         ...this.ifaces.map((_, i) => [this.names[i]!, this.ifaceStatus(i) + (this.relays[i] ? ` · DHCP 릴레이 → ${this.relays[i]}` : "")] as [string, string]),
+        ...(this.rip.config.enabled ? [["RIP", `켜짐 · 배운 경로 ${this.rip.rows().length}개${this.rip.config.defaultRoute ? " · 디폴트 라우트 광고" : ""}`] as [string, string]] : []),
         ...(this.firewall.config.enabled
           ? [["방화벽", `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}`] as [string, string]]
           : []),

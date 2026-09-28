@@ -640,6 +640,7 @@ export function lintTopology(t: Topology): LintIssue[] {
   }
 
   // 규칙 6: 게이트웨이/NAT 업링크(if0/outside)가 수동인데 디폴트 라우트 없음
+  const ripOn = (d: Device) => d.l3?.rip?.enabled === true;
   for (const d of t.devices) {
     if (DEVICE_SPECS[d.kind].role !== "l3" || !d.l3) continue;
     const c = d.l3.interfaces[0];
@@ -650,6 +651,8 @@ export function lintTopology(t: Topology): LintIssue[] {
     // 위쪽에 "안쪽 인터페이스"(다른 라우터의 LAN 쪽·인터넷)가 있을 때만: 게이트웨이끼리 if0 을 맞댄 백본은 디폴트 라우트가 필요 없다
     const ups = m.gwsOf(key).filter((g) => g.device !== d && g.inside);
     if (ups.length === 0) continue;
+    // 위쪽 라우터들도 RIP 를 켰으면 경로(필요하면 디폴트 라우트까지)를 광고로 배운다 — 토폴로지만으로는 판단할 수 없어 침묵
+    if (ripOn(d) && ups.every((g) => ripOn(g.device))) continue;
     const pick = pickGw(ups, ip);
     const name = portName(d, 0);
     add({
@@ -676,6 +679,7 @@ export function lintTopology(t: Topology): LintIssue[] {
       seenSeg.add(seg);
       for (const y of m.gwsOf(g.key)) {
         if (y.device === x || !y.uplink || y.device.kind !== "gateway") continue;
+        if (ripOn(x) && ripOn(y.device)) continue; // 둘 다 RIP 를 켜면 y 뒤의 서브넷은 광고로 배운다
         for (const s of subnetsBehind(y.device, m, new Set([x.id]))) {
           if (routes.some((r) => covers(r.subnet, s.subnet))) continue;
           if (!missing.some((q) => q.subnet.net === s.subnet.net && q.subnet.prefix === s.subnet.prefix)) missing.push({ subnet: s.subnet, y: y.device, owner: s.owner });
@@ -796,7 +800,7 @@ export function lintTopology(t: Topology): LintIssue[] {
     const ifs = d.l3.interfaces;
     // DHCP 로 받는 인터페이스나 수동 게이트웨이가 있으면 디폴트 라우트가 생기므로 통과로 본다
     const hasDefault = ifs.some((c) => c && (c.ipMode === "dhcp" || validIp(c.gateway)));
-    if (hasDefault) continue;
+    if (hasDefault || ripOn(d)) continue; // RIP 로 배울 경로는 토폴로지만 보고 알 수 없어 침묵
     const connected = m.allGws.filter((g) => g.device === d && g.subnet).map((g) => g.subnet!);
     const routes = (d.l3.routes ?? []).map((r) => subnetOf(validIp(r.dest), r.prefix)).filter((s): s is Subnet => !!s);
     const targets: { ifName: string; relay: string }[] = [];

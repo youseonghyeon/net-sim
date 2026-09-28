@@ -23,6 +23,7 @@
   --pkt-icmp: #2b8fd6;
   --pkt-tcp: #8b5cf6;
   --pkt-dns: #14b8a6;
+  --pkt-rip: #d6589b;
   /* 영역(주석 네모) 채움·테두리: 크롬 톤에 살짝 물든 정도 */
   --zone-gray: rgba(100, 107, 120, 0.07);
   --zone-gray-line: rgba(100, 107, 120, 0.45);
@@ -454,6 +455,9 @@ select.btn.example {
 .legend .dns {
   background: var(--pkt-dns);
 }
+.legend .rip {
+  background: var(--pkt-rip);
+}
 .zoom {
   position: absolute;
   right: 12px;
@@ -740,6 +744,9 @@ select.btn.example {
 .packet.dns circle {
   fill: var(--pkt-dns);
 }
+.packet.rip circle {
+  fill: var(--pkt-rip);
+}
 .packet.lost path {
   stroke: #fff;
   stroke-width: 2;
@@ -1007,6 +1014,15 @@ select.btn.example {
   padding: 3px 0;
   border-top: 1px solid var(--line);
   font-size: 12px;
+}
+/* 열 사이 간격: 열이 많은 표(라우팅 테이블 4열)에서 값이 붙어 보이지 않게. 머리글과 짧은 마지막 열(출처·시각)은 꺾지 않는다 */
+.table th + th,
+.table td + td {
+  padding-left: 6px;
+}
+.table th,
+.table td:last-child {
+  white-space: nowrap;
 }
 .table td.empty {
   color: var(--ink-3);
@@ -1637,6 +1653,9 @@ select.btn.example {
 .row .cat.tcp {
   background: var(--pkt-tcp);
 }
+.row .cat.rip {
+  background: var(--pkt-rip);
+}
 .row .cat.dns {
   background: var(--pkt-dns);
 }
@@ -1894,6 +1913,7 @@ select.btn.example {
 .cable-active.icmp { stroke: var(--pkt-icmp); }
 .cable-active.tcp { stroke: var(--pkt-tcp); }
 .cable-active.dns { stroke: var(--pkt-dns); }
+.cable-active.rip { stroke: var(--pkt-rip); }
 .tile-dot {
   stroke: var(--tile);
   stroke-width: 1.5;

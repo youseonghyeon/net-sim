@@ -4,10 +4,11 @@ import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, LIMITED_BROADCAST_IP, UNSPECIFIED_I
 import type { Emit, NetInterface } from "./iface";
 import type { NodeContext, TimerHandle } from "./node";
 
-export type DhcpState = "idle" | "discovering" | "requesting" | "bound" | "failed";
+export type DhcpState = "idle" | "rebooting" | "discovering" | "requesting" | "bound" | "failed";
 
 export const DHCP_STATE_LABEL: Record<DhcpState, string> = {
   idle: "대기",
+  rebooting: "이전 주소 확인 중",
   discovering: "서버 찾는 중",
   requesting: "주소 요청 중",
   bound: "주소 받음",
@@ -27,6 +28,8 @@ export class DhcpClient {
   private offered?: { ip: Ip; serverId?: Ip; prefix: number; router?: Ip };
   private timer: TimerHandle | undefined;
   private serverId: Ip | undefined;
+  /** 마지막으로 받은 주소. 링크가 다시 연결되면(로밍·케이블 재연결) Discover 대신 이 주소를 계속 써도 되는지 묻는다 (INIT-REBOOT) */
+  private last: Ip | undefined;
 
   constructor(
     private readonly iface: NetInterface,
@@ -39,14 +42,34 @@ export class DhcpClient {
     return this.label ? `[${this.label}] ${text}` : text;
   }
 
+  /** 주소 받기 시작. 전에 받은 주소가 있으면 INIT-REBOOT(Request 로 확인), 없으면 Discover 부터 */
   start(ctx: NodeContext, emit: Emit): void {
     this.iface.clearAddress();
     this.timer?.cancel();
     this.xid = 0x1000 + ((this.seed + ++this.xidSeq) & 0xffff);
-    this.state = "discovering";
     this.attempts = 1;
     this.offered = undefined;
+    if (this.last) {
+      this.state = "rebooting";
+      const req: DhcpMessage = { kind: "dhcp", op: "request", xid: this.xid, clientMac: this.iface.mac, requestedIp: this.last };
+      ctx.trace(
+        "dhcp.request.sent",
+        "app",
+        this.tag(`DHCP Request 브로드캐스트 (INIT-REBOOT): "전에 쓰던 ${this.last} 를 계속 써도 되나요?" — 다시 연결되면 Discover 대신 쓰던 주소부터 확인 (서버 식별자 없음)`),
+        { ...req },
+      );
+      this.iface.sendBroadcast(clientPacket(req), ctx, emit);
+      this.arm(ctx);
+      return;
+    }
+    this.state = "discovering";
     this.sendDiscover(ctx, emit);
+  }
+
+  /** 전에 받은 주소를 잊고 Discover 부터 */
+  private restart(ctx: NodeContext, emit: Emit): void {
+    this.last = undefined;
+    this.start(ctx, emit);
   }
 
   stop(): void {
@@ -60,6 +83,7 @@ export class DhcpClient {
   /** 정상 종료(장치 제거)에 앞서 서버에게 임대를 돌려준다 */
   release(ctx: NodeContext, emit: Emit): void {
     if (this.state !== "bound" || !this.iface.ip) return;
+    this.last = undefined;
     const msg: DhcpMessage = { kind: "dhcp", op: "release", xid: this.xid, clientMac: this.iface.mac, requestedIp: this.iface.ip, serverId: this.serverId };
     ctx.trace("dhcp.release", "app", this.tag(`DHCP Release: ${this.iface.ip} 를 서버 ${this.serverId ?? "?"} 에게 돌려줌 (임대 해제)`), { ...msg });
     const pkt: Ipv4Packet = {
@@ -123,18 +147,20 @@ export class DhcpClient {
         return;
       }
       case "ack": {
-        if (this.state !== "requesting") {
+        if (this.state !== "requesting" && this.state !== "rebooting") {
           ctx.trace("dhcp.ignore", "app", this.tag(`요청 중이 아닌데 Ack 수신 → 무시`), {}, frameId);
           return;
         }
         const prefix = msg.options?.prefix ?? this.offered?.prefix ?? 24;
         const router = msg.options?.router ?? this.offered?.router;
         this.iface.configure(msg.yiaddr, prefix, router, msg.options?.dns);
+        const rebooted = this.state === "rebooting";
         this.state = "bound";
+        this.last = msg.yiaddr;
         this.serverId = msg.serverId;
         this.timer?.cancel();
         this.timer = undefined;
-        ctx.trace("dhcp.ack.received", "app", this.tag(`DHCP Ack 수신: 서버 ${msg.serverId} 가 ${msg.yiaddr} 확정`), { ...msg }, frameId);
+        ctx.trace("dhcp.ack.received", "app", this.tag(rebooted ? `DHCP Ack 수신: 서버 ${msg.serverId} 가 쓰던 주소 ${msg.yiaddr} 를 그대로 쓰라고 확인` : `DHCP Ack 수신: 서버 ${msg.serverId} 가 ${msg.yiaddr} 확정`), { ...msg }, frameId);
         ctx.trace(
           "dhcp.bound",
           "app",
@@ -145,8 +171,19 @@ export class DhcpClient {
         return;
       }
       case "nak":
-        ctx.trace("dhcp.nak.received", "app", this.tag(`DHCP Nak 수신: 서버가 요청을 거부 → 처음부터 다시 시도`), { ...msg }, frameId);
-        this.start(ctx, emit);
+        if (this.state !== "requesting" && this.state !== "rebooting") {
+          // 이미 주소를 받은 뒤 다른 서버가 늦게 보낸 Nak 은 무시한다 (RFC 2131)
+          ctx.trace("dhcp.ignore", "app", this.tag(`${DHCP_STATE_LABEL[this.state]} 상태라 Nak 무시 (다른 서버의 응답)`), {}, frameId);
+          return;
+        }
+        ctx.trace(
+          "dhcp.nak.received",
+          "app",
+          this.tag(this.state === "rebooting" ? `DHCP Nak 수신: 전에 쓰던 ${this.last} 는 이 네트워크에서 쓸 수 없음 → 잊고 Discover 부터` : `DHCP Nak 수신: 서버가 요청을 거부 → 처음부터 다시 시도`),
+          { ...msg },
+          frameId,
+        );
+        this.restart(ctx, emit);
         return;
       default:
         ctx.trace("dhcp.ignore", "app", this.tag(`클라이언트가 처리하지 않는 DHCP ${msg.op} → 무시`), {}, frameId);
@@ -156,7 +193,12 @@ export class DhcpClient {
   onTimeout(data: unknown, ctx: NodeContext, emit: Emit): void {
     const { xid } = data as { xid: number };
     this.timer = undefined;
-    if (xid !== this.xid || (this.state !== "discovering" && this.state !== "requesting")) return;
+    if (xid !== this.xid || (this.state !== "discovering" && this.state !== "requesting" && this.state !== "rebooting")) return;
+    if (this.state === "rebooting") {
+      ctx.trace("dhcp.timeout", "app", this.tag(`DHCP timeout: 전에 쓰던 ${this.last} 확인에 ${DHCP_TIMEOUT}ms 동안 응답 없음 (서버에 임대 기록이 없거나 다른 네트워크) → Discover 부터`), {});
+      this.restart(ctx, emit);
+      return;
+    }
     if (this.attempts < DHCP_MAX_ATTEMPTS) {
       this.attempts += 1;
       this.state = "discovering";
@@ -165,6 +207,7 @@ export class DhcpClient {
       return;
     }
     this.state = "failed";
+    this.last = undefined;
     this.iface.clearAddress();
     ctx.trace(
       "dhcp.failed",
@@ -363,9 +406,43 @@ export class DhcpServer {
       return;
     }
     if (msg.op === "request") {
-      ctx.trace("dhcp.request.received", "app", `DHCP Request 수신: ${msg.clientMac} 가 ${msg.requestedIp} 요청 (서버 ${msg.serverId})${via}`, { ...msg }, frameId);
+      ctx.trace("dhcp.request.received", "app", `DHCP Request 수신: ${msg.clientMac} 가 ${msg.requestedIp} 요청 (${msg.serverId ? `서버 ${msg.serverId}` : "서버 식별자 없음 — INIT-REBOOT"})${via}`, { ...msg }, frameId);
       if (!this.config.enabled) {
         ctx.trace("dhcp.disabled", "app", `DHCP 서비스가 꺼져 있음 → 응답하지 않음`, {}, frameId);
+        return;
+      }
+      if (msg.serverId === undefined) {
+        // INIT-REBOOT (RFC 2131 4.3.2): 서버 식별자 없이 쓰던 주소를 확인하러 옴
+        const ip = msg.requestedIp;
+        const pool = this.poolFor(msg.giaddr);
+        const lease = ip ? this.leases.get(ip) : undefined;
+        // Nak 은 확실히 틀렸을 때만: 다른 서브넷이거나 남이 임대 중. 같은 서브넷인데 내 범위 밖이면 다른 서버의 임대일 수 있어 침묵
+        const wrongNet = !ip || !pool || !sameSubnet(ip, pool.start, pool.prefix);
+        if (wrongNet || (lease && lease.mac !== msg.clientMac)) {
+          const nak: DhcpMessage = { kind: "dhcp", op: "nak", xid: msg.xid, clientMac: msg.clientMac, serverId: me, giaddr: msg.giaddr };
+          const why = lease && lease.mac !== msg.clientMac ? `다른 클라이언트(${lease.mac})가 임대 중` : `이 네트워크(${pool ? `${pool.start}/${pool.prefix}` : "풀 없음"})의 주소가 아님`;
+          ctx.trace("dhcp.nak.sent", "app", `DHCP Nak (INIT-REBOOT): ${ip ?? "?"} 는 ${why} → 다시 Discover 하라고 거부`, { ...nak });
+          this.reply(nak, LIMITED_BROADCAST_IP, msg, ctx, emit);
+          return;
+        }
+        if (!lease || !this.inPool(ip!, pool!)) {
+          ctx.trace("dhcp.ignore", "app", `INIT-REBOOT: ${ip} 에 대한 ${msg.clientMac} 의 임대 기록이 없음 → 응답하지 않음 (RFC 2131). 클라이언트는 timeout 후 Discover`, { ip }, frameId);
+          return;
+        }
+        this.offers.delete(msg.clientMac);
+        this.leases.set(ip, { mac: msg.clientMac, at: ctx.now });
+        const ack: DhcpMessage = {
+          kind: "dhcp",
+          op: "ack",
+          xid: msg.xid,
+          clientMac: msg.clientMac,
+          yiaddr: ip,
+          serverId: me,
+          giaddr: msg.giaddr,
+          options: { prefix: pool.prefix, router: pool.router, dns: pool.dns, leaseTime: LEASE_TIME },
+        };
+        ctx.trace("dhcp.ack.sent", "app", `DHCP Ack (INIT-REBOOT): ${msg.clientMac} 의 임대 ${ip} 가 아직 유효 → 그대로 쓰라고 확인${msg.giaddr ? ` → 릴레이 ${msg.giaddr} 로` : ""}`, { ...ack });
+        this.reply(ack, ip, msg, ctx, emit);
         return;
       }
       if (msg.serverId !== me) {

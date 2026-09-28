@@ -190,11 +190,19 @@ describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트�
     const link = () => [...s.net.links.values()].find((l) => l.id.startsWith("wl_"));
     expect(host(s, t, "phone-1").ip).toMatch(/^192\.168\.0\./);
     expect([link()!.a.node, link()!.b.node]).toContain(ap1);
+    const before = host(s, t, "phone-1").ip;
+    const from = s.net.trace.length;
     const moved = patch(t, "phone-1", (d) => ({ ...d, x: 740 }));
     s.sync(moved);
     s.net.runToIdle();
     expect([link()!.a.node, link()!.b.node]).toContain(ap2);
-    expect(host(s, t, "phone-1").ip).toMatch(/^192\.168\.0\./);
+    // 로밍해도 쓰던 주소를 INIT-REBOOT(Request → Ack)로 확인만 하고 그대로 쓴다 — Discover 없음
+    expect(host(s, t, "phone-1").ip).toBe(before);
+    const phoneId = byName(t, "phone-1").id;
+    const after = s.net.trace.slice(from).filter((e) => e.nodeId === phoneId).map((e) => e.kind);
+    expect(after).toContain("dhcp.request.sent");
+    expect(after).toContain("dhcp.ack.received");
+    expect(after).not.toContain("dhcp.discover.sent");
   });
 });
 

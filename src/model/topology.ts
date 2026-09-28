@@ -213,6 +213,14 @@ export interface L3Settings {
   firewall?: FirewallSettings;
   /** 게이트웨이의 VLAN 서브 인터페이스 (router-on-a-stick) */
   subinterfaces?: SubIfaceSettings[];
+  /** 동적 라우팅 (RIP). 없으면 꺼짐 */
+  rip?: RipSettings;
+}
+
+export interface RipSettings {
+  enabled: boolean;
+  /** 내 디폴트 라우트를 이웃에게 0.0.0.0/0 으로 광고 (default-information originate) */
+  defaultRoute?: boolean;
 }
 
 /** 스위치 포트별 VLAN: 숫자(액세스) 또는 "trunk". 없으면 VLAN 1 */
@@ -1094,6 +1102,61 @@ export function exampleTwoHomesTopology(): Topology {
   return t;
 }
 
+/**
+ * 동적 라우팅: 게이트웨이 3대가 삼각형으로 직결되고 각자 LAN 을 하나씩 가진다. 스태틱 라우팅 없이 RIP 로 서로의 LAN 을 배운다.
+ * 링크 하나를 끊으면 RIP 가 경로를 철회하고 남은 길(다른 게이트웨이 경유)로 다시 수렴한다
+ */
+export function exampleRipTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    devices.push(d);
+    return d;
+  };
+  const iface = (ip: string) => ({ ipMode: "static" as const, ip, prefix: 24, gateway: "" });
+  const rip = { enabled: true };
+  const swA = add("switch", 320, 40);
+  const gwA = add("gateway", 320, 208);
+  const gwB = add("gateway", 64, 400);
+  const gwC = add("gateway", 576, 400);
+  gwA.name = "gw-a";
+  gwB.name = "gw-b";
+  gwC.name = "gw-c";
+  // gw-a: if0 = LAN(위 스위치), if1 → gw-b, if2 → gw-c
+  gwA.l3 = { interfaces: [iface("192.168.1.1"), iface("10.0.12.1"), iface("10.0.13.1")], routes: [], rip };
+  // gw-b: if0 → gw-a, if1 = LAN, if2 → gw-c
+  gwB.l3 = { interfaces: [iface("10.0.12.2"), iface("192.168.2.1"), iface("10.0.23.2")], routes: [], rip };
+  // gw-c: if0 → gw-a, if1 → gw-b, if2 = LAN
+  gwC.l3 = { interfaces: [iface("10.0.13.3"), iface("10.0.23.3"), iface("192.168.3.1")], routes: [], rip };
+  const swB = add("switch", 8, 592);
+  const swC = add("switch", 632, 592);
+  const pcA = add("pc", 160, 208);
+  const pcB = add("pc", 40, 752);
+  const pcC = add("pc", 744, 752);
+  pcA.name = "pc-a";
+  pcB.name = "pc-b";
+  pcC.name = "pc-c";
+  const staticHost = (d: Device, ip: string, gw: string) => {
+    d.host = { ipMode: "static", ip, prefix: 24, gateway: gw, services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  staticHost(pcA, "192.168.1.10", "192.168.1.1");
+  staticHost(pcB, "192.168.2.10", "192.168.2.1");
+  staticHost(pcC, "192.168.3.10", "192.168.3.1");
+  const cable = (a: Device, ap: number, b: Device, bp: number): Cable => ({ id: newId("cable"), a: { device: a.id, port: ap }, b: { device: b.id, port: bp } });
+  const cables: Cable[] = [
+    cable(swA, 4, gwA, 0),
+    cable(swA, 1, pcA, 0),
+    cable(gwA, 1, gwB, 0),
+    cable(gwA, 2, gwC, 0),
+    cable(gwB, 2, gwC, 1),
+    cable(gwB, 1, swB, 3),
+    cable(gwC, 2, swC, 5),
+    cable(swB, 1, pcB, 0),
+    cable(swC, 7, pcC, 0),
+  ];
+  return { devices, cables };
+}
+
 /** 백본: 집 세 곳의 게이트웨이 if0 을 스위치 하나(10.0.0.0/24, 라우터만 사는 서브넷)에 모은다. 인터넷 없음 */
 export function exampleBackboneTopology(): Topology {
   const devices: Device[] = [];
@@ -1326,7 +1389,7 @@ export function exampleRoamingTopology(): Topology {
   return { devices, cables };
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "roaming" | "docker";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -1355,6 +1418,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "백본 스위치로 집 세 곳 잇기 (라우터 전용 서브넷)",
     blurb: "게이트웨이 셋의 if0 이 sw-backbone(10.0.0.0/24) 에서 만납니다. 게이트웨이마다 다른 두 집으로 가는 스태틱 라우팅이 있고, 하나를 지우면 그 집만 못 갑니다.",
     build: exampleBackboneTopology,
+  },
+  rip: {
+    id: "rip",
+    group: "기능 단위",
+    label: "동적 라우팅 RIP (게이트웨이 3대 삼각형)",
+    blurb: "스태틱 라우팅 없이 RIP 로 서로의 LAN 을 배웁니다(게이트웨이 → 표 탭의 라우팅 테이블). pc-a 에서 192.168.3.10 으로 \"경로\" 를 본 뒤 gw-a ↔ gw-c 케이블을 지우면, RIP 가 경로를 철회하고 gw-b 를 거치는 길로 다시 수렴합니다.",
+    build: exampleRipTopology,
   },
   gateways: { id: "gateways", group: "기능 단위", label: "게이트웨이 2단 (라우터 전용 서브넷 + 스태틱 라우팅)", blurb: "pc-1 → 192.168.5.10 은 gw-1 이 스태틱 라우팅으로 gw-2 에 바로 넘기고, 인터넷은 NAT 로 올라갑니다. NAT 의 스태틱 라우팅을 지우면 응답이 돌아오지 못합니다.", build: exampleTwoGatewaysTopology },
   hub: { id: "hub", group: "L2", label: "허브 vs 스위치", blurb: "pc-1 → pc-2 ping 이 허브의 모든 포트(공유기까지)로 복제되는 것과, pc-3 → pc-4 가 스위치에서 그 포트로만 가는 것을 비교하세요.", build: exampleHubTopology },

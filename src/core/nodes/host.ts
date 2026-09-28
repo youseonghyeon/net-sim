@@ -1,4 +1,4 @@
-import { ipToInt, sameSubnet, type Ip, type Mac } from "../addr";
+import { ipToInt, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
 import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, describeOriginal, type EthernetFrame, type IcmpPacket, type IcmpTimeExceeded, type Ipv4Packet } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, type DnsServerConfig } from "./dns";
@@ -490,6 +490,8 @@ export class Host implements SimNode {
       ctx.trace("vlan.drop", "L2", `VLAN ${frame.vlan} 태그가 달린 프레임 → 호스트는 태그를 이해하지 못해 드롭 (스위치 포트를 액세스로 바꾸세요)`, { vlan: frame.vlan }, frame.id);
       return;
     }
+    // 가입하지 않은 멀티캐스트(예: 라우터끼리 주고받는 RIP)는 NIC 가 하드웨어에서 조용히 거른다
+    if (isMulticastMac(frame.dst)) return;
     if (!this.iface.accepts(frame)) {
       ctx.trace("frame.drop", "L2", `목적지 MAC ${frame.dst} 가 내 MAC(${this.iface.mac}) 아님 → 드롭`, { dst: frame.dst }, frame.id);
       return;

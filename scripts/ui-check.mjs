@@ -592,6 +592,29 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForTimeout(100);
   console.log("remembered ping target:", await page.locator(".ping-row .picker .input").first().inputValue());
 }
+// 동적 라우팅(RIP) 예제: 게이트웨이가 광고로 경로를 배우고, 그 경로로 ping 이 된다
+{
+  await loadEx("rip");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  const ripRows = async () => {
+    await clickDevice("gw-a");
+    await goTab("표");
+    return page.locator(".inspector .table td", { hasText: /^RIP \d홉$/ }).count();
+  };
+  let rows = 0;
+  for (let i = 0; i < 60 && rows < 3; i++) {
+    rows = await ripRows();
+    if (rows < 3) await page.waitForTimeout(250);
+  }
+  console.log("gw-a RIP routes:", rows, "| badge:", await device("gw-a").locator(".badge, .pill", { hasText: "RIP" }).count());
+  await page.screenshot({ path: `${OUT}/40-rip-table.png` });
+  await clickDevice("pc-a");
+  await page.locator(".ping-row .picker .input").first().fill("192.168.3.10");
+  await page.keyboard.press("Escape");
+  await page.click(".ping-row .btn:has-text('ping')");
+  await page.locator(".inspector .ping-log li.ok, .inspector .ping-log li.failed").first().waitFor({ timeout: 30000 });
+  console.log("pc-a → 192.168.3.10 via RIP:", (await page.locator(".inspector .ping-log li").first().textContent())?.replace(/\s+/g, " "));
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

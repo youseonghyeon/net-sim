@@ -284,6 +284,7 @@ export function effectiveL3(d: Device) {
     subinterfaces: (l3.subinterfaces ?? [])
       .filter((s) => Number.isInteger(s.vlan) && s.vlan >= 1 && s.vlan <= 4094 && s.port >= 1 && s.port < spec.ports.length && !spec.ports[s.port]!.radio)
       .map((s) => ({ port: s.port, vlan: s.vlan, ip: validIp(s.ip), prefix: s.prefix, relay: validIp(s.relay) })),
+    rip: { enabled: l3.rip?.enabled === true, defaultRoute: l3.rip?.defaultRoute === true },
   };
 }
 
@@ -325,6 +326,7 @@ export function makeNode(d: Device): SimNode {
       forwards: cfg.forwards,
       firewall: cfg.firewall,
       subinterfaces: cfg.subinterfaces,
+      rip: cfg.rip,
     });
   }
   return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d) });
@@ -346,5 +348,6 @@ export function applyConfig(net: Network, d: Device): void {
     node.setForwards(cfg.forwards, net.contextFor(d.id));
     node.setFirewall(cfg.firewall, net.contextFor(d.id));
     node.setSubinterfaces(cfg.subinterfaces, net.contextFor(d.id));
+    node.setRip(cfg.rip, net.contextFor(d.id));
   }
 }

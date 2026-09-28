@@ -44,6 +44,11 @@ export function isBroadcastMac(mac: Mac): boolean {
   return mac.toLowerCase() === BROADCAST_MAC;
 }
 
+/** 멀티캐스트 MAC (첫 옥텟의 최하위 비트가 1, 브로드캐스트 제외). 가입하지 않은 NIC 는 하드웨어에서 조용히 거른다 */
+export function isMulticastMac(mac: Mac): boolean {
+  return !isBroadcastMac(mac) && (parseInt(mac.slice(0, 2), 16) & 1) === 1;
+}
+
 /** 인터넷에서 라우팅되지 않는 주소 (RFC 1918 사설, 링크로컬, 루프백) */
 export function isPrivateIp(ip: Ip): boolean {
   const n = ipToInt(ip);
