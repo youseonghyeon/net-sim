@@ -21,6 +21,13 @@ export interface StpConfig {
 }
 
 export const DEFAULT_STP: StpConfig = { enabled: false, priority: 32768 };
+export const STP_TIMER_TAG = "stp-send";
+
+function hash(s: string): number {
+  let h = 0x811c9dc5;
+  for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+  return h;
+}
 /** 포트 비용 (1Gbps = 4) */
 export const STP_PORT_COST = 4;
 
@@ -70,6 +77,12 @@ export class Stp {
   rootCost = 0;
   rootPort: number | undefined;
   private age = 0;
+  /** 같은 순간의 변화를 모아 한 번만 보낸다 */
+  private sendPending = false;
+  /** 다음 BPDU 에 실을 Topology Change 번호, 이미 퍼뜨린 번호들 */
+  private tcOut: number | undefined;
+  private readonly tcSeen = new Set<number>();
+  private tcSeq = 0;
 
   constructor(private readonly host: StpHost) {}
 
@@ -89,31 +102,68 @@ export class Stp {
   }
 
   setConfig(cfg: StpConfig, mac: Mac, ctx: NodeContext): void {
-    if (cfg.enabled === this.config.enabled && cfg.priority === this.config.priority && mac === this.mac) return;
+    const wasOn = this.config.enabled;
+    if (!cfg.enabled) {
+      // 끔: 켜져 있었으면 이웃에게 내 정보를 거두라고 알린다 (Message Age 초과 BPDU). 원래 꺼져 있었으면 조용히
+      if (wasOn) {
+        this.withdraw(ctx);
+        ctx.trace("stp.config", "sys", "STP 꺼짐 → 모든 포트 전달 (이웃에게 내 정보를 거두라고 알림)", { ...cfg });
+      }
+      this.config = { ...cfg };
+      this.mac = mac;
+      this.heard.clear();
+      this.roles = [];
+      return;
+    }
+    if (wasOn && cfg.priority === this.config.priority && mac === this.mac) return;
+    if (wasOn) this.withdraw(ctx); // 우선순위가 바뀜: 옛 브리지 ID 로 알린 정보를 거둔다
     this.config = { ...cfg };
     this.mac = mac;
     this.heard.clear();
-    ctx.trace(
-      "stp.config",
-      "sys",
-      cfg.enabled ? `STP 켜짐: 브리지 ID ${bridgeIdLabel(this.me)} (우선순위 ${cfg.priority}) — 처음엔 내가 루트라고 알리고, 더 작은 ID 를 들으면 따른다` : "STP 꺼짐 → 모든 포트 전달",
-      { ...cfg },
-    );
+    ctx.trace("stp.config", "sys", `STP 켜짐: 브리지 ID ${bridgeIdLabel(this.me)} (우선순위 ${cfg.priority}) — 처음엔 내가 루트라고 알리고, 더 작은 ID 를 들으면 따른다`, { ...cfg });
     this.roles = [];
     this.recompute(ctx, true);
+  }
+
+  /** 이웃이 내게서 들은 정보를 지우게 한다: Message Age 를 한도 너머로 둔 BPDU (장치 제거·STP 끔·ID 변경) */
+  withdraw(ctx: NodeContext): void {
+    if (!this.config.enabled) return;
+    const n = this.host.portCount();
+    for (let p = 0; p < n; p++) {
+      if (!this.host.connected(p)) continue;
+      const bpdu: BpduPacket = { kind: "bpdu", root: this.me, cost: 0, bridge: this.me, port: p, age: STP_MAX_AGE + 1 };
+      this.host.send(p, { kind: "ethernet", id: ctx.nextPacketId(), src: this.mac, dst: STP_MULTICAST_MAC, payload: bpdu }, ctx);
+    }
   }
 
   /** 받은 BPDU */
   handle(p: number, bpdu: BpduPacket, frameId: number, ctx: NodeContext): void {
     if (!this.config.enabled) return;
     const name = this.host.portName(p);
+    const prev = this.heard.get(p);
+    const sameSender = !!prev && cmpId(prev.bridge, bpdu.bridge) === 0 && prev.port === bpdu.port;
+    if (bpdu.tc !== undefined && !this.tcSeen.has(bpdu.tc)) {
+      // 다른 스위치의 토폴로지 변경 알림: 나도 MAC 테이블을 비우고 한 번 더 퍼뜨린다
+      this.tcSeen.add(bpdu.tc);
+      if (this.tcSeen.size > 64) this.tcSeen.delete(this.tcSeen.values().next().value!);
+      this.host.topologyChanged(ctx);
+      this.tcOut = bpdu.tc;
+      this.schedule(ctx);
+    }
     if (bpdu.age > STP_MAX_AGE) {
-      ctx.trace("stp.bpdu", "L2", `[${name}] BPDU 의 Message Age ${bpdu.age} 가 ${STP_MAX_AGE} 을 넘음 → 오래된 정보로 보고 버림`, { port: p, age: bpdu.age }, frameId);
+      // 이 포트로 정보를 준 그 스위치가 거둔 것일 때만 지운다 (허브 너머 다른 스위치의 정보는 그대로)
+      if (!sameSender) return;
+      ctx.trace("stp.bpdu", "L2", `[${name}] ${bridgeIdLabel(bpdu.bridge)} 가 정보를 거둠 (Message Age ${bpdu.age} > ${STP_MAX_AGE}) → 그 정보를 버리고 다시 계산`, { port: p, age: bpdu.age }, frameId);
       this.heard.delete(p);
       this.recompute(ctx, false);
       return;
     }
-    const prev = this.heard.get(p);
+    // 802.1D: 더 좋은 정보이거나, 지금 가진 정보를 보낸 그 스위치의 갱신일 때만 바꾼다
+    // (허브처럼 한 포트에 여러 스위치가 보이면 더 나쁜 정보로 덮어써 루트 포트가 흔들리지 않게)
+    if (prev && !sameSender && cmpVec(bpdu, prev) >= 0) {
+      if (this.roles[p] === "designated" && cmpVec(this.myVector(p), bpdu) < 0) this.sendOn(p, ctx);
+      return;
+    }
     this.heard.set(p, bpdu);
     const same = prev && cmpVec(prev, bpdu) === 0 && prev.age === bpdu.age;
     ctx.trace("stp.bpdu", "L2", `[${name}] BPDU 수신: 루트 ${bridgeIdLabel(bpdu.root)}, 비용 ${bpdu.cost}, 보낸 스위치 ${bridgeIdLabel(bpdu.bridge)}${same ? " (전과 같음)" : ""}`, { port: p, root: bridgeIdLabel(bpdu.root), cost: bpdu.cost }, frameId);
@@ -170,6 +220,8 @@ export class Stp {
       }
     }
     const changedPorts = roles.map((r, p) => (r !== this.roles[p] ? p : -1)).filter((p) => p >= 0 && roles[p] !== "disabled");
+    // 전달하던 포트가 끊긴 것도 토폴로지 변경 (그 너머로 배운 MAC 이 다른 길로 옮겨 가야 한다)
+    const lostForwarding = roles.some((r, p) => r === "disabled" && (this.roles[p] === "root" || this.roles[p] === "designated"));
     const prevRoles = this.roles;
     this.roles = roles;
     if (rootChanged) {
@@ -191,17 +243,38 @@ export class Stp {
         { port: p, role: roles[p] },
       );
     }
-    const topo = changedPorts.some((p) => prevRoles[p] !== undefined && prevRoles[p] !== "disabled");
-    if (topo) this.host.topologyChanged(ctx);
-    const changed = rootChanged || changedPorts.length > 0;
+    const topo = lostForwarding || changedPorts.some((p) => prevRoles[p] !== undefined && prevRoles[p] !== "disabled");
+    if (topo) {
+      this.host.topologyChanged(ctx);
+      // 다른 스위치들도 MAC 테이블을 비우도록 다음 BPDU 에 Topology Change 를 싣는다
+      const id = (hash(this.mac) & 0xffff) * 0x10000 + (++this.tcSeq & 0xffff);
+      this.tcSeen.add(id);
+      this.tcOut = id;
+    }
+    const changed = rootChanged || changedPorts.length > 0 || lostForwarding;
     // 바뀌면 연결된 모든 포트로 알린다 (실제 STP 는 지정 포트로만 보내고 이웃의 옛 정보는 Max Age 20초로 사라지게 두지만,
     // 여기엔 주기 BPDU·만료 타이머가 없으므로 루트·차단 포트 건너편 이웃에게도 바뀐 정보를 직접 알려 옛 정보를 덮어쓴다)
-    if (changed || force) for (let p = 0; p < n; p++) if (roles[p] !== "disabled") this.sendOn(p, ctx);
+    if (changed || force) this.schedule(ctx);
     return changed;
   }
 
+  /** 같은 순간의 변화를 모아 0ms 뒤 한 번 보낸다 (큰 그물에서 BPDU 가 쏟아지지 않게) */
+  private schedule(ctx: NodeContext): void {
+    if (this.sendPending) return;
+    this.sendPending = true;
+    ctx.timer(0, STP_TIMER_TAG, {});
+  }
+
+  onTimer(ctx: NodeContext): void {
+    this.sendPending = false;
+    if (!this.config.enabled) return;
+    const n = this.host.portCount();
+    for (let p = 0; p < n; p++) if (this.roles[p] && this.roles[p] !== "disabled") this.sendOn(p, ctx);
+    this.tcOut = undefined;
+  }
+
   private sendOn(p: number, ctx: NodeContext): void {
-    const bpdu: BpduPacket = { kind: "bpdu", root: { ...this.root }, cost: this.rootCost, bridge: this.me, port: p, age: this.isRoot ? 0 : this.age };
+    const bpdu: BpduPacket = { kind: "bpdu", root: { ...this.root }, cost: this.rootCost, bridge: this.me, port: p, age: this.isRoot ? 0 : this.age, ...(this.tcOut !== undefined ? { tc: this.tcOut } : {}) };
     const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: this.mac, dst: STP_MULTICAST_MAC, payload: bpdu };
     this.host.send(p, frame, ctx);
   }

@@ -34,6 +34,8 @@ export interface BpduPacket {
   port: number;
   /** 루트에서 몇 번 전달됐는지 (Message Age). 20 을 넘으면 버린다 — 루트가 사라졌을 때 옛 정보가 끝없이 돌지 않게 */
   age: number;
+  /** Topology Change: 경로가 바뀌었으니 MAC 테이블을 비우라는 알림 (번호로 한 번씩만 퍼뜨린다) */
+  tc?: number;
 }
 
 export const STP_MULTICAST_MAC: Mac = "01:80:c2:00:00:00";

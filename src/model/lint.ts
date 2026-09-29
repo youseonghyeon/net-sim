@@ -1141,34 +1141,54 @@ export function lintTopology(t: Topology): LintIssue[] {
     }
   }
 
-  // 규칙 19: 스위치(·허브)끼리 이어 고리가 생겼는데 STP 를 안 켠 스위치가 있음 → 브로드캐스트가 끝없이 돈다 (안전장치가 드롭)
+  // 규칙 19: L2 장비(스위치·허브·공유기 LAN·투명 방화벽)끼리 이은 케이블이 고리를 이루는데, 그 고리의 스위치가 STP 를 안 켬
+  //   → 브로드캐스트가 끝없이 돈다 (여기서는 안전장치가 드롭). 고리에 실제로 속한 장비만 본다 (고리 컴포넌트에 매달린 가지는 제외)
   {
-    const l2 = new Set(t.devices.filter((d) => d.kind === "switch" || d.kind === "hub").map((d) => d.id));
-    const parent = new Map<string, string>();
-    const find = (x: string): string => {
-      let r = x;
-      while (parent.has(r) && parent.get(r) !== r) r = parent.get(r)!;
-      parent.set(x, r);
-      return r;
+    const isL2 = (d: Device | undefined, port: number) =>
+      !!d && (d.kind === "switch" || d.kind === "hub" || d.kind === "firewall" || (DEVICE_SPECS[d.kind].role === "router" && port !== 0));
+    const byId = new Map(t.devices.map((d) => [d.id, d]));
+    const edges = t.cables.filter((c) => c.a.device !== c.b.device && isL2(byId.get(c.a.device), c.a.port) && isL2(byId.get(c.b.device), c.b.port));
+    // 한 케이블을 빼도 두 끝이 여전히 이어져 있으면 그 케이블은 고리 위에 있다
+    const connectedWithout = (skip: number, from: string, to: string) => {
+      const seen = new Set([from]);
+      const stack = [from];
+      while (stack.length) {
+        const x = stack.pop()!;
+        if (x === to) return true;
+        edges.forEach((e, k) => {
+          if (k === skip) return;
+          const y = e.a.device === x ? e.b.device : e.b.device === x ? e.a.device : undefined;
+          if (y && !seen.has(y)) {
+            seen.add(y);
+            stack.push(y);
+          }
+        });
+      }
+      return false;
     };
-    const loopRoots = new Set<string>();
-    for (const c of t.cables) {
-      if (!l2.has(c.a.device) || !l2.has(c.b.device) || c.a.device === c.b.device) continue;
-      const ra = find(c.a.device);
-      const rb = find(c.b.device);
-      if (ra === rb) loopRoots.add(ra);
-      else parent.set(ra, rb);
-    }
-    const inLoop = new Set([...loopRoots].map((r) => find(r)));
-    for (const d of t.devices) {
-      if (d.kind !== "switch" || !l2.has(d.id) || !inLoop.has(find(d.id)) || d.switch?.stp?.enabled) continue;
+    const inLoop = new Set<string>();
+    edges.forEach((e, k) => {
+      if (connectedWithout(k, e.a.device, e.b.device)) {
+        inLoop.add(e.a.device);
+        inLoop.add(e.b.device);
+      }
+    });
+    for (const id of inLoop) {
+      const d = byId.get(id)!;
+      if (d.kind !== "switch" || d.switch?.stp?.enabled) continue;
       add({
         deviceId: d.id,
         severity: "warn",
         code: "switch.loop-no-stp",
-        message: "스위치끼리 이은 케이블이 고리(루프)를 이루는데 이 스위치는 STP 가 꺼져 있음 → 브로드캐스트가 고리를 끝없이 돈다 (여기서는 안전장치가 드롭)",
-        fix: `${d.name} → STP 를 켜기 (고리에 있는 스위치 모두). 실제 스위치는 기본으로 켜져 있다`,
+        message: "L2 케이블이 고리(루프)를 이루는데 이 스위치는 STP 가 꺼져 있음 → 브로드캐스트가 고리를 끝없이 돈다 (여기서는 안전장치가 드롭)",
+        fix: `${d.name} → STP 켜기 (고리에 있는 스위치 모두). 실제 스위치는 기본으로 켜져 있다`,
       });
+    }
+    // 스위치 없이 허브·공유기 LAN·투명 방화벽끼리만 고리: STP 를 켤 장비가 없다
+    const loopDevices = [...inLoop].map((id) => byId.get(id)!);
+    if (loopDevices.length > 0 && !loopDevices.some((d) => d.kind === "switch")) {
+      const d = loopDevices[0]!;
+      add({ deviceId: d.id, severity: "warn", code: "switch.loop-no-stp", message: "허브·공유기 LAN·투명 방화벽끼리 케이블이 고리를 이룸 → STP 를 켤 수 있는 스위치가 없어 브로드캐스트가 돈다", fix: "고리를 이루는 케이블 하나를 빼거나, 가운데에 STP 를 켠 스위치를 두기" });
     }
   }
 

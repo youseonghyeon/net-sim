@@ -1,7 +1,7 @@
 import { isBroadcastMac, type Mac } from "../addr";
 import { describeFrame, MAX_L2_HOPS, type EthernetFrame } from "../packet";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
-import { Stp, type StpConfig } from "./stp";
+import { Stp, STP_TIMER_TAG, type StpConfig } from "./stp";
 import { bridgeIdLabel } from "../packet";
 
 interface MacEntry {
@@ -199,7 +199,14 @@ export class Switch implements SimNode {
     this.stp.onLink(port, up, ctx);
   }
 
-  onTimer(): void {}
+  onTimer(tag: string, _data: unknown, ctx: NodeContext): void {
+    if (tag === STP_TIMER_TAG) this.stp.onTimer(ctx);
+  }
+
+  /** 장치 제거: 이웃이 내게서 들은 STP 정보를 거두게 한다 */
+  onRemove(ctx: NodeContext): void {
+    this.stp.withdraw(ctx);
+  }
 
   snapshot(): NodeSnapshot {
     const vlans = new Set<number>();
