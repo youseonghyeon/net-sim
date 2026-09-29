@@ -636,6 +636,28 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("lb-1 section:", await page.locator(".inspector h3", { hasText: "로드밸런서" }).count(), "| backends:", await page.locator(".inspector .lb-row").count(), "| badge:", await device("lb-1").locator(".badge", { hasText: "LB" }).count());
   await page.screenshot({ path: `${OUT}/43-lb-config.png` });
 }
+// 패킷 상세 보기: 로그 줄을 펼치면 실무 표기(tcpdump·시스코 debug)와 계층별 헤더
+{
+  await loadEx("router");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitAddr("pc-1", /^192\.168\.0\.1\d\d/);
+  await clickDevice("pc-1");
+  await page.locator(".ping-row .picker .input").first().fill("8.8.8.8");
+  await page.keyboard.press("Escape");
+  for (let k = 0; k < 2; k++) {
+    await page.click(".ping-row .btn:has-text('ping')");
+    await page.locator(".inspector .ping-log li.ok").nth(k).waitFor({ timeout: 30000 });
+  }
+  if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");
+  const natRow = page.locator(".log-list .row", { hasText: "NAT 변환" }).last();
+  await natRow.scrollIntoViewIfNeeded();
+  await natRow.click();
+  const detail = natRow.locator(".pkt-detail");
+  await detail.waitFor({ timeout: 5000 });
+  console.log("pkt detail:", (await detail.locator(".pkt-tool").allTextContents()).join(" | "), "| layers:", (await detail.locator(".pkt-layer-title").allTextContents()).join(","));
+  console.log("nat debug line:", await detail.locator(".pkt-line", { hasText: "debug ip nat" }).locator("code").textContent().catch(() => "?"));
+  await detail.screenshot({ path: `${OUT}/44-pkt-detail.png` });
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

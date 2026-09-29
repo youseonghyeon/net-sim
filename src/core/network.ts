@@ -49,6 +49,20 @@ export type ActionSpec =
   /** 인터넷 노드의 "저편 클라이언트" 가 공인 주소 dst:port 로 TCP 연결 (포트 포워딩 시연) */
   | { kind: "inet-connect"; nodeId: string; dst: Ip; port: number };
 
+/** 링크에 실린 프레임 한 번 (로그에서 "그때 그 프레임" 을 찾기 위해 보관) */
+export interface FrameSighting {
+  from: string;
+  to: string;
+  departAt: number;
+  arriveAt: number;
+  frame: EthernetFrame;
+  /** 다른 프레임을 처리하다 새로 만든 프레임이면 그 원래 프레임 id (라우터·NAT 는 홉마다 새 L2 프레임을 만든다) */
+  cause?: number;
+}
+
+/** 보관하는 프레임 id 수 상한 (오래된 것부터 버린다) */
+const FRAME_LOG_CAP = 20_000;
+
 export interface RecordedAction {
   time: number;
   action: ActionSpec;
@@ -224,7 +238,12 @@ export class Network {
           ev.tx.lost = true;
           break;
         }
-        node.receive(ev.tx.to.port, ev.tx.frame, this.ctx(node.id));
+        this.receiving = ev.tx.frame.id;
+        try {
+          node.receive(ev.tx.to.port, ev.tx.frame, this.ctx(node.id));
+        } finally {
+          this.receiving = undefined;
+        }
         break;
       }
       case "timer": {
@@ -336,6 +355,7 @@ export class Network {
       frame,
     };
     this.transmissions.push(tx);
+    this.recordFrame({ from: nodeId, to: conn.other.node, departAt: tx.departAt, arriveAt: tx.arriveAt, frame, ...(this.receiving !== undefined && this.receiving !== frame.id ? { cause: this.receiving } : {}) });
     this.pushTrace(
       nodeId,
       "link.transmit",
@@ -354,6 +374,39 @@ export class Network {
       return;
     }
     this.sched.push(tx.arriveAt, { type: "deliver", tx });
+  }
+
+  /** 프레임 id → 링크에 실린 기록들 (오래된 id 부터 버린다) */
+  readonly frameLog = new Map<number, FrameSighting[]>();
+
+  /**
+   * 지금 처리 중인(받는 중인) 프레임 id: 이 동안 새로 만든 프레임은 그 "원인" 으로 이어 둔다.
+   * ARP 응답을 기다렸다 나중에 보내는 패킷은 이어지지 않는다 (그때는 받은 프레임만 보인다)
+   */
+  private receiving: number | undefined;
+
+  private recordFrame(s: FrameSighting): void {
+    const push = (id: number) => {
+      const list = this.frameLog.get(id);
+      if (list) list.push(s);
+      else {
+        this.frameLog.set(id, [s]);
+        if (this.frameLog.size > FRAME_LOG_CAP) this.frameLog.delete(this.frameLog.keys().next().value!);
+      }
+    };
+    push(s.frame.id);
+    if (s.cause !== undefined) push(s.cause); // 원래 프레임의 기록에도: "이 장치가 이걸 받고 내보낸 것"
+  }
+
+  /**
+   * 로그 한 줄(장치 nodeId, 시각 time)이 가리키는 프레임: 그 장치가 받은 것(time 이전에 도착한 마지막)과
+   * 그 장치가 내보낸 것(time 이후 처음). NAT·TTL 감소·VLAN 태그처럼 장치를 지나며 바뀐 내용을 둘 다 볼 수 있다
+   */
+  framesAt(packetId: number, nodeId: string, time: number): { received?: EthernetFrame; sent?: EthernetFrame } {
+    const list = this.frameLog.get(packetId) ?? [];
+    const received = list.filter((s) => s.to === nodeId && s.arriveAt <= time && s.frame.id === packetId).at(-1)?.frame;
+    const sent = list.find((s) => s.from === nodeId && s.departAt >= time)?.frame;
+    return { received, sent };
   }
 
   private pushTrace(nodeId: string, kind: TraceKind, layer: Layer, summary: string, details?: Record<string, unknown>, packetId?: number): void {

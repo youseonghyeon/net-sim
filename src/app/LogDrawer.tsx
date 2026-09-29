@@ -1,8 +1,9 @@
 import { effect, signal } from "@preact/signals";
-import { Component } from "preact";
+import { Component, Fragment } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import type { Layer } from "../core/packet";
 import { BAD_KINDS, type TraceEvent } from "../core/trace";
+import { headerLayers, practitionerLines, type HeaderLayer } from "../model/packetView";
 import { sim, simVersion } from "../model/sim";
 import { LOG_MIN, logHeight, logOpen, selectedDeviceIds, selection, setLogHeight, topology } from "../model/store";
 import { Icon } from "./Icons";
@@ -215,8 +216,56 @@ class LogRow extends Component<{ e: TraceEvent; name: string | undefined; open: 
           {cat && <i class={`cat ${cat}`} />}
           {e.summary}
         </span>
-        {open && <pre class="details">{JSON.stringify({ kind: e.kind, packetId: e.packetId, ...e.details }, null, 2)}</pre>}
+        {open && <PacketDetail e={e} name={name} />}
       </li>
     );
   }
+}
+
+/** 펼친 로그 줄: 실무 표기(tcpdump·장비 명령 출력) → 계층별 헤더(받은/내보낸 프레임) → 원본 기록 */
+function PacketDetail({ e, name }: { e: TraceEvent; name: string | undefined }) {
+  const frames = e.packetId !== undefined ? sim.net.framesAt(e.packetId, e.nodeId, e.time) : {};
+  const lines = practitionerLines(e, frames, () => name ?? e.nodeId);
+  const changed = frames.received && frames.sent && JSON.stringify(frames.received) !== JSON.stringify(frames.sent);
+  const layerBlock = (title: string, layers: HeaderLayer[]) => (
+    <section class="pkt-frame">
+      <h5>{title}</h5>
+      {layers.map((l) => (
+        <div key={l.title} class="pkt-layer">
+          <span class="pkt-layer-title">{l.title}</span>
+          <dl>
+            {l.rows.map(([k, v]) => (
+              <Fragment key={k}>
+                <dt>{k}</dt>
+                <dd class="mono">{v}</dd>
+              </Fragment>
+            ))}
+          </dl>
+        </div>
+      ))}
+    </section>
+  );
+  return (
+    <div class="pkt-detail" onClick={(ev) => ev.stopPropagation()}>
+      {lines.length > 0 && (
+        <section class="pkt-lines">
+          <h5>실무에서는</h5>
+          {lines.map((l, i) => (
+            <div key={i} class="pkt-line">
+              <span class="pkt-tool">{l.tool}</span>
+              <code class="mono">{l.line}</code>
+            </div>
+          ))}
+        </section>
+      )}
+      {frames.received && layerBlock(changed ? `${name ?? "장치"} 가 받은 프레임` : "프레임", headerLayers(frames.received))}
+      {changed && frames.sent && layerBlock(`${name ?? "장치"} 가 내보낸 프레임 (바뀐 것: 주소·TTL·태그 등)`, headerLayers(frames.sent))}
+      {!frames.received && frames.sent && layerBlock("프레임", headerLayers(frames.sent))}
+      {e.packetId === undefined && lines.length === 0 && <p class="pkt-none">이 줄은 특정 패킷이 아니라 장치 안의 상태 변화입니다.</p>}
+      <details class="pkt-raw">
+        <summary>원본 기록 (JSON)</summary>
+        <pre>{JSON.stringify({ kind: e.kind, packetId: e.packetId, ...e.details }, null, 2)}</pre>
+      </details>
+    </div>
+  );
 }
