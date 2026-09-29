@@ -8,11 +8,13 @@ import {
   lintIssues,
   moveCableEnd,
   removeCable,
+  removeCables,
   removeDevices,
   removeZone,
   selection,
   topology,
   updateCable,
+  updateCables,
   updateDevices,
   updateZone,
   zoneAroundSelected,
@@ -99,6 +101,7 @@ export function NetworkPanel() {
           <li>팔레트의 장치를 캔버스로 끌어다 놓습니다.</li>
           <li>케이블 도구(C)로 장치에서 장치로 끌면 빈 포트끼리 연결됩니다. Shift 를 누른 채 끌어도 됩니다. 포트 칸을 잡고 끌어 상대 포트 칸에 놓으면 그 포트끼리 연결됩니다.</li>
           <li>빈 곳을 끌면 영역 선택, Shift+클릭으로 선택에 더하거나 뺍니다. 선택한 묶음은 함께 옮기고 ⌘C · ⌘V · ⌘D 로 복제합니다.</li>
+          <li>케이블도 Shift+클릭으로 여러 개 골라 손실률을 한 번에 바꾸거나 함께 지웁니다.</li>
           <li>⌘Z 되돌리기, ⌘⇧Z 다시 실행. 상단의 화살표 버튼도 같습니다.</li>
           <li>휠로 이동, ⌘ + 휠로 확대·축소, ⌥ 를 누른 채 끌어도 이동합니다.</li>
           <li>상단 "파일" 메뉴에서 예제를 불러오거나 JSON 으로 내려받고 불러옵니다.</li>
@@ -224,7 +227,7 @@ export function CablePanel({ c }: { c: Cable }) {
         <button class="btn wide" onClick={() => sim.dropNext(c.id)}>
           다음 패킷 1개 손실시키기
         </button>
-        <p class="note">손실된 패킷은 케이블 중간에서 사라집니다. TCP 는 ACK 가 안 오면 재전송하고, ping 은 timeout 으로 실패합니다.</p>
+        <p class="note">손실된 패킷은 케이블 중간에서 사라집니다. TCP 는 ACK 가 안 오면 재전송하고, ping 은 timeout 으로 실패합니다. Shift+클릭으로 케이블을 더 고르면 손실률을 한 번에 바꿀 수 있습니다.</p>
       </Section>
       <Section>
         <button class="btn danger" onClick={() => removeCable(c.id)}>
@@ -239,6 +242,70 @@ export function CablePanel({ c }: { c: Cable }) {
 /** 여러 값이 섞여 있으면 undefined */
 export function common<T>(values: T[]): T | undefined {
   return values.length > 0 && values.every((v) => v === values[0]) ? values[0] : undefined;
+}
+
+/** 손실률 선택지 (%) — 단일 케이블 패널과 같은 값 */
+const LOSS_CHOICES = [0, 10, 30, 50];
+const lossLabel = (p: number) => (p === 0 ? "없음" : `${p}%`);
+
+/** 케이블 다중 선택 패널: 손실률 일괄 설정(한 번 = 되돌리기 한 단계) + 함께 삭제 */
+export function CablesPanel({ ids }: { ids: string[] }) {
+  const t = topology.value;
+  const cables = t.cables.filter((c) => ids.includes(c.id));
+  const percents = cables.map((c) => Math.round((c.loss ?? 0) * 100));
+  const loss = common(percents);
+  // 불러온 파일의 손실률이 선택지에 없는 값이어도 그대로 보이게
+  const choices = loss !== undefined && !LOSS_CHOICES.includes(loss) ? [...LOSS_CHOICES, loss].sort((a, b) => a - b) : LOSS_CHOICES;
+  const counts = new Map<number, number>();
+  for (const p of [...percents].sort((a, b) => a - b)) counts.set(p, (counts.get(p) ?? 0) + 1);
+  return (
+    <>
+      <header class="panel-head">
+        <Icon name="cable" />
+        <div>
+          <h2>케이블 {cables.length}개 선택</h2>
+          <p>{[...counts.entries()].map(([p, n]) => `${p === 0 ? "손실 없음" : `손실 ${p}%`} ${n}`).join(" · ")}</p>
+        </div>
+      </header>
+      <Section id="multi-cables" title="선택한 케이블">
+        <div class="cable-list">
+          {cables.map((c, k) => (
+            <button key={c.id} class="cable-item" onClick={() => (selection.value = { type: "cable", id: c.id })} title="이 케이블만 선택">
+              <span class="ends">
+                {deviceName(c.a.device)} <span class="mono">{portName(c.a.device, c.a.port)}</span> — {deviceName(c.b.device)} <span class="mono">{portName(c.b.device, c.b.port)}</span>
+              </span>
+              <span class={`loss${percents[k] ? " on" : ""}`}>{lossLabel(percents[k]!)}</span>
+            </button>
+          ))}
+        </div>
+      </Section>
+      <Section title="실험: 패킷 손실">
+        <Field label="손실률">
+          <select class="input" value={loss === undefined ? "" : String(loss)} onChange={(e) => updateCables(ids, (x) => ({ ...x, loss: Number(e.currentTarget.value) / 100 }))}>
+            {loss === undefined && (
+              <option value="" disabled>
+                여러 값
+              </option>
+            )}
+            {choices.map((p) => (
+              <option key={p} value={String(p)}>
+                {lossLabel(p)}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <p class="note">
+          {loss === undefined ? "손실률이 케이블마다 다릅니다. 여기서 고르면 선택한 케이블이 모두 같은 값이 됩니다." : `선택한 케이블 ${cables.length}개에 같은 손실률이 적용됩니다.`} ⌘Z 한 번이면 모두 이전 값으로 돌아갑니다.
+        </p>
+      </Section>
+      <Section>
+        <button class="btn danger" onClick={() => removeCables(ids)}>
+          <Icon name="trash" size={16} />
+          케이블 {cables.length}개 삭제
+        </button>
+      </Section>
+    </>
+  );
 }
 
 /** 다중 선택 패널: 공통 설정 일괄 변경 + 일괄 동작 */

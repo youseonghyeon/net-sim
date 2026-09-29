@@ -17,14 +17,18 @@ import {
   moveZoneWithContents,
   paste,
   redo,
+  removeCable,
   removeSelected,
   selectAll,
+  selectedCableIds,
   selectedDeviceIds,
   selectedZoneIds,
   selection,
+  toggleCableSelection,
   toggleDeviceSelection,
   topology,
   undo,
+  updateCables,
   updateDevices,
   updateZone,
   zoneAroundSelected,
@@ -328,5 +332,81 @@ describe("영역 복사", () => {
     selection.value = { type: "device", id: pasted, zoneIds: selectedZoneIds({ type: "zone", id: topology.value.zones![1]!.id }) };
     toggleDeviceSelection(c.id);
     expect(selectedZoneIds(selection.value)).toEqual([topology.value.zones![1]!.id]);
+  });
+});
+
+describe("케이블 다중 선택", () => {
+  /** 스위치 하나에 PC 셋 — 케이블 3개 */
+  function star() {
+    const sw = addDevice("switch", 0, 0);
+    const pcs = [0, 1, 2].map((i) => addDevice("pc", i * 120, 200));
+    const cables = pcs.map((pc) => connectDevices(pc.id, sw.id).cable!);
+    selection.value = null;
+    return { sw, pcs, cables };
+  }
+  const lossOf = (id: string) => topology.value.cables.find((c) => c.id === id)?.loss ?? 0;
+
+  it("Shift+클릭 토글: 하나 → 여러 개 → 하나 → 없음, 장치가 선택돼 있으면 케이블로 새로 시작", () => {
+    const { pcs, cables } = star();
+    const [c1, c2] = cables;
+    toggleCableSelection(c1!.id);
+    expect(selection.value).toEqual({ type: "cable", id: c1!.id });
+    toggleCableSelection(c2!.id);
+    expect(selection.value).toEqual({ type: "cables", ids: [c1!.id, c2!.id] });
+    toggleCableSelection(c1!.id);
+    expect(selection.value).toEqual({ type: "cable", id: c2!.id });
+    toggleCableSelection(c2!.id);
+    expect(selection.value).toBeNull();
+    // 장치 선택 중에 케이블을 Shift+클릭 → 장치 선택을 버리고 그 케이블 하나
+    selection.value = { type: "devices", ids: [pcs[0]!.id, pcs[1]!.id] };
+    toggleCableSelection(c1!.id);
+    expect(selection.value).toEqual({ type: "cable", id: c1!.id });
+    // 반대로 케이블 선택 중에 장치를 Shift+클릭 → 그 장치 하나 (기존 규칙)
+    toggleCableSelection(c2!.id);
+    toggleDeviceSelection(pcs[2]!.id);
+    expect(selection.value).toEqual({ type: "device", id: pcs[2]!.id });
+    expect(selectedCableIds(selection.value)).toEqual([]);
+  });
+
+  it("토폴로지에 없는 링크(무선 파생 wl_…)는 선택에 들어가지 않는다", () => {
+    const { cables } = star();
+    toggleCableSelection(cables[0]!.id);
+    toggleCableSelection("wl_phone_ap_1");
+    expect(selection.value).toEqual({ type: "cable", id: cables[0]!.id });
+  });
+
+  it("손실률 일괄 설정은 선택한 케이블만 바꾸고, 되돌리기 한 번에 모두 이전 값으로", () => {
+    const { cables } = star();
+    const [c1, c2, c3] = cables.map((c) => c.id);
+    updateCables([c1!], (c) => ({ ...c, loss: 0.1 })); // 한 개만 먼저 다른 값
+    updateCables([c1!, c2!], (c) => ({ ...c, loss: 0.3 }));
+    expect([lossOf(c1!), lossOf(c2!), lossOf(c3!)]).toEqual([0.3, 0.3, 0]);
+    undo();
+    expect([lossOf(c1!), lossOf(c2!), lossOf(c3!)]).toEqual([0.1, 0, 0]);
+    redo();
+    expect([lossOf(c1!), lossOf(c2!)]).toEqual([0.3, 0.3]);
+  });
+
+  it("선택한 케이블을 한 단계로 지우고, 지우거나 되돌려 사라진 케이블은 선택에서 빠진다", () => {
+    const { cables } = star();
+    const [c1, c2, c3] = cables.map((c) => c.id);
+    selection.value = { type: "cables", ids: [c1!, c2!] };
+    removeSelected();
+    expect(topology.value.cables.map((c) => c.id)).toEqual([c3]);
+    expect(selection.value).toBeNull();
+    undo();
+    expect(topology.value.cables).toHaveLength(3);
+    // 셋 중 하나를 따로 지우면 남은 둘이 선택으로 남는다
+    selection.value = { type: "cables", ids: [c1!, c2!, c3!] };
+    removeCable(c2!);
+    expect(selection.value).toEqual({ type: "cables", ids: [c1, c3] });
+    removeCable(c3!);
+    expect(selection.value).toEqual({ type: "cable", id: c1 });
+    // 되돌리기로 케이블이 사라져도 빠진다: c3 을 만든 연결까지 되돌리면 선택은 나머지만
+    undo();
+    undo();
+    selection.value = { type: "cables", ids: [c1!, c2!, c3!] };
+    undo(); // c3 연결 취소
+    expect(selection.value).toEqual({ type: "cables", ids: [c1, c2] });
   });
 });

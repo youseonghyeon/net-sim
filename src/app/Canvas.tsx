@@ -17,10 +17,12 @@ import {
   moveDevices,
   moveZoneWithContents,
   requestFit,
+  selectedCableIds,
   selectedDeviceIds,
   selectedZoneIds,
   selection,
   selectionOf,
+  toggleCableSelection,
   toggleDeviceSelection,
   tool,
   topology,
@@ -103,6 +105,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
   const sel = selection.value;
   const selectedIds = new Set(selectedDeviceIds(sel));
   const selectedZoneSet = new Set(selectedZoneIds(sel));
+  const selectedCableSet = new Set(selectedCableIds(sel));
 
   function toCanvas(clientX: number, clientY: number): { x: number; y: number } {
     const rect = svgRef.current!.getBoundingClientRect();
@@ -205,7 +208,9 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
       return;
     }
     if (cableEl && e.button === 0 && !panning) {
-      selection.value = { type: "cable", id: cableEl.dataset.cable! };
+      // Shift+클릭 = 케이블 선택에 넣거나 빼기 (장치가 선택돼 있었으면 이 케이블로 새로 시작)
+      if (e.shiftKey) toggleCableSelection(cableEl.dataset.cable!);
+      else selection.value = { type: "cable", id: cableEl.dataset.cable! };
       dragRef.current = null;
       return;
     }
@@ -433,7 +438,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
           <g class="cables">
             <StpBlocks cables={t.cables} byId={byId} />
             {t.cables.map((c) => (
-              <CableView key={c.id} cable={c} byId={byId} selected={sel?.type === "cable" && sel.id === c.id} />
+              <CableView key={c.id} cable={c} byId={byId} selected={selectedCableSet.has(c.id)} />
             ))}
             <ActiveCables byId={byId} cables={t.cables} />
             {wl.map((l) => {

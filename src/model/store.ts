@@ -27,11 +27,12 @@ import {
 } from "./topology";
 import { EXAMPLES, type ExampleId } from "./examples";
 
-/** 선택: 장치 하나 / 장치 여러 개 / 케이블 하나 / 영역 하나. 장치 선택에는 함께 움직일 영역(붙여 넣은 영역 등)이 딸릴 수 있다 */
+/** 선택: 장치 하나 / 장치 여러 개 / 케이블 하나 / 케이블 여러 개 / 영역 하나. 장치 선택에는 함께 움직일 영역(붙여 넣은 영역 등)이 딸릴 수 있다 */
 export type Selection =
   | { type: "device"; id: string; zoneIds?: string[] }
   | { type: "devices"; ids: string[]; zoneIds?: string[] }
   | { type: "cable"; id: string }
+  | { type: "cables"; ids: string[] }
   | { type: "zone"; id: string }
   | null;
 
@@ -57,6 +58,21 @@ export function selectionOf(ids: string[], zoneIds: string[] = []): Selection {
   const zones = zoneIds.length > 0 ? { zoneIds } : {};
   if (ids.length === 1) return { type: "device", id: ids[0]!, ...zones };
   return { type: "devices", ids, ...zones };
+}
+
+/** 선택된 케이블 id 목록 (단일·다중 공통) */
+export function selectedCableIds(sel: Selection): string[] {
+  if (!sel) return [];
+  if (sel.type === "cable") return [sel.id];
+  if (sel.type === "cables") return sel.ids;
+  return [];
+}
+
+/** 케이블 id 목록을 선택 상태로: 0개 → 없음, 1개 → 케이블 하나, 여러 개 → 케이블 여러 개 */
+export function cableSelectionOf(ids: string[]): Selection {
+  if (ids.length === 0) return null;
+  if (ids.length === 1) return { type: "cable", id: ids[0]! };
+  return { type: "cables", ids };
 }
 export type Tool = "select" | "cable" | "zone";
 export type Theme = "light" | "dark";
@@ -234,13 +250,15 @@ export function redo(): void {
   refreshHistoryFlags();
 }
 
-/** 되돌린 뒤 사라진 장치·케이블은 선택에서 뺀다 */
+/** 되돌린 뒤·지운 뒤 사라진 장치·케이블은 선택에서 뺀다 */
 function pruneSelection(): void {
   const t = topology.peek();
   const s = selection.peek();
   if (!s) return;
-  if (s.type === "cable") {
-    if (!t.cables.some((c) => c.id === s.id)) selection.value = null;
+  if (s.type === "cable" || s.type === "cables") {
+    const ids = selectedCableIds(s);
+    const alive = ids.filter((id) => t.cables.some((c) => c.id === id));
+    if (alive.length !== ids.length) selection.value = cableSelectionOf(alive);
     return;
   }
   if (s.type === "zone") {
@@ -459,16 +477,40 @@ export function updateCable(id: string, patch: (c: Cable) => Cable): void {
   setTopology({ ...t, cables: t.cables.map((c) => (c.id === id ? patch(c) : c)) });
 }
 
-export function removeCable(id: string): void {
+/** 여러 케이블에 같은 패치를 적용한다 (일괄 설정 — 되돌리기 한 단계) */
+export function updateCables(ids: string[], patch: (c: Cable) => Cable): void {
   const t = topology.value;
-  setTopology({ ...t, cables: t.cables.filter((c) => c.id !== id) });
-  if (selection.value?.type === "cable" && selection.value.id === id) selection.value = null;
+  const set = new Set(ids);
+  setTopology({ ...t, cables: t.cables.map((c) => (set.has(c.id) ? patch(c) : c)) });
+}
+
+export function removeCable(id: string): void {
+  removeCables([id]);
+}
+
+/** 케이블들을 한 단계로 지우고, 지운 케이블은 선택에서 뺀다 */
+export function removeCables(ids: string[]): void {
+  const t = topology.value;
+  const set = new Set(ids);
+  setTopology({ ...t, cables: t.cables.filter((c) => !set.has(c.id)) });
+  pruneSelection();
+}
+
+/**
+ * 케이블 Shift+클릭: 케이블 선택에 넣거나 뺀다. 장치·영역이 선택돼 있으면 이 케이블 하나로 새로 시작한다
+ * (장치 Shift+클릭이 케이블 선택을 버리고 장치로 시작하는 것과 같은 규칙 — 장치와 케이블을 섞어 고르지 않는다).
+ * 토폴로지의 케이블만 대상이다(무선 파생 링크 wl_… 는 사용자 케이블이 아니다)
+ */
+export function toggleCableSelection(id: string): void {
+  if (!topology.value.cables.some((c) => c.id === id)) return;
+  const ids = selectedCableIds(selection.value);
+  selection.value = cableSelectionOf(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
 }
 
 export function removeSelected(): void {
   const s = selection.value;
   if (!s) return;
-  if (s.type === "cable") removeCable(s.id);
+  if (s.type === "cable" || s.type === "cables") removeCables(selectedCableIds(s));
   else if (s.type === "zone") removeZone(s.id);
   else removeDevices(selectedDeviceIds(s), selectedZoneIds(s));
 }

@@ -27,7 +27,7 @@ import { Icon } from "./Icons";
 import { DiagSection, InternetDiagSection, LiveTables, StatusSection } from "./inspector/diag";
 import { HostSection, HttpProxySection, LbSection, ServiceSection, WifiBaseSection, WifiClientSection, RemoteVpnSection } from "./inspector/host";
 import { L3Section, StpSection, VlanSection } from "./inspector/l3";
-import { CablePanel, LintSection, MultiPanel, NetworkPanel, ZonePanel, deviceName, portName } from "./inspector/panels";
+import { CablePanel, CablesPanel, LintSection, MultiPanel, NetworkPanel, ZonePanel, deviceName, portName } from "./inspector/panels";
 import { RouterSection } from "./inspector/router";
 import { FirewallSection } from "./inspector/rules";
 import { Field, Section } from "./inspector/ui";
@@ -96,7 +96,7 @@ export function Inspector() {
             <Icon name="panel" size={16} />
           </button>
         </div>
-        {sel?.type === "devices" ? <MultiPanel key={sel.ids.join()} ids={sel.ids} /> : device ? <DevicePanel key={device.id} d={device} /> : cable ? <CablePanel c={cable} /> : zone ? <ZonePanel z={zone} /> : <NetworkPanel />}
+        {sel?.type === "devices" ? <MultiPanel key={sel.ids.join()} ids={sel.ids} /> : sel?.type === "cables" ? <CablesPanel ids={sel.ids} /> : device ? <DevicePanel key={device.id} d={device} /> : cable ? <CablePanel c={cable} /> : zone ? <ZonePanel z={zone} /> : <NetworkPanel />}
       </div>
     </aside>
   );

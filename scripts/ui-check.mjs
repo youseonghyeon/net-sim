@@ -570,6 +570,48 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("after panel change:", cab2.map((c) => `${c.a.port}-${c.b.port}`).join(","), "| options:", opts.length);
   await page.screenshot({ path: `${OUT}/36-cable-port.png` });
 }
+// 14b) 케이블 여러 개: 하나에 손실 10% → Shift+클릭으로 하나 더(여러 값) → 30% 한 번에 → ⌘Z 한 번에 둘 다 복귀 → Delete 로 둘 다 삭제 → Esc
+{
+  await loadEx("router");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  const c1 = page.locator("[data-cable]").nth(2);
+  const c2 = page.locator("[data-cable]").nth(3);
+  const ids = [await c1.getAttribute("data-cable"), await c2.getAttribute("data-cable")];
+  const losses = async () => {
+    const cs = await page.evaluate(() => JSON.parse(localStorage.getItem("net-sim.topology.v1")).cables);
+    return ids.map((id) => cs.find((c) => c.id === id)?.loss ?? 0);
+  };
+  const lossSelect = () => page.locator(".inspector .field", { hasText: "손실률" }).locator("select");
+  const blur = () => page.evaluate(() => document.activeElement?.blur());
+  await c1.locator(".hit").click({ force: true });
+  await lossSelect().selectOption("10");
+  await blur();
+  await c2.locator(".hit").click({ force: true, modifiers: ["Shift"] });
+  await page.waitForTimeout(100);
+  const picked = await page.locator("[data-cable].selected").evaluateAll((els) => els.map((e) => e.dataset.cable));
+  const mixed = await lossSelect().inputValue();
+  console.log("multi cable:", await page.locator(".inspector h2").textContent(), "| canvas selected:", picked.length, picked.every((id) => ids.includes(id)) ? "(both)" : "(WRONG)", "| mixed select:", mixed === "" ? "여러 값" : `NO (${mixed})`);
+  await page.screenshot({ path: `${OUT}/55-multi-cable.png` });
+  await lossSelect().selectOption("30");
+  await blur();
+  const set = await losses();
+  await page.keyboard.press("Meta+z");
+  await page.waitForTimeout(100);
+  const undone = await losses();
+  console.log("multi cable loss:", set.join(","), "→ undo once →", undone.join(","), set.every((v) => v === 0.3) && undone[0] === 0.1 && undone[1] === 0 ? "ok" : "NO");
+  const n0 = await page.locator("[data-cable]").count();
+  await page.keyboard.press("Delete");
+  await page.waitForTimeout(100);
+  const n1 = await page.locator("[data-cable]").count();
+  await page.keyboard.press("Meta+z");
+  await page.waitForTimeout(100);
+  console.log("multi cable delete:", n0, "→", n1, "| panel:", await page.locator(".inspector h2").textContent(), "| undo →", await page.locator("[data-cable]").count());
+  await c1.locator(".hit").click({ force: true });
+  await c2.locator(".hit").click({ force: true, modifiers: ["Shift"] });
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(100);
+  console.log("multi cable esc → selected:", await page.locator("[data-cable].selected").count());
+}
 // 15) 진단 자동완성 + 장치별 기억: 도커 예제의 pc-1 에서 목록 열기 → 그룹·닿지 않는 후보 → 다른 장치 갔다 와도 값 유지
 {
   await loadEx("docker");

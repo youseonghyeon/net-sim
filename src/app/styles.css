@@ -1092,6 +1092,44 @@ select.btn.example {
 .port-row .peer.none {
   color: var(--ink-3);
 }
+/* 케이블 다중 선택: 선택한 케이블 목록 (줄을 누르면 그 케이블만 선택) */
+.cable-list {
+  display: grid;
+  margin: 0 -8px;
+}
+.cable-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.cable-item:hover {
+  background: var(--surface-2);
+}
+.cable-item .ends {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cable-item .ends .mono {
+  color: var(--ink-2);
+}
+.cable-item .loss {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.cable-item .loss.on {
+  color: var(--ink-2);
+  font-weight: 500;
+}
 .table {
   width: 100%;
   border-collapse: collapse;
