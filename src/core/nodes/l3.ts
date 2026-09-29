@@ -5,21 +5,15 @@ import {
   DHCP_SERVER_PORT,
   describeFrame,
   icmpLabel,
-  IKE_PORT,
   LIMITED_BROADCAST_IP,
-  NAT_T_PORT,
   RIP_MULTICAST_MAC,
   RIP_PORT,
-  VPN_PORT,
   VRRP_MULTICAST_MAC,
-  PFSYNC_MULTICAST_IP,
   PFSYNC_MULTICAST_MAC,
-  type PfsyncPacket,
   type DhcpMessage,
   type EthernetFrame,
   type IcmpPacket,
   type Ipv4Packet,
-  type EspPacket,
 } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient } from "./dhcp";
 import { hashCode } from "./host";
@@ -31,9 +25,9 @@ import { Rip, RIP_TIMER_TAG, type RipConfig } from "./rip";
 import { HA_TIMER_TAG, Ha, type HaConfig } from "./ha";
 import { IKE_TIMER_TAG, VPN_MODE_LABEL, Vpn, type VpnConfig } from "./vpn";
 import { RaServer, type RaServerConfig } from "./ravpn";
+import { TunnelEnds } from "./l3tunnel";
+import { HA_SYNC_TAG, SessionSync } from "./hasync";
 
-/** 이중화 세션 동기화: 같은 순간 생긴 상태를 모아 한 패킷으로 보내는 타이머 */
-const HA_SYNC_TAG = "ha-sync";
 
 export interface L3IfaceConfig {
   name: string;
@@ -117,13 +111,20 @@ export class L3Node implements SimNode {
       if (vip) iface.announceVip(ctx, this.emit(i, ctx));
       this.rip.kick(ctx); // RIP 넥스트 홉(가상 주소)을 다시 알린다
     },
-    onBackupSeen: (ctx) => {
-      // 후보 알림은 VIP 인터페이스마다 오므로 같은 순간에는 한 번만 보낸다
-      if (!this.syncing() || this.lastBulkAt === ctx.now) return;
-      this.lastBulkAt = ctx.now;
-      const nat = (this.nat?.values() ?? []).map((e) => ({ proto: e.proto, lanIp: e.lanIp, innerId: e.innerId, publicId: e.publicId }));
-      this.sendSync({ kind: "pfsync", vrid: this.ha.config.vrid, nat, flows: this.firewall.flowKeys(), bulk: true }, ctx);
+    onBackupSeen: (ctx) => this.sessionSync.bulk(ctx),
+  });
+  /** 이중화 세션 동기화 (pfsync 식) */
+  private readonly sessionSync: SessionSync = new SessionSync({
+    ha: this.ha,
+    nat: () => this.nat,
+    firewall: () => this.firewall,
+    syncIface: () => {
+      const ifs = this.ha.config.vips.map((v, i) => (v && this.linkUp[i] && this.ifaces[i]?.usable ? i : -1)).filter((i) => i >= 0);
+      return ifs.find((i) => i !== this.outside) ?? ifs[0];
     },
+    ifaceIp: (i) => this.ifaces[i]?.ip,
+    ifaceName: (i) => this.names[i]!,
+    send: (i, pkt, ctx) => this.ifaces[i]!.sendToMac(PFSYNC_MULTICAST_MAC, pkt, ctx, this.emit(i, ctx)),
   });
   /** VPN 이 장치에 부탁하는 바깥 송신 (사이트 간·원격 접속이 같이 쓴다): 바깥 경로로, NAT 하지 않음, 출발지는 가상 주소 우선 */
   private readonly tunnelIo = {
@@ -143,6 +144,17 @@ export class L3Node implements SimNode {
   /** 원격 접속 VPN 서버 */
   readonly ra: RaServer = new RaServer(this.tunnelIo);
   readonly vpn: Vpn = new Vpn(this.tunnelIo);
+  /** 사이트 간·원격 접속 VPN 의 터널 끝 (받은 터널 패킷 나누기·풀기, 터널로 보내기) */
+  private readonly tunnels = new TunnelEnds({
+    vpn: this.vpn,
+    ra: this.ra,
+    ownIndex: (ip) => this.ownIndex(ip),
+    addrOf: (i) => this.addrOf(i),
+    underlay: (dst) => this.underlay(dst),
+    sendOut: (i, pkt, nextHop, ctx) => this.ifaces[i]!.sendIp(pkt, ctx, this.emit(i, ctx), nextHop),
+    deliverLocal: (i, inner, frameId, ctx) => this.handleIcmp(i, inner, inner.payload as IcmpPacket, frameId, ctx),
+    forwardInner: (inner, inPort, frameId, ctx) => this.forward(inner, inPort, frameId, ctx, inner, true),
+  });
   /** 인터페이스 i 가 붙은 물리 포트와 VLAN 태그. 물리 인터페이스는 i === port, 서브 인터페이스는 그 뒤에 붙는다 */
   meta: { port: number; vlan?: number }[];
   private readonly macBase: Mac;
@@ -165,8 +177,8 @@ export class L3Node implements SimNode {
     if (this.nat && cfg.forwards) this.nat.setForwards(cfg.forwards);
     this.firewall = new Firewall(cfg.firewall);
     // 이중화 세션 동기화: master 가 새로 만든 매핑·흐름을 backup 에 복사한다
-    if (this.nat) this.nat.onNew = (e, ctx) => this.queueSync({ nat: [e], flows: [] }, ctx);
-    this.firewall.onFlow = (key, ctx) => this.queueSync({ nat: [], flows: [key] }, ctx);
+    if (this.nat) this.nat.onNew = (e, ctx) => this.sessionSync.queue({ nat: [e], flows: [] }, ctx);
+    this.firewall.onFlow = (key, ctx) => this.sessionSync.queue({ nat: [], flows: [key] }, ctx);
     if (cfg.subinterfaces) this.setSubinterfaces(cfg.subinterfaces);
     const self = this; // 객체 리터럴 getter 안의 this 는 그 객체라 별칭으로 잡는다
     this.rip = new Rip({
@@ -192,89 +204,10 @@ export class L3Node implements SimNode {
     this.vpn.setConfig(cfg, ctx);
   }
 
-  /** 터널로 보낸다: 원래 패킷을 암호화해 UDP 51820(WireGuard) 또는 ESP(IPsec)에 담아 상대 공인 주소로. 바깥 패킷은 내가 만든 것이라 NAT 하지 않는다 */
-  private sendTunnel(inner: Ipv4Packet, ctx: NodeContext, frameId?: number): void {
-    if (this.vpn.mode === "ipsec") {
-      this.vpn.sendIpsec(inner, ctx, frameId);
-      return;
-    }
-    const t = this.vpn.target();
-    const under = t ? this.underlay(t.ip) : undefined;
-    const src = under ? this.addrOf(under.out) : undefined; // 이중화 master 면 가상 주소 (넘어가도 상대가 같은 주소로 답하게)
-    const outer = src ? this.vpn.encapsulate(inner, src) : undefined;
-    if (!outer || !under) {
-      ctx.trace("vpn.drop", "L3", `VPN: 상대 ${t?.ip ?? "(주소 없음)"} 로 가는 바깥 경로가 없어 터널로 보낼 수 없음 → 드롭 (상대 공인 주소와 디폴트 라우트를 확인)`, { dst: inner.dst }, frameId);
-      return;
-    }
-    const u = outer.payload as { dstPort: number };
-    ctx.trace(
-      "vpn.encap",
-      "L3",
-      `VPN 캡슐화: ${inner.src} → ${inner.dst} 패킷을 암호화해 UDP ${outer.src}:51820 → ${outer.dst}:${u.dstPort} 안에 담음 — 인터넷 위에서는 공인 주소끼리의 UDP 로만 보이고 안쪽은 볼 수 없다`,
-      { inner: `${inner.src}>${inner.dst}`, peer: outer.dst },
-      frameId,
-    );
-    this.ifaces[under.out]!.sendIp(outer, ctx, this.emit(under.out, ctx), under.nextHop);
-  }
-
   /** 터널의 바깥(인터넷 쪽) 경로: VPN 경로를 빼고 찾는다 (상대 공인 주소가 터널 대역에 걸려 되돌아가지 않게) */
   private underlay(dst: Ip): Route | undefined {
     const r = this.route(dst, false);
     return r && r.kind !== "vpn" ? r : undefined;
-  }
-
-  /** 받은 터널 패킷: 허용한 상대 대역에서 온 것만 풀어서 안으로 */
-  private receiveTunnel(port: number, outer: Ipv4Packet, srcPort: number | undefined, inner: Ipv4Packet, frameId: number, ctx: NodeContext): void {
-    const ipsec = this.vpn.mode === "ipsec";
-    const noSa = ipsec ? this.vpn.refuseEsp() : undefined;
-    const why = noSa ?? this.vpn.refuse(outer, inner);
-    if (why) {
-      ctx.trace("vpn.drop", "L3", `${ipsec ? "IPsec ESP" : "VPN 패킷"} 수신 (from ${outer.src}) → 풀지 않고 드롭: ${why}`, { from: outer.src }, frameId);
-      if (noSa) this.vpn.onOrphanEsp(outer.src, ctx, frameId);
-      return;
-    }
-    if (ipsec) {
-      this.vpn.followPeer(outer.src, srcPort, ctx, frameId);
-      this.vpn.received++;
-      ctx.trace(
-        "vpn.decap",
-        "L3",
-        `IPsec 복호화: ${outer.src} 에서 온 ${srcPort !== undefined ? "UDP 4500 (NAT-T) 안의 " : ""}ESP 를 풀어 원래 패킷 ${inner.src} → ${inner.dst} 를 꺼냄 (출발지가 터널 대역 안인지 확인함)`,
-        { from: outer.src, inner: `${inner.src}>${inner.dst}` },
-        frameId,
-      );
-    } else {
-      const moved = this.vpn.learn(outer, srcPort ?? VPN_PORT);
-      ctx.trace(
-        "vpn.decap",
-        "L3",
-        `VPN 복호화: ${outer.src}:${srcPort} 에서 온 터널 패킷을 풀어 원래 패킷 ${inner.src} → ${inner.dst} 를 꺼냄${moved ? ` — 이제 상대에게는 ${outer.src}:${srcPort} 로 답함${outer.src !== this.vpn.config.peer ? " (상대가 NAT 뒤라 설정한 주소와 다름)" : ""}` : ""}`,
-        { from: outer.src, inner: `${inner.src}>${inner.dst}` },
-        frameId,
-      );
-    }
-    const mine = this.ownIndex(inner.dst);
-    if (mine >= 0) {
-      if (inner.payload.kind === "icmp") this.handleIcmp(mine, inner, inner.payload, frameId, ctx);
-      else ctx.trace("ip.drop", "L4", `터널로 온 ${inner.payload.kind.toUpperCase()} 가 나에게 왔지만 듣는 서비스 없음 → 드롭`, {}, frameId);
-      return;
-    }
-    this.forward(inner, port, frameId, ctx, inner, true);
-  }
-
-  /** 원격 접속 클라이언트의 ESP: 풀어서 안으로 (안쪽 출발지 = 그 클라이언트의 가상 주소) */
-  private receiveRa(port: number, outer: Ipv4Packet, srcPort: number | undefined, esp: EspPacket, frameId: number, ctx: NodeContext): void {
-    const c = this.ra.clientFor(outer, esp)!;
-    const inner = esp.inner;
-    this.ra.follow(c, outer.src, srcPort);
-    ctx.trace("vpn.decap", "L3", `원격 접속 복호화: ${outer.src} 의 ESP 를 풀어 ${inner.src}(가상 주소) → ${inner.dst} 패킷을 꺼냄`, { from: outer.src, inner: `${inner.src}>${inner.dst}` }, frameId);
-    const mine = this.ownIndex(inner.dst);
-    if (mine >= 0) {
-      if (inner.payload.kind === "icmp") this.handleIcmp(mine, inner, inner.payload, frameId, ctx);
-      else ctx.trace("ip.drop", "L4", `터널로 온 ${inner.payload.kind.toUpperCase()} 가 나에게 왔지만 듣는 서비스 없음 → 드롭`, {}, frameId);
-      return;
-    }
-    this.forward(inner, port, frameId, ctx, inner, true);
   }
 
   setRa(cfg: RaServerConfig, ctx: NodeContext): void {
@@ -488,53 +421,6 @@ export class L3Node implements SimNode {
     this.ha.setConfig(cfg, ctx);
   }
 
-  private pendingSync: { nat: PfsyncPacket["nat"]; flows: string[] } | undefined;
-  private lastBulkAt: number | undefined;
-
-  private syncing(): boolean {
-    return this.ha.config.enabled && this.ha.config.sync === true && this.ha.state === "master";
-  }
-
-  /** 새 상태를 모아 두었다가 같은 순간의 것은 한 패킷으로 보낸다 */
-  private queueSync(add: { nat: { proto: "icmp" | "tcp" | "udp"; lanIp: Ip; innerId: number; publicId: number }[]; flows: string[] }, ctx: NodeContext): void {
-    if (!this.syncing()) return;
-    if (!this.pendingSync) {
-      this.pendingSync = { nat: [], flows: [] };
-      ctx.timer(0, HA_SYNC_TAG, {});
-    }
-    for (const e of add.nat) this.pendingSync.nat.push({ proto: e.proto, lanIp: e.lanIp, innerId: e.innerId, publicId: e.publicId });
-    this.pendingSync.flows.push(...add.flows);
-  }
-
-  /** 세션 동기화 패킷을 보낼 인터페이스: 가상 주소를 둔 안쪽 인터페이스 (없으면 아무 VIP 인터페이스) */
-  private syncIface(): number | undefined {
-    const ifs = this.ha.config.vips.map((v, i) => (v && this.linkUp[i] && this.ifaces[i]?.usable ? i : -1)).filter((i) => i >= 0);
-    return ifs.find((i) => i !== this.outside) ?? ifs[0];
-  }
-
-  private sendSync(msg: PfsyncPacket, ctx: NodeContext): void {
-    const i = this.syncIface();
-    if (i === undefined || (msg.nat.length === 0 && msg.flows.length === 0)) return;
-    ctx.trace("ha.sync", "L3", `세션 동기화 송신 (pfsync${msg.bulk ? ", 전체 복사" : ""}): NAT 매핑 ${msg.nat.length}개, 방화벽 흐름 ${msg.flows.length}개 → backup 이 받아 두면 넘어가도 진행 중인 연결이 이어진다`, { nat: msg.nat.length, flows: msg.flows.length, bulk: msg.bulk === true });
-    this.ifaces[i]!.sendToMac(PFSYNC_MULTICAST_MAC, { kind: "ipv4", src: this.ifaces[i]!.ip!, dst: PFSYNC_MULTICAST_IP, ttl: 255, payload: msg }, ctx, this.emit(i, ctx));
-  }
-
-  private flushSync(ctx: NodeContext): void {
-    const p = this.pendingSync;
-    this.pendingSync = undefined;
-    if (!p || !this.syncing()) return;
-    this.sendSync({ kind: "pfsync", vrid: this.ha.config.vrid, nat: p.nat, flows: p.flows }, ctx);
-  }
-
-  /** 받은 세션 동기화: backup 이면 매핑·흐름을 그대로 받아 둔다 */
-  private receiveSync(port: number, pkt: Ipv4Packet, msg: PfsyncPacket, frameId: number, ctx: NodeContext): void {
-    const ha = this.ha.config;
-    if (!ha.enabled || !ha.sync || msg.vrid !== ha.vrid || this.ha.state === "master") return;
-    for (const e of msg.nat) this.nat?.importEntry(e, ctx.now);
-    for (const k of msg.flows) this.firewall.importFlow(k);
-    ctx.trace("ha.sync", "L3", `[${this.names[port]}] ${pkt.src} 의 세션 동기화 수신${msg.bulk ? " (전체 복사)" : ""}: NAT 매핑 ${msg.nat.length}개, 방화벽 흐름 ${msg.flows.length}개를 받아 둠`, { from: pkt.src, nat: msg.nat.length, flows: msg.flows.length }, frameId);
-  }
-
   // ---------- 수신 ----------
 
   receive(port: number, rawFrame: EthernetFrame, ctx: NodeContext): void {
@@ -573,33 +459,13 @@ export class L3Node implements SimNode {
 
   private handleIp(port: number, pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
     const name = this.names[port]!;
+    // 나에게 온 VPN 터널 패킷(WireGuard·IKE·ESP)은 NAT 역변환보다 먼저 푼다 (지나가는 것·VPN 을 안 켠 장비면 아래에서 보통 패킷처럼)
+    if (this.tunnels.accept(port, pkt, frameId, ctx)) return;
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
       const m = udp.payload;
       if (m.kind === "rip") {
         if (udp.dstPort === RIP_PORT) this.rip.handle(port, pkt.src, m, frameId, ctx);
-        return;
-      }
-      // 나에게 온 VPN 터널 패킷은 NAT 역변환보다 먼저 푼다 (지나가는 것이면 아래에서 보통 UDP 처럼 전달)
-      // VPN 을 켜지 않은 장비(예: VPN 게이트웨이 앞의 NAT 박스)는 보통 UDP 로 보고 NAT 역변환·포트 포워딩으로 넘긴다
-      const toMyIp = this.ownIndex(pkt.dst) >= 0;
-      if (m.kind === "vpn" && this.vpn.config.enabled && this.vpn.mode === "wireguard" && toMyIp) {
-        this.receiveTunnel(port, pkt, udp.srcPort, m.inner, frameId, ctx);
-        return;
-      }
-      // IPsec: IKE 협상(UDP 500/4500)과 NAT-T 로 온 ESP(UDP 4500)
-      if (m.kind === "ike" && toMyIp && (udp.dstPort === IKE_PORT || udp.dstPort === NAT_T_PORT) && (this.ra.handleIke(pkt, udp.srcPort, udp.dstPort, m, ctx, frameId) || this.vpn.handleIke(pkt, udp.srcPort, udp.dstPort, m, ctx, frameId))) return;
-      if (m.kind === "esp" && toMyIp && udp.dstPort === NAT_T_PORT && this.ra.clientFor(pkt, m)) {
-        this.receiveRa(port, pkt, udp.srcPort, m, frameId, ctx);
-        return;
-      }
-      // 가상 주소 풀에서 온 모르는 원격 접속 ESP: INVALID_SPI 로 알려 클라이언트가 다시 접속하게
-      if (m.kind === "esp" && toMyIp && udp.dstPort === NAT_T_PORT && this.ra.inPool(m.inner.src)) {
-        this.ra.orphan(pkt, udp.srcPort, m, ctx, frameId);
-        return;
-      }
-      if (m.kind === "esp" && toMyIp && udp.dstPort === NAT_T_PORT && this.vpn.config.enabled && this.vpn.mode === "ipsec") {
-        this.receiveTunnel(port, pkt, udp.srcPort, m.inner, frameId, ctx);
         return;
       }
       const toMe = pkt.dst === "255.255.255.255" || this.ownIndex(pkt.dst) >= 0;
@@ -630,7 +496,7 @@ export class L3Node implements SimNode {
       return;
     }
     if (pkt.payload.kind === "pfsync") {
-      this.receiveSync(port, pkt, pkt.payload, frameId, ctx);
+      this.sessionSync.receive(port, pkt, pkt.payload, frameId, ctx);
       return;
     }
     if (pkt.payload.kind === "vrrp") {
@@ -639,18 +505,6 @@ export class L3Node implements SimNode {
       return;
     }
     const mine = this.ownIndex(pkt.dst);
-    if (pkt.payload.kind === "esp" && mine >= 0 && this.ra.clientFor(pkt, pkt.payload)) {
-      this.receiveRa(port, pkt, undefined, pkt.payload, frameId, ctx);
-      return;
-    }
-    if (pkt.payload.kind === "esp" && mine >= 0 && this.ra.inPool(pkt.payload.inner.src)) {
-      this.ra.orphan(pkt, undefined, pkt.payload, ctx, frameId);
-      return;
-    }
-    if (pkt.payload.kind === "esp" && mine >= 0 && this.vpn.config.enabled && this.vpn.mode === "ipsec") {
-      this.receiveTunnel(port, pkt, undefined, pkt.payload.inner, frameId, ctx);
-      return;
-    }
     const fromOutside = this.nat !== undefined && port === this.outside;
     if (fromOutside && mine >= 0 && mine !== this.outside) {
       ctx.trace("ip.drop", "L3", `[${name}] 바깥에서 안쪽 주소 ${pkt.dst} 로 온 패킷 → 드롭. NAT 뒤의 사설 주소는 바깥에서 닿을 수 없음`, { dst: pkt.dst }, frameId);
@@ -817,7 +671,7 @@ export class L3Node implements SimNode {
   private sendVia(pkt: Ipv4Packet, ctx: NodeContext, frameId?: number): void {
     const r = this.route(pkt.dst);
     if (r?.kind === "vpn") {
-      this.sendTunnel(pkt, ctx, frameId);
+      this.tunnels.send(pkt, ctx, frameId);
       return;
     }
     if (r?.kind === "ra") {
@@ -881,7 +735,7 @@ export class L3Node implements SimNode {
       // 사설 대역끼리: NAT 하지 않고 터널로. 방화벽은 터널로 나가는 것을 아웃바운드로 본다 (Stateful 이면 돌아오는 응답도 통과)
       if (!this.firewall.check(pkt, tunnel ? "lan" : "out", ctx, frameId)) return;
       ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 VPN 상대 대역 → 터널로 (NAT 하지 않음), TTL ${pkt.ttl} → ${pkt.ttl - 1}`, { dst: pkt.dst, out: "VPN", kind: r.kind }, frameId);
-      this.sendTunnel({ ...pkt, ttl: pkt.ttl - 1 }, ctx, frameId);
+      this.tunnels.send({ ...pkt, ttl: pkt.ttl - 1 }, ctx, frameId);
       return;
     }
     const outName = this.names[r.out]!;
@@ -934,7 +788,7 @@ export class L3Node implements SimNode {
       return;
     }
     if (tag === HA_SYNC_TAG) {
-      this.flushSync(ctx);
+      this.sessionSync.flush(ctx);
       return;
     }
     if (tag === HA_TIMER_TAG) {

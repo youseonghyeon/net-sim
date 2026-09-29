@@ -8,6 +8,8 @@ Packet Tracer 식으로 직접 구성하는 네트워크 학습 시뮬레이터.
   - `nodes/*.ts` — 노드 구현 (`SimNode` 인터페이스). 노드는 `NodeContext` 를 통해서만 송신/타이머/트레이스
   - `packet.ts` — 계층별 패킷 모델 (학습에 필요한 필드만)
   - `trace.ts` — `TraceKind` 목록. 새 이벤트 종류를 추가하면 여기에 먼저 등록
+  - `packet.ts` 의 `hasPorts`·`isControl`·`IP_PROTO`: 장비들은 IPv4 안의 종류를 나열하지 않고 이 판별로 나눈다(포트가 있나 / 라우터끼리의 제어 멀티캐스트인가). 새 IP 프로토콜은 여기부터 넣는다
+  - L3 장치(`nodes/l3.ts`)는 라우팅·NAT·방화벽·릴레이만 직접 하고, VPN 터널 끝은 `nodes/l3tunnel.ts`(`TunnelEnds`: 받은 터널 패킷을 사이트 간·원격 접속으로 나누고 풀기, 터널로 보내기), 이중화 세션 동기화는 `nodes/hasync.ts`(`SessionSync`)에 맡긴다. IPsec 협상(재전송·NAT 감지·SPI·패킷 조립)은 두 VPN 이 `nodes/ike.ts` 를 같이 쓴다
   - 프레임 기록: `Network.frameLog`(프레임 id → 링크에 실린 기록, 2만 id 상한)와 `framesAt(packetId, nodeId, time)` — 로그 줄의 장치가 받은/내보낸 프레임. 라우터·NAT 는 홉마다 새 L2 프레임(새 id)을 만들므로, 받는 중에 새로 보낸 프레임은 `cause` 로 원래 id 에 이어 둔다(ARP 를 기다렸다 나중에 보낸 것은 이어지지 않음)
   - `scenarios/` — 테스트용 고정 토폴로지
 - `src/model/` — 편집 가능한 토폴로지 모델(`topology.ts`: 장치 종류·포트·앵커 좌표·무선 파생·`planCable` 검증·`cloneDevices`/`alignDevices`·JSON 직렬화 `serializeTopology`/`parseTopology`), 예제 21종의 레지스트리는 `examples.ts`(`EXAMPLES`, 메뉴 순서), 예제 함수는 `examples/` 에 메뉴 묶음별 파일(basic·parts·routing·l2·security·services·internet·wireless, 조립 도우미 `build.ts`) — 새 예제는 묶음 파일에 함수를 넣고 `EXAMPLES` 에 등록 —과 앱 상태(`store.ts`: Preact signals, localStorage 저장, 되돌리기 스택 — 모든 편집은 `setTopology` 를 거치고 드래그는 `beginCoalesce/endCoalesce` 로 한 단계, 선택은 단일/다중/케이블, 클립보드). `store.ts` 는 브라우저 API 를 `typeof` 로 감싸 vitest 에서도 import 된다(`tests/store.test.ts`). 시뮬레이션 실행 시 코어 `Network` 로 변환한다.
