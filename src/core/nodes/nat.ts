@@ -1,6 +1,6 @@
 // NAT 변환 테이블. 라우터(공유기)와 NAT 박스가 공유한다. ICMP 는 id, TCP 는 포트로 구분한다.
 import type { Ip } from "../addr";
-import { isTimeExceeded, type IcmpTimeExceeded, type Ipv4Packet } from "../packet";
+import { icmpErrorLabel, isIcmpError, type IcmpError, type Ipv4Packet } from "../packet";
 import type { NodeContext } from "./node";
 
 export interface NatEntry {
@@ -55,7 +55,7 @@ export class NatTable {
   /** 안 → 밖: 출발지를 공인 주소로 바꾼다 (ICMP 는 id, TCP/UDP 는 출발 포트) */
   translate(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
-    if (isTimeExceeded(p)) return this.translateError(pkt, p, publicIp, ctx, frameId);
+    if (isIcmpError(p)) return this.translateError(pkt, p, publicIp, ctx, frameId);
     const proto = p.kind;
     if (p.kind === "tcp") {
       // 포트 포워딩으로 들어온 연결의 응답: 그 흐름이 들어온 공인 포트로 되돌린다 (동적 항목 없음)
@@ -95,10 +95,10 @@ export class NatTable {
   }
 
   /**
-   * 안 → 밖으로 나가는 ICMP 오류(Time Exceeded): 출발지만 공인 주소로 바꾼다. 안에 내장된 원래 패킷은
+   * 안 → 밖으로 나가는 ICMP 오류(Time Exceeded·Unreachable): 출발지만 공인 주소로 바꾼다. 안에 내장된 원래 패킷은
    * 바깥에서 들어왔던 것이므로 그 목적지(내부 호스트)를 다시 공인 주소로 되돌려 바깥 호스트가 알아보게 한다 (RFC 5508)
    */
-  private translateError(pkt: Ipv4Packet, p: IcmpTimeExceeded, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet {
+  private translateError(pkt: Ipv4Packet, p: IcmpError, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet {
     const o = p.original;
     let original = o;
     const innerId = o.l4.kind === "icmp" ? o.l4.id : o.l4.dstPort;
@@ -111,12 +111,12 @@ export class NatTable {
       const rule = this.forwards.find((r) => r.lanIp === o.dst && r.lanPort === port);
       if (rule) original = { ...o, dst: publicIp, l4: { ...o.l4, dstPort: rule.publicPort } };
     }
-    ctx.trace("nat.translate", "L3", `NAT 변환: Time Exceeded 통지의 출발지 ${pkt.src} → ${publicIp} (안에 내장된 원래 패킷의 내부 주소도 공인 주소로)`, { proto: "icmp", lanIp: pkt.src }, frameId);
+    ctx.trace("nat.translate", "L3", `NAT 변환: ${icmpErrorLabel(p)} 통지의 출발지 ${pkt.src} → ${publicIp} (안에 내장된 원래 패킷의 내부 주소도 공인 주소로)`, { proto: "icmp", lanIp: pkt.src }, frameId);
     return { ...pkt, src: publicIp, payload: { ...p, original } };
   }
 
-  /** 밖 → 안으로 들어온 ICMP 오류(Time Exceeded): 내장된 원래 패킷의 공인 id/포트로 테이블을 찾아 내부 호스트에게 되돌린다 */
-  private restoreError(pkt: Ipv4Packet, p: IcmpTimeExceeded, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
+  /** 밖 → 안으로 들어온 ICMP 오류(Time Exceeded·Unreachable): 내장된 원래 패킷의 공인 id/포트로 테이블을 찾아 내부 호스트에게 되돌린다 */
+  private restoreError(pkt: Ipv4Packet, p: IcmpError, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const o = p.original;
     const proto = o.l4.kind;
     const publicId = o.l4.kind === "icmp" ? o.l4.id : o.l4.srcPort;
@@ -131,7 +131,7 @@ export class NatTable {
     } else {
       const rule = proto !== "icmp" ? this.forwards.find((r) => r.publicPort === publicId) : undefined;
       if (!rule) {
-        ctx.trace("nat.miss", "L3", `Time Exceeded 안의 원래 패킷(${what})이 NAT 테이블에 없음 → 드롭. 내부에서 시작한 통신의 오류 통지만 들어올 수 있음`, { proto, publicId }, frameId);
+        ctx.trace("nat.miss", "L3", `${icmpErrorLabel(p)} 안의 원래 패킷(${what})이 NAT 테이블에 없음 → 드롭. 내부에서 시작한 통신의 오류 통지만 들어올 수 있음`, { proto, publicId }, frameId);
         return undefined;
       }
       lanIp = rule.lanIp;
@@ -140,7 +140,7 @@ export class NatTable {
     ctx.trace(
       "nat.restore",
       "L3",
-      `NAT 역변환: Time Exceeded 안의 원래 패킷 (${publicIp}, ${what}) → ${lanIp} (${proto === "icmp" ? "id" : "포트"} ${innerId}) — 오류 통지도 원래 보낸 내부 호스트에게 되돌림`,
+      `NAT 역변환: ${icmpErrorLabel(p)} 안의 원래 패킷 (${publicIp}, ${what}) → ${lanIp} (${proto === "icmp" ? "id" : "포트"} ${innerId}) — 오류 통지도 원래 보낸 내부 호스트에게 되돌림`,
       { proto, publicId, lanIp, innerId },
       frameId,
     );
@@ -151,7 +151,7 @@ export class NatTable {
   /** 밖 → 안: 테이블에 있으면 목적지를 내부 호스트로 되돌린다 */
   restore(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
-    if (isTimeExceeded(p)) return this.restoreError(pkt, p, publicIp, ctx, frameId);
+    if (isIcmpError(p)) return this.restoreError(pkt, p, publicIp, ctx, frameId);
     const proto = p.kind;
     const publicId = p.kind === "icmp" ? p.id : p.dstPort;
     const what = p.kind === "icmp" ? `ICMP id ${publicId}` : `${proto.toUpperCase()} 포트 ${publicId}`;

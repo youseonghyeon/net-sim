@@ -154,6 +154,13 @@ export class DnsResolver {
     q.done(undefined, "DNS timeout · 응답 없음");
   }
 
+  /** 내 DNS 서버에 닿지 않는다는 ICMP Destination Unreachable: 기다리는 질의를 바로 실패로 */
+  onUnreachable(reason: string, ctx: NodeContext): boolean {
+    if (this.pending.size === 0) return false;
+    for (const id of [...this.pending.keys()]) this.fail(id, reason, ctx);
+    return true;
+  }
+
   private fail(id: number, reason: string, ctx: NodeContext): void {
     const q = this.pending.get(id);
     if (!q) return;

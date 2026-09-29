@@ -58,14 +58,14 @@ describe("WAN + NAT", () => {
     expect(rt.nat.size).toBe(2);
   });
 
-  it("WAN 에 주소가 없으면 외부 ping 은 라우터에서 막힌다", () => {
+  it("WAN 에 주소가 없으면 외부 ping 은 라우터에서 막히고, 라우터가 Net Unreachable 로 바로 알린다", () => {
     const net = buildHomeLan(true, false);
     net.connect("pc1", 0, "sw", 1);
     net.runToIdle();
     net.scheduleAction(net.now, { kind: "ping", nodeId: "pc1", dst: "8.8.8.8" });
     net.runToIdle();
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "ip.no-route")).toBe(true);
-    expect(net.getHost("pc1").pings.at(-1)).toMatchObject({ status: "failed", reason: "timeout · 응답 없음" });
+    expect(net.getHost("pc1").pings.at(-1)).toMatchObject({ status: "failed", reason: "Destination Net Unreachable (192.168.0.1)" });
   });
 
   it("사설 주소로 향하는 패킷은 인터넷에서 버려진다", () => {

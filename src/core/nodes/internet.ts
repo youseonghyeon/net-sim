@@ -1,5 +1,5 @@
 import { isMulticastMac, isPrivateIp, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, type DnsMessage, type EthernetFrame, type Ipv4Packet } from "../packet";
+import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, UNREACHABLE_LABEL, type DnsMessage, type EthernetFrame, type Ipv4Packet } from "../packet";
 import { DhcpServer } from "./dhcp";
 import { normalizeName, PUBLIC_ZONE } from "./dns";
 import { NetInterface, type Emit } from "./iface";
@@ -133,6 +133,12 @@ export class Internet implements SimNode {
       const who = pkt.dst === Internet.REMOTE_CLIENT ? "클라이언트" : "서버";
       ctx.trace("inet.forward", "app", `인터넷 경로로 ${pkt.dst}${name ? ` (${name})` : ""}:${p.dstPort} 에 전달 — 중간 라우터 생략, ${who} 응답은 ${Internet.LATENCY * 2}ms 뒤 도착`, { dst: pkt.dst, src: pkt.src }, frameId);
       this.tcp.handle(pkt, p, ctx);
+      return;
+    }
+    if (p.type === "unreachable" && pkt.dst === Internet.REMOTE_CLIENT) {
+      // 바깥 클라이언트의 연결 시도(외부 접속)가 NAT 뒤에서 닿지 않음
+      const reason = `${UNREACHABLE_LABEL[p.code]} (${pkt.src})`;
+      if (this.tcp.onUnreachable(p.original, reason, ctx)) ctx.trace("icmp.unreachable.received", "app", `외부 클라이언트가 ${pkt.src} 로부터 ICMP ${UNREACHABLE_LABEL[p.code]} 수신 → 연결 실패`, { from: pkt.src }, frameId);
       return;
     }
     if (p.type !== "echo-request") {

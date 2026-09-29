@@ -255,7 +255,7 @@ describe("traceroute", () => {
 });
 
 describe("traceroute: WAN 없는 라우터", () => {
-  it("라우터가 인터넷에 못 나가도 1 번째 홉은 라우터, 그 뒤는 * 로 보인다", () => {
+  it("라우터가 인터넷에 못 나가면 1 번째 홉은 라우터, 2 번째 프로브에서 라우터가 !N (Net Unreachable) 으로 끝낸다", () => {
     const net = buildHomeLan(true, false);
     net.connect("pc1", 0, "sw", 1);
     net.runToIdle();
@@ -263,7 +263,9 @@ describe("traceroute: WAN 없는 라우터", () => {
     net.runToIdle();
     const rec = net.getHost("pc1").traceroutes.at(-1)!;
     expect(rec.status).toBe("failed");
-    expect(hopIps(net.getHost("pc1")).slice(0, 3)).toEqual(["192.168.0.1", "*", "*"]);
+    expect(hopIps(net.getHost("pc1"))).toEqual(["192.168.0.1", "192.168.0.1"]);
+    expect(rec.hops.at(-1)!.flag).toBe("!N");
+    expect(rec.reason).toContain("Destination Net Unreachable");
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "ip.no-route" && e.summary.includes("WAN"))).toBe(true);
     expect(net.pendingEvents).toBe(0);
   });

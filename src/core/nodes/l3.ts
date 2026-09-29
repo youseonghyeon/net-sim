@@ -516,6 +516,19 @@ export class L3Node implements SimNode {
     return undefined;
   }
 
+  /** 전달하려던 패킷이 ARP 무응답으로 버려짐: 보낸 이 쪽 인터페이스에서 Host Unreachable (NAT 바깥이면 원래 패킷을 공인 주소로 되돌려) */
+  private hostUnreachable(pkt: Ipv4Packet, dropIface: NetInterface, ctx: NodeContext): void {
+    if (this.ifaces.some((f) => f.ip === pkt.src)) return; // 내가 만든 패킷(또는 NAT 가 바꾼 것)은 통지할 상대가 없다
+    const back = this.route(pkt.src);
+    const from = back ? this.ifaces[back.out]! : dropIface;
+    let notice = from.unreachable(pkt, "host", ctx);
+    if (!notice) return;
+    const outside = this.outside;
+    const publicIp = outside !== undefined ? this.ifaces[outside]?.ip : undefined;
+    if (this.nat && back?.out === outside && publicIp) notice = this.nat.translate(notice, publicIp, ctx);
+    if (notice) this.sendVia(notice, ctx);
+  }
+
   /** 내가 만든 패킷(응답)을 라우팅 테이블대로 내보낸다 */
   private sendVia(pkt: Ipv4Packet, ctx: NodeContext, frameId?: number): void {
     const r = this.route(pkt.dst);
@@ -550,6 +563,8 @@ export class L3Node implements SimNode {
             ? "RIP 이웃에게서 이 경로를 배우지 못함 — 이웃 라우터도 RIP 를 켰는지, 그 네트워크를 가진 라우터까지 이어지는지 확인하세요"
             : "스태틱 라우팅을 추가하거나 디폴트 라우트(업링크 게이트웨이)를 설정하세요. 라우터가 여럿이면 RIP(동적 라우팅)를 켜도 됩니다";
       ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 로 가는 경로가 없음 (연결된 서브넷·스태틱 라우팅·디폴트 라우트 모두 해당 없음) → 드롭. ${hint}`, { dst: pkt.dst }, frameId);
+      const notice = this.ifaces[inPort]!.unreachable(received, "net", ctx, frameId);
+      if (notice) this.sendVia(notice, ctx, frameId);
       return;
     }
     const outName = this.names[r.out]!;
@@ -559,6 +574,8 @@ export class L3Node implements SimNode {
     if (this.nat && r.out === this.outside) {
       if (inPort === this.outside) {
         ctx.trace("ip.no-route", "L3", `${pkt.dst} 로 가는 안쪽 경로가 없어 바깥으로 되돌아감 → 드롭. 스태틱 라우팅을 추가하세요 (예: ${networkOf(pkt.dst, 24)}/24 via 안쪽 게이트웨이)`, { dst: pkt.dst }, frameId);
+        const notice = this.ifaces[inPort]!.unreachable(received, "net", ctx, frameId);
+        if (notice) this.sendVia(notice, ctx, frameId);
         return;
       }
       const translated = this.nat.translate(out, outIface.ip!, ctx, frameId);
@@ -581,7 +598,10 @@ export class L3Node implements SimNode {
 
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
     if (tag === "arp-timeout") {
-      for (const iface of this.ifaces) iface.onArpTimeout(data, ctx);
+      for (const iface of this.ifaces) {
+        // 넘기려던 패킷의 목적지(또는 넥스트 홉)가 ARP 에 응답하지 않음 → 보낸 이에게 Host Unreachable
+        for (const pkt of iface.onArpTimeout(data, ctx)) this.hostUnreachable(pkt, iface, ctx);
+      }
       return;
     }
     if (tag === "arp-probe") {

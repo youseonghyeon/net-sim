@@ -253,6 +253,20 @@ export class TcpStack {
     }
   }
 
+  /** ICMP Destination Unreachable 이 내 연결 시도(SYN)에 대한 것이면 즉시 실패로 끝낸다. 처리했으면 true */
+  onUnreachable(o: { dst: Ip; l4: { kind: string; srcPort?: number; dstPort?: number } }, reason: string, ctx: NodeContext): boolean {
+    if (o.l4.kind !== "tcp") return false;
+    const conn = [...this.conns.values()].find((c) => c.role === "client" && c.localPort === o.l4.srcPort && c.remoteIp === o.dst && c.remotePort === o.l4.dstPort);
+    if (!conn || conn.state !== "SYN_SENT") return false;
+    conn.state = "FAILED";
+    conn.reason = reason;
+    conn.closedAt = ctx.now;
+    this.cancelAll(conn);
+    ctx.trace("tcp.failed", "L4", `TCP 연결 실패: ${reason} → SYN 재전송을 기다리지 않고 바로 포기 (${endpoint(conn.remoteIp, conn.remotePort)})`, { conn: conn.id });
+    this.host.onFinish?.(conn, ctx);
+    return true;
+  }
+
   /** IP 가 없는 등 시작조차 못 한 연결을 기록에 남긴다 (인스펙터 표시용) */
   recordFailure(localIp: Ip, remoteIp: Ip, remotePort: number, reason: string, ctx: NodeContext): void {
     const localPort = this.nextPort++;

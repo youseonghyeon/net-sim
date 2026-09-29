@@ -49,6 +49,8 @@ export type TraceKind =
   | "icmp.failed"
   | "icmp.ttl-exceeded"
   | "icmp.ttl-received"
+  | "icmp.unreachable.sent"
+  | "icmp.unreachable.received"
   | "trace.start"
   | "trace.probe"
   | "trace.hop"
@@ -172,6 +174,7 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "icmp.timeout",
   "icmp.failed",
   "icmp.ttl-received",
+  "icmp.unreachable.received",
   "trace.timeout",
   "trace.failed",
   "dhcp.nak.sent",

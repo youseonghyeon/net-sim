@@ -1411,6 +1411,11 @@ select.btn.example {
 .trace-result.failed .trace-head span:last-child {
   color: var(--danger);
 }
+/* traceroute 홉의 Unreachable 표시 (!N·!H·!P) */
+.hop-flag {
+  color: var(--danger);
+  font-weight: 600;
+}
 .trace-hops {
   list-style: none;
   margin: 4px 0 0;

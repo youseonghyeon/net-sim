@@ -388,6 +388,8 @@ export class Router implements SimNode {
     }
     if (!this.wan.ip) {
       ctx.trace("ip.no-route", "L3", `${pkt.dst} 는 외부 주소인데 WAN 에 공인 주소가 없음 → 인터넷으로 보낼 수 없음 (WAN 케이블과 DHCP 확인)`, { dst: pkt.dst }, frameId);
+      const notice = this.lan.unreachable(pkt, "net", ctx, frameId);
+      if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
       return;
     }
     if (!this.firewall.check(pkt, "out", ctx, frameId)) return;
@@ -412,7 +414,13 @@ export class Router implements SimNode {
 
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
     if (tag === "arp-timeout") {
-      this.lan.onArpTimeout(data, ctx);
+      // 바깥에서 들어와(포트 포워딩·NAT 역변환) LAN 호스트로 가려던 패킷의 주인이 없음 → 바깥의 보낸 이에게 Host Unreachable
+      for (const pkt of this.lan.onArpTimeout(data, ctx)) {
+        if (!this.wan.ip || sameSubnet(pkt.src, this.lan.ip!, this.lan.prefix)) continue;
+        const notice = this.lan.unreachable(pkt, "host", ctx);
+        const out = notice ? this.nat.translate(notice, this.wan.ip, ctx) : undefined;
+        if (out) this.wan.sendIp(out, ctx, this.emitWan(ctx));
+      }
       this.wan.onArpTimeout(data, ctx);
       return;
     }

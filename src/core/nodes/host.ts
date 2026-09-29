@@ -1,5 +1,5 @@
 import { ipToInt, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, describeOriginal, type EthernetFrame, type IcmpPacket, type IcmpTimeExceeded, type Ipv4Packet } from "../packet";
+import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, describeOriginal, type EthernetFrame, type IcmpPacket, type IcmpTimeExceeded, type Ipv4Packet, UNREACHABLE_FLAG, UNREACHABLE_LABEL, type IcmpUnreachable } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, type DnsServerConfig } from "./dns";
 import { NetInterface } from "./iface";
@@ -45,6 +45,8 @@ export interface TracerouteHop {
   /** 응답한 홉의 주소. 시간 안에 응답이 없으면(*) 비어 있다 */
   ip?: Ip;
   rtt?: number;
+  /** 이 홉이 Destination Unreachable 을 돌려줌 (!N 경로 없음, !H 호스트 무응답, !P 포트 닫힘) */
+  flag?: string;
 }
 
 export interface TracerouteRecord {
@@ -472,6 +474,44 @@ export class Host implements SimNode {
     ctx.trace("icmp.ttl-received", "app", `${pkt.src} 로부터 Time Exceeded 수신 (원래 ${describeOriginal(o)}) → 기다리는 traceroute/ping 이 없어 무시`, { from: pkt.src }, frameId);
   }
 
+  /** ICMP Destination Unreachable: 원래 패킷으로 누가 보낸 것인지 찾아 timeout 을 기다리지 않고 바로 끝낸다 */
+  private handleUnreachable(pkt: Ipv4Packet, icmp: IcmpUnreachable, frameId: number, ctx: NodeContext): void {
+    const o = icmp.original;
+    const label = UNREACHABLE_LABEL[icmp.code];
+    const reason = `${label} (${pkt.src})`;
+    const done = (what: string) =>
+      ctx.trace("icmp.unreachable.received", "app", `${pkt.src} 로부터 ICMP ${label} 수신 (원래 ${describeOriginal(o)}) → ${what}`, { from: pkt.src, code: icmp.code }, frameId);
+    if (o.l4.kind === "icmp" && o.l4.id === this.trId) {
+      const a = this.activeTrace;
+      if (a && a.seq === o.l4.seq) {
+        a.timer?.cancel();
+        a.rec.hops.push({ ttl: a.ttl, ip: pkt.src, rtt: ctx.now - a.sentAt, flag: UNREACHABLE_FLAG[icmp.code] });
+        done(`traceroute 는 ${a.ttl} 번째 홉 ${pkt.src} ${UNREACHABLE_FLAG[icmp.code]} 에서 끝`);
+        this.failTrace(a.rec, reason, ctx, icmp.code === "net" ? "그 장치의 라우팅 테이블에 목적지 경로가 없음 — 스태틱 라우팅·디폴트 라우트·RIP 를 확인" : "그 장치 너머의 목적지 주소에 응답하는 장치가 없음");
+        return;
+      }
+    }
+    if (o.l4.kind === "icmp" && o.l4.id === this.icmpId) {
+      const seq = o.l4.seq;
+      const rec = this.pings.find((p) => p.seq === seq && p.status === "pending");
+      if (rec) {
+        this.finishPing(rec, "failed", { reason });
+        done(`ping ${rec.dst} 실패`);
+        ctx.trace("icmp.failed", "app", `ping ${rec.dst} 실패: ${reason}`, { dst: rec.dst, seq: rec.seq });
+        return;
+      }
+    }
+    if (this.tcp.onUnreachable(o, reason, ctx)) {
+      done("TCP 연결 실패");
+      return;
+    }
+    if (o.l4.kind === "udp" && o.l4.srcPort === this.resolver.port && this.resolver.onUnreachable(`DNS 서버에 닿지 않음: ${reason}`, ctx)) {
+      done("DNS 조회 실패");
+      return;
+    }
+    done("기다리는 요청이 없어 무시");
+  }
+
   /** TCP 연결 시작 (클라이언트) */
   connect(target: string, port: number, ctx: NodeContext): void {
     if (!this.iface.ip) {
@@ -552,10 +592,14 @@ export class Host implements SimNode {
         }
         if (udp.dstPort === this.resolver.port) this.resolver.handle(m, pkt.src, frameId, ctx);
         else if (udp.dstPort === DNS_PORT && (this.dnsServer.config.enabled || m.op === "response")) this.dnsServer.handle(pkt, udp.srcPort, m, frameId, ctx, this.emit(ctx));
-        else ctx.trace("ip.drop", "L4", `DNS 질의를 받았지만 DNS 서버 서비스가 꺼져 있음 → 드롭 (서비스에서 DNS 서버를 켜세요)`, { port: udp.dstPort }, frameId);
+        else {
+          ctx.trace("ip.drop", "L4", `DNS 질의를 받았지만 DNS 서버 서비스가 꺼져 있음 → 드롭 (서비스에서 DNS 서버를 켜세요)`, { port: udp.dstPort }, frameId);
+          this.portUnreachable(pkt, ctx, frameId);
+        }
         return;
       }
       ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 프로그램 없음 → 드롭`, { port: udp.dstPort }, frameId);
+      if (pkt.dst === this.iface.ip) this.portUnreachable(pkt, ctx, frameId);
       return;
     }
     if (pkt.dst !== this.iface.ip) {
@@ -569,9 +613,19 @@ export class Host implements SimNode {
     this.handleIcmp(pkt, pkt.payload, frameId, ctx);
   }
 
+  /** 닫힌 UDP 포트로 온 패킷: 보낸 이에게 Port Unreachable 로 알린다 (보낸 쪽 DNS 조회 등이 바로 실패를 안다) */
+  private portUnreachable(pkt: Ipv4Packet, ctx: NodeContext, frameId: number): void {
+    const notice = this.iface.unreachable(pkt, "port", ctx, frameId);
+    if (notice) this.iface.sendIp(notice, ctx, this.emit(ctx));
+  }
+
   private handleIcmp(pkt: Ipv4Packet, icmp: IcmpPacket, frameId: number, ctx: NodeContext): void {
     if (icmp.type === "time-exceeded") {
       this.handleTimeExceeded(pkt, icmp, frameId, ctx);
+      return;
+    }
+    if (icmp.type === "unreachable") {
+      this.handleUnreachable(pkt, icmp, frameId, ctx);
       return;
     }
     if (icmp.type === "echo-request") {

@@ -1,5 +1,5 @@
 import { BROADCAST_MAC, networkOf, sameSubnet, ZERO_MAC, type Ip, type Mac } from "../addr";
-import { describeFrame, LIMITED_BROADCAST_IP, timeExceededFor, type ArpPacket, type EthernetFrame, type Ipv4Packet } from "../packet";
+import { describeFrame, icmpErrorFor, LIMITED_BROADCAST_IP, timeExceededFor, UNREACHABLE_LABEL, type ArpPacket, type EthernetFrame, type Ipv4Packet, type UnreachableCode } from "../packet";
 import type { NodeContext, TimerHandle } from "./node";
 
 export interface ArpEntry {
@@ -163,6 +163,18 @@ export class NetInterface {
       { src: pkt.src, dst: pkt.dst, from: this.ip, ttl: pkt.ttl },
       frameId,
     );
+    return notice;
+  }
+
+  /**
+   * 더 넘길 수 없는 패킷(경로 없음·ARP 무응답·닫힌 UDP 포트)을 보낸 이에게 알릴 ICMP Destination Unreachable (출발지 = 이 인터페이스 주소).
+   * 보내는 방법은 장치마다 달라 호출자가 보낸다. 만들 수 없으면(내 주소 없음, ICMP 오류·브로드캐스트에 대한 것) undefined
+   */
+  unreachable(pkt: Ipv4Packet, code: UnreachableCode, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
+    const notice = this.ip ? icmpErrorFor(this.ip, pkt, { type: "unreachable", code }) : undefined;
+    if (!notice) return undefined;
+    const why = code === "net" ? "그 목적지로 가는 경로가 없음" : code === "host" ? "그 주소의 장치가 ARP 에 응답하지 않음" : "그 UDP 포트를 듣는 프로그램이 없음";
+    ctx.trace("icmp.unreachable.sent", "L3", `${pkt.src} 에게 ICMP ${UNREACHABLE_LABEL[code]} 통지 (원래 ${pkt.src} → ${pkt.dst}) — ${why}. 보낸 쪽은 timeout 을 기다리지 않고 바로 실패를 안다`, { to: pkt.src, dst: pkt.dst, code }, frameId);
     return notice;
   }
 

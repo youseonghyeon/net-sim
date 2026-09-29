@@ -79,10 +79,43 @@ export interface OriginalPacket {
   l4: { kind: "icmp"; id: number; seq: number } | { kind: "tcp" | "udp"; srcPort: number; dstPort: number };
 }
 
-export type IcmpPacket = IcmpEcho | IcmpTimeExceeded;
+/**
+ * ICMP Destination Unreachable: 라우터나 목적지가 "여기서 더 못 간다" 를 보낸 이에게 알린다. 원래 패킷 식별 정보를 싣는다.
+ * net(코드 0) = 경로 없음, host(코드 1) = 그 주소에 ARP 응답이 없음, port(코드 3) = 그 UDP 포트를 듣는 프로그램이 없음
+ */
+export interface IcmpUnreachable {
+  kind: "icmp";
+  type: "unreachable";
+  code: UnreachableCode;
+  original: OriginalPacket;
+}
+
+export type UnreachableCode = "net" | "host" | "port";
+
+export const UNREACHABLE_LABEL: Record<UnreachableCode, string> = {
+  net: "Destination Net Unreachable",
+  host: "Destination Host Unreachable",
+  port: "Destination Port Unreachable",
+};
+/** traceroute 가 홉 뒤에 붙이는 표시 (!N, !H, !P) */
+export const UNREACHABLE_FLAG: Record<UnreachableCode, string> = { net: "!N", host: "!H", port: "!P" };
+
+/** 원래 패킷을 싣는 ICMP 오류 (보낸 이에게 돌려주는 통지) */
+export type IcmpError = IcmpTimeExceeded | IcmpUnreachable;
+
+export type IcmpPacket = IcmpEcho | IcmpError;
 
 export function isTimeExceeded(p: Ipv4Packet["payload"]): p is IcmpTimeExceeded {
   return p.kind === "icmp" && p.type === "time-exceeded";
+}
+
+export function isIcmpError(p: Ipv4Packet["payload"]): p is IcmpError {
+  return p.kind === "icmp" && (p.type === "time-exceeded" || p.type === "unreachable");
+}
+
+/** ICMP 오류의 이름 (로그용) */
+export function icmpErrorLabel(p: IcmpError): string {
+  return p.type === "time-exceeded" ? "Time Exceeded" : UNREACHABLE_LABEL[p.code];
 }
 
 /**
@@ -90,14 +123,24 @@ export function isTimeExceeded(p: Ipv4Packet["payload"]): p is IcmpTimeExceeded 
  * ICMP 오류에 대한 오류(RFC 1122)나 출발지가 없는(0.0.0.0) 패킷에는 만들지 않는다 → undefined.
  */
 export function timeExceededFor(from: Ip, dropped: Ipv4Packet): Ipv4Packet | undefined {
-  if (dropped.src === UNSPECIFIED_IP) return undefined;
+  return icmpErrorFor(from, dropped, { type: "time-exceeded" });
+}
+
+/**
+ * 드롭한 패킷을 보낸 이에게 돌려줄 ICMP 오류. ICMP 오류에 대한 오류(RFC 1122), 출발지가 없는(0.0.0.0) 패킷,
+ * 브로드캐스트·멀티캐스트로 간 패킷에는 만들지 않는다 → undefined
+ */
+export function icmpErrorFor(from: Ip, dropped: Ipv4Packet, err: { type: "time-exceeded" } | { type: "unreachable"; code: UnreachableCode }): Ipv4Packet | undefined {
+  if (dropped.src === UNSPECIFIED_IP || dropped.dst === LIMITED_BROADCAST_IP || /^2(2[4-9]|3\d)\./.test(dropped.dst)) return undefined;
   const p = dropped.payload;
   let l4: OriginalPacket["l4"];
   if (p.kind === "icmp") {
-    if (p.type === "time-exceeded") return undefined;
+    if (p.type !== "echo-request" && p.type !== "echo-reply") return undefined;
     l4 = { kind: "icmp", id: p.id, seq: p.seq };
   } else l4 = { kind: p.kind, srcPort: p.srcPort, dstPort: p.dstPort };
-  return { kind: "ipv4", src: from, dst: dropped.src, ttl: 64, payload: { kind: "icmp", type: "time-exceeded", original: { src: dropped.src, dst: dropped.dst, l4 } } };
+  const original = { src: dropped.src, dst: dropped.dst, l4 };
+  const payload: IcmpError = err.type === "time-exceeded" ? { kind: "icmp", type: "time-exceeded", original } : { kind: "icmp", type: "unreachable", code: err.code, original };
+  return { kind: "ipv4", src: from, dst: dropped.src, ttl: 64, payload };
 }
 
 /** 원래 패킷 정보를 사람이 읽는 형태로: "192.168.0.100 → 8.8.8.8 Echo seq=3" */
@@ -108,7 +151,8 @@ export function describeOriginal(o: OriginalPacket): string {
 
 /** ICMP 메시지 종류 라벨 */
 export function icmpLabel(p: IcmpPacket): string {
-  return p.type === "echo-request" ? "Echo 요청" : p.type === "echo-reply" ? "Echo 응답" : "Time Exceeded";
+  if (isIcmpError(p)) return icmpErrorLabel(p);
+  return p.type === "echo-request" ? "Echo 요청" : "Echo 응답";
 }
 
 export interface UdpPacket {
@@ -192,7 +236,7 @@ export function describeFrame(frame: EthernetFrame): string {
   }
   const inner = p.payload;
   if (inner.kind === "icmp") {
-    if (inner.type === "time-exceeded") return `ICMP Time Exceeded (원래 ${describeOriginal(inner.original)})`;
+    if (inner.type === "time-exceeded" || inner.type === "unreachable") return `ICMP ${icmpErrorLabel(inner)} (원래 ${describeOriginal(inner.original)})`;
     return inner.type === "echo-request" ? `ICMP Echo 요청 seq=${inner.seq}` : `ICMP Echo 응답 seq=${inner.seq}`;
   }
   if (inner.kind === "tcp") return `TCP ${tcpFlags(inner)} seq=${inner.seq} ack=${inner.ack}${inner.len ? ` len=${inner.len}` : ""}`;
@@ -216,7 +260,7 @@ export function shortLabel(frame: EthernetFrame): string {
   const p = frame.payload;
   if (p.kind === "arp") return p.op === "request" ? "ARP 요청" : "ARP 응답";
   const inner = p.payload;
-  if (inner.kind === "icmp") return inner.type === "echo-request" ? "ping 요청" : inner.type === "echo-reply" ? "ping 응답" : "TTL 초과";
+  if (inner.kind === "icmp") return inner.type === "echo-request" ? "ping 요청" : inner.type === "echo-reply" ? "ping 응답" : inner.type === "time-exceeded" ? "TTL 초과" : "도달 불가";
   if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";

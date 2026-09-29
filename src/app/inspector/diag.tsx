@@ -220,7 +220,10 @@ export function DiagSection({ d }: { d: Device }) {
               return (
                 <li key={h.ttl}>
                   <span class="ttl mono">{h.ttl}</span>
-                  <span class="mono">{h.ip ?? "*"}</span>
+                  <span class="mono">
+                    {h.ip ?? "*"}
+                    {h.flag && <b class="hop-flag" title={h.flag === "!N" ? "Net Unreachable: 그 장치에 목적지 경로가 없음" : h.flag === "!H" ? "Host Unreachable: 목적지 주소에 ARP 응답이 없음" : "Port Unreachable"}> {h.flag}</b>}
+                  </span>
                   <span class="who">{who ?? (h.ip ? "" : "응답 없음")}</span>
                   <span class="rtt">{h.rtt !== undefined ? `${h.rtt}ms` : ""}</span>
                 </li>
