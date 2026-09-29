@@ -249,7 +249,6 @@ function PacketDetail({ e, name }: { e: TraceEvent; name: string | undefined }) 
     <div class="pkt-detail" onClick={(ev) => ev.stopPropagation()}>
       {lines.length > 0 && (
         <section class="pkt-lines">
-          <h5>도구 출력</h5>
           {lines.map((l, i) => (
             <div key={i} class="pkt-line">
               <span class="pkt-tool">{l.tool}</span>
