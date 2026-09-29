@@ -1,10 +1,11 @@
-// 호스트 설정: IP 설정, 서비스(웹·DHCP 서버·DNS 서버·로드밸런서), 무선 단말·AP.
+// 호스트 설정: IP 설정, 서비스(웹·DHCP 서버·DNS 서버·로드밸런서·프록시), HTTP 프록시 설정, 무선 단말·AP.
 import { prefixToMask, intToIp, sameSubnet } from "../../core/addr";
 import { topology, updateDevice } from "../../model/store";
 import {
   DEFAULT_DHCP_SERVER,
   DEFAULT_DNS_SERVER,
   DEFAULT_LB_SETTINGS,
+  DEFAULT_PROXY_SETTINGS,
   DEFAULT_ROUTER_WIFI,
   DEFAULT_WIFI_BASE,
   type Device,
@@ -211,6 +212,78 @@ export function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
       )}
       <DnsServiceSection d={d} h={h} staticIp={staticIp} />
       <LbFields d={d} h={h} />
+      <ProxyFields d={d} h={h} />
+    </Section>
+  );
+}
+
+/** 포워드 프록시(Squid 식) 켜기 + 포트·차단 목록 */
+function ProxyFields({ d, h }: { d: Device; h: HostSettings }) {
+  const px = h.proxy ?? DEFAULT_PROXY_SETTINGS;
+  const set = (patch: Partial<typeof px>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, proxy: { ...(x.host!.proxy ?? DEFAULT_PROXY_SETTINGS), ...patch } } }));
+  const clash = px.enabled && ((h.services ?? []).includes(px.port) || (h.lb?.enabled && h.lb.port === px.port));
+  return (
+    <>
+      <label class="toggle-row">
+        <span>
+          프록시 <span class="mono muted">TCP {px.port}</span>
+        </span>
+        <Toggle on={px.enabled} onToggle={() => set({ enabled: !px.enabled })} />
+      </label>
+      {!px.enabled && <p class="note">켜면 다른 장치가 부탁한 웹 요청을 대신 받아 옵니다(Squid 같은 포워드 프록시). 로드밸런서가 서버들을 대신한다면, 프록시는 클라이언트들을 대신합니다.</p>}
+      {px.enabled && (
+        <>
+          <Field label="받는 포트">
+            <input class="input mono" type="number" min={1} max={65535} value={px.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 3128)) }); }} />
+          </Field>
+          {clash && <p class="note error-note">포트 {px.port} 는 이 장치의 다른 서비스가 이미 받습니다. 프록시 포트를 바꾸세요(보통 3128).</p>}
+          <h3 class="sub">차단 목록</h3>
+          {px.deny.length === 0 && <p class="note">비어 있으면 모든 사이트를 대신 받아 옵니다.</p>}
+          {px.deny.map((v, i) => (
+            <div key={i} class="lb-row proxy-row">
+              <input class="input mono" value={v} placeholder="example.com 또는 93.184.216.34" onInput={(e) => set({ deny: px.deny.map((x, k) => (k === i ? e.currentTarget.value : x)) })} />
+              <button class="icon-btn" title="차단 항목 삭제" onClick={() => set({ deny: px.deny.filter((_, k) => k !== i) })}>
+                <Icon name="trash" size={15} />
+              </button>
+            </div>
+          ))}
+          <button class="btn wide" onClick={() => set({ deny: [...px.deny, ""] })}>
+            <Icon name="plus" size={14} />
+            차단 추가
+          </button>
+          <p class="note">
+            PC 가 <b>대상 주소를 적어</b> 부탁하면(요청 줄이 <span class="mono">GET http://대상/</span>) 이 장치가 대상에 직접 연결해 받은 응답을 돌려줍니다. 이름도 이 장치가 찾습니다. 대상 서버에게는 요청이 이 장치 주소에서 온 것으로 보입니다. 차단 목록의 이름(하위 이름 포함)이나 주소는 403, 이름을 못 찾거나 연결하지 못하면 503 입니다. 방화벽에서 이 장치만 인터넷으로 내보내면 사내 PC 는 프록시로만 나갑니다.
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
+/** HTTP 프록시 설정 (http_proxy): 웹 요청을 프록시에게 부탁 */
+export function HttpProxySection({ d, h }: { d: Device; h: HostSettings }) {
+  const hp = h.httpProxy ?? { enabled: false, server: "", port: 3128 };
+  const set = (patch: Partial<typeof hp>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, httpProxy: { ...(x.host!.httpProxy ?? { enabled: false, server: "", port: 3128 }), ...patch } } }));
+  return (
+    <Section title="HTTP 프록시">
+      <label class="toggle-row">
+        <span>
+          {hp.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">http_proxy</span>
+        </span>
+        <Toggle on={hp.enabled} onToggle={() => set({ enabled: !hp.enabled })} />
+      </label>
+      {!hp.enabled && <p class="note">켜면 웹(포트 80) 요청을 대상에 직접 보내지 않고 프록시 서버에게 대신 받아 달라고 부탁합니다. 사내에서 인터넷을 프록시로만 내보낼 때 PC 에 넣는 설정입니다(브라우저 프록시 설정·http_proxy 환경 변수).</p>}
+      {hp.enabled && (
+        <>
+          <Field label="프록시 서버" error={ipError(hp.server, true)}>
+            <input class="input mono" value={hp.server} placeholder="192.168.0.10" onInput={(e) => set({ server: e.currentTarget.value })} />
+          </Field>
+          <Field label="포트">
+            <input class="input mono" type="number" min={1} max={65535} value={hp.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 3128)) }); }} />
+          </Field>
+          <p class="note">웹 요청은 대상이 같은 사무실 서버여도 프록시를 거칩니다. 이름은 이 장치가 찾지 않고 프록시가 찾습니다. SSH 등 웹이 아닌 연결과 ping 은 프록시를 거치지 않고 직접 나갑니다.</p>
+        </>
+      )}
     </Section>
   );
 }
@@ -264,13 +337,22 @@ function LbFields({ d, h }: { d: Device; h: HostSettings }) {
               </button>
             </div>
           </Field>
-          <label class="toggle-row">
-            <span>
-              세션 고정
-              <small class="muted">같은 출발지 IP 는 계속 같은 백엔드로 (소스 IP 어피니티)</small>
-            </span>
-            <Toggle on={lb.sticky === true} onToggle={() => set({ sticky: !lb.sticky })} />
-          </label>
+          <Field label="세션 고정">
+            <div class="segmented" role="radiogroup">
+              <button class={!lb.sticky ? "on" : ""} onClick={() => set({ sticky: undefined })} title="요청마다 분배 방식대로 고름">
+                없음
+              </button>
+              <button class={lb.sticky === "ip" ? "on" : ""} onClick={() => set({ sticky: "ip" })} title="같은 출발지 IP 는 계속 같은 백엔드로 (소스 IP 어피니티)">
+                출발지 IP
+              </button>
+              <button class={lb.sticky === "cookie" ? "on" : ""} disabled={lb.mode === "l4"} onClick={() => set({ sticky: "cookie" })} title={lb.mode === "l4" ? "L4 는 HTTP 를 보지 않아 쿠키를 넣을 수 없습니다" : "첫 응답에 Set-Cookie 로 백엔드를 적어 두고, 브라우저가 보내는 쿠키로 같은 백엔드를 고름"}>
+                쿠키
+              </button>
+            </div>
+          </Field>
+          {lb.sticky === "ip" && <p class="note">NAT·프록시 뒤의 여러 사람은 한 주소로 보여 모두 같은 백엔드로 몰립니다. 사람마다 나누려면 쿠키를 쓰세요.</p>}
+          {lb.sticky === "cookie" && lb.mode !== "l4" && <p class="note">첫 응답에 <span class="mono">Set-Cookie: SERVERID=백엔드</span> 를 넣고, 브라우저가 다음 요청에 실어 보내는 쿠키로 같은 백엔드를 고릅니다. 주소가 아니라 브라우저마다라 NAT 뒤에서도 사람별로 나뉩니다.</p>}
+          {lb.sticky === "cookie" && lb.mode === "l4" && <p class="note error-note">L4 는 HTTP 를 보지 않아 쿠키 세션 고정이 동작하지 않습니다. 출발지 IP 로 바꾸거나 L7 프록시로 바꾸세요.</p>}
           {shadowsWeb && <p class="note">웹 서버도 포트 {lb.port} 인데, 이 포트로 온 연결은 로드밸런서가 받습니다.</p>}
           <h3 class="sub">백엔드</h3>
           {lb.backends.length === 0 && <p class="note error-note">백엔드가 없으면 모든 요청에 502 Bad Gateway 를 돌려줍니다. 뒤 서버의 주소와 포트를 추가하세요.</p>}

@@ -180,6 +180,10 @@ export interface HostSettings {
   dnsServer?: DnsServerSettings;
   /** 이 호스트가 로드밸런서(리버스 프록시) 역할을 할 때. 로드밸런서 장비는 켜진 채로 만들어진다 */
   lb?: LbSettings;
+  /** 이 호스트가 포워드 프록시(Squid 식) 역할을 할 때 */
+  proxy?: ProxySettings;
+  /** 이 호스트의 HTTP 프록시 설정 (http_proxy). 없으면 직접 */
+  httpProxy?: HttpProxySettings;
   /** 원격 접속 VPN 클라이언트. 없으면 꺼짐 */
   ra?: RaClientSettings;
 }
@@ -192,8 +196,24 @@ export interface LbSettings {
   backends: { ip: string; port: number }[];
   /** 없으면 L7 (리버스 프록시) */
   mode?: "l7" | "l4";
-  /** 세션 고정 (같은 출발지 IP → 같은 백엔드) */
-  sticky?: boolean;
+  /** 세션 고정: "ip" 같은 출발지 IP → 같은 백엔드, "cookie" 응답에 넣은 쿠키로 (L7 만). 예전 저장본의 true 는 "ip" */
+  sticky?: "ip" | "cookie";
+}
+
+export interface ProxySettings {
+  enabled: boolean;
+  /** 듣는 포트 (Squid 기본 3128) */
+  port: number;
+  /** 차단 목록: 이름(하위 이름 포함) 또는 주소 */
+  deny: string[];
+}
+
+export const DEFAULT_PROXY_SETTINGS: ProxySettings = { enabled: false, port: 3128, deny: [] };
+
+export interface HttpProxySettings {
+  enabled: boolean;
+  server: string;
+  port: number;
 }
 
 export const DEFAULT_LB_SETTINGS: LbSettings = { enabled: false, port: 80, algorithm: "round-robin", backends: [] };
@@ -863,6 +883,8 @@ export function normalizeTopology(t: Topology): Topology {
         };
       }
     }
+    // 예전 저장본: 세션 고정이 켜기/끄기(true)였다 → 출발지 IP
+    if (fixed.host?.lb && (fixed.host.lb.sticky as unknown) === true) fixed.host = { ...fixed.host, lb: { ...fixed.host.lb, sticky: "ip" } };
     if (spec.role === "ap" && !fixed.ap) fixed.ap = { ...DEFAULT_WIFI_BASE };
     if (spec.role === "firewall") fixed.firewall = fixed.firewall ? { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.firewall, rules: fixed.firewall.rules ?? [] } : { ...DEFAULT_FIREWALL_SETTINGS, enabled: true, rules: [] };
     if (spec.role === "switch" && !fixed.switch) fixed.switch = { vlans: {} };

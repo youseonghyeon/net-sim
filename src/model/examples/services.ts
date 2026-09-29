@@ -50,3 +50,54 @@ export function exampleLoadBalancerTopology(): Topology {
   ];
   return t;
 }
+
+/**
+ * 포워드 프록시: 사무실 PC 는 방화벽 때문에 인터넷에 직접 못 나가고, 프록시 서버(Squid 식)만 나갈 수 있다.
+ * pc-1 은 HTTP 프록시 설정(http_proxy)이 있어 웹 요청을 프록시에게 부탁하고, laptop-1 은 설정이 없어 막힌다.
+ * 프록시는 이름도 대신 찾고(PC 는 외부 DNS 가 필요 없음), 차단 목록의 사이트는 403 으로 돌려준다.
+ */
+export function exampleProxyTopology(): Topology {
+  const { devices, add } = builder();
+  const PROXY = "192.168.0.10";
+  const inet = add("internet", 344, -40, "internet-1");
+  const rt = add("router", 344, 96, "공유기");
+  rt.router = {
+    ...rt.router!,
+    firewall: {
+      enabled: true,
+      defaultPolicy: "allow",
+      stateful: true,
+      rules: [
+        // 프록시 서버만 인터넷으로 나간다. 나머지 사무실 장비의 아웃바운드는 모두 차단
+        { action: "allow", proto: "any", direction: "out", src: PROXY, dst: "", dstPort: "" },
+        { action: "deny", proto: "any", direction: "out", src: "", dst: "", dstPort: "" },
+      ],
+    },
+  };
+  const sw = add("switch", 344, 272, "sw-1");
+  const pc = add("pc", 120, 448, "pc-1");
+  pc.host = { ...pc.host!, httpProxy: { enabled: true, server: PROXY, port: 3128 } };
+  const laptop = add("laptop", 264, 448, "laptop-1");
+  const proxy = add("server", 520, 448, "proxy-1");
+  proxy.host = {
+    ...proxy.host!,
+    ipMode: "static",
+    ip: PROXY,
+    prefix: 24,
+    gateway: "192.168.0.1",
+    dns: "8.8.8.8",
+    services: [],
+    dhcpServer: { ...DEFAULT_DHCP_SERVER },
+    proxy: { enabled: true, port: 3128, deny: ["naver.com"] },
+  };
+  const cables: Cable[] = [
+    cable(inet, 0, rt, 0),
+    cable(rt, 1, sw, 3),
+    cable(sw, 0, pc, 0),
+    cable(sw, 1, laptop, 0),
+    cable(sw, 5, proxy, 0),
+  ];
+  const t: Topology = { devices, cables };
+  t.zones = [{ id: newId("zone"), label: "인터넷으로 나갈 수 있는 유일한 장비", tint: "amber", ...zoneAround(t, [proxy.id], 24)! }];
+  return t;
+}

@@ -148,9 +148,9 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
         net.scheduleAction(net.now, { kind: "tcp-connect", nodeId: fromId, dst: c.value, port });
         net.runToIdle(20_000);
         const conn = [...src.tcp.conns.values()].at(-1);
-        const httpError = conn?.status?.startsWith("HTTP 5");
+        const httpError = /^HTTP [45]/.test(conn?.status ?? "");
         ok = conn?.state === "CLOSED" && conn.bytesReceived > 0 && !httpError;
-        reason = httpError ? `${conn!.status} (로드밸런서 뒤 백엔드 문제)` : conn?.reason;
+        reason = httpError ? `${conn!.status} (${conn!.target ? "프록시" : "로드밸런서 뒤 백엔드 문제"})` : conn?.reason;
         resolved = c.isName ? conn?.remoteIp : undefined;
       }
     } catch {

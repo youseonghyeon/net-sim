@@ -261,31 +261,37 @@ export function DiagSection({ d }: { d: Device }) {
         if (conns.length === 0) return null;
         return (
           <ul class="ping-log tcp-log">
-            {conns.map((c) => (
-              <li key={c.id} class={c.state === "FAILED" || c.status?.startsWith("HTTP 5") ? "failed" : (c.state === "CLOSED" && c.bytesReceived > 0) || (c.ssh?.open && c.state === "ESTABLISHED") ? "ok" : ""}>
-                <span class="mono">
-                  {c.remoteIp}:{c.remotePort}
-                </span>
-                <span>
-                  {c.state === "FAILED"
-                    ? `실패 · ${c.reason ?? ""}`
-                    : c.status?.startsWith("HTTP 5")
-                      ? `${c.status}${c.servedBy ? ` · ${c.servedBy}` : ""}`
-                      : c.state === "CLOSED"
-                        ? `종료됨 · 받음 ${c.bytesReceived}B${c.servedBy ? ` · 응답 ${c.servedBy}` : ""}`
-                        : c.ssh?.open && c.state === "ESTABLISHED"
-                          ? "SSH 세션 열림"
-                          : c.ssh && c.state === "ESTABLISHED"
-                            ? `SSH 키 교환 중 (${c.ssh.step}/6)`
-                            : TCP_STATE_LABEL[c.state]}
-                </span>
-                {c.ssh && c.state === "ESTABLISHED" && (
-                  <button class="btn ghost small" onClick={() => sim.act({ kind: "tcp-close", nodeId: d.id, conn: c.id })} title="FIN 을 보내 세션을 닫습니다">
-                    연결 해제
-                  </button>
-                )}
-              </li>
-            ))}
+            {conns.map((c) => {
+              // 4xx·5xx: 연결은 됐지만 요청이 실패 (프록시 차단 403, 백엔드·대상 문제 502·503)
+              const httpErr = /^HTTP [45]/.test(c.status ?? "");
+              const cookie = c.setCookie ? ` · 쿠키 받음` : c.cookie ? ` · 쿠키 보냄` : "";
+              return (
+                <li key={c.id} class={c.state === "FAILED" || httpErr ? "failed" : (c.state === "CLOSED" && c.bytesReceived > 0) || (c.ssh?.open && c.state === "ESTABLISHED") ? "ok" : ""} title={c.setCookie ? `Set-Cookie: ${c.setCookie}` : c.cookie ? `Cookie: ${c.cookie}` : undefined}>
+                  <span class="mono" title={c.target ? `프록시 ${c.remoteIp}:${c.remotePort} 경유` : undefined}>
+                    {c.target ?? `${c.remoteIp}:${c.remotePort}`}
+                    {c.target && <small class="via">프록시 경유</small>}
+                  </span>
+                  <span>
+                    {c.state === "FAILED"
+                      ? `실패 · ${c.reason ?? ""}`
+                      : httpErr
+                        ? `${c.status}${c.servedBy ? ` · ${c.servedBy}` : ""}`
+                        : c.state === "CLOSED"
+                          ? `종료됨 · 받음 ${c.bytesReceived}B${c.servedBy ? ` · 응답 ${c.servedBy}` : ""}${cookie}`
+                          : c.ssh?.open && c.state === "ESTABLISHED"
+                            ? "SSH 세션 열림"
+                            : c.ssh && c.state === "ESTABLISHED"
+                              ? `SSH 키 교환 중 (${c.ssh.step}/6)`
+                              : TCP_STATE_LABEL[c.state]}
+                  </span>
+                  {c.ssh && c.state === "ESTABLISHED" && (
+                    <button class="btn ghost small" onClick={() => sim.act({ kind: "tcp-close", nodeId: d.id, conn: c.id })} title="FIN 을 보내 세션을 닫습니다">
+                      연결 해제
+                    </button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         );
       })()}

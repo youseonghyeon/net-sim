@@ -1,4 +1,4 @@
-// 로드밸런서 규칙: 백엔드 없음·닫힌 백엔드·로드밸런서끼리 순환·L7 에 SSH 포트.
+// 로드밸런서 규칙: 백엔드 없음·닫힌 백엔드·로드밸런서끼리 순환·L7 에 SSH 포트·L4 에 쿠키 세션 고정.
 import type { Device } from "../topology";
 import { validIp, validPort } from "./addr";
 import type { LintContext } from "./context";
@@ -48,6 +48,15 @@ export function lbRules({ t, add }: LintContext): void {
         fix: `${d.name} → 로드밸런서 → 받는 포트를 80 등 웹 포트로 (SSH 는 백엔드 서버에 바로 접속)`,
       });
     }
+    if (lb.mode === "l4" && lb.sticky === "cookie") {
+      add({
+        deviceId: d.id,
+        severity: "warn",
+        code: "lb.cookie-l4",
+        message: "L4 주소 변환은 HTTP 를 보지 않아 쿠키를 넣지도 읽지도 못함 → 쿠키 세션 고정이 동작하지 않고 연결마다 분배 방식대로 나뉨",
+        fix: `${d.name} → 로드밸런서 → 세션 고정을 출발지 IP 로 바꾸거나, 방식을 L7 프록시로`,
+      });
+    }
     const backends = lbBackends(d);
     if (backends.length === 0) {
       add({
@@ -64,7 +73,7 @@ export function lbRules({ t, add }: LintContext): void {
       const owners = t.devices.filter((x) => x.host?.ipMode === "static" && x.host.ip === b.ip);
       if (owners.length !== 1) continue;
       const target = owners[0]!;
-      const listens = (target.host!.services ?? []).includes(b.port) || (target.host!.lb?.enabled === true && target.host!.lb.port === b.port);
+      const listens = (target.host!.services ?? []).includes(b.port) || (target.host!.lb?.enabled === true && target.host!.lb.port === b.port) || (target.host!.proxy?.enabled === true && target.host!.proxy.port === b.port);
       if (listens) continue;
       add({
         deviceId: d.id,

@@ -13,7 +13,7 @@ import type { StpConfig } from "../core/nodes/stp";
 import type { RaClientConfig } from "../core/nodes/ravpn";
 import { Switch, type PortVlan } from "../core/nodes/switch";
 import { validCidr } from "../core/nodes/firewall";
-import { DEFAULT_LB_SETTINGS,
+import { DEFAULT_LB_SETTINGS, DEFAULT_PROXY_SETTINGS,
   DEFAULT_DHCP_SERVER,
   DEFAULT_DNS_SERVER,
   DEFAULT_FIREWALL_SETTINGS,
@@ -102,7 +102,7 @@ export class NetworkSync {
       }
     }
     for (const d of t.devices) {
-      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d) }) };
+      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d) }) };
       const prev = this.syncedConfig.get(d.id);
       if (prev === undefined) {
         settle();
@@ -129,6 +129,9 @@ export class NetworkSync {
             if (dns) node.setDnsServer(dns, net.contextFor(d.id));
             const lb = effectiveLb(d);
             if (lb) node.setLb(lb, net.contextFor(d.id));
+            const proxy = effectiveProxy(d);
+            if (proxy) node.setProxy(proxy, net.contextFor(d.id));
+            node.setHttpProxy(effectiveHttpProxy(d), net.contextFor(d.id));
             node.setRemoteVpn(effectiveRaClient(d) ?? { enabled: false, psk: "" }, net.contextFor(d.id));
           }
         }
@@ -214,9 +217,28 @@ export function effectiveLb(d: Device) {
     port: port(c.port) ? c.port : 80,
     algorithm: c.algorithm === "least-conn" ? ("least-conn" as const) : ("round-robin" as const),
     ...(c.mode === "l4" ? { mode: "l4" as const } : {}),
-    ...(c.sticky ? { sticky: true } : {}),
+    ...(c.sticky === "cookie" ? { sticky: "cookie" as const } : c.sticky ? { sticky: "ip" as const } : {}),
     backends: c.backends.filter((b) => validIp(b.ip) && port(b.port)).map((b) => ({ ip: b.ip, port: b.port })),
   };
+}
+
+/** 포워드 프록시 설정: 포트가 올바르고, 차단 목록은 빈 칸 뺀 것 */
+export function effectiveProxy(d: Device) {
+  if (!d.host) return undefined;
+  const c = d.host.proxy ?? DEFAULT_PROXY_SETTINGS;
+  return {
+    enabled: c.enabled,
+    port: Number.isInteger(c.port) && c.port >= 1 && c.port <= 65535 ? c.port : 3128,
+    deny: (Array.isArray(c.deny) ? c.deny : []).filter((x) => typeof x === "string").map((x) => x.trim()).filter((x) => x !== ""),
+  };
+}
+
+/** HTTP 프록시 설정(http_proxy): 켜져 있고 주소·포트가 올바를 때만 */
+export function effectiveHttpProxy(d: Device) {
+  const c = d.host?.httpProxy;
+  const server = validIp(c?.server);
+  if (!c?.enabled || !server || !Number.isInteger(c.port) || c.port < 1 || c.port > 65535) return undefined;
+  return { server, port: c.port };
 }
 
 export function effectiveDnsServer(d: Device) {
@@ -397,7 +419,7 @@ export function makeNode(d: Device): SimNode {
       vpn: cfg.vpn,
     });
   }
-  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d), lb: effectiveLb(d) });
+  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d), lb: effectiveLb(d), proxy: effectiveProxy(d), httpProxy: effectiveHttpProxy(d) });
 }
 
 export function applyConfig(net: Network, d: Device): void {

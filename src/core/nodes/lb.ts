@@ -9,7 +9,10 @@
 //   클라이언트 → LB:포트  ⇒  LB:변환 포트 → 백엔드:포트   (돌아올 때 반대로)
 //   TCP 연결은 클라이언트와 백엔드 사이 하나뿐이고, LB 는 HTTP 내용을 보지 않는다(그래서 SSH 등 무엇이든 나눈다).
 //   대신 요청 단위로 다시 고르거나 응답 상태를 볼 수 없다 — 백엔드가 RST 로 거부할 때만 빼 둔다.
-// 세션 고정 (두 모드 공통): 같은 출발지 IP 는 살아 있는 한 같은 백엔드로 (소스 IP 어피니티)
+// 세션 고정: 출발지 IP (두 모드 공통) — 같은 출발지 IP 는 살아 있는 한 같은 백엔드로 (소스 IP 어피니티).
+//   NAT·프록시 뒤의 여러 사람은 한 주소로 보여 모두 한 백엔드로 몰린다.
+// 쿠키 (L7 만, HAProxy "cookie SERVERID insert" 식) — 첫 응답에 Set-Cookie: SERVERID=<백엔드> 를 넣고, 브라우저가 다음 요청에
+//   실어 보내는 Cookie 로 같은 백엔드를 고른다. 주소가 아니라 브라우저마다라 NAT 뒤에서도 사람별로 나뉜다. L4 는 HTTP 를 보지 않아 못 쓴다.
 import type { Ip } from "../addr";
 import type { Ipv4Packet, TcpSegment } from "../packet";
 import type { NodeContext } from "./node";
@@ -37,8 +40,17 @@ export interface LbConfig {
   backends: LbBackend[];
   /** 없으면 L7 (리버스 프록시) */
   mode?: LbMode;
-  /** 세션 고정: 같은 출발지 IP 는 같은 백엔드로 */
-  sticky?: boolean;
+  /** 세션 고정: "ip" 같은 출발지 IP 는 같은 백엔드로, "cookie" 응답에 넣은 쿠키로 (L7 만) */
+  sticky?: LbSticky;
+}
+
+export type LbSticky = "ip" | "cookie";
+export const LB_STICKY_LABEL: Record<LbSticky, string> = { ip: "세션 고정 (출발지 IP)", cookie: "세션 고정 (쿠키)" };
+/** 쿠키 세션 고정에 쓰는 쿠키 이름 (HAProxy 예제의 관례) */
+export const LB_COOKIE = "SERVERID";
+/** Cookie 헤더에서 이 LB 의 쿠키가 가리키는 백엔드 "주소:포트" */
+function cookieBackend(cookie: string | undefined): string | undefined {
+  return cookie ? new RegExp(`(?:^|;\\s*)${LB_COOKIE}=([^;]+)`).exec(cookie)?.[1] : undefined;
 }
 
 export const DEFAULT_LB: LbConfig = { enabled: false, port: 80, algorithm: "round-robin", backends: [] };
@@ -115,13 +127,13 @@ export class LoadBalancer {
     // 설정에 남은 백엔드의 상태·고정·흐름은 유지한다 (세션 고정만 켰는데 열린 연결이 끊기면 안 된다)
     const kept = new Set(cfg.backends.map(keyOf));
     for (const k of [...this.downUntil.keys()]) if (!kept.has(k)) this.downUntil.delete(k);
-    for (const [ip, k] of [...this.affinity]) if (!kept.has(k) || !cfg.sticky) this.affinity.delete(ip);
+    for (const [ip, k] of [...this.affinity]) if (!kept.has(k) || cfg.sticky !== "ip") this.affinity.delete(ip);
     for (const f of [...this.flows.values()]) if (cfg.mode !== "l4" || !kept.has(keyOf(f.backend))) this.dropFlow(f);
     ctx.trace(
       "lb.config",
       "sys",
       cfg.enabled
-        ? `로드밸런서 켜짐 (${LB_MODE_LABEL[cfg.mode ?? "l7"]}${cfg.sticky ? ", 세션 고정" : ""}): 포트 ${cfg.port} 로 온 ${cfg.mode === "l4" ? "연결" : "요청"}을 ${LB_ALGORITHM_LABEL[cfg.algorithm]} 로 백엔드 ${cfg.backends.length}대(${cfg.backends.map(keyOf).join(", ") || "없음"})에 나눔`
+        ? `로드밸런서 켜짐 (${LB_MODE_LABEL[cfg.mode ?? "l7"]}${cfg.sticky ? `, ${LB_STICKY_LABEL[cfg.sticky]}` : ""}): 포트 ${cfg.port} 로 온 ${cfg.mode === "l4" ? "연결" : "요청"}을 ${LB_ALGORITHM_LABEL[cfg.algorithm]} 로 백엔드 ${cfg.backends.length}대(${cfg.backends.map(keyOf).join(", ") || "없음"})에 나눔`
         : "로드밸런서 꺼짐",
       { ...cfg },
     );
@@ -144,16 +156,19 @@ export class LoadBalancer {
     return n;
   }
 
-  /** 분배 규칙대로 백엔드 하나 고르기 (빼 둔 것·이번 요청에서 이미 실패한 것 제외). 세션 고정이면 그 클라이언트가 쓰던 백엔드 먼저 */
-  private pick(now: number, tried: Set<string>, client?: Ip): { backend: LbBackend; sticky: boolean } | undefined {
+  /**
+   * 분배 규칙대로 백엔드 하나 고르기 (빼 둔 것·이번 요청에서 이미 실패한 것 제외).
+   * 세션 고정이면 그 클라이언트가 쓰던 백엔드(출발지 IP) 또는 쿠키가 가리키는 백엔드 먼저 (L4 는 쿠키를 모른다 — cookie 를 넘기지 않음)
+   */
+  private pick(now: number, tried: Set<string>, client?: Ip, cookie?: string): { backend: LbBackend; sticky: boolean } | undefined {
     const alive = this.config.backends.filter((b) => this.isUp(b, now) && !tried.has(keyOf(b)));
     if (alive.length === 0) return undefined;
-    if (this.config.sticky && client) {
-      const prev = alive.find((b) => keyOf(b) === this.affinity.get(client));
-      if (prev) return { backend: prev, sticky: true };
-    }
+    const ipSticky = this.config.sticky === "ip" && client !== undefined;
+    const want = ipSticky ? this.affinity.get(client) : this.config.sticky === "cookie" ? cookieBackend(cookie) : undefined;
+    const prev = want !== undefined ? alive.find((b) => keyOf(b) === want) : undefined;
+    if (prev) return { backend: prev, sticky: true };
     const b = this.pickBy(alive);
-    if (b && this.config.sticky && client) this.affinity.set(client, keyOf(b));
+    if (b && ipSticky) this.affinity.set(client, keyOf(b));
     return b ? { backend: b, sticky: false } : undefined;
   }
 
@@ -189,7 +204,7 @@ export class LoadBalancer {
       return;
     }
     const me = this.localIp();
-    const chosen = me ? this.pick(ctx.now, tried, down.remoteIp) : undefined;
+    const chosen = me ? this.pick(ctx.now, tried, down.remoteIp, down.cookie) : undefined;
     const b = chosen?.backend;
     if (!b || !me) {
       const why = !me ? "내 주소가 없음" : this.config.backends.length === 0 ? "백엔드가 하나도 없음" : "살아 있는 백엔드가 없음 (모두 실패로 빠져 있음)";
@@ -198,13 +213,15 @@ export class LoadBalancer {
       return;
     }
     const alive = this.config.backends.filter((x) => this.isUp(x, ctx.now));
+    const stale = this.config.sticky === "cookie" && !chosen!.sticky ? cookieBackend(down.cookie) : undefined;
     const why = chosen!.sticky
-      ? `세션 고정 (이 클라이언트가 쓰던 백엔드)`
-      : this.config.algorithm === "least-conn"
-        ? `최소 연결 (진행 중 ${this.active(b)}개)`
-        : `라운드 로빈 (살아 있는 ${alive.length}대 중 차례)`;
+      ? this.config.sticky === "cookie"
+        ? `쿠키 고정 (Cookie ${LB_COOKIE}=${keyOf(b)})`
+        : `세션 고정 (이 클라이언트가 쓰던 백엔드)`
+      : (this.config.algorithm === "least-conn" ? `최소 연결 (진행 중 ${this.active(b)}개)` : `라운드 로빈 (살아 있는 ${alive.length}대 중 차례)`) +
+        (stale ? ` — 쿠키가 가리키는 ${stale} 는 빠져 있거나 없어 다시 고름` : "");
     ctx.trace("lb.pick", "app", `로드밸런서: 클라이언트 ${down.remoteIp} 의 요청 → 백엔드 ${keyOf(b)} 선택 — ${why}. LB 가 대신 연결해 요청`, { backend: keyOf(b), client: down.remoteIp });
-    this.tcp.connect(me, b.ip, b.port, ctx, hops + 1, (up) => this.pending.set(up.id, { down, backend: b, tried }));
+    this.tcp.connect(me, b.ip, b.port, ctx, { via: hops + 1, onCreated: (up) => this.pending.set(up.id, { down, backend: b, tried }) });
   }
 
   /** 백엔드 연결이 끝남: 응답을 받았으면 클라이언트에게 전달, 실패면 빼 두고 다음 백엔드로. LB 가 처리한 연결이면 true */
@@ -222,12 +239,19 @@ export class LoadBalancer {
       const status = up.status ?? "HTTP 200";
       const origin = up.servedBy ?? p.backend.ip;
       const n = Math.max(1, Math.ceil(up.bytesReceived / RESPONSE_SEGMENT_BYTES));
-      ctx.trace("lb.relay", "app", `로드밸런서: 백엔드 ${key} 의 응답 (${status}, ${up.bytesReceived}B) 을 클라이언트 ${p.down.remoteIp} 에게 전달${origin !== p.backend.ip ? ` — 응답을 만든 서버는 그 뒤의 ${origin}` : ""}`, { backend: key, bytes: up.bytesReceived, status });
+      // 쿠키 고정: 클라이언트가 이 백엔드를 가리키는 쿠키를 안 가져왔으면(처음·다시 고름) 응답에 심는다
+      const setCookie = this.config.sticky === "cookie" && cookieBackend(p.down.cookie) !== key ? `${LB_COOKIE}=${key}` : undefined;
+      ctx.trace(
+        "lb.relay",
+        "app",
+        `로드밸런서: 백엔드 ${key} 의 응답 (${status}, ${up.bytesReceived}B) 을 클라이언트 ${p.down.remoteIp} 에게 전달${origin !== p.backend.ip ? ` — 응답을 만든 서버는 그 뒤의 ${origin}` : ""}${setCookie ? ` — Set-Cookie: ${setCookie} 를 넣어 이 브라우저의 다음 요청을 같은 백엔드로` : ""}`,
+        { backend: key, bytes: up.bytesReceived, status, ...(setCookie ? { setCookie } : {}) },
+      );
       this.tcp.respond(
         p.down,
         Array.from({ length: n }, (_, k) => ({ len: Math.min(RESPONSE_SEGMENT_BYTES, up.bytesReceived - k * RESPONSE_SEGMENT_BYTES), data: status === "HTTP 200" ? `HTTP 200 (${k + 1}/${n})` : status })),
         ctx,
-        origin,
+        { origin, ...(setCookie ? { setCookie } : {}) },
       );
       return true;
     }

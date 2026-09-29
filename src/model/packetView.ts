@@ -291,14 +291,17 @@ function icmpLayer(p: IcmpPacket): HeaderLayer {
 function tcpLayer(t: TcpSegment): HeaderLayer {
   const rows: [string, string][] = [
     ["출발지 포트", String(t.srcPort)],
-    ["목적지 포트", `${t.dstPort}${t.dstPort === 80 ? " (HTTP)" : t.dstPort === 443 ? " (HTTPS)" : t.dstPort === 22 ? " (SSH)" : ""}`],
+    ["목적지 포트", `${t.dstPort}${t.dstPort === 80 ? " (HTTP)" : t.dstPort === 443 ? " (HTTPS)" : t.dstPort === 22 ? " (SSH)" : t.dstPort === 3128 ? " (HTTP 프록시)" : ""}`],
     ["순서 번호 (seq)", String(t.seq)],
     ["확인 번호 (ack)", t.ackFlag ? String(t.ack) : "- (ACK 플래그 없음)"],
     ["플래그", `${tcpFlags(t)} [${tcpFlagChars(t)}]`],
     ["데이터 길이", `${t.len}B`],
   ];
   if (t.data) rows.push(["데이터 (요약)", t.srcPort === 22 || t.dstPort === 22 ? "SSH 암호화 데이터 (내용은 다루지 않음)" : t.data]);
-  if (t.via !== undefined) rows.push(["Via (HTTP 헤더 흉내)", `로드밸런서 ${t.via}개 거침`]);
+  if (t.target) rows.push(["요청 대상 (절대 URI)", `http://${t.target.replace(/:80$/, "")}/ — 프록시에게 대신 받아 달라는 요청`]);
+  if (t.via !== undefined) rows.push(["Via (HTTP 헤더 흉내)", `로드밸런서·프록시 ${t.via}개 거침`]);
+  if (t.cookie) rows.push(["Cookie", t.cookie]);
+  if (t.setCookie) rows.push(["Set-Cookie", `${t.setCookie}; path=/ — 로드밸런서가 넣은 세션 고정 쿠키`]);
   if (t.origin) rows.push(["X-Served-By (흉내)", t.origin]);
   return { title: "TCP (L4)", rows };
 }
@@ -481,6 +484,23 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
     case "lb.down":
       out.push({ tool: "nginx error.log", line: `connect() failed while connecting to upstream, upstream: "http://${detail(ev, "backend") ?? "?"}/" — upstream server temporarily disabled` });
       break;
+    case "proxy.use":
+      out.push({ tool: "curl -v", line: `* Uses proxy env variable http_proxy == 'http://${detail(ev, "proxy") ?? "?"}'` });
+      out.push({ tool: "curl -v", line: `> GET http://${String(detail(ev, "dst") ?? "?")}/ HTTP/1.1` });
+      break;
+    case "tcp.cookie":
+      out.push({ tool: "curl -v", line: `< Set-Cookie: ${detail(ev, "cookie") ?? "?"}; path=/` });
+      break;
+    case "proxy.relay":
+    case "proxy.deny":
+    case "proxy.fail": {
+      // Squid access.log: 시각 경과ms 클라이언트 결과/상태 바이트 메서드 URL 사용자 계층/상대 형식
+      const target = String(detail(ev, "target") ?? "-");
+      const code = ev.kind === "proxy.deny" ? "TCP_DENIED/403" : ev.kind === "proxy.fail" ? (ev.summary.includes("400") ? "TAG_NONE/400" : "TCP_MISS/503") : `TCP_MISS/${String(detail(ev, "status") ?? "HTTP 200").split(" ")[1] ?? "200"}`;
+      const hier = ev.kind === "proxy.relay" ? `HIER_DIRECT/${detail(ev, "ip") ?? "-"}` : "HIER_NONE/-";
+      out.push({ tool: "Squid access.log", line: `${(ev.time / 1000).toFixed(3)}      0 ${detail(ev, "client") ?? "-"} ${code} ${detail(ev, "bytes") ?? 200} GET http://${target.replace(/:80$/, "")}/ - ${hier} text/html` });
+      break;
+    }
     case "lb.relay":
       out.push({ tool: "nginx access.log", line: `${ip?.dst ?? "-"} - - "GET / HTTP/1.1" ${(detail(ev, "status") ?? "HTTP 200").replace("HTTP ", "").split(" ")[0]} ${detail(ev, "bytes") ?? "-"} upstream=${detail(ev, "backend") ?? "?"}` });
       break;

@@ -989,6 +989,9 @@ select.btn.example {
   align-items: center;
   margin-bottom: 6px;
 }
+.lb-row.proxy-row {
+  grid-template-columns: minmax(0, 1fr) 30px;
+}
 .lb-error {
   grid-column: 1 / -1;
 }
@@ -1362,6 +1365,14 @@ select.btn.example {
 .tcp-log li.failed > span:nth-child(2) {
   color: var(--danger);
 }
+/* 프록시에게 부탁한 연결: 대상 아래 작은 줄 */
+.tcp-log li .via {
+  display: block;
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
 /* 구성 검사 배지 (타일 왼쪽 위) */
 .lint-badge circle {
   fill: var(--warn);
@@ -1592,6 +1603,10 @@ select.btn.example {
   background: transparent;
   color: var(--ink-2);
   cursor: pointer;
+}
+.segmented button:disabled {
+  color: var(--ink-3);
+  cursor: not-allowed;
 }
 .segmented button.on {
   background: var(--surface);

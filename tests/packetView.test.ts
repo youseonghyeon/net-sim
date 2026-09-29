@@ -105,3 +105,31 @@ describe("STP BPDU", () => {
     expect(layers[1]!.rows[0]![1]).toContain("4096.02:00:00:00:00:01");
   });
 });
+
+describe("프록시·쿠키", () => {
+  it("curl -v 의 프록시 줄, Squid access.log, 요청 줄의 절대 URI·Cookie 헤더", async () => {
+    const { exampleProxyTopology } = await import("../src/model/examples");
+    const { loadTopology } = await import("./helpers");
+    const { s, id, act } = loadTopology(exampleProxyTopology());
+    const tr = act({ kind: "tcp-connect", nodeId: id("pc-1"), dst: "example.com", port: 80 });
+    const use = tr.find((e) => e.kind === "proxy.use")!;
+    expect(practitionerLines(use, {}).map((l) => l.line)).toEqual(["* Uses proxy env variable http_proxy == 'http://192.168.0.10:3128'", "> GET http://example.com/ HTTP/1.1"]);
+    const relay = tr.find((e) => e.kind === "proxy.relay")!;
+    expect(practitionerLines(relay, {}).find((l) => l.tool === "Squid access.log")!.line).toMatch(/^\d+\.\d{3} +0 192\.168\.0\.1\d\d TCP_MISS\/200 3000 GET http:\/\/example\.com\/ - HIER_DIRECT\/93\.184\.216\.34 text\/html$/);
+    const deny = act({ kind: "tcp-connect", nodeId: id("pc-1"), dst: "naver.com", port: 80 }).find((e) => e.kind === "proxy.deny")!;
+    expect(practitionerLines(deny, {}).find((l) => l.tool === "Squid access.log")!.line).toContain("TCP_DENIED/403 200 GET http://naver.com/ - HIER_NONE/-");
+    void s;
+  });
+
+  it("프록시에게 보낸 요청: tcpdump 는 절대 URI, 헤더는 요청 대상·Cookie, 응답은 Set-Cookie", () => {
+    const req = ip({ kind: "tcp", srcPort: 49152, dstPort: 3128, seq: 1001, ack: 3001, ackFlag: true, len: 100, data: "GET http://example.com/", target: "example.com:80", cookie: "SERVERID=192.168.0.11:80" }, "192.168.0.101", "192.168.0.10", 64);
+    expect(tcpdumpLine(req)).toContain("IP 192.168.0.101.49152 > 192.168.0.10.3128: Flags [P.]");
+    expect(tcpdumpLine(req)).toContain("HTTP: GET http://example.com/ HTTP/1.1");
+    const rows = headerLayers(req).at(-1)!.rows;
+    expect(rows.find((r) => r[0] === "목적지 포트")![1]).toBe("3128 (HTTP 프록시)");
+    expect(rows.find((r) => r[0] === "요청 대상 (절대 URI)")![1]).toContain("http://example.com/");
+    expect(rows.find((r) => r[0] === "Cookie")![1]).toBe("SERVERID=192.168.0.11:80");
+    const res = ip({ kind: "tcp", srcPort: 80, dstPort: 49152, seq: 3001, ack: 1101, ackFlag: true, len: 1000, data: "HTTP 200 (1/3)", setCookie: "SERVERID=192.168.0.11:80" }, "192.168.0.20", "192.168.0.101", 64);
+    expect(headerLayers(res).at(-1)!.rows.find((r) => r[0] === "Set-Cookie")![1]).toContain("SERVERID=192.168.0.11:80; path=/");
+  });
+});

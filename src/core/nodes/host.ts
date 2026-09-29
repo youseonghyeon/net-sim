@@ -3,7 +3,8 @@ import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, describeOr
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, type DnsServerConfig } from "./dns";
 import { NetInterface } from "./iface";
-import { LB_ALGORITHM_LABEL, LB_MODE_LABEL, LoadBalancer, type LbConfig } from "./lb";
+import { LB_ALGORITHM_LABEL, LB_MODE_LABEL, LB_STICKY_LABEL, LoadBalancer, type LbConfig } from "./lb";
+import { ForwardProxy, type ProxyConfig } from "./proxy";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { TCP_TIMER_TAG, TcpStack } from "./tcp";
 import { RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
@@ -27,8 +28,17 @@ export interface HostConfig {
   dnsServer?: DnsServerConfig;
   /** 이 호스트가 로드밸런서(리버스 프록시) 역할을 할 때 */
   lb?: LbConfig;
+  /** 이 호스트가 포워드 프록시(Squid 식) 역할을 할 때 */
+  proxy?: ProxyConfig;
+  /** 이 호스트의 HTTP 프록시 설정 (http_proxy): 포트 80 요청을 이 프록시에게 부탁한다 */
+  httpProxy?: HttpProxySetting;
   /** 원격 접속 VPN 클라이언트 */
   ra?: RaClientConfig;
+}
+
+export interface HttpProxySetting {
+  server: Ip;
+  port: number;
 }
 
 export interface PingRecord {
@@ -95,6 +105,8 @@ export class Host implements SimNode {
   readonly tcp: TcpStack;
   /** 로드밸런서 서비스 (꺼져 있으면 아무것도 안 함) */
   readonly lb: LoadBalancer;
+  readonly proxy: ForwardProxy;
+  httpProxy: HttpProxySetting | undefined;
   /** 원격 접속 VPN 클라이언트 */
   readonly ra: RaClient;
   /** 웹 등 직접 응답하는 TCP 포트. 실제로 듣는 포트는 여기에 LB 포트를 더한 것 */
@@ -125,11 +137,14 @@ export class Host implements SimNode {
     this.dhcp = new DhcpClient(this.iface, hashCode(cfg.id));
     this.tcp = new TcpStack({
       send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)),
-      onRequest: (conn, ctx) => this.lb.onRequest(conn, ctx),
-      onFinish: (conn, ctx) => void this.lb.onFinish(conn, ctx),
+      onRequest: (conn, ctx) => this.lb.onRequest(conn, ctx) || this.proxy.onRequest(conn, ctx),
+      onFinish: (conn, ctx) => void (this.lb.onFinish(conn, ctx) || this.proxy.onFinish(conn, ctx)),
     });
     this.lb = new LoadBalancer(this.tcp, () => this.iface.ip);
     if (cfg.lb) this.lb.config = { ...cfg.lb, backends: cfg.lb.backends.map((b) => ({ ...b })) };
+    this.proxy = new ForwardProxy(this.tcp, () => this.iface.ip, (name, ctx, done) => this.resolver.resolve(name, ctx, this.emit(ctx), done));
+    if (cfg.proxy) this.proxy.config = { ...cfg.proxy, deny: [...cfg.proxy.deny] };
+    this.httpProxy = cfg.httpProxy ? { ...cfg.httpProxy } : undefined;
     this.services = [...(cfg.services ?? [])];
     this.syncListening();
     this.dhcpServer = new DhcpServer(cfg.dhcpServer ?? { enabled: false, start: "", end: "" }, this.iface, false);
@@ -195,10 +210,24 @@ export class Host implements SimNode {
     this.syncListening(ctx);
   }
 
-  /** 실제로 듣는 포트 = 서비스 포트 + (켜져 있으면) LB 포트 */
+  /** 포워드 프록시 설정 교체 */
+  setProxy(cfg: ProxyConfig, ctx: NodeContext): void {
+    this.proxy.setConfig(cfg, ctx);
+    this.syncListening(ctx);
+  }
+
+  /** HTTP 프록시 설정(http_proxy) 교체 */
+  setHttpProxy(cfg: HttpProxySetting | undefined, ctx: NodeContext): void {
+    if (JSON.stringify(cfg) === JSON.stringify(this.httpProxy)) return;
+    this.httpProxy = cfg ? { ...cfg } : undefined;
+    ctx.trace("ip.config", "sys", cfg ? `HTTP 프록시 설정: http_proxy=http://${cfg.server}:${cfg.port} — 웹(포트 80) 요청은 이 프록시에게 부탁` : "HTTP 프록시 설정 지움 — 웹 요청을 직접 보냄", { ...cfg });
+  }
+
+  /** 실제로 듣는 포트 = 서비스 포트 + (켜져 있으면) LB 포트 + 프록시 포트 */
   private syncListening(ctx?: NodeContext): void {
     const next = new Set(this.services);
     if (this.lb.config.enabled && this.lb.config.mode !== "l4") next.add(this.lb.config.port); // L4 는 TCP 로 받지 않고 주소만 바꿔 넘긴다
+    if (this.proxy.config.enabled) next.add(this.proxy.config.port);
     for (const p of [...this.tcp.listening]) {
       if (!next.has(p)) {
         this.tcp.listening.delete(p);
@@ -208,7 +237,8 @@ export class Host implements SimNode {
     for (const p of next) {
       if (!this.tcp.listening.has(p)) {
         this.tcp.listening.add(p);
-        ctx?.trace("ip.config", "sys", `TCP 포트 ${p} 에서 연결 받기 시작 (listen)${this.lb.config.enabled && p === this.lb.config.port ? " — 로드밸런서" : ""}`, { port: p });
+        const role = this.lb.config.enabled && p === this.lb.config.port ? " — 로드밸런서" : this.proxy.config.enabled && p === this.proxy.config.port ? " — 프록시" : "";
+        ctx?.trace("ip.config", "sys", `TCP 포트 ${p} 에서 연결 받기 시작 (listen)${role}`, { port: p });
       }
     }
   }
@@ -547,6 +577,13 @@ export class Host implements SimNode {
       this.tcp.recordFailure(this.iface.ip, target, port, "잘못된 주소", ctx);
       return;
     }
+    const proxy = this.proxyFor(target, port);
+    if (proxy) {
+      // 웹 요청은 대상에 직접 가지 않고 프록시에게 부탁한다. 이름도 풀지 않고 그대로 넘긴다 (프록시가 찾는다)
+      ctx.trace("proxy.use", "app", `HTTP 프록시 설정(http_proxy=http://${proxy.server}:${proxy.port}) → ${target}:${port} 에 직접 가지 않고 프록시에게 대신 받아 달라고 부탁${looksLikeName(target) ? " (이름은 프록시가 찾음)" : ""}`, { dst: target, port, proxy: `${proxy.server}:${proxy.port}` });
+      this.tcp.connect(this.iface.ip, proxy.server, proxy.port, ctx, { target: `${target}:${port}` });
+      return;
+    }
     if (looksLikeName(target)) {
       this.resolver.resolve(target, ctx, this.emit(ctx), (ip, err) => {
         if (!ip) {
@@ -560,6 +597,16 @@ export class Host implements SimNode {
       return;
     }
     this.tcp.connect(this.iface.ip, target, port, ctx);
+  }
+
+  /**
+   * 이 연결을 프록시에게 부탁하는지: 웹(포트 80) 요청이면 대상이 어디든 (브라우저·curl 의 http_proxy 와 같다 —
+   * 같은 사무실 서버도 프록시를 거친다. 실무에서는 예외 목록(no_proxy·PAC)으로 뺀다). 내 주소는 직접
+   */
+  private proxyFor(target: string, port: number): HttpProxySetting | undefined {
+    const p = this.httpProxy;
+    if (!p || port !== 80 || !this.iface.ip || target === this.iface.ip) return undefined;
+    return p;
   }
 
   /** ipconfig /renew 에 해당 */
@@ -790,8 +837,10 @@ export class Host implements SimNode {
         ...(this.dnsServer.config.enabled
           ? [["DNS 서버", `켜짐 · 레코드 ${this.dnsServer.config.records.length}개${this.dnsServer.config.upstream ? ` · 업스트림 DNS ${this.dnsServer.config.upstream}` : ""}`] as [string, string]]
           : []),
+        ...(this.httpProxy ? [["HTTP 프록시", `http://${this.httpProxy.server}:${this.httpProxy.port} (웹 요청)`] as [string, string]] : []),
+        ...(this.proxy.config.enabled ? [["프록시", `켜짐 · 포트 ${this.proxy.config.port}${this.proxy.config.deny.length ? ` · 차단 ${this.proxy.config.deny.length}개` : ""}`] as [string, string]] : []),
         ...(this.lb.config.enabled
-          ? [["로드밸런서", `켜짐 · ${LB_MODE_LABEL[this.lb.config.mode ?? "l7"]} · 포트 ${this.lb.config.port} · ${LB_ALGORITHM_LABEL[this.lb.config.algorithm]}${this.lb.config.sticky ? " · 세션 고정" : ""} · 백엔드 ${this.lb.config.backends.length}대`] as [string, string]]
+          ? [["로드밸런서", `켜짐 · ${LB_MODE_LABEL[this.lb.config.mode ?? "l7"]} · 포트 ${this.lb.config.port} · ${LB_ALGORITHM_LABEL[this.lb.config.algorithm]}${this.lb.config.sticky ? ` · ${LB_STICKY_LABEL[this.lb.config.sticky]}` : ""} · 백엔드 ${this.lb.config.backends.length}대`] as [string, string]]
           : []),
       ],
       tables: [
@@ -799,6 +848,7 @@ export class Host implements SimNode {
         ...(this.dnsServer.config.enabled ? [{ title: "DNS 레코드·캐시", columns: ["이름", "IP", "출처"], rows: this.dnsServer.rows() }] : []),
         ...(this.lb.config.enabled ? [{ title: "로드밸런서 백엔드", columns: ["백엔드", "상태", "처리", "실패"], rows: this.lb.rows(this.clock) }] : []),
         ...(this.lb.config.enabled && this.lb.config.mode === "l4" ? [{ title: "L4 흐름", columns: ["클라이언트", "변환 → 백엔드"], rows: this.lb.flowRows() }] : []),
+        ...(this.proxy.config.enabled ? [{ title: "프록시 요청 (access.log)", columns: ["클라이언트", "대상", "결과"], rows: this.proxy.rows() }] : []),
         ...(this.resolver.cache.size > 0 ? [{ title: "DNS 캐시 (리졸버)", columns: ["이름", "IP", "시각"], rows: this.resolver.rows() }] : []),
         { title: "TCP 연결", columns: ["상대", "상태", "보냄 / 받음"], rows: this.tcp.rows() },
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: i.arpRows() },

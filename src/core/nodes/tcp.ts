@@ -80,6 +80,12 @@ export interface TcpConn {
   status?: string;
   /** 요청이 거친 로드밸런서 수 (클라이언트: 보낼 값, 서버: 받은 값) */
   via?: number;
+  /** 요청의 Cookie (클라이언트: 보낸 값, 서버: 받은 값) */
+  cookie?: string;
+  /** 클라이언트: 응답의 Set-Cookie */
+  setCookie?: string;
+  /** 프록시 경유 요청의 대상 "호스트:포트" (클라이언트: 프록시에게 부탁한 곳, 서버: 받은 값) */
+  target?: string;
   /** 클라이언트: 응답 대기 timeout 타이머 */
   readTimer?: TimerHandle;
   /** SSH 흉내 (포트 22): 지금까지 주고받은 메시지 수, 세션이 열렸는지 */
@@ -101,6 +107,26 @@ export interface ResponsePart {
   data: string;
 }
 
+/** 요청에 붙이는 것 */
+export interface ConnectOptions {
+  /** 이 요청이 이미 거친 로드밸런서·프록시 수 (그들이 뒤로 보낼 때만). 있으면 쿠키 저장소를 쓰지 않는다 (중계 연결) */
+  via?: number;
+  /** 프록시에게 부탁할 대상 "호스트:포트" (요청 줄이 절대 URI) */
+  target?: string;
+  /** 보낼 Cookie. 없으면 끝 클라이언트는 쿠키 저장소에서 찾는다 */
+  cookie?: string;
+  /** SYN 을 보내기 전에 부른다. 내 주소로 가는 루프백은 connect 안에서 연결이 끝까지 진행되므로, 추적할 쪽은 여기서 등록한다 */
+  onCreated?: (conn: TcpConn) => void;
+}
+
+/** 응답에 붙이는 것 */
+export interface ResponseMeta {
+  /** 응답을 실제로 만든 서버 (X-Served-By 흉내) */
+  origin?: string;
+  /** 첫 응답 세그먼트에 싣는 Set-Cookie */
+  setCookie?: string;
+}
+
 function connKey(localIp: Ip, localPort: number, remoteIp: Ip, remotePort: number): string {
   return `${localIp}:${localPort}-${remoteIp}:${remotePort}`;
 }
@@ -109,9 +135,16 @@ function endpoint(ip: Ip, port: number): string {
   return `${ip}:${port}`;
 }
 
+/** 쿠키의 사이트: 프록시 경유면 부탁한 대상의 호스트, 아니면 접속한 주소 */
+function siteOf(remoteIp: Ip, target?: string): string {
+  return target ? target.replace(/:\d+$/, "") : remoteIp;
+}
+
 export class TcpStack {
   readonly conns = new Map<string, TcpConn>();
   readonly listening = new Set<number>();
+  /** 쿠키 저장소 (브라우저): 사이트(접속한 호스트 — 주소 또는 이름, 포트는 보지 않음) → 받은 Set-Cookie. 끝 클라이언트만 쓴다 */
+  readonly cookies = new Map<string, string>();
   private nextPort = EPHEMERAL_START;
 
   constructor(
@@ -122,12 +155,10 @@ export class TcpStack {
 
   // ---------- 클라이언트 ----------
 
-  /**
-   * @param via 이 요청이 이미 거친 로드밸런서 수 (로드밸런서가 백엔드로 보낼 때만)
-   * @param onCreated SYN 을 보내기 전에 부른다. 내 주소로 가는 루프백은 connect 안에서 연결이 끝까지 진행되므로, 추적할 쪽은 여기서 등록한다
-   */
-  connect(localIp: Ip, remoteIp: Ip, remotePort: number, ctx: NodeContext, via?: number, onCreated?: (conn: TcpConn) => void): TcpConn {
+  connect(localIp: Ip, remoteIp: Ip, remotePort: number, ctx: NodeContext, opts: ConnectOptions = {}): TcpConn {
+    const { via, target, onCreated } = opts;
     const localPort = this.nextPort++;
+    const cookie = opts.cookie ?? (via === undefined ? this.cookies.get(siteOf(remoteIp, target)) : undefined);
     const conn: TcpConn = {
       id: connKey(localIp, localPort, remoteIp, remotePort),
       role: "client",
@@ -148,6 +179,8 @@ export class TcpStack {
       finReceived: false,
       createdAt: ctx.now,
       ...(via !== undefined ? { via } : {}),
+      ...(target !== undefined ? { target } : {}),
+      ...(cookie !== undefined ? { cookie } : {}),
     };
     this.conns.set(conn.id, conn);
     this.prune();
@@ -221,7 +254,21 @@ export class TcpStack {
             return;
           }
           // 앱: 요청 전송. 응답이 영원히 안 오면 끝나지 않으므로 응답 대기 timeout 을 건다
-          this.transmit(conn, { ackFlag: true, len: REQUEST_BYTES, data: "GET /", ...(conn.via !== undefined ? { via: conn.via } : {}) }, ctx, `요청 데이터 전송: "GET /" ${REQUEST_BYTES}B (seq=${conn.sndNxt})${conn.via ? ` — 로드밸런서 ${conn.via}개 거침 (Via)` : ""}`, "tcp.data.sent");
+          {
+            const line = conn.target ? `GET http://${conn.target.replace(/:80$/, "")}/` : "GET /";
+            const notes = [
+              conn.target ? `프록시에게 ${conn.target} 를 대신 받아 달라고 부탁 (요청 줄이 절대 URI)` : "",
+              conn.via ? `로드밸런서·프록시 ${conn.via}개 거침 (Via)` : "",
+              conn.cookie ? `Cookie: ${conn.cookie}` : "",
+            ].filter(Boolean);
+            this.transmit(
+              conn,
+              { ackFlag: true, len: REQUEST_BYTES, data: line, ...(conn.via !== undefined ? { via: conn.via } : {}), ...(conn.target ? { target: conn.target } : {}), ...(conn.cookie ? { cookie: conn.cookie } : {}) },
+              ctx,
+              `요청 데이터 전송: "${line}" ${REQUEST_BYTES}B (seq=${conn.sndNxt})${notes.length ? ` — ${notes.join(", ")}` : ""}`,
+              "tcp.data.sent",
+            );
+          }
           conn.readTimer = ctx.timer(TCP_READ_TIMEOUT, TCP_TIMER_TAG, { conn: conn.id, read: true });
         } else {
           ctx.trace("tcp.ignore", "L4", `SYN_SENT 상태에서 기대하지 않은 ${flags} → 무시`, { conn: conn.id });
@@ -371,10 +418,22 @@ export class TcpStack {
     if (conn.role === "client") {
       if (seg.origin) conn.servedBy = seg.origin;
       if (conn.status === undefined && seg.data) conn.status = /^HTTP \d{3}( [A-Za-z ]+)?/.exec(seg.data)?.[0].trim();
+      if (seg.setCookie) {
+        conn.setCookie = seg.setCookie;
+        // 끝 클라이언트(브라우저)만 저장해 다음 요청부터 싣는다. 중계 연결(로드밸런서·프록시)은 받은 것을 앞으로 넘길 뿐
+        if (conn.via === undefined) {
+          this.cookies.set(siteOf(conn.remoteIp, conn.target), seg.setCookie);
+          ctx.trace("tcp.cookie", "app", `Set-Cookie 수신: ${seg.setCookie} → 쿠키 저장, 이 사이트로 가는 다음 요청부터 Cookie 헤더로 보냄`, { conn: conn.id, cookie: seg.setCookie });
+        }
+      }
       conn.readTimer?.cancel();
       conn.readTimer = undefined;
     }
-    if (conn.role === "server" && seg.via !== undefined) conn.via = seg.via;
+    if (conn.role === "server") {
+      if (seg.via !== undefined) conn.via = seg.via;
+      if (seg.cookie !== undefined) conn.cookie = seg.cookie;
+      if (seg.target !== undefined) conn.target = seg.target;
+    }
     // SSH 흉내: 상대 메시지를 받으면 다음 차례 메시지를 보낸다
     if (conn.ssh && conn.state === "ESTABLISHED") {
       conn.ssh.step++;
@@ -450,11 +509,19 @@ export class TcpStack {
     return true;
   }
 
-  /** 서버 연결로 응답 세그먼트를 보내고 FIN. origin 을 주면 세그먼트에 "응답을 만든 서버" 를 싣는다 */
-  respond(conn: TcpConn, parts: ResponsePart[], ctx: NodeContext, origin?: string): void {
+  /** 서버 연결로 응답 세그먼트를 보내고 FIN. origin 을 주면 세그먼트에 "응답을 만든 서버" 를, setCookie 는 첫 세그먼트에 싣는다 */
+  respond(conn: TcpConn, parts: ResponsePart[], ctx: NodeContext, meta: ResponseMeta = {}): void {
     if (conn.state !== "ESTABLISHED") return; // 기다리는 동안 클라이언트가 끊었으면 보낼 곳이 없다
+    const { origin, setCookie } = meta;
     parts.forEach((p, k) => {
-      this.transmit(conn, { ackFlag: true, len: p.len, data: p.data, ...(origin ? { origin } : {}) }, ctx, `응답 데이터 전송 ${k + 1}/${parts.length}: ${p.data} ${p.len}B (seq=${conn.sndNxt})${origin ? ` — 만든 서버 ${origin}` : ""}`, "tcp.data.sent");
+      const cookie = k === 0 && setCookie ? setCookie : undefined;
+      this.transmit(
+        conn,
+        { ackFlag: true, len: p.len, data: p.data, ...(origin ? { origin } : {}), ...(cookie ? { setCookie: cookie } : {}) },
+        ctx,
+        `응답 데이터 전송 ${k + 1}/${parts.length}: ${p.data} ${p.len}B (seq=${conn.sndNxt})${origin ? ` — 만든 서버 ${origin}` : ""}${cookie ? `, Set-Cookie: ${cookie}` : ""}`,
+        "tcp.data.sent",
+      );
     });
     conn.state = "FIN_WAIT_1";
     this.transmit(conn, { fin: true, ackFlag: true }, ctx, `FIN 전송: 응답을 다 보냈으니 종료 요청 (seq=${conn.sndNxt})`, "tcp.fin.sent");

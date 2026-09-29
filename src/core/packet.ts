@@ -102,6 +102,12 @@ export interface TcpSegment {
   origin?: string;
   /** 요청이 거친 로드밸런서 수 (HTTP Via 헤더 흉내). 로드밸런서끼리 순환하면 이 값으로 끊는다 */
   via?: number;
+  /** 요청의 Cookie 헤더 (예: "SERVERID=192.168.0.11:80") */
+  cookie?: string;
+  /** 응답의 Set-Cookie 헤더 — 로드밸런서의 쿠키 세션 고정 */
+  setCookie?: string;
+  /** 프록시에게 보낸 요청의 대상 (절대 URI "GET http://example.com/" 의 호스트:포트) */
+  target?: string;
 }
 
 export interface IcmpEcho {

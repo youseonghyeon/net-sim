@@ -7,7 +7,7 @@ import { examplePartsTopology, exampleDockerTopology } from "./examples/parts";
 import { exampleTwoGatewaysTopology, exampleTwoHomesTopology, exampleBackboneTopology, exampleRipTopology } from "./examples/routing";
 import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
 import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
-import { exampleLoadBalancerTopology } from "./examples/services";
+import { exampleLoadBalancerTopology, exampleProxyTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology } from "./examples/internet";
 import { exampleRoamingTopology } from "./examples/wireless";
 
@@ -20,7 +20,7 @@ export * from "./examples/services";
 export * from "./examples/internet";
 export * from "./examples/wireless";
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "lb" | "roaming" | "docker";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "lb" | "proxy" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -138,6 +138,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "로드밸런서 (서버 토글 vs 전용 장비)",
     blurb: "pc-1 에서 192.168.0.10(nginx 서버) 이나 192.168.0.20(lb-1) 으로 TCP 연결을 여러 번 보내 보세요. 진단 목록의 \"응답\" 이 web-1 → web-2 로 바뀝니다. web-2 의 웹 서버를 끄면 그 차례 요청은 거부되고 곧바로 다른 서버로 넘어가며 10초 동안 빠집니다. 인터넷 노드의 외부 접속으로 공인 주소:80 에 들어오면 포트 포워딩 → lb-1 → 웹 서버로 갑니다. lb-1 설정에서 방식을 L4 주소 변환으로 바꾸면 연결이 하나로 이어지고(LB 는 주소만 바꿈), 세션 고정을 켜면 같은 PC 는 늘 같은 서버로 갑니다.",
     build: exampleLoadBalancerTopology,
+  },
+  proxy: {
+    id: "proxy",
+    group: "서비스",
+    label: "포워드 프록시 (프록시로만 나가는 사무실)",
+    blurb: "공유기 방화벽은 proxy-1 만 인터넷으로 내보냅니다. pc-1 에서 example.com 으로 TCP 연결(80)을 보내면 프록시 설정(http_proxy)에 따라 proxy-1 에게 부탁하고, proxy-1 이 이름을 찾아 대신 받아 옵니다. 같은 요청을 laptop-1 에서 보내면 설정이 없어 직접 나가다 방화벽에 막혀 timeout 입니다. pc-1 에서 8.8.8.8 로 ping 해 보세요 — 프록시는 웹만 대신하므로 막힙니다. naver.com 은 proxy-1 의 차단 목록에 있어 403 을 받습니다. proxy-1 의 표 탭에서 요청 기록(access.log)을 봅니다.",
+    build: exampleProxyTopology,
   },
   internet: {
     id: "internet",

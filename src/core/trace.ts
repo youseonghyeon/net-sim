@@ -101,6 +101,13 @@ export type TraceKind =
   | "tcp.rst.received"
   | "tcp.refused"
   | "tcp.ignore"
+  | "tcp.cookie"
+  | "proxy.config"
+  | "proxy.use"
+  | "proxy.request"
+  | "proxy.relay"
+  | "proxy.deny"
+  | "proxy.fail"
   | "link.loss"
   | "hub.repeat"
   | "nat.forward.rule"
@@ -184,6 +191,8 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "tcp.rst.received",
   "tcp.refused",
   "tcp.out-of-order",
+  "proxy.deny",
+  "proxy.fail",
   "arp.timeout",
   "ip.conflict",
   "link.unconnected",

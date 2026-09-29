@@ -836,7 +836,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("설정");
   await page.click(".inspector .segmented button:has-text('L4 주소 변환')");
   await page.waitForTimeout(100);
-  console.log("lb mode:", await page.locator(".inspector .segmented button.on", { hasText: "L4" }).count() ? "L4" : "NO", "| sticky toggle:", await page.locator(".inspector .toggle-row", { hasText: "세션 고정" }).count());
+  console.log("lb mode:", await page.locator(".inspector .segmented button.on", { hasText: "L4" }).count() ? "L4" : "NO", "| cookie sticky disabled in L4:", await page.locator(".inspector .segmented button:has-text('쿠키')").isDisabled());
   await clickDevice("pc-1");
   await goTab("진단");
   await page.fill(".tcp-row .input:not(.port)", "192.168.0.20");
@@ -845,6 +845,53 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.click(".tcp-row .btn");
   await page.waitForFunction(() => /종료됨|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 60000 });
   console.log("lb l4 tcp:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
+}
+// 로드밸런서 쿠키 세션 고정: lb-1 을 쿠키로 → pc-1 이 두 번 연결하면 처음은 쿠키를 받고 다음은 보낸다
+{
+  await loadEx("lb");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await clickDevice("lb-1");
+  await goTab("설정");
+  await page.click(".inspector .segmented button:has-text('쿠키')");
+  await clickDevice("pc-1");
+  await goTab("진단");
+  for (let k = 0; k < 2; k++) {
+    await page.fill(".tcp-row .input:not(.port)", "192.168.0.20");
+    await page.keyboard.press("Escape");
+    await page.fill(".tcp-row .input.port", "80");
+    const before = await page.locator(".inspector .tcp-log li").count();
+    await page.click(".tcp-row .btn");
+    await page.waitForFunction((n) => document.querySelectorAll(".inspector .tcp-log li").length > n && /종료됨|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), before, { timeout: 60000 });
+  }
+  const rows = (await page.locator(".inspector .tcp-log li").allInnerTexts()).map((x) => x.replace(/\s+/g, " "));
+  console.log("lb cookie:", rows.slice(0, 2).join(" | "));
+}
+// 포워드 프록시: pc-1 의 웹 요청은 proxy-1 경유(이름도 프록시가 찾음), 차단 목록은 403, proxy-1 표에 access.log
+{
+  await loadEx("proxy");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await clickDevice("pc-1");
+  await goTab("진단");
+  for (const dst of ["example.com", "naver.com"]) {
+    await page.fill(".tcp-row .input:not(.port)", dst);
+    await page.keyboard.press("Escape");
+    await page.fill(".tcp-row .input.port", "80");
+    await page.click(".tcp-row .btn");
+    await page.waitForFunction((d) => new RegExp(`${d}.*(종료됨|실패|HTTP)`).test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), dst, { timeout: 60000 });
+    console.log(`proxy ${dst}:`, (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
+  }
+  await page.screenshot({ path: `${OUT}/56-proxy-diag.png` });
+  await clickDevice("proxy-1");
+  await goTab("표");
+  const log = page.locator(".inspector section", { has: page.locator("h3", { hasText: "프록시 요청" }) });
+  console.log("proxy access.log rows:", await log.locator("tbody tr").count());
+  await goTab("설정");
+  await page.locator(".inspector .toggle-row", { hasText: "프록시" }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/57-proxy-settings.png` });
+  await clickDevice("pc-1");
+  await goTab("설정");
+  await page.locator(".inspector h3", { hasText: "HTTP 프록시" }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/58-http-proxy.png` });
 }
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
