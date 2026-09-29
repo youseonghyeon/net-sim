@@ -30,7 +30,7 @@ export interface Ipv4Packet {
   src: Ip;
   dst: Ip;
   ttl: number;
-  payload: IcmpPacket | UdpPacket | TcpSegment | EspPacket;
+  payload: IcmpPacket | UdpPacket | TcpSegment | EspPacket | VrrpPacket;
 }
 
 export interface TcpSegment {
@@ -137,7 +137,7 @@ export function icmpErrorFor(from: Ip, dropped: Ipv4Packet, err: { type: "time-e
   if (p.kind === "icmp") {
     if (p.type !== "echo-request" && p.type !== "echo-reply") return undefined;
     l4 = { kind: "icmp", id: p.id, seq: p.seq };
-  } else if (p.kind === "esp") return undefined; // 터널 바깥 패킷의 오류는 VPN 장비가 쓰지 않으므로 생략 (터널은 IKE timeout 으로 알아챈다)
+  } else if (p.kind === "esp" || p.kind === "vrrp") return undefined; // 터널 바깥 패킷의 오류는 VPN 장비가 쓰지 않으므로 생략 (터널은 IKE timeout 으로 알아챈다)
   else l4 = { kind: p.kind, srcPort: p.srcPort, dstPort: p.dstPort };
   const original = { src: dropped.src, dst: dropped.dst, l4 };
   const payload: IcmpError = err.type === "time-exceeded" ? { kind: "icmp", type: "time-exceeded", original } : { kind: "icmp", type: "unreachable", code: err.code, original };
@@ -209,6 +209,21 @@ export interface IkeMessage {
   error?: "AUTHENTICATION_FAILED";
 }
 
+/**
+ * VRRP 광고 (IP 프로토콜 112, 224.0.0.18): 이중화 쌍이 "나는 이 가상 주소의 master(또는 후보)이고 우선순위는 N" 을 알린다.
+ * 우선순위 0 = master 가 물러남 (backup 이 곧바로 이어받으라는 뜻)
+ */
+export interface VrrpPacket {
+  kind: "vrrp";
+  vrid: number;
+  priority: number;
+  /** 이 세그먼트의 가상 주소 */
+  vip: Ip;
+}
+
+export const VRRP_MULTICAST_IP: Ip = "224.0.0.18";
+export const VRRP_MULTICAST_MAC: Mac = "01:00:5e:00:00:12";
+
 export const IKE_PORT = 500;
 export const NAT_T_PORT = 4500;
 
@@ -274,7 +289,7 @@ export const LIMITED_BROADCAST_IP: Ip = "255.255.255.255";
 
 export type Layer = "L1" | "L2" | "L3" | "L4" | "app" | "sys";
 
-export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns" | "rip" | "vpn";
+export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns" | "rip" | "vpn" | "vrrp";
 
 const ESP_LABEL = (e: EspPacket) => `ESP SPI 0x${e.spi.toString(16).padStart(8, "0")} seq=${e.seq} (암호화됨 · 안: ${e.inner.src} → ${e.inner.dst})`;
 const IKE_LABEL = (m: IkeMessage) => `IKE ${m.exchange} ${m.response ? (m.error ? `응답 (${m.error})` : "응답") : "요청"}`;
@@ -294,6 +309,7 @@ export function describeFrame(frame: EthernetFrame): string {
   }
   if (inner.kind === "tcp") return `TCP ${tcpFlags(inner)} seq=${inner.seq} ack=${inner.ack}${inner.len ? ` len=${inner.len}` : ""}`;
   if (inner.kind === "esp") return ESP_LABEL(inner);
+  if (inner.kind === "vrrp") return `VRRP 광고 (그룹 ${inner.vrid}, 우선순위 ${inner.priority}${inner.priority === 0 ? " — 물러남" : ""}, 가상 주소 ${inner.vip})`;
   const d = inner.payload;
   if (d.kind === "esp") return `UDP 4500 (NAT-T) · ${ESP_LABEL(d)}`;
   if (d.kind === "ike") return IKE_LABEL(d);
@@ -319,6 +335,7 @@ export function shortLabel(frame: EthernetFrame): string {
   const inner = p.payload;
   if (inner.kind === "icmp") return inner.type === "echo-request" ? "ping 요청" : inner.type === "echo-reply" ? "ping 응답" : inner.type === "time-exceeded" ? "TTL 초과" : "도달 불가";
   if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
+  if (inner.kind === "vrrp") return inner.priority === 0 ? "VRRP 물러남" : `VRRP ${inner.priority}`;
   if (inner.kind === "esp" || inner.payload.kind === "esp") return "ESP 터널";
   if (inner.payload.kind === "ike") return inner.payload.exchange === "IKE_SA_INIT" ? "IKE 협상" : "IKE 인증";
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
@@ -334,6 +351,7 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.payload.kind === "icmp") return "icmp";
   if (p.payload.kind === "tcp") return "tcp";
   if (p.payload.kind === "esp") return "vpn";
+  if (p.payload.kind === "vrrp") return "vrrp";
   const k = p.payload.payload.kind;
   return k === "dns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" ? "vpn" : "dhcp";
 }

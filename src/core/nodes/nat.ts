@@ -61,6 +61,7 @@ export class NatTable {
   translate(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
     if (isIcmpError(p)) return this.translateError(pkt, p, publicIp, ctx, frameId);
+    if (p.kind === "vrrp") return undefined; // 멀티캐스트 광고는 NAT 대상이 아님
     if (p.kind === "esp") {
       ctx.trace("nat.miss", "L3", `ESP(IPsec) ${pkt.src} → ${pkt.dst}: ESP 에는 포트가 없어 NAT 가 누구 것인지 구분할 수 없음 → 드롭. 양쪽 VPN 이 NAT 를 감지하면 UDP 4500 (NAT-T) 로 싣는다`, { proto: "esp" }, frameId);
       return undefined;
@@ -164,6 +165,7 @@ export class NatTable {
   restore(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
     if (isIcmpError(p)) return this.restoreError(pkt, p, publicIp, ctx, frameId);
+    if (p.kind === "vrrp") return undefined; // 멀티캐스트 광고는 NAT 대상이 아님
     if (p.kind === "esp") {
       ctx.trace("nat.miss", "L3", `ESP(IPsec) ${pkt.src} → ${pkt.dst}: ESP 에는 포트가 없어 NAT 가 누구 것인지 구분할 수 없음 → 드롭. 양쪽 VPN 이 NAT 를 감지하면 UDP 4500 (NAT-T) 로 싣는다`, { proto: "esp" }, frameId);
       return undefined;

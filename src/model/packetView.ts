@@ -35,6 +35,7 @@ function l4Length(p: Ipv4Packet["payload"]): number {
   if (p.kind === "icmp") return p.type === "echo-request" || p.type === "echo-reply" ? ICMP_ECHO_LEN : 36;
   if (p.kind === "tcp") return 20 + p.len;
   if (p.kind === "esp") return espLength(p);
+  if (p.kind === "vrrp") return 12; // VRRPv3 머리 8 + 가상 주소 4
   return 8 + appLength(p);
 }
 /** ESP 머리(SPI 4 + seq 4) + IV 16 + 암호화된 원래 IP 패킷 + 패딩·무결성 값 약 16 */
@@ -68,6 +69,7 @@ function ipLine(pkt: Ipv4Packet): string {
   if (p.kind === "icmp") return `IP ${pkt.src} > ${pkt.dst}: ${icmpText(p)}, length ${l4Length(p)}`;
   if (p.kind === "tcp") return `IP ${pkt.src}.${p.srcPort} > ${pkt.dst}.${p.dstPort}: ${tcpText(p)}`;
   if (p.kind === "esp") return `IP ${pkt.src} > ${pkt.dst}: ${espText(p)}, length ${espLength(p)}`;
+  if (p.kind === "vrrp") return `IP ${pkt.src} > ${pkt.dst}: VRRPv3, Advertisement, vrid ${p.vrid}, prio ${p.priority}, intvl 100cs, length 12`;
   return `IP ${pkt.src}.${p.srcPort} > ${pkt.dst}.${p.dstPort}: ${udpText(p)}`;
 }
 
@@ -111,7 +113,7 @@ function udpText(u: UdpPacket): string {
   // tcpdump 는 터널 안을 풀지 못한다 — 암호화되어 있으므로 그냥 UDP 로 보인다
   if (m.kind === "vpn") return `UDP, length ${appLength(u)}`;
   if (m.kind === "esp") return `UDP-encap: ${espText(m)}, length ${appLength(u)}`;
-  if (m.kind === "ike") return `${u.dstPort === 4500 ? "NONESP-encap: " : ""}isakmp: ${m.exchange === "IKE_SA_INIT" ? "parent_sa ikev2_init" : "child_sa  ikev2_auth"}[${m.response ? "R" : "I"}]`;
+  if (m.kind === "ike") return `${u.dstPort === 4500 || u.srcPort === 4500 ? "NONESP-encap: " : ""}isakmp: ${m.exchange === "IKE_SA_INIT" ? "parent_sa ikev2_init" : "child_sa  ikev2_auth"}[${m.response ? "R" : "I"}]`;
   if (m.kind === "dhcp") {
     const fromClient = m.op === "discover" || m.op === "request" || m.op === "release";
     return `BOOTP/DHCP, ${fromClient ? "Request" : "Reply"} from ${m.clientMac}, length ${appLength(u)} (DHCP-Message Option 53: ${DHCP_TYPE[m.op][1]})`;
@@ -160,7 +162,7 @@ export function headerLayers(frame: EthernetFrame): HeaderLayer[] {
 function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
   const layers: HeaderLayer[] = [];
   const l4 = p.payload;
-  const proto = l4.kind === "icmp" ? "1 (ICMP)" : l4.kind === "tcp" ? "6 (TCP)" : l4.kind === "esp" ? "50 (ESP — 포트 없음)" : "17 (UDP)";
+  const proto = l4.kind === "icmp" ? "1 (ICMP)" : l4.kind === "tcp" ? "6 (TCP)" : l4.kind === "esp" ? "50 (ESP — 포트 없음)" : l4.kind === "vrrp" ? "112 (VRRP)" : "17 (UDP)";
   layers.push({
     title: "IPv4 (L3)",
     rows: [
@@ -174,6 +176,16 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
   if (l4.kind === "icmp") layers.push(icmpLayer(l4));
   else if (l4.kind === "tcp") layers.push(tcpLayer(l4));
   else if (l4.kind === "esp") layers.push(espLayer(l4, false), ...ipLayers(l4.inner, true));
+  else if (l4.kind === "vrrp")
+    layers.push({
+      title: "VRRP",
+      rows: [
+        ["버전 / 종류", "3 / 1 (Advertisement)"],
+        ["가상 라우터 번호 (VRID)", `${l4.vrid} → 가상 MAC 00:00:5e:00:01:${l4.vrid.toString(16).padStart(2, "0")}`],
+        ["우선순위", `${l4.priority}${l4.priority === 0 ? " (master 가 물러남 — backup 이 곧 이어받음)" : ""}`],
+        ["가상 주소", l4.vip],
+      ],
+    });
   else {
     layers.push(...udpLayers(l4));
     if (l4.payload.kind === "esp") layers.push(espLayer(l4.payload, true), ...ipLayers(l4.payload.inner, true));
@@ -406,9 +418,10 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       }
       break;
     case "vpn.ike":
-      if (detail(ev, "spi") !== undefined) out.push({ tool: "strongSwan (charon)", line: `07[IKE] initiating IKE_SA vpn[1] to ${detail(ev, "peer") ?? "?"}` });
-      else if (detail(ev, "nat") === "true") out.push({ tool: "strongSwan (charon)", line: `08[IKE] remote host is behind NAT` });
-      else if (detail(ev, "natT") === "true") out.push({ tool: "strongSwan (charon)", line: `08[IKE] local host is behind NAT, sending keep alives` });
+      if (detail(ev, "retransmit") !== undefined) out.push({ tool: "strongSwan (charon)", line: `11[IKE] retransmit ${detail(ev, "retransmit")} of request with message ID ${detail(ev, "step") === "IKE_AUTH" ? 1 : 0}` });
+      else if (detail(ev, "spi") !== undefined) out.push({ tool: "strongSwan (charon)", line: `07[IKE] initiating IKE_SA vpn[1] to ${detail(ev, "peer") ?? "?"}` });
+      if (detail(ev, "localNat") === "true") out.push({ tool: "strongSwan (charon)", line: `08[IKE] local host is behind NAT, sending keep alives` });
+      if (detail(ev, "remoteNat") === "true") out.push({ tool: "strongSwan (charon)", line: `08[IKE] remote host is behind NAT` });
       break;
     case "vpn.up":
       out.push({ tool: "strongSwan (charon)", line: `09[IKE] IKE_SA vpn[1] established between ${ip?.dst ?? "?"}...${detail(ev, "peer") ?? "?"}` });
@@ -417,7 +430,7 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
     case "vpn.drop":
       if (ev.summary.includes("AUTHENTICATION_FAILED 로 거절 —")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] received AUTHENTICATION_FAILED notify error` });
       else if (ev.summary.includes("PSK)가 다름 → AUTHENTICATION_FAILED")) out.push({ tool: "strongSwan (charon)", line: `05[IKE] tried 1 shared key for '${ip?.dst ?? "?"}' - '${ip?.src ?? "?"}', but MAC mismatched` });
-      else if (ev.summary.includes("응답 없음 (timeout")) out.push({ tool: "strongSwan (charon)", line: `11[IKE] giving up after 5 retransmits` });
+      else if (ev.summary.includes("재전송") && ev.summary.includes("timeout")) out.push({ tool: "strongSwan (charon)", line: `11[IKE] giving up after 2 retransmits` });
       break;
     case "lb.down":
       out.push({ tool: "nginx error.log", line: `connect() failed while connecting to upstream, upstream: "http://${detail(ev, "backend") ?? "?"}/" — upstream server temporarily disabled` });

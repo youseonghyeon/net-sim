@@ -1,4 +1,4 @@
-// 게이트웨이·NAT 박스 설정: 인터페이스, 스태틱 라우팅, 동적 라우팅(RIP), VPN, VLAN 서브 인터페이스. 스위치 포트 VLAN 도 여기.
+// 게이트웨이·NAT 박스 설정: 인터페이스, 스태틱 라우팅, 동적 라우팅(RIP), VPN, 이중화(HA), VLAN 서브 인터페이스. 스위치 포트 VLAN 도 여기.
 import { sameSubnet } from "../../core/addr";
 import { updateDevice } from "../../model/store";
 import {
@@ -98,6 +98,7 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
       </Section>
       <RipSection d={d} l3={l3} />
       <VpnSection d={d} l3={l3} />
+      <HaSection d={d} l3={l3} />
       {isNat && (
         <ForwardSection
           rules={l3.forwards ?? []}
@@ -179,6 +180,68 @@ export function VpnSection({ d, l3 }: { d: Device; l3: L3Settings }) {
               ? "이 대역으로 가는 첫 패킷이 오면 IKE 로 터널을 맺고(IKE_SA_INIT → IKE_AUTH), 그다음부터 ESP 로 암호화해 보냅니다(NAT 하지 않음). 사이에 NAT 가 있으면 알아채고 UDP 4500 에 싣습니다(NAT-T). 터널로 온 패킷은 이 대역에서 온 것만 받습니다. 상대가 NAT 뒤라면 그 NAT 에 UDP 500·4500 포트 포워딩이 필요합니다."
               : "이 대역으로 가는 패킷은 터널로 가고(NAT 하지 않음), 터널로 온 패킷은 이 대역에서 온 것만 받습니다(WireGuard 의 AllowedIPs). 상대가 NAT 뒤에 있으면 상대가 먼저 보낸 뒤 그 출발지로 답합니다."}{" "}
             양쪽 사설 대역이 겹치면 안 됩니다.
+          </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** 이중화 (VRRP 식): 켜기 + 그룹 번호 + 우선순위 + 인터페이스별 가상 주소 */
+export function HaSection({ d, l3 }: { d: Device; l3: L3Settings }) {
+  const empty = { enabled: false, vrid: 1, priority: 100, vips: [] as string[] };
+  const ha = l3.ha ?? empty;
+  const names = specOf(d).ports.map((p) => p.name);
+  const set = (patch: Partial<NonNullable<L3Settings["ha"]>>) =>
+    updateDevice(d.id, (x) => {
+      const cur = x.l3 ?? defaultL3(x.kind);
+      return { ...x, l3: { ...cur, ha: { ...(cur.ha ?? empty), ...patch } } };
+    });
+  const clamp = (v: string, lo: number, hi: number, dflt: number) => Math.min(hi, Math.max(lo, Math.round(Number(v)) || dflt));
+  const vipError = (i: number): string | undefined => {
+    const v = ha.vips[i] ?? "";
+    const base = ipError(v, false);
+    if (base) return base;
+    const c = l3.interfaces[i];
+    if (!v || !c || c.ipMode !== "static" || !validIp(c.ip)) return undefined;
+    if (v === c.ip) return "인터페이스 자신의 주소와 달라야 합니다 (가상 주소는 쌍이 함께 쓰는 별도 주소)";
+    if (!sameSubnet(v, c.ip, c.prefix)) return `${names[i]} 의 서브넷(${c.ip}/${c.prefix}) 밖입니다`;
+    return undefined;
+  };
+  return (
+    <Section title="이중화 (HA)">
+      <label class="toggle-row">
+        <span>
+          {ha.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">VRRP</span>
+        </span>
+        <Toggle on={ha.enabled} onToggle={() => set({ enabled: !ha.enabled })} />
+      </label>
+      {!ha.enabled && (
+        <p class="note">
+          켜면 같은 설정의 장비 두 대가 가상 주소를 함께 두고, 우선순위가 높은 한 대(master)만 그 주소로 일합니다. master 의 링크가 죽거나 장비가 사라지면 다른 한 대(backup)가 가상 주소를 이어받습니다. 호스트의 게이트웨이는 가상 주소로 둡니다.
+        </p>
+      )}
+      {ha.enabled && (
+        <>
+          <Field label="그룹 번호 (VRID)">
+            <input class="input mono" type="number" min={1} max={255} value={ha.vrid} onInput={(e) => { if (e.currentTarget.value !== "") set({ vrid: clamp(e.currentTarget.value, 1, 255, 1) }); }} />
+          </Field>
+          <Field label="우선순위">
+            <input class="input mono" type="number" min={1} max={254} value={ha.priority} onInput={(e) => { if (e.currentTarget.value !== "") set({ priority: clamp(e.currentTarget.value, 1, 254, 100) }); }} />
+          </Field>
+          <h3 class="sub">가상 주소</h3>
+          {names.map((n, i) => (
+            <Field key={n} label={n} error={vipError(i)}>
+              <input
+                class="input mono"
+                value={ha.vips[i] ?? ""}
+                placeholder="비우면 이 인터페이스는 참여 안 함"
+                onInput={(e) => set({ vips: names.map((_, k) => (k === i ? e.currentTarget.value : (ha.vips[k] ?? ""))) })}
+              />
+            </Field>
+          ))}
+          <p class="note">
+            짝 장비에도 같은 그룹 번호·가상 주소로 켜고, 우선순위만 다르게 둡니다(높은 쪽이 master, 돌아오면 다시 가져감). 가상 MAC 은 00:00:5e:00:01:{ha.vrid.toString(16).padStart(2, "0")} 입니다. NAT·방화벽 흐름·IPsec 터널은 넘어가지 않아 진행 중이던 연결은 끊기고 새 연결부터 됩니다.
           </p>
         </>
       )}

@@ -231,6 +231,29 @@ export interface L3Settings {
   rip?: RipSettings;
   /** 사이트 간 VPN (WireGuard 식). 없으면 꺼짐 */
   vpn?: VpnSettings;
+  /** 이중화 (VRRP 식). 없으면 꺼짐 */
+  ha?: HaSettings;
+}
+
+export interface HaSettings {
+  enabled: boolean;
+  /** 가상 라우터 번호 1~255 (쌍은 같은 번호) */
+  vrid: number;
+  /** 우선순위 1~254 (높은 쪽이 master) */
+  priority: number;
+  /** 인터페이스별 가상 주소 (인덱스 = 인터페이스, "" = 참여 안 함) */
+  vips: string[];
+}
+
+/** 불러온 JSON 의 이중화 설정 정리 */
+function normalizeHa(h: Partial<HaSettings>): HaSettings {
+  const int = (v: unknown, lo: number, hi: number, dflt: number) => (typeof v === "number" && Number.isInteger(v) && v >= lo && v <= hi ? v : dflt);
+  return {
+    enabled: h.enabled === true,
+    vrid: int(h.vrid, 1, 255, 1),
+    priority: int(h.priority, 1, 254, 100),
+    vips: Array.isArray(h.vips) ? h.vips.map((v) => (typeof v === "string" ? v : "")) : [],
+  };
 }
 
 /** 불러온 JSON 의 VPN 설정 정리: 빠지거나 잘못된 칸은 기본값으로 (remote 가 없으면 구성 검사·동기화가 멈춘다) */
@@ -286,7 +309,7 @@ export interface PortForwardSettings {
 
 export interface FirewallRuleSettings {
   action: "allow" | "deny";
-  proto: "any" | "icmp" | "tcp" | "udp";
+  proto: "any" | "icmp" | "tcp" | "udp" | "esp";
   direction: "in" | "out" | "any";
   src: string;
   dst: string;
@@ -811,6 +834,7 @@ export function normalizeTopology(t: Topology): Topology {
           routes: fixed.l3.routes ?? [],
           ...(fixed.l3.firewall ? { firewall: { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.l3.firewall, rules: fixed.l3.firewall.rules ?? [] } } : {}),
           ...(fixed.l3.vpn ? { vpn: normalizeVpn(fixed.l3.vpn) } : {}),
+          ...(fixed.l3.ha ? { ha: normalizeHa(fixed.l3.ha) } : {}),
         };
       }
     }

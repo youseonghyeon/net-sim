@@ -6,6 +6,8 @@ import { lintTopology } from "../src/model/lint";
 import { NetworkSync } from "../src/model/netSync";
 import { exampleNcpVpnTopology, exampleVpnTopology } from "../src/model/examples";
 import { createDevice, type Device, type Topology, type VpnSettings } from "../src/model/topology";
+import { L3Node } from "../src/core/nodes/l3";
+import { tcpdumpLine } from "../src/model/packetView";
 
 /** VPN 예제의 두 NAT 를 IPsec 으로 (patch 로 한쪽씩 바꿀 수 있음) */
 function ipsec(a: Partial<VpnSettings> = {}, b: Partial<VpnSettings> = {}): Topology {
@@ -78,7 +80,8 @@ describe("IPsec", () => {
     const tr = act({ kind: "ping", nodeId: id("pc-a"), dst: "192.168.2.10" });
     expect(tr.some((e) => e.kind === "vpn.drop" && e.summary.includes("timeout"))).toBe(true);
     const tr2 = act({ kind: "ping", nodeId: id("pc-a"), dst: "192.168.2.10" });
-    expect(tr2.filter((e) => e.kind === "vpn.ike").length).toBe(1);
+    // 새 협상 1번 + 재전송 2번 뒤 포기
+    expect(tr2.filter((e) => e.kind === "vpn.ike").map((e) => e.summary.includes("재전송"))).toEqual([false, true, true]);
   });
 
   it("방식이 다르면(한쪽 WireGuard) 구성 검사가 지적한다", () => {
@@ -151,5 +154,75 @@ describe("IPsec", () => {
     act({ kind: "ping", nodeId: id("외부망 PC 1"), dst: "8.8.8.8" });
     expect(host("외부망 PC 1").pings.at(-1)!.status).toBe("ok");
     expect(s).toBeDefined();
+  });
+
+  it("리뷰: 한쪽만 설정이 바뀌어 터널이 내려가도, 옛 터널로 온 ESP 를 받은 쪽이 새로 협상해 복구한다", () => {
+    const t = ipsec();
+    const { s, id, host, act } = load(t);
+    act({ kind: "ping", nodeId: id("pc-a"), dst: "192.168.2.10" });
+    // B 만 설정 변경 (대역 추가) → B 의 SA 가 내려감, A 는 여전히 up
+    const changed: Topology = { ...t, devices: t.devices.map((d) => (d.name === "사무실 B NAT" ? { ...d, l3: { ...d.l3!, vpn: { ...d.l3!.vpn!, remote: [...d.l3!.vpn!.remote, { dest: "192.168.9.0", prefix: 24 }] } } } : d)) };
+    s.sync(changed);
+    s.net.runToIdle();
+    const first = act({ kind: "ping", nodeId: id("pc-a"), dst: "192.168.2.10" });
+    expect(first.some((e) => e.kind === "vpn.up")).toBe(true); // B 가 알아채고 새로 맺음
+    act({ kind: "ping", nodeId: id("pc-a"), dst: "192.168.2.10" });
+    expect(host("pc-a").pings.at(-1)!.status).toBe("ok");
+  });
+
+  it("리뷰: 상대 공인 주소가 바뀌면 인증된 ESP 의 출발지를 따라가 그쪽으로 답한다", () => {
+    const t = ipsec();
+    const { s, id, host, act } = load(t);
+    act({ kind: "ping", nodeId: id("pc-a"), dst: "192.168.2.10" });
+    const moved: Topology = { ...t, devices: t.devices.map((d) => (d.name === "사무실 B NAT" ? { ...d, l3: { ...d.l3!, interfaces: d.l3!.interfaces.map((c, i) => (i === 0 ? { ...c, ip: "203.0.113.99" } : c)) } } : d)) };
+    s.sync(moved);
+    s.net.runToIdle();
+    act({ kind: "ping", nodeId: id("pc-b"), dst: "192.168.1.10" });
+    act({ kind: "ping", nodeId: id("pc-b"), dst: "192.168.1.10" });
+    expect(host("pc-b").pings.at(-1)!.status).toBe("ok");
+    expect((s.net.nodes.get(id("사무실 A NAT")) as L3Node).vpn.target()?.ip).toBe("203.0.113.99");
+  });
+
+  it("리뷰: NAT 뒤 상대가 UDP 500 만 포워딩하면 구성 검사가 4500 을 지적한다, PSK 가 양쪽 다 비면 경고", () => {
+    const base = ipsec();
+    const natB = (forwards: { publicPort: number; lanIp: string; lanPort: number; proto: "udp" }[]): Topology => ({
+      ...base,
+      devices: [
+        ...base.devices.map((d) => (d.name === "사무실 B NAT" ? { ...d, l3: { interfaces: [d.l3!.interfaces[0]!, { ipMode: "static" as const, ip: "10.0.0.1", prefix: 24, gateway: "" }], routes: [], forwards } } : d)),
+        { ...createDevice("gateway", 0, 0, base.devices), name: "gw-b", l3: { interfaces: [{ ipMode: "static", ip: "10.0.0.2", prefix: 24, gateway: "10.0.0.1" }, { ipMode: "static", ip: "", prefix: 24, gateway: "" }, { ipMode: "static", ip: "", prefix: 24, gateway: "" }], routes: [], vpn: { enabled: true, mode: "ipsec", psk: "s3cret", peer: "203.0.113.11", remote: [] } } },
+      ],
+    });
+    const codes = (t: Topology) => lintTopology(t).map((i) => i.code);
+    expect(codes(natB([{ publicPort: 500, lanIp: "10.0.0.2", lanPort: 500, proto: "udp" }]))).toContain("vpn.natt-closed");
+    expect(codes(natB([{ publicPort: 500, lanIp: "10.0.0.2", lanPort: 500, proto: "udp" }, { publicPort: 4500, lanIp: "10.0.0.2", lanPort: 4500, proto: "udp" }]))).not.toContain("vpn.natt-closed");
+    expect(codes(ipsec({ psk: "" }, { psk: "" }))).toContain("vpn.psk-empty");
+  });
+
+  it("리뷰: 방화벽 규칙에 ESP 를 고를 수 있고, 인바운드 기본 차단이어도 ESP·IKE 를 허용하면 상대가 먼저 연 터널이 지난다", () => {
+    const base = ipsec();
+    const isp = base.devices.find((d) => d.name === "통신사 구간")!;
+    const natA = base.devices.find((d) => d.name === "사무실 A NAT")!;
+    const fw = { ...createDevice("firewall", 160, -30, base.devices), name: "fw-a" };
+    fw.firewall = {
+      enabled: true,
+      defaultPolicy: "deny",
+      stateful: true,
+      rules: [
+        { action: "allow", proto: "any", direction: "out", src: "", dst: "", dstPort: "" },
+        { action: "allow", proto: "udp", direction: "in", src: "203.0.113.22", dst: "", dstPort: "500" },
+        { action: "allow", proto: "esp", direction: "in", src: "203.0.113.22", dst: "", dstPort: "" },
+      ],
+    };
+    const cables = base.cables.filter((c) => !([c.a.device, c.b.device].includes(isp.id) && [c.a.device, c.b.device].includes(natA.id)));
+    cables.push({ id: "f0", a: { device: isp.id, port: 1 }, b: { device: fw.id, port: 0 } }, { id: "f1", a: { device: fw.id, port: 1 }, b: { device: natA.id, port: 0 } });
+    const t: Topology = { devices: [...base.devices, fw], cables };
+    const { id, host, act } = load(t);
+    act({ kind: "ping", nodeId: id("pc-b"), dst: "192.168.1.10" });
+    expect(host("pc-b").pings.at(-1)!.status).toBe("ok");
+  });
+
+  it("리뷰: tcpdump 는 4500 에서 나가는 IKE 응답에도 NONESP-encap 을 붙인다", () => {
+    const f = { kind: "ethernet" as const, id: 1, src: "02:00:00:00:00:01", dst: "02:00:00:00:00:02", payload: { kind: "ipv4" as const, src: "203.0.113.22", dst: "203.0.113.11", ttl: 64, payload: { kind: "udp" as const, srcPort: 4500, dstPort: 40001, payload: { kind: "ike" as const, exchange: "IKE_AUTH" as const, response: true, spi: 1 } } } };
+    expect(tcpdumpLine(f)).toContain("NONESP-encap: isakmp: child_sa  ikev2_auth[R]");
   });
 });

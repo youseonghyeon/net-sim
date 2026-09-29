@@ -5,7 +5,7 @@ import { describeOriginal, icmpErrorLabel, isIcmpError, type Ipv4Packet } from "
 import type { NodeContext } from "./node";
 
 export type FwAction = "allow" | "deny";
-export type FwProto = "any" | "icmp" | "tcp" | "udp";
+export type FwProto = "any" | "icmp" | "tcp" | "udp" | "esp";
 /** in = 업링크(WAN/outside/if0)에서 들어옴, out = 업링크로 나감, lan = 안쪽 서브넷끼리 */
 export type FwDirection = "in" | "out" | "any";
 export type FlowDirection = "in" | "out" | "lan";
@@ -33,7 +33,7 @@ export interface FirewallConfig {
 
 export const DEFAULT_FIREWALL: FirewallConfig = { enabled: false, defaultPolicy: "allow", stateful: true, rules: [] };
 
-export const PROTO_LABEL: Record<FwProto, string> = { any: "모든 프로토콜", icmp: "ICMP(ping)", tcp: "TCP", udp: "UDP" };
+export const PROTO_LABEL: Record<FwProto, string> = { any: "모든 프로토콜", icmp: "ICMP(ping)", tcp: "TCP", udp: "UDP", esp: "ESP(IPsec)" };
 export const DIRECTION_LABEL: Record<FwDirection, string> = { in: "인바운드", out: "아웃바운드", any: "양방향" };
 
 /** "a.b.c.d" 또는 "a.b.c.d/n" 이 ip 를 포함하는지. 형식이 틀리면 false */
@@ -93,6 +93,7 @@ function flowKey(pkt: Ipv4Packet, reverse: boolean): string {
   const b = reverse ? pkt.src : pkt.dst;
   if (p.kind === "icmp") return `icmp:${a}:${b}:${p.id}`;
   if (p.kind === "esp") return `esp:${a}:${b}`; // ESP 는 포트가 없어 주소 쌍으로 본다
+  if (p.kind === "vrrp") return `vrrp:${a}:${b}`;
   const ap = reverse ? p.dstPort : p.srcPort;
   const bp = reverse ? p.srcPort : p.dstPort;
   return `${p.kind}:${a}:${ap}:${b}:${bp}`;
@@ -129,7 +130,7 @@ export class Firewall {
     if (r.src && !cidrContains(r.src, pkt.src)) return false;
     if (r.dst && !cidrContains(r.dst, pkt.dst)) return false;
     if (r.dstPort) {
-      if (p.kind === "icmp" || p.kind === "esp") return false;
+      if (p.kind === "icmp" || p.kind === "esp" || p.kind === "vrrp") return false;
       if (p.dstPort !== r.dstPort) return false;
     }
     return true;
@@ -185,5 +186,6 @@ function describePacket(pkt: Ipv4Packet): string {
   if (isIcmpError(p)) return `ICMP ${icmpErrorLabel(p)} ${pkt.src} → ${pkt.dst} (원래 ${describeOriginal(p.original)})`;
   if (p.kind === "icmp") return `ICMP ${p.type === "echo-request" ? "ping 요청" : "ping 응답"} ${pkt.src} → ${pkt.dst}`;
   if (p.kind === "esp") return `ESP ${pkt.src} → ${pkt.dst} (IPsec)`;
+  if (p.kind === "vrrp") return `VRRP ${pkt.src} → ${pkt.dst}`;
   return `${p.kind.toUpperCase()} ${pkt.src}:${p.srcPort} → ${pkt.dst}:${p.dstPort}`;
 }

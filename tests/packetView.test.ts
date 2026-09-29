@@ -85,3 +85,13 @@ describe("IPsec", () => {
     expect(titles[1]!.rows.find((r) => r[0] === "프로토콜")![1]).toContain("50 (ESP");
   });
 });
+
+describe("VRRP", () => {
+  it("tcpdump 와 헤더: 프로토콜 112, 그룹·우선순위·가상 주소", () => {
+    const f = ip({ kind: "vrrp", vrid: 10, priority: 200, vip: "192.168.0.1" }, "192.168.0.2", "224.0.0.18", 255);
+    expect(tcpdumpLine(f)).toContain("IP 192.168.0.2 > 224.0.0.18: VRRPv3, Advertisement, vrid 10, prio 200, intvl 100cs, length 12");
+    const layers = headerLayers(f);
+    expect(layers.map((l) => l.title)).toEqual(["이더넷 (L2)", "IPv4 (L3)", "VRRP"]);
+    expect(layers[2]!.rows.find((r) => r[0].startsWith("가상 라우터"))![1]).toContain("00:00:5e:00:01:0a");
+  });
+});

@@ -90,6 +90,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.relays.some(Boolean)) out.push("DHCP 릴레이");
     if (node.rip.config.enabled) out.push("RIP");
     if (node.vpn.config.enabled) out.push("VPN");
+    if (node.ha.config.enabled) out.push(node.ha.state === "master" ? "HA master" : "HA backup");
     if (node.nat) out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
     if (node.firewall.config.enabled) out.push("방화벽");
   } else if (node instanceof Internet) {

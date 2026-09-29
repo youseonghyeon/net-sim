@@ -103,7 +103,10 @@ export class NetworkSync {
       const prev = this.syncedConfig.get(d.id);
       if (prev === undefined) {
         settle();
-        net.addNode(makeNode(d));
+        const node = makeNode(d);
+        net.addNode(node);
+        // 이중화는 시작할 때 광고·타이머가 필요해 만든 뒤에 켠다
+        if (node instanceof L3Node && d.l3?.ha?.enabled) node.setHa(effectiveL3(d).ha, net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -300,6 +303,12 @@ export function effectiveL3(d: Device) {
       .filter((s) => Number.isInteger(s.vlan) && s.vlan >= 1 && s.vlan <= 4094 && s.port >= 1 && s.port < spec.ports.length && !spec.ports[s.port]!.radio)
       .map((s) => ({ port: s.port, vlan: s.vlan, ip: validIp(s.ip), prefix: s.prefix, relay: validIp(s.relay) })),
     rip: { enabled: l3.rip?.enabled === true, defaultRoute: l3.rip?.defaultRoute === true },
+    ha: {
+      enabled: l3.ha?.enabled === true,
+      vrid: Number.isInteger(l3.ha?.vrid) && l3.ha!.vrid >= 1 && l3.ha!.vrid <= 255 ? l3.ha!.vrid : 1,
+      priority: Number.isInteger(l3.ha?.priority) && l3.ha!.priority >= 1 && l3.ha!.priority <= 254 ? l3.ha!.priority : 100,
+      vips: spec.ports.map((_, i) => validIp(l3.ha?.vips?.[i])),
+    },
     vpn: {
       enabled: l3.vpn?.enabled === true,
       ...(l3.vpn?.mode === "ipsec" ? { mode: "ipsec" as const, psk: l3.vpn.psk ?? "" } : {}),
@@ -372,5 +381,6 @@ export function applyConfig(net: Network, d: Device): void {
     node.setSubinterfaces(cfg.subinterfaces, net.contextFor(d.id));
     node.setRip(cfg.rip, net.contextFor(d.id));
     node.setVpn(cfg.vpn, net.contextFor(d.id));
+    node.setHa(cfg.ha, net.contextFor(d.id));
   }
 }

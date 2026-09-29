@@ -140,6 +140,8 @@ interface GwIface {
   /** 인터페이스 칸 이름 (예: "if1", "if1.10", "LAN") */
   ifName: string;
   ip?: string;
+  /** 이중화(HA)를 켠 L3 인터페이스의 가상 주소 — 호스트 게이트웨이로 이 주소를 써도 된다 */
+  vip?: string;
   subnet?: Subnet;
   /** 안쪽(호스트가 붙는) 인터페이스인가. L3 의 if0/outside 는 false */
   inside: boolean;
@@ -425,7 +427,8 @@ function analyze(t: Topology): Model {
       spec.ports.forEach((p, i) => {
         const c = d.l3!.interfaces[i];
         const ip = c && c.ipMode === "static" ? validIp(c.ip) : undefined;
-        addGw({ device: d, key: `${d.id}:${i}`, label: `${d.name} ${p.name}`, ifName: p.name, ip, subnet: c ? subnetOf(ip, c.prefix) : undefined, inside: i > 0, uplink: i === 0, gwKind: "l3", port: i });
+        const vip = d.l3!.ha?.enabled ? validIp(d.l3!.ha.vips[i]) : undefined;
+        addGw({ device: d, key: `${d.id}:${i}`, label: `${d.name} ${p.name}`, ifName: p.name, ip, ...(vip ? { vip } : {}), subnet: c ? subnetOf(ip, c.prefix) : undefined, inside: i > 0, uplink: i === 0, gwKind: "l3", port: i });
       });
       for (const s of validSubifs(d)) {
         addGw({ device: d, key: s.key, label: `${d.name} ${s.label}`, ifName: s.label, ip: s.ip, subnet: subnetOf(s.ip, s.prefix), inside: true, uplink: false, gwKind: "l3", port: s.port });
@@ -615,7 +618,7 @@ export function lintTopology(t: Topology): LintIssue[] {
           message: `이 서브넷엔 게이트웨이 장치가 없음 → 게이트웨이 ${gw} 로 보낸 패킷은 응답 없이 사라짐`,
           fix: `게이트웨이/NAT 박스나 공유기를 이 스위치에 연결하고 그 인터페이스 주소를 ${gw} 로 맞추기 (같은 서브넷 안에서만 통신한다면 게이트웨이 칸을 비워도 됨)`,
         });
-      } else if (gws.every((g) => g.ip) && !gws.some((g) => g.ip === gw)) {
+      } else if (gws.every((g) => g.ip) && !gws.some((g) => g.ip === gw || g.vip === gw)) {
         const pick = pickGw(gws, ip);
         flaggedHosts.add(d.id);
         add({
@@ -626,6 +629,18 @@ export function lintTopology(t: Topology): LintIssue[] {
           fix: `${d.name} → IP 설정 → 게이트웨이 칸을 ${pick?.ip ?? gws[0]!.ip} (${pick?.label ?? gws[0]!.label}) 로 바꾸거나, 케이블을 ${gw} 를 가진 라우터 쪽 스위치로 옮기기`,
           related: uniqueDevices(gws).map((x) => x.id),
         });
+      } else {
+        const real = gws.find((g) => g.ip === gw && g.vip && g.vip !== gw);
+        if (real) {
+          add({
+            deviceId: d.id,
+            severity: "warn",
+            code: "ha.host-real-gw",
+            message: `게이트웨이 ${gw} 는 ${real.device.name} 의 실제 주소 — 이중화 쌍이 넘어가도(그 장비가 죽어도) 따라가지 않음`,
+            fix: `${d.name} → IP 설정 → 게이트웨이를 가상 주소 ${real.vip} 로`,
+            related: [real.device.id],
+          });
+        }
       }
     }
     if (ip && inSegment && !flaggedHosts.has(d.id)) {
@@ -1004,6 +1019,17 @@ export function lintTopology(t: Topology): LintIssue[] {
     const fwd = vpnOf(peerDev) ? undefined : peerDev.l3?.forwards?.find((f) => f.proto === "udp" && f.publicPort === tunnelPort);
     if (fwd) {
       const inner = t.devices.find((x) => x.l3 && x.l3.interfaces.some((i) => i.ipMode === "static" && validIp(i.ip) === validIp(fwd.lanIp)));
+      // IPsec 상대가 NAT 뒤면 NAT 가 반드시 감지되어 IKE_AUTH·ESP 는 UDP 4500 으로 온다 → 4500 포워딩도 필요
+      if (v.mode === "ipsec" && !peerDev.l3?.forwards?.some((f) => f.proto === "udp" && f.publicPort === 4500 && validIp(f.lanIp) === validIp(fwd.lanIp))) {
+        add({
+          deviceId: d.id,
+          severity: "warn",
+          code: "vpn.natt-closed",
+          message: `상대 ${peerDev.name} 가 UDP 500 만 ${fwd.lanIp} 로 포워딩함 → NAT 뒤라 IKE_AUTH·ESP 가 UDP 4500 (NAT-T) 으로 가는데 그 포트가 막혀 터널이 맺어지지 않음`,
+          fix: `${peerDev.name} → 포트 포워딩에 UDP 4500 → ${fwd.lanIp}:4500 추가`,
+          related: [peerDev.id],
+        });
+      }
       if (!inner) continue;
       peerDev = inner;
     }
@@ -1023,6 +1049,9 @@ export function lintTopology(t: Topology): LintIssue[] {
         related: [peerDev.id],
       });
       continue;
+    }
+    if (v.mode === "ipsec" && !(v.psk ?? "") && !(pv.psk ?? "")) {
+      add({ deviceId: d.id, severity: "warn", code: "vpn.psk-empty", message: `IPsec 사전 공유 키(PSK)가 양쪽 다 비어 있음 → 누구나 이 터널에 붙을 수 있음`, fix: `${d.name} 와 ${peerDev.name} 의 VPN → 사전 공유 키에 같은 긴 문자열`, related: [peerDev.id] });
     }
     if (v.mode === "ipsec" && (v.psk ?? "") !== (pv.psk ?? "")) {
       add({
@@ -1048,6 +1077,43 @@ export function lintTopology(t: Topology): LintIssue[] {
         fix: `${peerDev.name} → VPN → 상대 쪽 사설 대역에 ${missing.map(fmtSubnet).join(", ")} 추가`,
         related: [peerDev.id],
       });
+    }
+  }
+
+  // 규칙 18: 이중화 (VRRP 식) — 가상 주소가 서브넷 밖, 짝이 없음, 같은 세그먼트 짝의 그룹·가상 주소 불일치
+  for (const d of t.devices) {
+    const ha = d.l3?.ha;
+    if (!ha?.enabled) continue;
+    const vipIfs = ha.vips.map((v, i) => ({ vip: validIp(v), i })).filter((x): x is { vip: string; i: number } => !!x.vip);
+    if (vipIfs.length === 0) {
+      add({ deviceId: d.id, severity: "warn", code: "ha.no-vip", message: "이중화를 켰지만 가상 주소가 없음 → 넘겨줄 것이 없음", fix: `${d.name} → 이중화 → 인터페이스마다 쌍이 함께 쓸 가상 주소 입력` });
+      continue;
+    }
+    let peers = 0;
+    for (const { vip, i } of vipIfs) {
+      const c = d.l3!.interfaces[i];
+      const own = c?.ipMode === "static" ? subnetOf(validIp(c.ip), c.prefix) : undefined;
+      if (own && !contains(own, vip)) {
+        add({ deviceId: d.id, severity: "error", code: "ha.vip-outside-subnet", message: `가상 주소 ${vip} 가 ${portName(d, i)} 의 서브넷 ${fmtSubnet(own)} 밖 → 이웃이 ARP 로 찾을 수 없음`, fix: `${d.name} → 이중화 → ${portName(d, i)} 가상 주소를 ${fmtSubnet(own)} 안의 빈 주소로` });
+      }
+      const key = `${d.id}:${i}`;
+      if (!m.linked.has(key) || m.stranded.has(key)) continue;
+      for (const g of m.gwsOf(key)) {
+        if (g.device === d || !g.device.l3?.ha?.enabled) continue;
+        const other = g.device.l3.ha;
+        const theirVip = validIp(other.vips[g.port]);
+        if (other.vrid === ha.vrid) {
+          peers++;
+          if (theirVip !== vip) {
+            add({ deviceId: d.id, severity: "error", code: "ha.vip-mismatch", message: `짝 ${g.device.name} 의 ${portName(g.device, g.port)} 가상 주소(${theirVip ?? "없음"})가 내 것(${vip})과 다름 → 넘어가면 호스트가 쓰던 주소가 사라짐`, fix: "쌍의 두 장비에 같은 가상 주소를 넣기", related: [g.device.id] });
+          }
+        } else if (theirVip === vip) {
+          add({ deviceId: d.id, severity: "error", code: "ha.vrid-mismatch", message: `${g.device.name} 도 가상 주소 ${vip} 를 쓰지만 그룹 번호가 다름 (${ha.vrid} ↔ ${other.vrid}) → 서로를 짝으로 보지 않아 둘 다 master 가 됨`, fix: "쌍의 두 장비에 같은 그룹 번호(VRID)를", related: [g.device.id] });
+        }
+      }
+    }
+    if (peers === 0 && vipIfs.some(({ i }) => m.linked.has(`${d.id}:${i}`))) {
+      add({ deviceId: d.id, severity: "warn", code: "ha.no-peer", message: `같은 세그먼트에 그룹 ${ha.vrid} 짝이 없음 → 혼자 master 라 고장 나면 이어받을 장비가 없음`, fix: "같은 스위치들에 두 번째 장비를 연결하고 같은 그룹 번호·가상 주소로 이중화를 켜기" });
     }
   }
 

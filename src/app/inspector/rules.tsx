@@ -20,6 +20,7 @@ export function FirewallSection({ value, onChange, uplinkName }: { value: Firewa
     if (r.dst && !validCidr(r.dst)) return "목적지: 주소 또는 CIDR (주소/마스크 길이)";
     if (r.dstPort && !/^\d+$/.test(r.dstPort)) return "포트는 숫자";
     if (r.dstPort && r.proto === "icmp") return "ICMP 에는 포트가 없습니다";
+    if (r.dstPort && r.proto === "esp") return "ESP 에는 포트가 없습니다 (IPsec 협상은 UDP 500·4500 규칙으로)";
     return undefined;
   };
   return (
@@ -69,6 +70,7 @@ export function FirewallSection({ value, onChange, uplinkName }: { value: Firewa
                   <option value="icmp">ICMP(ping)</option>
                   <option value="tcp">TCP</option>
                   <option value="udp">UDP</option>
+                  <option value="esp">ESP(IPsec)</option>
                 </select>
               </div>
               <div class="fw-line fw-addr">
@@ -77,7 +79,7 @@ export function FirewallSection({ value, onChange, uplinkName }: { value: Firewa
                 <span class="muted">목적</span>
                 <input class="input mono" value={r.dst} placeholder="모두" title="목적지: 주소 또는 CIDR (주소/마스크 길이)" onInput={(e) => setRule(i, { dst: e.currentTarget.value })} />
                 <span class="muted">:</span>
-                <input class="input mono port" value={r.dstPort} placeholder="포트" disabled={r.proto === "icmp"} onInput={(e) => setRule(i, { dstPort: e.currentTarget.value })} />
+                <input class="input mono port" value={r.dstPort} placeholder="포트" disabled={r.proto === "icmp" || r.proto === "esp"} onInput={(e) => setRule(i, { dstPort: e.currentTarget.value })} />
               </div>
               <div class="fw-line fw-actions">
                 <button class="icon-btn" title="위로" onClick={() => move(i, -1)} disabled={i === 0}>

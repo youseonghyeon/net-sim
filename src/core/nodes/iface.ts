@@ -49,6 +49,8 @@ export class NetInterface {
   private lastDefendAt = -Infinity;
   /** nextHop IP → ARP 해석을 기다리는 패킷들 */
   readonly pending = new Map<Ip, PendingPacket[]>();
+  /** 이중화(HA) master 일 때만: 이 인터페이스가 함께 쓰는 가상 주소·가상 MAC (ARP 응답·수신을 이것으로도 한다) */
+  vip: { ip: Ip; mac: Mac } | undefined;
   private readonly arpTimers = new Map<Ip, TimerHandle>();
 
   constructor(mac: Mac, cfg: { ip?: Ip; prefix?: number; gateway?: Ip; dns?: Ip } = {}) {
@@ -94,7 +96,7 @@ export class NetInterface {
 
   /** 프레임이 이 인터페이스 앞으로 온 것인지 (내 MAC 또는 브로드캐스트) */
   accepts(frame: EthernetFrame): boolean {
-    return frame.dst === this.mac || frame.dst === BROADCAST_MAC;
+    return frame.dst === this.mac || frame.dst === BROADCAST_MAC || (this.vip !== undefined && frame.dst === this.vip.mac);
   }
 
   // ---------- 송신 ----------
@@ -219,6 +221,16 @@ export class NetInterface {
    * Gratuitous ARP: 주소를 새로 얻었을 때 "이 IP 는 이제 내 MAC" 이라고 알린다.
    * 같은 IP 를 옛 MAC 으로 기억하던 이웃이 캐시를 고친다.
    */
+  /** 가상 주소를 가져왔을 때 Gratuitous ARP: 가상 MAC 을 출발지로 보내 스위치가 이 MAC 의 새 포트를 배우게 한다 */
+  announceVip(ctx: NodeContext, emit: Emit): void {
+    if (!this.vip) return;
+    const { ip, mac } = this.vip;
+    const arp: ArpPacket = { kind: "arp", op: "request", senderMac: mac, senderIp: ip, targetMac: ZERO_MAC, targetIp: ip };
+    const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: mac, dst: BROADCAST_MAC, payload: arp };
+    ctx.trace("arp.request.sent", "L2", `Gratuitous ARP 브로드캐스트: "가상 주소 ${ip} 는 ${mac}" — 스위치는 이 가상 MAC 이 이제 이쪽 포트에 있다고 배운다`, { ip, mac }, frame.id);
+    emit(frame);
+  }
+
   announce(ctx: NodeContext, emit: Emit): void {
     if (!this.ip || this.conflict?.refused) return;
     const arp: ArpPacket = { kind: "arp", op: "request", senderMac: this.mac, senderIp: this.ip, targetMac: ZERO_MAC, targetIp: this.ip };
@@ -278,7 +290,9 @@ export class NetInterface {
       ctx.trace("frame.drop", "L2", `IP 설정이 없어 ARP 무시`, {}, frameId);
       return;
     }
-    const isTarget = arp.targetIp === this.ip && !this.conflict?.refused;
+    // 가상 주소(HA master)로 온 요청도 내 것
+    const asVip = this.vip !== undefined && arp.targetIp === this.vip.ip && arp.senderIp !== this.vip.ip;
+    const isTarget = (arp.targetIp === this.ip && !this.conflict?.refused) || asVip;
 
     // 주소 충돌: 다른 MAC 이 내 주소를 보낸이로 쓴다(요청·응답·Gratuitous ARP 모두). Probe 중이면 같은 주소를 동시에 Probe 한 것도 충돌
     if (arp.senderMac !== this.mac) {
@@ -341,9 +355,10 @@ export class NetInterface {
         ctx.trace("frame.drop", "L2", `${arp.targetIp} 는 내 IP(${this.ip}) 아님 → 응답 안 함`, { targetIp: arp.targetIp }, frameId);
         return;
       }
-      const reply: ArpPacket = { kind: "arp", op: "reply", senderMac: this.mac, senderIp: this.ip, targetMac: arp.senderMac, targetIp: arp.senderIp };
-      const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: this.mac, dst: arp.senderMac, payload: reply };
-      ctx.trace("arp.reply.sent", "L2", `ARP 응답 송신: "${this.ip} 는 ${this.mac}" → ${arp.senderMac} 에게 유니캐스트`, { to: arp.senderMac }, frame.id);
+      const me = asVip ? this.vip! : { ip: this.ip, mac: this.mac };
+      const reply: ArpPacket = { kind: "arp", op: "reply", senderMac: me.mac, senderIp: me.ip, targetMac: arp.senderMac, targetIp: arp.senderIp };
+      const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: me.mac, dst: arp.senderMac, payload: reply };
+      ctx.trace("arp.reply.sent", "L2", `ARP 응답 송신: "${me.ip} 는 ${me.mac}"${asVip ? " (이중화 가상 주소 — master 인 내가 답함)" : ""} → ${arp.senderMac} 에게 유니캐스트`, { to: arp.senderMac }, frame.id);
       emit(frame);
       return;
     }

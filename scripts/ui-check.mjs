@@ -760,6 +760,34 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("설정");
   console.log("ssh toggle:", await page.locator(".inspector .toggle-row", { hasText: "SSH 서버" }).count(), "| badge:", await device("dev-2").locator(".badge", { hasText: "SSH" }).count());
 }
+// 방화벽 이중화: A 가 master → ping, A 를 지우면 B 가 master 가 되어 ping 이 계속된다
+{
+  await loadEx("ha");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => /방화벽 A/.test(el.textContent ?? "") && /HA master/.test(el.textContent ?? "")), null, { timeout: 20000 });
+  console.log("ha initial: A master", "| B:", await device("방화벽 B").locator(".badge", { hasText: "HA" }).textContent());
+  const pingOnce = async () => {
+    await clickDevice("pc-1");
+    await goTab("진단");
+    await page.locator(".ping-row .picker .input").first().fill("8.8.8.8");
+    await page.keyboard.press("Escape");
+    const before = await page.locator(".inspector .ping-log li").count();
+    await page.click(".ping-row .btn:has-text('ping')");
+    await page.waitForFunction((n) => document.querySelectorAll(".inspector .ping-log li").length > n || n >= 3, before, { timeout: 30000 });
+    await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".inspector .ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+    return (await page.locator(".inspector .ping-log li").first().innerText()).replace(/\s+/g, " ");
+  };
+  console.log("ha ping via A:", await pingOnce());
+  await clickDevice("방화벽 A");
+  await goTab("설정");
+  console.log("ha section:", await page.locator(".inspector h3", { hasText: "이중화" }).count());
+  await page.locator(".inspector section", { has: page.locator("h3", { hasText: "이중화" }) }).first().screenshot({ path: `${OUT}/50-ha-section.png` });
+  await page.keyboard.press("Delete");
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => /방화벽 B/.test(el.textContent ?? "") && /HA master/.test(el.textContent ?? "")), null, { timeout: 20000 });
+  console.log("ha failover: B master");
+  console.log("ha ping via B:", await pingOnce());
+  await page.screenshot({ path: `${OUT}/51-ha-failover.png` });
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

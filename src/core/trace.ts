@@ -142,7 +142,12 @@ export type TraceKind =
   | "vpn.decap"
   | "vpn.drop"
   | "vpn.ike"
-  | "vpn.up";
+  | "vpn.up"
+  | "ha.config"
+  | "ha.state"
+  | "ha.advert"
+  | "ha.master"
+  | "ha.backup";
 
 export interface TraceEvent {
   seq: number;

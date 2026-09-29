@@ -47,7 +47,7 @@ const enabledLayers = signal<Set<Layer>>(new Set<Layer>(["L2", "L3", "L4", "app"
 const onlySelected = signal(false);
 const expanded = signal<Set<number>>(new Set());
 
-function categoryOf(e: TraceEvent): "arp" | "dhcp" | "icmp" | "tcp" | "dns" | "rip" | "vpn" | "" {
+function categoryOf(e: TraceEvent): "arp" | "dhcp" | "icmp" | "tcp" | "dns" | "rip" | "vpn" | "vrrp" | "" {
   if (e.kind.startsWith("arp.")) return "arp";
   if (e.kind.startsWith("dhcp.")) return "dhcp";
   if (e.kind.startsWith("icmp.")) return "icmp";
@@ -55,6 +55,7 @@ function categoryOf(e: TraceEvent): "arp" | "dhcp" | "icmp" | "tcp" | "dns" | "r
   if (e.kind.startsWith("dns.")) return "dns";
   if (e.kind.startsWith("rip.")) return "rip";
   if (e.kind.startsWith("vpn.")) return "vpn";
+  if (e.kind.startsWith("ha.")) return "vrrp";
   return "";
 }
 

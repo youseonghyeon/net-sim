@@ -496,6 +496,60 @@ export function exampleFirewallTopology(): Topology {
   return { devices, cables };
 }
 
+/**
+ * 방화벽 이중화 (VRRP 식): NAT 박스 두 대가 가상 주소(바깥 203.0.113.10, 안쪽 192.168.0.1)를 함께 두고 한 대만 일한다.
+ * 호스트의 기본 게이트웨이는 가상 주소라, master(방화벽 A)의 케이블을 뽑거나 지워도 backup(방화벽 B)이 이어받아 설정 변경 없이 계속 나간다.
+ * 두 대의 규칙은 같게 둔다 (실제 HA 쌍은 설정을 자동으로 맞추지만 여기서는 손으로).
+ */
+export function exampleHaTopology(): Topology {
+  const { devices, add } = builder();
+  const staticHost = (d: Device, ip: string, services: number[] = []) => {
+    d.host = { ipMode: "static", ip, prefix: 24, gateway: "192.168.0.1", dns: "8.8.8.8", services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  const firewall = () => ({
+    enabled: true,
+    defaultPolicy: "deny" as const,
+    stateful: true,
+    rules: [{ action: "allow" as const, proto: "any" as const, direction: "out" as const, src: "", dst: "", dstPort: "" }],
+  });
+  const inet = add("internet", 344, -296, "internet-1");
+  const swOut = add("switch", 344, -168, "outside 스위치");
+  const fwA = add("nat", 200, -24, "방화벽 A");
+  fwA.l3 = {
+    interfaces: [iface("203.0.113.11", "203.0.113.1"), iface("192.168.0.2")],
+    routes: [],
+    firewall: firewall(),
+    ha: { enabled: true, vrid: 10, priority: 200, vips: ["203.0.113.10", "192.168.0.1"] },
+  };
+  const fwB = add("nat", 488, -24, "방화벽 B");
+  fwB.l3 = {
+    interfaces: [iface("203.0.113.12", "203.0.113.1"), iface("192.168.0.3")],
+    routes: [],
+    firewall: firewall(),
+    ha: { enabled: true, vrid: 10, priority: 100, vips: ["203.0.113.10", "192.168.0.1"] },
+  };
+  const swIn = add("switch", 344, 136, "inside 스위치");
+  const pc1 = add("pc", 216, 296, "pc-1");
+  const pc2 = add("pc", 344, 296, "pc-2");
+  const laptop = add("laptop", 472, 296, "laptop-1");
+  staticHost(pc1, "192.168.0.10");
+  staticHost(pc2, "192.168.0.11");
+  staticHost(laptop, "192.168.0.12");
+  const cables: Cable[] = [
+    cable(swOut, 3, inet, 0),
+    cable(swOut, 1, fwA, 0),
+    cable(swOut, 6, fwB, 0),
+    cable(fwA, 1, swIn, 1),
+    cable(fwB, 1, swIn, 6),
+    cable(swIn, 2, pc1, 0),
+    cable(swIn, 4, pc2, 0),
+    cable(swIn, 5, laptop, 0),
+  ];
+  const t: Topology = { devices, cables };
+  t.zones = [{ id: newId("zone"), label: "HA 쌍 · 가상 주소 203.0.113.10 / 192.168.0.1", tint: "amber", ...zoneAround(t, [fwA.id, fwB.id], 24)! }];
+  return t;
+}
+
 /** 방화벽 장비: 스위치와 서버 사이에 투명 방화벽을 끼워 서버로 오는 ping 만 막는다. 주소는 하나도 안 바꾼다 */
 export function exampleFirewallApplianceTopology(): Topology {
   const { devices, add } = builder();
@@ -985,7 +1039,7 @@ export function exampleNcpVpnTopology(): Topology {
   return t;
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "publish" | "internet" | "vpn" | "ncp" | "lb" | "roaming" | "docker";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "lb" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -1082,6 +1136,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "투명 방화벽 장비 (서버 앞)",
     blurb: "pc-1 → srv-1 ping 은 fw-1 에서 차단되지만 TCP 80 연결은 됩니다. srv-1 → pc-1 ping 은 응답이 Stateful 검사로 돌아오고, srv-1 → pc-1 traceroute 는 1홉 — fw-1 은 IP 가 없어 홉에 안 보입니다.",
     build: exampleFirewallApplianceTopology,
+  },
+  ha: {
+    id: "ha",
+    group: "보안",
+    label: "방화벽 이중화 (VRRP)",
+    blurb: "pc-1 에서 8.8.8.8 로 ping 하면 master 인 방화벽 A 가 NAT 합니다. 방화벽 A 의 케이블을 지우고(또는 장치를 지우고) 다시 ping 하면 방화벽 B 가 가상 주소를 이어받아 그대로 나갑니다. 케이블을 되돌리면 우선순위가 높은 A 가 다시 가져갑니다.",
+    build: exampleHaTopology,
   },
   lb: {
     id: "lb",
