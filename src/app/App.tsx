@@ -7,6 +7,7 @@ import {
   clearAll,
   copySelected,
   duplicateSelected,
+  endCoalesce,
   exportJson,
   fitSelectionOrAll,
   importJson,
@@ -84,10 +85,12 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
-      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable) return;
+      // select 는 자체 되돌리기가 없으므로 ⌘Z·⌘⇧Z 만 앱이 처리한다 (나머지 키 — 화살표·Space·Delete 등 — 는 select 몫)
+      if (el.tagName === "SELECT" && !(mod && e.code === "KeyZ")) return;
       // 토글 스위치 위에서 Space 는 토글이 처리한다 (재생까지 같이 바뀌지 않게)
       if (e.defaultPrevented || el.getAttribute?.("role") === "switch") return;
-      const mod = e.metaKey || e.ctrlKey;
       // 문자 키는 e.code 로 판정 (한글 입력 상태에서도 동작, ₩ 로 바뀌는 \ 포함)
       const code = e.code;
       if (mod && code === "Backslash") {
@@ -95,6 +98,8 @@ export function App() {
         toggleInspector();
       } else if (mod && code === "KeyZ") {
         e.preventDefault();
+        // select 에 포커스가 있는 동안 인스펙터는 편집을 한 단계로 묶어 두고(beginCoalesce) 그동안 되돌리기를 막는다 → 먼저 확정
+        if (el.tagName === "SELECT") endCoalesce();
         if (e.shiftKey) redo();
         else undo();
       } else if (mod && code === "KeyC") {

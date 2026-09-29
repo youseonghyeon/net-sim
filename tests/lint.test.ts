@@ -11,6 +11,7 @@ import {
   type Topology,
 } from "../src/model/topology";
 import { exampleHaTopology, exampleTopology, examplePartsTopology, exampleVlanTopology } from "../src/model/examples";
+import { loadTopology } from "./helpers";
 
 /** createDevice + newId("cable") 로 토폴로지를 조립하는 도우미 */
 function build() {
@@ -263,6 +264,65 @@ describe("규칙 4 host.no-gateway-in-segment", () => {
     c.link(sw2, 1, c.gw, 0);
     c.link(sw2, 2, pc2, 0);
     expect(codes(lintTopology(c.t), pc2.id)).toEqual([]);
+  });
+
+  it("같은 세그먼트에 아래 게이트웨이 업링크(if0)와 NAT 안쪽이 있으면 장치 순서와 무관하게 안쪽 인터페이스를 추천한다", () => {
+    const b = build();
+    const gw = b.add("gateway"); // 먼저 추가 → 세그먼트 목록에서 업링크 if0 이 앞에 온다
+    gw.l3!.interfaces[0] = { ipMode: "static", ip: "10.0.0.2", prefix: 24, gateway: "10.0.0.1" };
+    const nat = b.add("nat");
+    nat.l3!.interfaces[1] = { ipMode: "static", ip: "10.0.0.1", prefix: 24, gateway: "" };
+    const sw = b.add("switch");
+    const pc = staticHost(b.add("pc"), "10.0.0.50", "10.0.0.9");
+    const srv = staticHost(b.add("server"), "10.0.0.5", "10.0.0.1", { dns: "8.8.8.8", dhcpServer: { enabled: true, start: "10.0.0.100", end: "10.0.0.199", router: "10.0.0.9", dns: "8.8.8.8" } });
+    b.link(nat, 1, sw, 0);
+    b.link(gw, 0, sw, 1);
+    b.link(pc, 0, sw, 2);
+    b.link(srv, 0, sw, 3);
+    const issues = lintTopology(b.t);
+    expect(issue(issues, pc.id, "host.no-gateway-in-segment").fix).toContain(`10.0.0.1 (${nat.name} inside)`);
+    expect(issue(issues, srv.id, "dhcp.gateway-mismatch").fix).toContain(`10.0.0.1 (${nat.name} inside)`);
+    srv.host!.dhcpServer.router = "";
+    expect(issue(lintTopology(b.t), srv.id, "dhcp.no-router").fix).toContain("10.0.0.1");
+  });
+
+  it("게이트웨이 주소가 라우터가 아닌 호스트 주소면 ARP timeout 이 아니라 그 호스트가 드롭한다고 안내한다 (시뮬레이션으로 확인)", () => {
+    const b = build();
+    const gw = b.add("gateway");
+    const sw = b.add("switch");
+    const pc = staticHost(b.add("pc"), "192.168.1.10", "192.168.1.20");
+    const other = staticHost(b.add("pc"), "192.168.1.20", "192.168.1.1");
+    b.link(gw, 1, sw, 0);
+    b.link(sw, 1, pc, 0);
+    b.link(sw, 2, other, 0);
+    const i = issue(lintTopology(b.t), pc.id, "host.no-gateway-in-segment");
+    expect(i.message).toContain(`${other.name} 가 ARP 에 응답`);
+    expect(i.message).toContain("드롭");
+    expect(i.message).not.toContain("ARP timeout");
+    const sim = loadTopology(b.t);
+    const tr = sim.act({ kind: "ping", nodeId: pc.id, dst: "10.9.9.9" });
+    expect(tr.some((e) => e.nodeId === other.id && e.kind === "ip.drop")).toBe(true);
+    expect(tr.some((e) => e.kind === "arp.timeout")).toBe(false);
+  });
+
+  it("그 주소의 장비가 없으면 ARP timeout, DHCP 범위 안 주소면 그 주소를 받은 단말이 드롭할 수도 있다고 안내한다", () => {
+    const b = build();
+    const gw = b.add("gateway");
+    const sw = b.add("switch");
+    const pc = staticHost(b.add("pc"), "192.168.1.10", "192.168.1.254");
+    b.link(gw, 1, sw, 0);
+    b.link(sw, 1, pc, 0);
+    const i = issue(lintTopology(b.t), pc.id, "host.no-gateway-in-segment");
+    expect(i.message).toContain("그 주소로 ARP 에 응답하는 장비가 없어 ARP timeout");
+    const sim = loadTopology(b.t);
+    expect(sim.act({ kind: "ping", nodeId: pc.id, dst: "10.9.9.9" }).some((e) => e.nodeId === pc.id && e.kind === "arp.timeout")).toBe(true);
+    // 같은 세그먼트 DHCP 서버의 범위 안: 그 주소를 받은 단말이 있을 수 있다
+    const srv = staticHost(b.add("server"), "192.168.1.2", "192.168.1.1", { dns: "8.8.8.8", dhcpServer: { enabled: true, start: "192.168.1.100", end: "192.168.1.199", router: "192.168.1.1", dns: "8.8.8.8" } });
+    b.link(sw, 2, srv, 0);
+    pc.host!.gateway = "192.168.1.150";
+    const j = issue(lintTopology(b.t), pc.id, "host.no-gateway-in-segment");
+    expect(j.message).toContain("DHCP 로 받은 단말");
+    expect(j.message).toContain("ARP timeout");
   });
 });
 
@@ -724,6 +784,111 @@ describe("규칙 21 dhcp.gateway-mismatch", () => {
     srv2.host!.dhcpServer.extraPools!.push({ start: "172.16.0.100", end: "172.16.0.199", prefix: 24, router: "172.16.0.1", dns: "8.8.8.8" });
     expect(codes(lintTopology(t2), srv2.id)).toEqual([]);
   });
+
+  it("옵션(3)이 DHCP 서버 자신의 주소면 ARP timeout 이 아니라 서버가 받아 드롭한다고 안내한다 (시뮬레이션으로 확인)", () => {
+    const { t, srv } = dhcpLan("192.168.1.2");
+    const pc = t.devices.find((d) => d.kind === "pc")!;
+    const i = issue(lintTopology(t), srv.id, "dhcp.gateway-mismatch");
+    expect(i.message).toContain("주소는 받지만");
+    expect(i.message).toContain(`${srv.name} 가 ARP 에 응답`);
+    expect(i.message).not.toContain("ARP timeout");
+    const sim = loadTopology(t);
+    expect(sim.host(pc.name).iface.gateway).toBe("192.168.1.2");
+    const tr = sim.act({ kind: "ping", nodeId: pc.id, dst: "10.9.9.9" });
+    expect(tr.some((e) => e.nodeId === srv.id && e.kind === "ip.drop")).toBe(true);
+    expect(tr.some((e) => e.kind === "arp.timeout")).toBe(false);
+    // 옵션이 이 서버의 풀 범위 안이면 그 주소를 받은 단말일 수도 있다
+    srv.host!.dhcpServer.router = "192.168.1.150";
+    expect(issue(lintTopology(t), srv.id, "dhcp.gateway-mismatch").message).toContain("DHCP 로 받은 단말");
+  });
+
+  it("기본 풀과 추가 풀이 둘 다 틀리면 (장치, code) 하나로 합쳐지더라도 한 이슈에 둘 다 드러난다", () => {
+    const t = examplePartsTopology();
+    const srv = t.devices.find((d) => d.name === "dhcp-srv")!;
+    const pool = srv.host!.dhcpServer.extraPools![0]!;
+    srv.host!.dhcpServer.router = "192.168.1.254";
+    pool.router = "192.168.2.254";
+    const issues = lintTopology(t).filter((i) => i.deviceId === srv.id);
+    expect(codes(issues)).toEqual(["dhcp.gateway-mismatch"]);
+    const i = issues[0]!;
+    expect(i.message).toContain("옵션(3) 192.168.1.254");
+    expect(i.message).toContain("추가 풀 192.168.2.0/24 의 기본 게이트웨이 옵션(3) 192.168.2.254");
+    expect(i.fix).toContain("기본 게이트웨이 칸을 192.168.1.1 (");
+    expect(i.fix).toContain("추가 풀 1 → 게이트웨이 칸을 192.168.2.1 (");
+    // 게이트웨이 칸이 둘 다 비어도 마찬가지
+    srv.host!.dhcpServer.router = "";
+    pool.router = "";
+    const j = lintTopology(t).filter((x) => x.deviceId === srv.id);
+    expect(codes(j)).toEqual(["dhcp.no-router"]);
+    expect(j[0]!.message).toContain("DHCP 로 주소는 나가지만");
+    expect(j[0]!.message).toContain("추가 풀 192.168.2.0/24");
+    expect(j[0]!.fix).toContain("192.168.1.1");
+    expect(j[0]!.fix).toContain("192.168.2.1");
+  });
+});
+
+describe("규칙 23 dhcp.range-invalid (서버가 Discover 에 응답하지 않는 범위)", () => {
+  /** 게이트웨이 if1(192.168.1.1) 아래 스위치에 DHCP 서버 호스트(192.168.1.2/prefix) + DHCP 로 받는 pc */
+  function lanWithRange(start: string, end: string, router: string, prefix = 24) {
+    const b = build();
+    const gw = b.add("gateway");
+    const sw = b.add("switch");
+    const srv = staticHost(b.add("server"), "192.168.1.2", "192.168.1.1", { prefix, dns: "8.8.8.8", dhcpServer: { enabled: true, start, end, router, dns: "8.8.8.8" } });
+    const pc = b.add("pc");
+    b.link(gw, 1, sw, 0);
+    b.link(sw, 1, srv, 0);
+    b.link(sw, 2, pc, 0);
+    return { ...b, gw, sw, srv, pc };
+  }
+
+  it("범위가 서버 서브넷 밖이면 '주소는 받지만' 하는 gateway-mismatch 대신 range-invalid 만 — 시뮬레이션에서도 서버가 응답하지 않는다", () => {
+    const x = lanWithRange("192.168.5.100", "192.168.5.199", "192.168.5.1");
+    const issues = lintTopology(x.t);
+    expect(codes(issues, x.srv.id)).toEqual(["dhcp.range-invalid"]);
+    const i = issue(issues, x.srv.id, "dhcp.range-invalid");
+    expect(i.severity).toBe("error");
+    expect(i.message).toContain("192.168.5.100 ~ 192.168.5.199");
+    expect(i.message).toContain("192.168.1.0/24 밖");
+    expect(i.message).toContain("응답하지 않아");
+    expect(i.fix).toContain("192.168.1.0/24 안으로");
+    const sim = loadTopology(x.t);
+    expect(sim.s.net.trace.some((e) => e.nodeId === x.srv.id && e.kind === "dhcp.misconfigured")).toBe(true);
+    expect(sim.host(x.pc.name).iface.ip).toBeUndefined();
+  });
+
+  it("시작 > 끝도 같은 규칙, 범위가 잘못되면 게이트웨이·DNS 안내 규칙과 추가 풀 규칙은 모두 침묵", () => {
+    const r = lanWithRange("192.168.1.199", "192.168.1.100", "192.168.1.1");
+    expect(codes(lintTopology(r.t), r.srv.id)).toEqual(["dhcp.range-invalid"]);
+    expect(issue(lintTopology(r.t), r.srv.id, "dhcp.range-invalid").message).toContain("끝 주소 192.168.1.100 보다 큼");
+    const sim = loadTopology(r.t);
+    expect(sim.host(r.pc.name).iface.ip).toBeUndefined();
+    const e = lanWithRange("192.168.5.100", "192.168.5.199", "");
+    e.srv.host!.dhcpServer.dns = "";
+    expect(codes(lintTopology(e.t), e.srv.id)).toEqual(["dhcp.range-invalid"]);
+    // 서버는 릴레이로 온 요청에도 응답하지 않는다 → 추가 풀의 게이트웨이 문제도 말하지 않음
+    const t = examplePartsTopology();
+    const srv = t.devices.find((d) => d.name === "dhcp-srv")!;
+    srv.host!.dhcpServer.start = "10.9.9.100";
+    srv.host!.dhcpServer.end = "10.9.9.199";
+    srv.host!.dhcpServer.extraPools![0]!.router = "192.168.2.254";
+    const issues = lintTopology(t).filter((i) => i.deviceId === srv.id);
+    expect(codes(issues)).toEqual(["dhcp.range-invalid"]);
+    expect(issues[0]!.message).toContain("추가 풀");
+  });
+
+  it("추가 풀이 서버 서브넷 밖인 건 정상(릴레이용), /0 서버는 어느 범위든 안, 입력 중인 범위는 침묵", () => {
+    expect(lintTopology(examplePartsTopology())).toEqual([]);
+    const z = lanWithRange("10.0.0.100", "10.0.0.199", "10.0.0.1", 0);
+    expect(codes(lintTopology(z.t), z.srv.id)).not.toContain("dhcp.range-invalid");
+    expect(loadTopology(z.t).host(z.pc.name).iface.ip).toBe("10.0.0.100"); // 코어도 /0 서버는 응답
+    const p = lanWithRange("192.168.5.", "192.168.5.199", "192.168.1.1");
+    expect(codes(lintTopology(p.t), p.srv.id)).toEqual([]);
+    // 서버 IP 를 입력 중이면 코어 서버는 응답하지 않는다("서버 자신의 IP 주소가 없음") → "주소는 나가지만" 류 안내도 하지 않음
+    const q = lanWithRange("192.168.1.100", "192.168.1.199", "");
+    q.srv.host!.ip = "192.168.1.";
+    expect(codes(lintTopology(q.t), q.srv.id)).toEqual([]);
+    expect(loadTopology(q.t).host(q.pc.name).iface.ip).toBeUndefined();
+  });
 });
 
 describe("규칙 22 host.prefix-mismatch", () => {
@@ -801,6 +966,27 @@ describe("규칙 22 host.prefix-mismatch", () => {
     const pc = staticHost(c.add("pc"), "10.0.0.50", "10.0.0.1", { prefix: 16 });
     c.link(sw2, 2, pc, 0);
     expect(codes(lintTopology(c.t), pc.id)).toEqual([]);
+  });
+
+  it("게이트웨이 규칙(규칙 4)에 걸린 호스트는 내지 않는다 — 세그먼트에 없는 게이트웨이로 '돌려 보냄' 이라고 쓰지 않게", () => {
+    const x = lan(28, "192.168.1.5"); // 192.168.1.10/28, 게이트웨이 .5 는 내 서브넷 안이지만 그런 라우터가 없다
+    expect(codes(lintTopology(x.t), x.pc.id)).toEqual(["host.no-gateway-in-segment"]);
+  });
+
+  it("/0 호스트도 잡는다 (모든 주소를 같은 네트워크로 보고 ARP) — 다른 규칙은 그대로", () => {
+    const x = lan(0);
+    const issues = lintTopology(x.t);
+    expect(codes(issues)).toEqual(["host.prefix-mismatch"]);
+    const i = issue(issues, x.pc.id, "host.prefix-mismatch");
+    expect(i.message).toContain("/0");
+    expect(i.message).toContain("짧음");
+    expect(i.message).toContain("ARP timeout");
+    expect(i.fix).toContain("서브넷을 /24 로");
+    const sim = loadTopology(x.t);
+    expect(sim.act({ kind: "ping", nodeId: x.pc.id, dst: "10.9.9.9" }).some((e) => e.nodeId === x.pc.id && e.kind === "arp.timeout")).toBe(true);
+    // 라우터 서브넷 밖 /0 호스트는 여전히 규칙 11 만
+    const m = lan(0, "", "10.5.5.5");
+    expect(codes(lintTopology(m.t), m.pc.id)).toEqual(["segment.mixed-subnet"]);
   });
 });
 

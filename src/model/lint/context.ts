@@ -44,14 +44,18 @@ export function uniqueDevices(list: { device: Device }[], exclude?: Device): Dev
   return out;
 }
 
-/** 후보 라우터 인터페이스 중 참조 주소와 같은 서브넷인 것을 우선, 없으면 주소를 아는 첫 번째 */
+/**
+ * 후보 라우터 인터페이스 중 참조 주소와 같은 서브넷인 것을 우선, 없으면 주소를 아는 것 중에서.
+ * 같은 조건이면 안쪽(호스트가 붙는) 인터페이스를 먼저 — 같은 세그먼트에 아래 게이트웨이의 업링크(if0)가 있어도 위쪽 라우터의 안쪽을 추천한다
+ */
 export function pickGw(gws: GwIface[], ref: string | undefined): GwIface | undefined {
   const known = gws.filter((g) => g.ip && g.subnet);
+  const insideFirst = (list: GwIface[]) => list.find((g) => g.inside) ?? list[0];
   if (ref) {
-    const same = known.find((g) => contains(g.subnet!, ref));
-    if (same) return same;
+    const same = known.filter((g) => contains(g.subnet!, ref));
+    if (same.length > 0) return insideFirst(same);
   }
-  return known[0] ?? gws[0];
+  return insideFirst(known) ?? gws[0];
 }
 
 /** Y(게이트웨이) 뒤에 있는 서브넷들: Y 의 안쪽 인터페이스 + 그 아래 또 다른 게이트웨이 뒤까지 (NAT 박스 뒤는 주소가 바뀌므로 제외) */

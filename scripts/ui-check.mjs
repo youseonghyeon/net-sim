@@ -570,7 +570,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("after panel change:", cab2.map((c) => `${c.a.port}-${c.b.port}`).join(","), "| options:", opts.length);
   await page.screenshot({ path: `${OUT}/36-cable-port.png` });
 }
-// 14b) 케이블 여러 개: 하나에 손실 10% → Shift+클릭으로 하나 더(여러 값) → 30% 한 번에 → ⌘Z 한 번에 둘 다 복귀 → Delete 로 둘 다 삭제 → Esc
+// 14b) 케이블 여러 개: 하나에 손실 10% → Shift+클릭으로 하나 더(여러 값) → 30% 한 번에 → select 에 포커스를 둔 채 ⌘Z 한 번에 둘 다 복귀·⌘⇧Z 다시 실행 → Delete 로 둘 다 삭제 → Esc
 {
   await loadEx("router");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
@@ -593,12 +593,23 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("multi cable:", await page.locator(".inspector h2").textContent(), "| canvas selected:", picked.length, picked.every((id) => ids.includes(id)) ? "(both)" : "(WRONG)", "| mixed select:", mixed === "" ? "여러 값" : `NO (${mixed})`);
   await page.screenshot({ path: `${OUT}/55-multi-cable.png` });
   await lossSelect().selectOption("30");
-  await blur();
+  // 방금 바꾼 select 에 포커스를 둔 채 단축키 (select 는 자체 되돌리기가 없으니 앱의 되돌리기/다시 실행이 동작해야 한다)
+  await lossSelect().focus();
+  const focused = await page.evaluate(() => document.activeElement?.tagName);
   const set = await losses();
   await page.keyboard.press("Meta+z");
   await page.waitForTimeout(100);
   const undone = await losses();
-  console.log("multi cable loss:", set.join(","), "→ undo once →", undone.join(","), set.every((v) => v === 0.3) && undone[0] === 0.1 && undone[1] === 0 ? "ok" : "NO");
+  await page.keyboard.press("Meta+Shift+z");
+  await page.waitForTimeout(100);
+  const redone = await losses();
+  await page.keyboard.press("Meta+z");
+  await page.waitForTimeout(100);
+  const undoneAgain = await losses();
+  const undoOk = set.every((v) => v === 0.3) && undone[0] === 0.1 && undone[1] === 0 && redone.every((v) => v === 0.3) && undoneAgain[0] === 0.1 && undoneAgain[1] === 0;
+  console.log("multi cable loss (focus", focused, "):", set.join(","), "→ undo once →", undone.join(","), "→ redo →", redone.join(","), "→ undo →", undoneAgain.join(","), undoOk ? "ok" : "NO");
+  if (focused !== "SELECT" || !undoOk) errors.push(`select focus undo: 손실률 select 에 포커스가 있을 때 ⌘Z/⌘⇧Z 가 동작하지 않음 (focus ${focused}, ${set} → ${undone} → ${redone} → ${undoneAgain}) / App.tsx 단축키 처리에서 SELECT 는 ⌘Z·⌘⇧Z 만 통과시키기 / src/app/App.tsx onKey`);
+  await blur();
   const n0 = await page.locator("[data-cable]").count();
   await page.keyboard.press("Delete");
   await page.waitForTimeout(100);

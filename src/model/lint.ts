@@ -30,7 +30,7 @@ export function l2Segments(t: Topology): Map<string, number> {
 
 /** 규칙 실행 순서 (규칙 번호 순). 결과는 finalize 가 정렬하지만, 같은 (장치, code) 는 먼저 낸 것의 문구가 남으므로 순서를 지킨다 */
 const RULES: ((ctx: LintContext) => void)[] = [
-  dhcpServiceRules, // 1·2·5·21
+  dhcpServiceRules, // 1·2·5·21·23
   staticHostRules, // 3·4·5·11·22
   uplinkDefaultRule, // 6
   returnRouteRule, // 7
