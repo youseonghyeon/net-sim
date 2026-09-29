@@ -20,6 +20,7 @@ import { Firewall, type FirewallConfig, type FlowDirection } from "./firewall";
 import { NatTable, type PortForward } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { Rip, RIP_TIMER_TAG, type RipConfig } from "./rip";
+import { Vpn, type VpnConfig } from "./vpn";
 
 export interface L3IfaceConfig {
   name: string;
@@ -60,12 +61,14 @@ export interface L3Config {
   forwards?: PortForward[];
   /** 동적 라우팅 (RIPv2 축소판) */
   rip?: RipConfig;
+  /** 사이트 간 VPN (WireGuard 식) */
+  vpn?: VpnConfig;
 }
 
 interface Route {
   out: number;
   nextHop: Ip;
-  kind: "connected" | "static" | "default" | "rip";
+  kind: "connected" | "static" | "default" | "rip" | "vpn";
   /** RIP 경로의 홉 수 */
   metric?: number;
 }
@@ -87,6 +90,8 @@ export class L3Node implements SimNode {
   readonly firewall: Firewall;
   /** 동적 라우팅 (RIP). 꺼져 있으면 아무것도 보내지 않는다 */
   readonly rip: Rip;
+  /** 사이트 간 VPN 터널 */
+  readonly vpn = new Vpn();
   /** 인터페이스 i 가 붙은 물리 포트와 VLAN 태그. 물리 인터페이스는 i === port, 서브 인터페이스는 그 뒤에 붙는다 */
   meta: { port: number; vlan?: number }[];
   private readonly macBase: Mac;
@@ -125,6 +130,62 @@ export class L3Node implements SimNode {
       send: (i, pkt, ctx) => this.ifaces[i]!.sendToMac(RIP_MULTICAST_MAC, pkt, ctx, this.emit(i, ctx)),
     });
     if (cfg.rip) this.rip.config = { ...cfg.rip };
+    if (cfg.vpn) this.vpn.config = { ...cfg.vpn, remote: cfg.vpn.remote.map((r) => ({ ...r })) };
+  }
+
+  setVpn(cfg: VpnConfig, ctx: NodeContext): void {
+    this.vpn.setConfig(cfg, ctx);
+  }
+
+  /** 터널로 보낸다: 원래 패킷을 암호화해 UDP 51820 에 담아 상대 공인 주소로. 바깥 패킷은 내가 만든 것이라 NAT 하지 않는다 */
+  private sendTunnel(inner: Ipv4Packet, ctx: NodeContext, frameId?: number): void {
+    const t = this.vpn.target();
+    const under = t ? this.underlay(t.ip) : undefined;
+    const src = under ? this.ifaces[under.out]!.ip : undefined;
+    const outer = src ? this.vpn.encapsulate(inner, src) : undefined;
+    if (!outer || !under) {
+      ctx.trace("vpn.drop", "L3", `VPN: 상대 ${t?.ip ?? "(주소 없음)"} 로 가는 바깥 경로가 없어 터널로 보낼 수 없음 → 드롭 (상대 공인 주소와 디폴트 라우트를 확인)`, { dst: inner.dst }, frameId);
+      return;
+    }
+    const u = outer.payload as { dstPort: number };
+    ctx.trace(
+      "vpn.encap",
+      "L3",
+      `VPN 캡슐화: ${inner.src} → ${inner.dst} 패킷을 암호화해 UDP ${outer.src}:51820 → ${outer.dst}:${u.dstPort} 안에 담음 — 인터넷 위에서는 공인 주소끼리의 UDP 로만 보이고 안쪽은 볼 수 없다`,
+      { inner: `${inner.src}>${inner.dst}`, peer: outer.dst },
+      frameId,
+    );
+    this.ifaces[under.out]!.sendIp(outer, ctx, this.emit(under.out, ctx), under.nextHop);
+  }
+
+  /** 터널의 바깥(인터넷 쪽) 경로: VPN 경로를 빼고 찾는다 (상대 공인 주소가 터널 대역에 걸려 되돌아가지 않게) */
+  private underlay(dst: Ip): Route | undefined {
+    const r = this.route(dst, false);
+    return r && r.kind !== "vpn" ? r : undefined;
+  }
+
+  /** 받은 터널 패킷: 허용한 상대 대역에서 온 것만 풀어서 안으로 */
+  private receiveTunnel(port: number, outer: Ipv4Packet, srcPort: number, inner: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    const why = this.vpn.refuse(outer, inner);
+    if (why) {
+      ctx.trace("vpn.drop", "L3", `VPN 패킷 수신 (from ${outer.src}) → 풀지 않고 드롭: ${why}`, { from: outer.src }, frameId);
+      return;
+    }
+    const moved = this.vpn.learn(outer, srcPort);
+    ctx.trace(
+      "vpn.decap",
+      "L3",
+      `VPN 복호화: ${outer.src}:${srcPort} 에서 온 터널 패킷을 풀어 원래 패킷 ${inner.src} → ${inner.dst} 를 꺼냄${moved ? ` — 이제 상대에게는 ${outer.src}:${srcPort} 로 답함${outer.src !== this.vpn.config.peer ? " (상대가 NAT 뒤라 설정한 주소와 다름)" : ""}` : ""}`,
+      { from: outer.src, inner: `${inner.src}>${inner.dst}` },
+      frameId,
+    );
+    const mine = this.ifaces.findIndex((i) => i.ip !== undefined && i.ip === inner.dst);
+    if (mine >= 0) {
+      if (inner.payload.kind === "icmp") this.handleIcmp(mine, inner, inner.payload, frameId, ctx);
+      else ctx.trace("ip.drop", "L4", `터널로 온 ${inner.payload.kind.toUpperCase()} 가 나에게 왔지만 듣는 서비스 없음 → 드롭`, {}, frameId);
+      return;
+    }
+    this.forward(inner, port, frameId, ctx, inner, true);
   }
 
   /** RIP 를 주고받는 인터페이스: 주소가 확정됨(Probe 끝·충돌 없음)·링크 업·NAT outside 아님 */
@@ -358,6 +419,11 @@ export class L3Node implements SimNode {
         if (udp.dstPort === RIP_PORT) this.rip.handle(port, pkt.src, m, frameId, ctx);
         return;
       }
+      // 나에게 온 VPN 터널 패킷은 NAT 역변환보다 먼저 푼다 (지나가는 것이면 아래에서 보통 UDP 처럼 전달)
+      if (m.kind === "vpn" && this.ifaces.some((i) => i.ip !== undefined && i.ip === pkt.dst)) {
+        this.receiveTunnel(port, pkt, udp.srcPort, m.inner, frameId, ctx);
+        return;
+      }
       const toMe = pkt.dst === "255.255.255.255" || this.ifaces.some((i) => i.ip !== undefined && i.ip === pkt.dst);
       // 내 DHCP 클라이언트로 온 응답(Offer/Ack 는 아직 내 것이 아닌 주소로 올 수 있다)은 목적지와 무관하게 받는다
       const forMyClient = m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT && this.clients[port] !== undefined;
@@ -475,7 +541,7 @@ export class L3Node implements SimNode {
    * 라우팅 테이블 조회: 연결된 서브넷 → 스태틱 라우팅·RIP 중 긴 마스크(같으면 스태틱이 우선, 관리 거리 1 < 120)
    * → 디폴트 라우트(업링크 게이트웨이) → RIP 로 배운 디폴트 라우트
    */
-  route(dst: Ip): Route | undefined {
+  route(dst: Ip, includeVpn = true): Route | undefined {
     for (let i = 0; i < this.ifaces.length; i++) {
       const iface = this.ifaces[i]!;
       if (iface.ip && sameSubnet(dst, iface.ip, iface.prefix)) return { out: i, nextHop: dst, kind: "connected" };
@@ -497,6 +563,12 @@ export class L3Node implements SimNode {
       if (r.prefix === 0 || !matches(r.dest, r.prefix)) continue;
       if (best && (best.prefix > r.prefix || (best.prefix === r.prefix && (best.kind === "static" || (best.metric ?? 99) <= r.metric)))) continue;
       best = { out: r.out, nextHop: r.nextHop, kind: "rip", metric: r.metric, prefix: r.prefix };
+    }
+    // VPN 으로 가는 상대 대역: 스태틱과 같은 급 (같은 마스크면 스태틱이 우선)
+    const tunnel = includeVpn ? this.vpn.match(dst) : undefined;
+    if (tunnel && (!best || tunnel.prefix > best.prefix)) {
+      const under = this.underlay(this.vpn.target()!.ip);
+      return { out: under?.out ?? this.outside ?? 0, nextHop: this.vpn.target()!.ip, kind: "vpn" };
     }
     if (best) return { out: best.out, nextHop: best.nextHop, kind: best.kind, metric: best.metric };
     const def = this.staticDefault();
@@ -532,6 +604,10 @@ export class L3Node implements SimNode {
   /** 내가 만든 패킷(응답)을 라우팅 테이블대로 내보낸다 */
   private sendVia(pkt: Ipv4Packet, ctx: NodeContext, frameId?: number): void {
     const r = this.route(pkt.dst);
+    if (r?.kind === "vpn") {
+      this.sendTunnel(pkt, ctx, frameId);
+      return;
+    }
     if (!r) {
       ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 로 가는 경로가 없음 (연결된 서브넷도, 디폴트 라우트도 없음) → 드롭`, { dst: pkt.dst }, frameId);
       return;
@@ -543,13 +619,25 @@ export class L3Node implements SimNode {
    * 패킷을 라우팅 테이블대로 다른 인터페이스로 넘긴다.
    * @param received 선에서 받은 그대로의 패킷 (NAT 역변환 전). TTL 초과 통지에 내장할 원래 패킷은 보낸 이가 알아볼 수 있게 이걸 쓴다
    */
-  private forward(pkt: Ipv4Packet, inPort: number, frameId: number, ctx: NodeContext, received: Ipv4Packet = pkt): void {
+  /**
+   * ICMP 통지(Time Exceeded·Unreachable)를 보낼 인터페이스: 보통은 패킷이 들어온 곳.
+   * 터널에서 풀린 패킷이면 안쪽(LAN) 인터페이스 주소로 — 공인 주소로 보내면 상대가 자기 사설 대역에서 온 게 아니라며 버린다(AllowedIPs)
+   */
+  private noticeFrom(pkt: Ipv4Packet, inPort: number, tunnel: boolean): NetInterface {
+    if (!tunnel) return this.ifaces[inPort]!;
+    const r = this.route(pkt.dst, false);
+    const i = r && r.out !== this.outside && this.ifaces[r.out]?.ip ? r.out : this.ifaces.findIndex((f, k) => f.ip !== undefined && k !== this.outside);
+    return this.ifaces[i >= 0 ? i : inPort]!;
+  }
+
+  /** @param tunnel VPN 터널에서 풀려 나온 패킷 (바깥에서 왔지만 NAT·바깥 방향 규칙을 적용하지 않고 안쪽끼리로 본다) */
+  private forward(pkt: Ipv4Packet, inPort: number, frameId: number, ctx: NodeContext, received: Ipv4Packet = pkt, tunnel = false): void {
     if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
       ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
     if (pkt.ttl <= 1) {
-      const notice = this.ifaces[inPort]!.timeExceeded(received, ctx, frameId);
+      const notice = this.noticeFrom(pkt, inPort, tunnel).timeExceeded(received, ctx, frameId);
       if (notice) this.sendVia(notice, ctx, frameId);
       return;
     }
@@ -563,18 +651,25 @@ export class L3Node implements SimNode {
             ? "RIP 이웃에게서 이 경로를 배우지 못함 — 이웃 라우터도 RIP 를 켰는지, 그 네트워크를 가진 라우터까지 이어지는지 확인하세요"
             : "스태틱 라우팅을 추가하거나 디폴트 라우트(업링크 게이트웨이)를 설정하세요. 라우터가 여럿이면 RIP(동적 라우팅)를 켜도 됩니다";
       ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 로 가는 경로가 없음 (연결된 서브넷·스태틱 라우팅·디폴트 라우트 모두 해당 없음) → 드롭. ${hint}`, { dst: pkt.dst }, frameId);
-      const notice = this.ifaces[inPort]!.unreachable(received, "net", ctx, frameId);
+      const notice = this.noticeFrom(pkt, inPort, tunnel).unreachable(received, "net", ctx, frameId);
       if (notice) this.sendVia(notice, ctx, frameId);
+      return;
+    }
+    if (r.kind === "vpn") {
+      // 사설 대역끼리: NAT 하지 않고 터널로. 방화벽은 안쪽끼리(양방향) 규칙으로 본다
+      if (!this.firewall.check(pkt, "lan", ctx, frameId)) return;
+      ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 VPN 상대 대역 → 터널로 (NAT 하지 않음), TTL ${pkt.ttl} → ${pkt.ttl - 1}`, { dst: pkt.dst, out: "VPN", kind: r.kind }, frameId);
+      this.sendTunnel({ ...pkt, ttl: pkt.ttl - 1 }, ctx, frameId);
       return;
     }
     const outName = this.names[r.out]!;
     const outIface = this.ifaces[r.out]!;
-    if (!this.firewall.check(pkt, this.flowDirection(inPort, r.out), ctx, frameId)) return;
+    if (!this.firewall.check(pkt, tunnel ? "lan" : this.flowDirection(inPort, r.out), ctx, frameId)) return;
     let out: Ipv4Packet = { ...pkt, ttl: pkt.ttl - 1 };
     if (this.nat && r.out === this.outside) {
-      if (inPort === this.outside) {
+      if (inPort === this.outside && !tunnel) {
         ctx.trace("ip.no-route", "L3", `${pkt.dst} 로 가는 안쪽 경로가 없어 바깥으로 되돌아감 → 드롭. 스태틱 라우팅을 추가하세요 (예: ${networkOf(pkt.dst, 24)}/24 via 안쪽 게이트웨이)`, { dst: pkt.dst }, frameId);
-        const notice = this.ifaces[inPort]!.unreachable(received, "net", ctx, frameId);
+        const notice = this.noticeFrom(pkt, inPort, tunnel).unreachable(received, "net", ctx, frameId);
         if (notice) this.sendVia(notice, ctx, frameId);
         return;
       }
@@ -641,6 +736,7 @@ export class L3Node implements SimNode {
       routes.push([`${r.dest}/${r.prefix}`, out >= 0 ? this.names[out]! : "(넥스트 홉에 닿는 인터페이스 없음)", r.via, "스태틱"]);
     }
     for (const r of this.rip.rows()) routes.push([`${r.dest}/${r.prefix}`, this.names[r.out]!, r.nextHop, `RIP ${r.metric}홉`]);
+    if (this.vpn.config.enabled && this.vpn.config.peer) for (const r of this.vpn.config.remote) routes.push([`${r.dest}/${r.prefix}`, "VPN 터널", this.vpn.target()!.ip, "VPN"]);
     const def = this.staticDefault();
     if (def) routes.push(["0.0.0.0/0", this.names[def.out]!, def.nextHop, "디폴트 라우트"]);
     const tables: NodeSnapshot["tables"] = [{ title: "라우팅 테이블", columns: ["목적지", "인터페이스", "넥스트 홉", "출처"], rows: routes }];
@@ -657,6 +753,9 @@ export class L3Node implements SimNode {
       label: this.id,
       info: [
         ...this.ifaces.map((_, i) => [this.names[i]!, this.ifaceStatus(i) + (this.relays[i] ? ` · DHCP 릴레이 → ${this.relays[i]}` : "")] as [string, string]),
+        ...(this.vpn.config.enabled
+          ? [["VPN", `켜짐 · 상대 ${this.vpn.target() ? `${this.vpn.target()!.ip}:${this.vpn.target()!.port}` : "없음"}${this.vpn.endpoint && this.vpn.endpoint.ip !== this.vpn.config.peer ? " (NAT 뒤에서 온 주소)" : ""} · 보냄 ${this.vpn.sent} / 받음 ${this.vpn.received}`] as [string, string]]
+          : []),
         ...(this.rip.config.enabled ? [["RIP", `켜짐 · 배운 경로 ${this.rip.rows().length}개${this.rip.config.defaultRoute ? " · 디폴트 라우트 광고" : ""}`] as [string, string]] : []),
         ...(this.firewall.config.enabled
           ? [["방화벽", `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}`] as [string, string]]

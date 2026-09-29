@@ -953,6 +953,55 @@ export function lintTopology(t: Topology): LintIssue[] {
     });
   }
 
+  // 규칙 17: 사이트 간 VPN — 상대 주소 없음, 상대 대역이 우리 LAN 과 겹침, 상대가 VPN 을 안 켬, 상대 대역 목록에 우리 LAN 이 없음
+  const vpnOf = (d: Device) => (d.l3?.vpn?.enabled ? d.l3.vpn : undefined);
+  const publicIp = (d: Device) => {
+    const c = d.l3?.interfaces[0];
+    return c?.ipMode === "static" ? validIp(c.ip) : undefined;
+  };
+  const lanSubnets = (d: Device) => m.allGws.filter((g) => g.device === d && g.subnet && !g.uplink).map((g) => g.subnet!);
+  const remotesOf = (v: NonNullable<ReturnType<typeof vpnOf>>) => v.remote.map((r) => subnetOf(validIp(r.dest), r.prefix)).filter((x): x is Subnet => !!x);
+  for (const d of t.devices) {
+    const v = vpnOf(d);
+    if (!v) continue;
+    const peer = validIp(v.peer);
+    if (!peer) {
+      add({ deviceId: d.id, severity: "warn", code: "vpn.no-peer", message: "VPN 을 켰지만 상대 공인 주소가 없음 → 터널로 보낼 곳이 없음", fix: `${d.name} → VPN → 상대 공인 주소에 상대 터널 장비의 공인(outside) 주소` });
+      continue;
+    }
+    const mine = lanSubnets(d);
+    const remotes = remotesOf(v);
+    const clash = remotes.flatMap((r) => mine.filter((l) => overlaps(r, l)).map((l) => `${fmtSubnet(r)} ↔ ${fmtSubnet(l)}`));
+    if (clash.length) {
+      add({
+        deviceId: d.id,
+        severity: "error",
+        code: "vpn.overlap",
+        message: `VPN 상대 대역이 우리 LAN 과 겹침 (${clash.join(", ")}) → 같은 주소가 양쪽에 있어 어느 쪽으로 보낼지 구분할 수 없음`,
+        fix: "한쪽 사무실의 사설 대역을 바꾸기 (예: 192.168.1.0/24 와 192.168.2.0/24)",
+      });
+    }
+    const peerDev = t.devices.find((x) => x !== d && x.l3 && publicIp(x) === peer);
+    if (!peerDev) continue; // 상대가 이 토폴로지에 없거나 주소를 DHCP 로 받으면 판단하지 않는다
+    const pv = vpnOf(peerDev);
+    if (!pv) {
+      add({ deviceId: d.id, severity: "warn", code: "vpn.peer-off", message: `상대 ${peerDev.name} (${peer}) 가 VPN 을 켜지 않음 → 터널 패킷을 풀지 못해 드롭`, fix: `${peerDev.name} → VPN 을 켜고 상대 주소·대역을 이쪽과 짝으로 설정`, related: [peerDev.id] });
+      continue;
+    }
+    const theirRemotes = remotesOf(pv);
+    const missing = mine.filter((l) => !theirRemotes.some((r) => covers(r, l)));
+    if (missing.length && mine.length) {
+      add({
+        deviceId: d.id,
+        severity: "warn",
+        code: "vpn.one-way",
+        message: `상대 ${peerDev.name} 의 VPN 대역에 우리 LAN ${missing.map(fmtSubnet).join(", ")} 이 없음 → 이쪽에서 보낸 패킷을 상대가 받지 않고(허용 안 한 주소), 응답도 터널로 돌아오지 않음`,
+        fix: `${peerDev.name} → VPN → 상대 쪽 사설 대역에 ${missing.map(fmtSubnet).join(", ")} 추가`,
+        related: [peerDev.id],
+      });
+    }
+  }
+
   return finalize(issues, t);
 }
 

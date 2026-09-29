@@ -696,6 +696,42 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("fwd row: two lines", b.height > 50 ? "yes" : "NO", "| ip width", Math.round(ip.width), "| proto", await fwd.locator("select.proto").inputValue());
   await fwd.screenshot({ path: `${OUT}/46-fwd-row.png` });
 }
+// VPN 예제: 사설끼리 ping, 통신사 구간을 지나는 패킷 카드에 "터널 안" 층, NAT 박스 설정에 VPN 섹션
+{
+  await loadEx("vpn");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await clickDevice("pc-a");
+  await page.locator(".ping-row .picker .input").first().fill("192.168.2.10");
+  await page.keyboard.press("Escape");
+  await page.click(".ping-row .btn:has-text('ping')");
+  await page.locator(".inspector .ping-log li.ok, .inspector .ping-log li.failed").first().waitFor({ timeout: 30000 });
+  console.log("vpn ping:", (await page.locator(".inspector .ping-log li").first().textContent())?.replace(/\s+/g, " "));
+  await clickDevice("사무실 A NAT");
+  await goTab("설정");
+  console.log("vpn section:", await page.locator(".inspector h3", { hasText: "VPN" }).count(), "| remote rows:", await page.locator(".inspector .lb-row").count(), "| badge:", await device("사무실 A NAT").locator(".badge", { hasText: "VPN" }).count());
+  // 다시 ping 을 보내고 통신사 구간 위의 터널 패킷을 눌러 본다
+  await clickDevice("pc-a");
+  await page.click(".ping-row .btn:has-text('ping')");
+  const isp = await device("통신사 구간").locator(".tile").boundingBox();
+  let clicked = false;
+  for (let i = 0; i < 80 && !clicked; i++) {
+    for (const el of await page.locator("g.packet.vpn[data-tx]").all()) {
+      const b = await el.boundingBox();
+      if (b && b.y < isp.y + isp.height + 80) {
+        await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+        clicked = (await page.locator(".packet-card").count()) > 0;
+        if (clicked) break;
+      }
+    }
+    if (!clicked) await page.waitForTimeout(50);
+  }
+  if (clicked) {
+    console.log("vpn packet card:", (await page.locator(".packet-card .pkt-layer-title").allTextContents()).join(" > "));
+    await page.screenshot({ path: `${OUT}/47-vpn-card.png` });
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Space");
+  } else console.log("vpn packet card: (터널 패킷을 누르지 못함)");
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

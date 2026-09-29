@@ -756,7 +756,50 @@ export function exampleLoadBalancerTopology(): Topology {
   return t;
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "publish" | "internet" | "lb" | "roaming" | "docker";
+/**
+ * VPN 으로 두 사무실 잇기: 두 NAT 박스가 통신사 구간(공인 203.0.113.0/24)으로 이어지고, 서로의 사설 대역을
+ * WireGuard 식 터널(UDP 51820)로 보낸다. 사설 주소끼리 NAT 없이 그대로 닿고, 인터넷 위에서는 공인 주소끼리의 UDP 만 보인다.
+ * 두 사무실의 사설 대역은 달라야 한다(겹치면 어느 쪽인지 구분할 수 없다)
+ */
+export function exampleVpnTopology(): Topology {
+  const { devices, add } = builder();
+  const staticHost = (d: Device, ip: string, gw: string, services: number[] = []) => {
+    d.host = { ipMode: "static", ip, prefix: 24, gateway: gw, services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  const isp = add("switch", 400, -104, "통신사 구간");
+  const natA = add("nat", 160, 48, "사무실 A NAT");
+  natA.l3 = { interfaces: [iface("203.0.113.11"), iface("192.168.1.1")], routes: [], vpn: { enabled: true, peer: "203.0.113.22", remote: [{ dest: "192.168.2.0", prefix: 24 }] } };
+  const natB = add("nat", 640, 48, "사무실 B NAT");
+  natB.l3 = { interfaces: [iface("203.0.113.22"), iface("192.168.2.1")], routes: [], vpn: { enabled: true, peer: "203.0.113.11", remote: [{ dest: "192.168.1.0", prefix: 24 }] } };
+  const swA = add("switch", 160, 208, "sw-a");
+  const swB = add("switch", 640, 208, "sw-b");
+  const pcA = add("pc", 128, 368, "pc-a");
+  const srvA = add("server", 256, 368, "srv-a");
+  const pcB = add("pc", 608, 368, "pc-b");
+  const srvB = add("server", 736, 368, "srv-b");
+  staticHost(pcA, "192.168.1.10", "192.168.1.1");
+  staticHost(srvA, "192.168.1.20", "192.168.1.1", [80]);
+  staticHost(pcB, "192.168.2.10", "192.168.2.1");
+  staticHost(srvB, "192.168.2.20", "192.168.2.1", [80]);
+  const cables: Cable[] = [
+    cable(isp, 1, natA, 0),
+    cable(isp, 6, natB, 0),
+    cable(natA, 1, swA, 3),
+    cable(natB, 1, swB, 3),
+    cable(swA, 1, pcA, 0),
+    cable(swA, 6, srvA, 0),
+    cable(swB, 1, pcB, 0),
+    cable(swB, 6, srvB, 0),
+  ];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "사무실 A 192.168.1.0/24", tint: "blue", ...zoneAround(t, [natA.id, swA.id, pcA.id, srvA.id], 24)! },
+    { id: newId("zone"), label: "사무실 B 192.168.2.0/24", tint: "green", ...zoneAround(t, [natB.id, swB.id, pcB.id, srvB.id], 24)! },
+  ];
+  return t;
+}
+
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "publish" | "internet" | "vpn" | "lb" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -874,6 +917,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "도메인으로 회사 웹 서버 접속 (DNS·NAT·포트 포워딩)",
     blurb: "맥북에서 nexus.com:80 으로 TCP 연결을 보내 보세요. 공인 DNS 8.8.8.8(ISP 라우터 너머)이 회사 공인 주소를 알려 주고, 집 NAT(출발지 변환) → 회사 NAT 포트 포워딩(목적지 변환) → 방화벽(웹 서버 80 만 허용) → 웹 서버로 갑니다. srv-1(192.168.1.3)은 사설 주소라 밖에서 직접 닿지 않습니다.",
     build: examplePublishTopology,
+  },
+  vpn: {
+    id: "vpn",
+    group: "인터넷",
+    label: "VPN 으로 두 사무실 잇기 (터널·캡슐화)",
+    blurb: "pc-a 에서 192.168.2.10 으로 ping 하면 사설 주소끼리 바로 닿습니다. 통신사 구간을 지나는 패킷을 눌러 보면 바깥은 공인 주소끼리의 UDP 51820 뿐이고, 원래 패킷은 \"터널 안\" 에 암호화돼 있습니다. NAT 박스 한쪽의 VPN 을 끄면 사설 주소는 인터넷으로 나갈 수 없어 실패합니다.",
+    build: exampleVpnTopology,
   },
   roaming: {
     id: "roaming",

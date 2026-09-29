@@ -40,6 +40,7 @@ function appLength(u: UdpPacket): number {
   const m = u.payload;
   if (m.kind === "dhcp") return 300;
   if (m.kind === "dns") return 12 + m.name.length + 6 + (m.answer ? 16 : 0);
+  if (m.kind === "vpn") return 32 + 20 + l4Length(m.inner.payload); // WireGuard 머리 32 + 암호화된 원래 IP 패킷
   return 4 + m.entries.length * 20; // RIP
 }
 
@@ -93,6 +94,8 @@ function tcpText(t: TcpSegment): string {
 
 function udpText(u: UdpPacket): string {
   const m = u.payload;
+  // tcpdump 는 터널 안을 풀지 못한다 — 암호화되어 있으므로 그냥 UDP 로 보인다
+  if (m.kind === "vpn") return `UDP, length ${appLength(u)}`;
   if (m.kind === "dhcp") {
     const fromClient = m.op === "discover" || m.op === "request" || m.op === "release";
     return `BOOTP/DHCP, ${fromClient ? "Request" : "Reply"} from ${m.clientMac}, length ${appLength(u)} (DHCP-Message Option 53: ${DHCP_TYPE[m.op][1]})`;
@@ -133,6 +136,13 @@ export function headerLayers(frame: EthernetFrame): HeaderLayer[] {
     });
     return layers;
   }
+  layers.push(...ipLayers(p));
+  return layers;
+}
+
+/** IPv4 부터 위 계층. VPN 터널이면 암호화 층 뒤에 "터널 안(복호화하면)" 원래 패킷을 겹겹이 */
+function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
+  const layers: HeaderLayer[] = [];
   const l4 = p.payload;
   const proto = l4.kind === "icmp" ? "1 (ICMP)" : l4.kind === "tcp" ? "6 (TCP)" : "17 (UDP)";
   layers.push({
@@ -147,8 +157,22 @@ export function headerLayers(frame: EthernetFrame): HeaderLayer[] {
   });
   if (l4.kind === "icmp") layers.push(icmpLayer(l4));
   else if (l4.kind === "tcp") layers.push(tcpLayer(l4));
-  else layers.push(...udpLayers(l4));
-  return layers;
+  else {
+    layers.push(...udpLayers(l4));
+    if (l4.payload.kind === "vpn") {
+      const inner = l4.payload.inner;
+      layers.push({
+        title: "VPN (WireGuard 식)",
+        rows: [
+          ["종류", "전송 데이터 (type 4)"],
+          ["안쪽", "암호화됨 — 인터넷 위의 장비는 아래 원래 패킷을 볼 수 없다"],
+          ["원래 패킷 (복호화하면)", `${inner.src} → ${inner.dst}`],
+        ],
+      });
+      layers.push(...ipLayers(inner, true));
+    }
+  }
+  return inTunnel ? layers.map((l) => ({ ...l, title: `터널 안 · ${l.title}` })) : layers;
 }
 
 function icmpLayer(p: IcmpPacket): HeaderLayer {
@@ -221,6 +245,7 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
     if (m.op === "response") rows.push(["응답", m.answer ? `${m.name} A ${m.answer}` : `없음 (rcode ${m.rcode === "NXDOMAIN" ? "3 NXDOMAIN" : "2 SERVFAIL"})`]);
     return [udp, { title: "DNS (앱)", rows }];
   }
+  if (m.kind === "vpn") return [udp];
   return [
     udp,
     {

@@ -159,8 +159,20 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage;
 }
+
+/**
+ * VPN 터널 데이터 (WireGuard 식): 원래 IP 패킷을 암호화해 UDP 51820 안에 싣는다.
+ * 중간 장비에게는 공인 주소끼리의 UDP 로만 보이고, 안쪽(사설 주소·내용)은 암호화되어 보이지 않는다.
+ * inner 는 받는 쪽이 복호화했을 때의 원래 패킷 (시뮬레이터는 실제로 암호화하지 않고 "암호화됨" 으로 표시만 한다)
+ */
+export interface VpnMessage {
+  kind: "vpn";
+  inner: Ipv4Packet;
+}
+
+export const VPN_PORT = 51820;
 
 /**
  * RIPv2 메시지 (RFC 2453 축소판). 경로마다 목적지·프리픽스·메트릭(홉 수, 16 = 도달 불가)만 담는다.
@@ -224,7 +236,7 @@ export const LIMITED_BROADCAST_IP: Ip = "255.255.255.255";
 
 export type Layer = "L1" | "L2" | "L3" | "L4" | "app" | "sys";
 
-export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns" | "rip";
+export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns" | "rip" | "vpn";
 
 const DHCP_LABEL: Record<DhcpOp, string> = { discover: "Discover", offer: "Offer", request: "Request", ack: "Ack", nak: "Nak", release: "Release" };
 
@@ -243,6 +255,7 @@ export function describeFrame(frame: EthernetFrame): string {
   const d = inner.payload;
   if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}?)` : `DNS 응답 (${d.name} = ${d.answer ?? d.rcode})`;
   if (d.kind === "rip") return d.command === "request" ? "RIP Request (전체 경로 요청)" : `RIP Response (경로 ${d.entries.length}개)`;
+  if (d.kind === "vpn") return `VPN 터널 (암호화됨 · 안: ${d.inner.src} → ${d.inner.dst})`;
   return `DHCP ${DHCP_LABEL[d.op]}${d.yiaddr ? ` (${d.yiaddr})` : ""}`;
 }
 
@@ -264,6 +277,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
+  if (inner.payload.kind === "vpn") return "VPN 터널";
   return `DHCP ${DHCP_LABEL[inner.payload.op]}`;
 }
 
@@ -274,5 +288,5 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.payload.kind === "icmp") return "icmp";
   if (p.payload.kind === "tcp") return "tcp";
   const k = p.payload.payload.kind;
-  return k === "dns" ? "dns" : k === "rip" ? "rip" : "dhcp";
+  return k === "dns" ? "dns" : k === "rip" ? "rip" : k === "vpn" ? "vpn" : "dhcp";
 }

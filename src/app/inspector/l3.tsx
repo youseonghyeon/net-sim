@@ -1,4 +1,4 @@
-// 게이트웨이·NAT 박스 설정: 인터페이스, 스태틱 라우팅, 동적 라우팅(RIP), VLAN 서브 인터페이스. 스위치 포트 VLAN 도 여기.
+// 게이트웨이·NAT 박스 설정: 인터페이스, 스태틱 라우팅, 동적 라우팅(RIP), VPN, VLAN 서브 인터페이스. 스위치 포트 VLAN 도 여기.
 import { sameSubnet } from "../../core/addr";
 import { updateDevice } from "../../model/store";
 import {
@@ -97,6 +97,7 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
         </button>
       </Section>
       <RipSection d={d} l3={l3} />
+      <VpnSection d={d} l3={l3} />
       {isNat && (
         <ForwardSection
           rules={l3.forwards ?? []}
@@ -110,6 +111,59 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
         uplinkName={isNat ? "outside" : "if0"}
       />
     </>
+  );
+}
+
+/** 사이트 간 VPN (WireGuard 식): 켜기 + 상대 공인 주소 + 상대 쪽 사설 대역 */
+export function VpnSection({ d, l3 }: { d: Device; l3: L3Settings }) {
+  const vpn = l3.vpn ?? { enabled: false, peer: "", remote: [] };
+  const set = (patch: Partial<NonNullable<L3Settings["vpn"]>>) =>
+    updateDevice(d.id, (x) => {
+      const cur = x.l3 ?? defaultL3(x.kind);
+      return { ...x, l3: { ...cur, vpn: { ...(cur.vpn ?? { enabled: false, peer: "", remote: [] }), ...patch } } };
+    });
+  const setRemote = (i: number, patch: Partial<{ dest: string; prefix: number }>) => set({ remote: vpn.remote.map((r, k) => (k === i ? { ...r, ...patch } : r)) });
+  return (
+    <Section title="VPN (사이트 간)">
+      <label class="toggle-row">
+        <span>
+          {vpn.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">UDP 51820</span>
+        </span>
+        <Toggle on={vpn.enabled} onToggle={() => set({ enabled: !vpn.enabled })} />
+      </label>
+      {!vpn.enabled && (
+        <p class="note">
+          켜면 상대 사무실의 사설 대역으로 가는 패킷을 암호화해 UDP 에 담아 상대 공인 주소로 보냅니다(WireGuard 식 터널). 사설 주소끼리 NAT 없이 이어지고, 인터넷 위에서는 공인 주소끼리의 UDP 로만 보입니다. 상대 장비에도 이쪽 주소·대역으로 짝을 맞춰 켜야 합니다.
+        </p>
+      )}
+      {vpn.enabled && (
+        <>
+          <Field label="상대 공인 주소" error={ipError(vpn.peer, true)}>
+            <input class="input mono" value={vpn.peer} placeholder="203.0.113.22" onInput={(e) => set({ peer: e.currentTarget.value })} />
+          </Field>
+          <h3 class="sub">상대 쪽 사설 대역</h3>
+          {vpn.remote.length === 0 && <p class="note error-note">상대 사무실의 사설 대역(예: 192.168.2.0/24)을 넣어야 그쪽으로 가는 패킷이 터널을 탑니다.</p>}
+          {vpn.remote.map((r, i) => (
+            <div key={i} class="lb-row">
+              <input class="input mono" value={r.dest} placeholder="192.168.2.0" onInput={(e) => setRemote(i, { dest: e.currentTarget.value })} />
+              <span class="mono muted">/</span>
+              <input class="input mono" type="number" min={1} max={32} value={r.prefix} onInput={(e) => { if (e.currentTarget.value !== "") setRemote(i, { prefix: Math.min(32, Math.max(1, Number(e.currentTarget.value) || 24)) }); }} />
+              <button class="icon-btn" title="대역 삭제" onClick={() => set({ remote: vpn.remote.filter((_, k) => k !== i) })}>
+                <Icon name="trash" size={15} />
+              </button>
+              {ipError(r.dest, true) && <div class="error lb-error">{ipError(r.dest, true)}</div>}
+            </div>
+          ))}
+          <button class="btn wide" onClick={() => set({ remote: [...vpn.remote, { dest: "", prefix: 24 }] })}>
+            <Icon name="plus" size={14} />
+            대역 추가
+          </button>
+          <p class="note">
+            이 대역으로 가는 패킷은 터널로 가고(NAT 하지 않음), 터널로 온 패킷은 이 대역에서 온 것만 받습니다(WireGuard 의 AllowedIPs). 상대가 NAT 뒤에 있으면 상대가 먼저 보낸 뒤 그 출발지로 답합니다. 양쪽 사설 대역이 겹치면 안 됩니다.
+          </p>
+        </>
+      )}
+    </Section>
   );
 }
 

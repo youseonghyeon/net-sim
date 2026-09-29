@@ -229,6 +229,16 @@ export interface L3Settings {
   subinterfaces?: SubIfaceSettings[];
   /** 동적 라우팅 (RIP). 없으면 꺼짐 */
   rip?: RipSettings;
+  /** 사이트 간 VPN (WireGuard 식). 없으면 꺼짐 */
+  vpn?: VpnSettings;
+}
+
+export interface VpnSettings {
+  enabled: boolean;
+  /** 상대 터널 끝의 공인 주소 */
+  peer: string;
+  /** 상대 쪽 사설 대역 */
+  remote: { dest: string; prefix: number }[];
 }
 
 export interface RipSettings {

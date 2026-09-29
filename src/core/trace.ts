@@ -136,7 +136,11 @@ export type TraceKind =
   | "lb.pick"
   | "lb.relay"
   | "lb.down"
-  | "lb.fail";
+  | "lb.fail"
+  | "vpn.config"
+  | "vpn.encap"
+  | "vpn.decap"
+  | "vpn.drop";
 
 export interface TraceEvent {
   seq: number;
@@ -192,4 +196,5 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "vlan.drop",
   "lb.down",
   "lb.fail",
+  "vpn.drop",
 ]);
