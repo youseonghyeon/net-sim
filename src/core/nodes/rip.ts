@@ -30,6 +30,8 @@ export interface RipRoute {
   out: number;
   /** 홉 수. 16 = 도달 불가(철회 중) */
   metric: number;
+  /** 이 경로를 알려 준 이웃 (넥스트 홉 필드로 다른 주소를 적어 보냈으면 nextHop 과 다르다) */
+  from?: Ip;
 }
 
 /** RIP 가 라우터에게서 알아야 하는 것 */
@@ -42,6 +44,8 @@ export interface RipHost {
   participates(i: number): boolean;
   /** 쓸 수 있는(링크 업·주소 있음) 스태틱 디폴트 라우트가 나가는 인터페이스. 업링크가 죽으면 undefined → 광고 철회 */
   staticDefaultOut(): number | undefined;
+  /** 이 인터페이스로 광고할 때 적을 넥스트 홉 (이중화 master 의 가상 주소). 없으면 보낸 이 자신 */
+  advertisedNextHop?(i: number): Ip | undefined;
   /** 인터페이스 i 로 L2 멀티캐스트 송신 */
   send(i: number, pkt: Ipv4Packet, ctx: NodeContext): void;
 }
@@ -163,7 +167,9 @@ export class Rip {
       const metric = r.metric >= RIP_INFINITY || r.out === i ? RIP_INFINITY : Math.min(r.metric + 1, RIP_INFINITY);
       out.push({ dest: r.dest, prefix: r.prefix, metric });
     }
-    return out;
+    // 이중화 master 는 넥스트 홉을 가상 주소로 적는다 (철회에는 필요 없음)
+    const nh = this.host.advertisedNextHop?.(i);
+    return nh ? out.map((e) => (e.metric < RIP_INFINITY ? { ...e, nextHop: nh } : e)) : out;
   }
 
   private withdrawAll(): RipEntry[] {
@@ -212,7 +218,15 @@ export class Rip {
       if (own.has(k)) continue; // 내 직접 연결 네트워크는 배우지 않는다
       const metric = Math.min(e.metric, RIP_INFINITY);
       const cur = this.routes.get(k);
-      if (cur && cur.nextHop === src && cur.out === i) {
+      // 넥스트 홉 필드: 같은 서브넷의 주소면 그리로 (이중화 가상 주소), 아니면 보낸 이
+      const ifIp = this.host.ifaceIp(i);
+      const hop = e.nextHop && ifIp && sameSubnet(e.nextHop, ifIp, this.host.ifacePrefix(i)) ? e.nextHop : src;
+      if (cur && (cur.from ?? cur.nextHop) === src && cur.out === i) {
+        if (metric < RIP_INFINITY && hop !== cur.nextHop) {
+          ctx.trace("rip.learn", "app", `RIP 경로 넥스트 홉 변경: ${k} → ${hop} (${src} 가 알림)`, { dest: e.dest, prefix: e.prefix, nextHop: hop }, frameId);
+          cur.nextHop = hop;
+          changed = true;
+        }
         if (metric === cur.metric) continue;
         if (metric >= RIP_INFINITY) {
           cur.metric = RIP_INFINITY;
@@ -229,8 +243,8 @@ export class Rip {
       if (metric >= RIP_INFINITY) continue;
       if (!cur || !this.usable(cur) || metric < cur.metric) {
         const why = !cur || !this.usable(cur) ? "새 경로" : `더 짧은 경로 (${cur.metric} → ${metric}홉)`;
-        this.routes.set(k, { dest: e.dest, prefix: e.prefix, nextHop: src, out: i, metric });
-        ctx.trace("rip.learn", "app", `RIP 경로 학습: ${k} via ${src} (${name}), ${metric}홉 — ${why} → 라우팅 테이블에 추가`, { dest: e.dest, prefix: e.prefix, nextHop: src, metric }, frameId);
+        this.routes.set(k, { dest: e.dest, prefix: e.prefix, nextHop: hop, out: i, metric, ...(hop !== src ? { from: src } : {}) });
+        ctx.trace("rip.learn", "app", `RIP 경로 학습: ${k} via ${hop} (${name}), ${metric}홉 — ${why}${hop !== src ? ` (${src} 가 넥스트 홉을 가상 주소 ${hop} 로 알림)` : ""} → 라우팅 테이블에 추가`, { dest: e.dest, prefix: e.prefix, nextHop: hop, metric }, frameId);
         changed = true;
       }
     }

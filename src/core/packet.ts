@@ -219,6 +219,10 @@ export interface VrrpPacket {
   priority: number;
   /** 이 세그먼트의 가상 주소 */
   vip: Ip;
+  /** 우선순위가 같을 때 가르는 장비 식별 주소 (VIP 를 둔 첫 인터페이스의 실제 주소 — 인터페이스마다 판단이 엇갈리지 않게) */
+  rid: Ip;
+  /** master 가 아닌 후보의 알림 (시작·복구 때). 이것만으로는 backup 이 기다림을 멈추지 않는다 */
+  candidate?: boolean;
 }
 
 export const VRRP_MULTICAST_IP: Ip = "224.0.0.18";
@@ -241,6 +245,8 @@ export interface RipEntry {
   dest: Ip;
   prefix: number;
   metric: number;
+  /** RIPv2 넥스트 홉: 보낸 이 대신 이 주소로 보내라 (이중화 master 는 가상 주소를 적는다 — 넘어가도 경로가 그대로) */
+  nextHop?: Ip;
 }
 
 export const RIP_PORT = 520;

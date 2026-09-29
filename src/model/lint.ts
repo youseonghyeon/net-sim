@@ -1001,7 +1001,13 @@ export function lintTopology(t: Topology): LintIssue[] {
         fix: "한쪽 사무실의 사설 대역을 바꾸기 (예: 192.168.1.0/24 와 192.168.2.0/24)",
       });
     }
-    const shared = t.devices.filter((x) => x !== d && vpnOf(x) && validIp(vpnOf(x)!.peer) === peer);
+    // 이중화 짝(같은 그룹·같은 바깥 가상 주소)은 한 번에 한 대만 일하므로 같은 상대를 써도 된다
+    const haPair = (x: Device) => {
+      const a = d.l3?.ha;
+      const b = x.l3?.ha;
+      return !!a?.enabled && !!b?.enabled && a.vrid === b.vrid && !!validIp(a.vips[0]) && a.vips[0] === b.vips[0];
+    };
+    const shared = t.devices.filter((x) => x !== d && vpnOf(x) && validIp(vpnOf(x)!.peer) === peer && !haPair(x));
     if (shared.length) {
       add({
         deviceId: d.id,
@@ -1103,6 +1109,12 @@ export function lintTopology(t: Topology): LintIssue[] {
         const other = g.device.l3.ha;
         const theirVip = validIp(other.vips[g.port]);
         if (other.vrid === ha.vrid) {
+          const sharesAny = other.vips.some((v) => validIp(v) && ha.vips.includes(v));
+          if (!sharesAny) {
+            // 가상 주소가 하나도 겹치지 않는 같은 번호 = 서로 다른 쌍이 번호를 같이 씀 → 한 선출로 묶인다
+            add({ deviceId: d.id, severity: "error", code: "ha.vrid-shared", message: `다른 이중화 쌍(${g.device.name})이 같은 세그먼트에서 같은 그룹 번호 ${ha.vrid} 를 씀 → 네 대가 하나의 선출로 묶여 한 쌍은 master 를 잃음`, fix: "쌍마다 다른 그룹 번호(VRID)를", related: [g.device.id] });
+            continue;
+          }
           peers++;
           if (theirVip !== vip) {
             add({ deviceId: d.id, severity: "error", code: "ha.vip-mismatch", message: `짝 ${g.device.name} 의 ${portName(g.device, g.port)} 가상 주소(${theirVip ?? "없음"})가 내 것(${vip})과 다름 → 넘어가면 호스트가 쓰던 주소가 사라짐`, fix: "쌍의 두 장비에 같은 가상 주소를 넣기", related: [g.device.id] });

@@ -62,6 +62,7 @@ export class NetworkSync {
   sync(t: Topology, settleTime: () => number = () => this.net.now): boolean {
     const net = this.net;
     let changed = false;
+    let connected = false;
     const settle = () => {
       if (!changed) net.runUntil(settleTime());
       changed = true;
@@ -141,6 +142,7 @@ export class NetworkSync {
           }
           net.connect(c.a.device, c.a.port, c.b.device, c.b.port, c.latency, c.id);
           net.setLinkLoss(c.id, loss);
+          connected = true;
         } catch (e) {
           console.warn("cable sync failed", c, e);
           if (c.wireless) {
@@ -156,6 +158,10 @@ export class NetworkSync {
         net.setLinkLoss(c.id, loss);
         this.syncedCables.set(c.id, loss);
       }
+    }
+    // 케이블이 새로 이어지면 이중화 master 들이 한 번 광고한다: 갈라졌던 동안 생긴 다른 master 와 정리 (주기 광고가 없으므로)
+    if (connected) {
+      for (const node of net.nodes.values()) if (node instanceof L3Node && node.ha.config.enabled) node.ha.poke(net.contextFor(node.id));
     }
     return changed;
   }

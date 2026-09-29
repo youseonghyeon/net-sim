@@ -107,6 +107,7 @@ export class L3Node implements SimNode {
       if (!iface) return;
       iface.vip = vip;
       if (vip) iface.announceVip(ctx, this.emit(i, ctx));
+      this.rip.kick(ctx); // RIP 넥스트 홉(가상 주소)을 다시 알린다
     },
   });
   readonly vpn: Vpn = new Vpn({
@@ -158,6 +159,7 @@ export class L3Node implements SimNode {
         const d = this.staticDefault();
         return d && this.linkUp[d.out] && this.ifaces[d.out]!.usable ? d.out : undefined;
       },
+      advertisedNextHop: (i) => this.ifaces[i]?.vip?.ip,
       send: (i, pkt, ctx) => this.ifaces[i]!.sendToMac(RIP_MULTICAST_MAC, pkt, ctx, this.emit(i, ctx)),
     });
     if (cfg.rip) this.rip.config = { ...cfg.rip };
@@ -176,7 +178,7 @@ export class L3Node implements SimNode {
     }
     const t = this.vpn.target();
     const under = t ? this.underlay(t.ip) : undefined;
-    const src = under ? this.ifaces[under.out]!.ip : undefined;
+    const src = under ? this.addrOf(under.out) : undefined; // 이중화 master 면 가상 주소 (넘어가도 상대가 같은 주소로 답하게)
     const outer = src ? this.vpn.encapsulate(inner, src) : undefined;
     if (!outer || !under) {
       ctx.trace("vpn.drop", "L3", `VPN: 상대 ${t?.ip ?? "(주소 없음)"} 로 가는 바깥 경로가 없어 터널로 보낼 수 없음 → 드롭 (상대 공인 주소와 디폴트 라우트를 확인)`, { dst: inner.dst }, frameId);
@@ -519,6 +521,7 @@ export class L3Node implements SimNode {
       if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT && this.clients[port]) {
         this.clients[port]!.handle(m, frameId, ctx, this.emit(port, ctx));
         this.rip.kick(ctx); // 주소를 받았으면 RIP 가 그 네트워크를 광고한다
+        this.ha.onLinks(ctx); // 이중화: 주소가 생기거나 없어지면 우선순위가 바뀐다
       }
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) this.handleRelay(port, pkt, m, frameId, ctx);
       else if (m.kind !== "dhcp" && this.nat && port === this.outside && this.ownIndex(pkt.dst) === port) {
@@ -799,6 +802,7 @@ export class L3Node implements SimNode {
       const i = this.ifaces.findIndex((f) => f.mac === (data as { mac: string }).mac);
       if (i >= 0) this.ifaces[i]!.finishProbe(ctx, this.emit(i, ctx));
       this.rip.kick(ctx);
+      this.ha.onLinks(ctx);
       return;
     }
     if (tag === RIP_TIMER_TAG) {

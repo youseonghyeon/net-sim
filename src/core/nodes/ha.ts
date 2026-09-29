@@ -115,8 +115,24 @@ export class Ha {
     }
     this.state = "backup";
     ctx.trace("ha.state", "L3", `이중화 시작: backup 으로 대기하며 우선순위 ${p} 를 알림 → ${MASTER_DOWN / 1000}초 안에 더 높은 master 가 답하지 않으면 master 가 됨`, { priority: p });
-    this.advertise(ctx, p);
+    this.advertise(ctx, p, true);
     this.arm(MASTER_DOWN + skewMs(p), ctx);
+  }
+
+  /** 우선순위가 같을 때 가르는 이 장비의 식별 주소 */
+  private rid(): Ip {
+    const first = this.vipIfaces()[0];
+    return (first !== undefined ? this.host.ifaceIp(first) : undefined) ?? "0.0.0.0";
+  }
+
+  /** 상대가 나보다 앞서는지: 우선순위, 같으면 식별 주소 */
+  private outranks(msg: VrrpPacket, mine: number): boolean {
+    return msg.priority > mine || (msg.priority === mine && ipToInt(msg.rid) > ipToInt(this.rid()));
+  }
+
+  /** 토폴로지가 다시 이어짐(케이블 연결): master 는 한 번 광고해, 갈라졌던 동안 생긴 다른 master 와 정리한다 */
+  poke(ctx: NodeContext): void {
+    if (this.config.enabled && this.state === "master") this.advertise(ctx, this.config.priority);
   }
 
   private arm(ms: number, ctx: NodeContext): void {
@@ -157,11 +173,12 @@ export class Ha {
   }
 
   /** VIP 인터페이스마다 광고 (링크가 살아 있는 곳만) */
-  private advertise(ctx: NodeContext, priority: number): void {
+  private advertise(ctx: NodeContext, priority: number, candidate = false): void {
+    const rid = this.rid();
     for (const i of this.vipIfaces()) {
       const src = this.host.ifaceIp(i);
       if (!src || !this.host.linkUp(i)) continue;
-      const msg: VrrpPacket = { kind: "vrrp", vrid: this.config.vrid, priority, vip: this.config.vips[i]! };
+      const msg: VrrpPacket = { kind: "vrrp", vrid: this.config.vrid, priority, vip: this.config.vips[i]!, rid, ...(candidate ? { candidate: true } : {}) };
       this.host.send(i, { kind: "ipv4", src, dst: VRRP_MULTICAST_IP, ttl: 255, payload: msg }, ctx);
     }
   }
@@ -193,7 +210,7 @@ export class Ha {
         this.advertise(ctx, this.config.priority);
         return;
       }
-      if (msg.priority > mine || (msg.priority === mine && ipToInt(src) > ipToInt(this.host.ifaceIp(i) ?? "0.0.0.0"))) {
+      if (this.outranks(msg, mine)) {
         ctx.trace("ha.advert", "L3", `[${name}] 더 높은 우선순위 ${msg.priority} 의 ${src} 광고 수신 (나는 ${mine}) → master 를 넘긴다 (preempt)`, { from: src, priority: msg.priority }, frameId);
         this.resign(ctx, `더 높은 우선순위의 ${src} 가 있음`);
         this.masterIp = src;
@@ -214,16 +231,20 @@ export class Ha {
       this.arm(skewMs(mine), ctx);
       return;
     }
-    const higher = msg.priority > mine || (msg.priority === mine && ipToInt(src) > ipToInt(this.host.ifaceIp(i) ?? "0.0.0.0"));
-    if (higher) {
-      this.armed = undefined; // master(또는 곧 master 가 될 쪽)가 있으므로 기다림을 멈춘다
+    if (this.outranks(msg, mine)) {
+      if (msg.candidate) {
+        // 아직 master 가 아닌 후보의 알림: 그쪽이 master 가 될 때까지 내 기다림은 그대로 (그 사이 master 가 비지 않게)
+        ctx.trace("ha.advert", "L3", `[${name}] 후보 ${src} 의 시작 알림 (우선순위 ${msg.priority}) 수신 → 나(${mine})보다 높지만 아직 master 가 아니므로 기다림은 그대로`, { from: src, priority: msg.priority }, frameId);
+        return;
+      }
+      this.armed = undefined; // master 가 있으므로 기다림을 멈춘다
       this.masterIp = src;
-      ctx.trace("ha.advert", "L3", `[${name}] ${src} 의 VRRP 광고 (우선순위 ${msg.priority}) 수신 → 나(${mine})보다 높으므로 backup 유지`, { from: src, priority: msg.priority }, frameId);
+      ctx.trace("ha.advert", "L3", `[${name}] master ${src} 의 VRRP 광고 (우선순위 ${msg.priority}) 수신 → 나(${mine})보다 높으므로 backup 유지`, { from: src, priority: msg.priority }, frameId);
       return;
     }
     // 나보다 낮은 쪽이 master 거나 경쟁 중: 내 우선순위를 알린다 (그쪽이 master 면 물러나고, 내 타이머가 끝나면 내가 master)
     ctx.trace("ha.advert", "L3", `[${name}] 낮은 우선순위 ${msg.priority} 의 ${src} 광고 수신 (나는 ${mine}) → 내 우선순위를 알리고 master 를 가져감 (preempt)`, { from: src, priority: msg.priority }, frameId);
-    this.advertise(ctx, mine);
+    this.advertise(ctx, mine, true);
     this.arm(skewMs(mine), ctx);
   }
 

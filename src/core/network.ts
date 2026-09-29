@@ -86,6 +86,8 @@ export class Network {
   eventCount = 0;
 
   private readonly sched = new Scheduler<SimEvent>();
+  /** 장치별 걸려 있는 타이머 (장치를 지울 때 취소) */
+  private readonly timersOf = new Map<string, Set<SimEvent>>();
   private readonly portMap = new Map<string, { link: Link; other: Endpoint }>();
   private packetSeq = 0;
   private traceSeq = 0;
@@ -104,6 +106,9 @@ export class Network {
   removeNode(id: string): void {
     const node = this.nodes.get(id);
     if (!node) return;
+    // 남은 타이머는 버린다 (되돌리기로 같은 id 의 새 장치가 생겨도 옛 타이머가 발동하지 않게)
+    for (const ev of this.timersOf.get(id) ?? []) (ev as { cancelled: boolean }).cancelled = true;
+    this.timersOf.delete(id);
     const before = this.transmissions.length;
     node.onRemove?.(this.ctx(id));
     for (const tx of this.transmissions.slice(before)) if (tx.from.node === id) tx.graceful = true;
@@ -143,10 +148,13 @@ export class Network {
         this.pushTrace(tx.from.node, "link.lost", "L1", `케이블이 빠져 전송 중이던 ${describeFrame(tx.frame)} 손실`, { linkId }, tx.frame.id);
       }
     }
+    // 링크 다운을 알아챈 장치가 곧바로 다른 포트로 보내는 알림(이중화의 물러남 광고 등)은, 같은 순간 그 케이블까지 빠져도 나간 것으로 본다
+    const before = this.transmissions.length;
     for (const ep of [link.a, link.b]) {
       const node = this.nodes.get(ep.node);
       node?.onLink?.(ep.port, false, this.ctx(ep.node));
     }
+    for (const tx of this.transmissions.slice(before)) tx.graceful = true;
   }
 
   hasNode(id: string): boolean {
@@ -247,6 +255,7 @@ export class Network {
         break;
       }
       case "timer": {
+        this.timersOf.get(ev.nodeId)?.delete(ev);
         if (ev.cancelled) break;
         const node = this.nodes.get(ev.nodeId);
         node?.onTimer(ev.tag, ev.data, this.ctx(node.id));
@@ -331,6 +340,9 @@ export class Network {
       timer: (delay, tag, data): TimerHandle => {
         const ev: SimEvent = { type: "timer", nodeId, tag, data, cancelled: false };
         this.sched.push(now + delay, ev);
+        let set = this.timersOf.get(nodeId);
+        if (!set) this.timersOf.set(nodeId, (set = new Set()));
+        set.add(ev);
         return { cancel: () => void ((ev as { cancelled: boolean }).cancelled = true) };
       },
       trace: (kind, layer, summary, details, packetId) => this.pushTrace(nodeId, kind, layer, summary, details, packetId),
