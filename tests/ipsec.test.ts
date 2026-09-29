@@ -142,10 +142,11 @@ describe("IPsec", () => {
     const conn = () => [...host("내부망 PC 1").tcp.conns.values()].at(-1)!;
     const first = act({ kind: "tcp-connect", nodeId: id("내부망 PC 1"), dst: "192.168.111.11", port: 22 });
     expect(first.some((e) => e.kind === "vpn.up" && e.nodeId === id("내부망 방화벽 NAT"))).toBe(true);
-    expect(conn()).toMatchObject({ state: "CLOSED", bytesReceived: 3000 });
+    // 포트 22 는 SSH: 키 교환·인증 뒤 세션이 열린 채 남는다
+    expect(conn()).toMatchObject({ state: "ESTABLISHED", ssh: { open: true } });
     for (const dst of ["192.168.112.11", "192.168.113.11", "172.21.4.11"]) {
       act({ kind: "tcp-connect", nodeId: id("내부망 PC 1"), dst, port: 22 });
-      expect(conn()).toMatchObject({ remoteIp: dst, state: "CLOSED", bytesReceived: 3000 });
+      expect(conn()).toMatchObject({ remoteIp: dst, state: "ESTABLISHED", ssh: { open: true } });
     }
     const web = act({ kind: "tcp-connect", nodeId: id("내부망 PC 1"), dst: "192.168.112.11", port: 80 });
     expect(web.some((e) => e.kind === "fw.deny" && e.nodeId === id("NCP VPN Gateway"))).toBe(true);

@@ -417,6 +417,15 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
         out.push({ tool: "dig", line: `${ip.payload.payload.name}.\t\t300\tIN\tA\t${ip.payload.payload.answer}` });
       }
       break;
+    case "ssh.open": {
+      // conn id = "내주소:포트-상대주소:포트"
+      const [local, remote] = (detail(ev, "conn") ?? "").split("-");
+      const [rip, rport] = (remote ?? "?:?").split(":");
+      if (ev.summary.includes("가 인증함")) out.push({ tool: "sshd (auth.log)", line: `Accepted publickey for user from ${rip} port ${rport} ssh2` });
+      else out.push({ tool: "ssh -v", line: `debug1: Authenticated to ${rip} ([${rip}]:${rport}) using "publickey".` });
+      void local;
+      break;
+    }
     case "vpn.ike":
       if (detail(ev, "retransmit") !== undefined) out.push({ tool: "strongSwan (charon)", line: `11[IKE] retransmit ${detail(ev, "retransmit")} of request with message ID ${detail(ev, "step") === "IKE_AUTH" ? 1 : 0}` });
       else if (detail(ev, "spi") !== undefined) out.push({ tool: "strongSwan (charon)", line: `07[IKE] initiating IKE_SA vpn[1] to ${detail(ev, "peer") ?? "?"}` });

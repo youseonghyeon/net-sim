@@ -51,7 +51,7 @@ function categoryOf(e: TraceEvent): "arp" | "dhcp" | "icmp" | "tcp" | "dns" | "r
   if (e.kind.startsWith("arp.")) return "arp";
   if (e.kind.startsWith("dhcp.")) return "dhcp";
   if (e.kind.startsWith("icmp.")) return "icmp";
-  if (e.kind.startsWith("tcp.")) return "tcp";
+  if (e.kind.startsWith("tcp.") || e.kind.startsWith("ssh.")) return "tcp";
   if (e.kind.startsWith("dns.")) return "dns";
   if (e.kind.startsWith("rip.")) return "rip";
   if (e.kind.startsWith("vpn.")) return "vpn";

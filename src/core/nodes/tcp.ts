@@ -1,5 +1,9 @@
 // 학습용 축소 TCP: 3-way handshake, 누적 ACK, 타임아웃 재전송, FIN 종료, RST.
-// 슬라이딩 윈도우·혼잡 제어는 없다. 앱 계층은 "요청 1개 → 응답 N 세그먼트" 인 HTTP 흉내다.
+// 슬라이딩 윈도우·혼잡 제어는 없다. 앱 계층은 두 가지:
+// - HTTP 흉내 (기본): "요청 1개 → 응답 N 세그먼트" 뒤 서버가 FIN
+// - SSH 흉내 (포트 22): 버전 교환 → 키 교환 → 인증 뒤 세션을 열어 둔 채 유지. 사용자가 "연결 해제" 하면 FIN.
+//   명령은 주고받지 않는다 (내용은 암호화라 보여 줄 것도 없다). 오래 열린 연결이 NAT·방화벽·이중화 변화에 어떻게 반응하는지 보는 용도
+//   (keepalive 없음 — 조용한 세션은 경로가 끊겨도 모르고, 다음에 보낼 때 알게 된다)
 import type { Ip } from "../addr";
 import { tcpFlags, type Ipv4Packet, type TcpSegment } from "../packet";
 import type { NodeContext, TimerHandle } from "./node";
@@ -28,6 +32,16 @@ export const SERVER_ISS = 3000;
 const EPHEMERAL_START = 49152;
 const REQUEST_BYTES = 100;
 const RESPONSE_SEGMENT_BYTES = 1000;
+export const SSH_PORT = 22;
+/** SSH 세션을 여는 주고받기 (클라이언트 → 서버 → 클라이언트 → …). 마지막 서버 메시지를 받으면 세션이 열린다 */
+const SSH_STEPS: { from: "client" | "server"; len: number; data: string }[] = [
+  { from: "client", len: 40, data: "SSH-2.0 버전 알림" },
+  { from: "server", len: 40, data: "SSH-2.0 버전 알림" },
+  { from: "client", len: 600, data: "키 교환 요청 (KEXINIT·ECDH)" },
+  { from: "server", len: 700, data: "키 교환 응답 (호스트 키·서명)" },
+  { from: "client", len: 200, data: "NEWKEYS·사용자 인증 (암호화됨)" },
+  { from: "server", len: 100, data: "인증 성공 (암호화됨)" },
+];
 
 interface Unacked {
   seg: TcpSegment;
@@ -68,6 +82,8 @@ export interface TcpConn {
   via?: number;
   /** 클라이언트: 응답 대기 timeout 타이머 */
   readTimer?: TimerHandle;
+  /** SSH 흉내 (포트 22): 지금까지 주고받은 메시지 수, 세션이 열렸는지 */
+  ssh?: { step: number; open: boolean };
 }
 
 export interface TcpHost {
@@ -199,6 +215,11 @@ export class TcpStack {
           ctx.trace("tcp.synack.received", "L4", `SYN·ACK 수신: 서버 초기 seq ${seg.seq}, 내 SYN 확인(ack ${seg.ack})`, { conn: conn.id });
           this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송: 3-way handshake 완료 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
           ctx.trace("tcp.established", "L4", `연결 성립 ${endpoint(conn.localIp, conn.localPort)} ↔ ${endpoint(conn.remoteIp, conn.remotePort)}`, { conn: conn.id });
+          if (conn.remotePort === SSH_PORT && conn.via === undefined) {
+            conn.ssh = { step: 0, open: false };
+            this.sshNext(conn, ctx);
+            return;
+          }
           // 앱: 요청 전송. 응답이 영원히 안 오면 끝나지 않으므로 응답 대기 timeout 을 건다
           this.transmit(conn, { ackFlag: true, len: REQUEST_BYTES, data: "GET /", ...(conn.via !== undefined ? { via: conn.via } : {}) }, ctx, `요청 데이터 전송: "GET /" ${REQUEST_BYTES}B (seq=${conn.sndNxt})${conn.via ? ` — 로드밸런서 ${conn.via}개 거침 (Via)` : ""}`, "tcp.data.sent");
           conn.readTimer = ctx.timer(TCP_READ_TIMEOUT, TCP_TIMER_TAG, { conn: conn.id, read: true });
@@ -354,6 +375,13 @@ export class TcpStack {
       conn.readTimer = undefined;
     }
     if (conn.role === "server" && seg.via !== undefined) conn.via = seg.via;
+    // SSH 흉내: 상대 메시지를 받으면 다음 차례 메시지를 보낸다 (로드밸런서가 맡는 포트면 로드밸런서가 먼저)
+    if (conn.role === "server" && conn.localPort === SSH_PORT && !conn.ssh && conn.state === "ESTABLISHED" && !conn.deferred && conn.bytesSent === 0 && conn.via === undefined) conn.ssh = { step: 0, open: false };
+    if (conn.ssh && conn.state === "ESTABLISHED") {
+      conn.ssh.step++;
+      this.sshNext(conn, ctx);
+      return;
+    }
     if (conn.role === "server" && conn.state === "ESTABLISHED" && conn.bytesSent === 0 && !conn.deferred) {
       // 앱이 요청을 맡으면(로드밸런서) 받았다는 ACK 만 보내고 응답은 나중에
       if (this.host.onRequest?.(conn, ctx)) {
@@ -367,6 +395,54 @@ export class TcpStack {
       return;
     }
     this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
+  }
+
+  /** SSH 흉내: 내 차례면 다음 메시지를 보내고, 마지막 메시지까지 오갔으면 세션을 연다 */
+  private sshNext(conn: TcpConn, ctx: NodeContext): void {
+    const ssh = conn.ssh!;
+    conn.readTimer?.cancel();
+    conn.readTimer = undefined;
+    if (ssh.step >= SSH_STEPS.length) {
+      this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
+      if (!ssh.open) {
+        ssh.open = true;
+        ctx.trace(
+          "ssh.open",
+          "app",
+          conn.role === "client"
+            ? `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 와 키 교환·인증 끝 → 연결을 열어 둔 채 유지 (명령은 주고받지 않음. "연결 해제" 로 닫음)`
+            : `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 가 인증함 → 연결을 열어 둔 채 유지`,
+          { conn: conn.id },
+        );
+      }
+      return;
+    }
+    const step = SSH_STEPS[ssh.step]!;
+    if (step.from !== conn.role) {
+      // 상대 차례: 받은 것만 확인하고 기다린다
+      this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
+      return;
+    }
+    this.transmit(conn, { ackFlag: true, len: step.len, data: step.data }, ctx, `SSH ${ssh.step + 1}/${SSH_STEPS.length}: ${step.data} ${step.len}B 전송 (seq=${conn.sndNxt})`, "tcp.data.sent");
+    ssh.step++;
+    if (ssh.step >= SSH_STEPS.length && conn.role === "server") {
+      ssh.open = true;
+      ctx.trace("ssh.open", "app", `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 가 인증함 → 연결을 열어 둔 채 유지`, { conn: conn.id });
+      return;
+    }
+    // 클라이언트: 서버의 다음 메시지를 기다린다 (영원히 안 오면 끝나지 않으므로 timeout)
+    if (conn.role === "client") conn.readTimer = ctx.timer(TCP_READ_TIMEOUT, TCP_TIMER_TAG, { conn: conn.id, read: true, step: ssh.step });
+  }
+
+  /** 사용자가 연결을 닫는다 (SSH "연결 해제"): FIN 을 보내 정상 종료를 시작 */
+  disconnect(id: string, ctx: NodeContext): boolean {
+    const conn = this.conns.get(id);
+    if (!conn || conn.state !== "ESTABLISHED") return false;
+    conn.readTimer?.cancel();
+    conn.readTimer = undefined;
+    conn.state = "FIN_WAIT_1";
+    this.transmit(conn, { fin: true, ackFlag: true }, ctx, `FIN 전송: 연결 해제 요청 (seq=${conn.sndNxt})`, "tcp.fin.sent");
+    return true;
   }
 
   /** 서버 연결로 응답 세그먼트를 보내고 FIN. origin 을 주면 세그먼트에 "응답을 만든 서버" 를 싣는다 */
@@ -438,12 +514,14 @@ export class TcpStack {
   }
 
   onTimer(data: unknown, ctx: NodeContext): void {
-    const { conn: id, seq, read } = data as { conn: string; seq: number; read?: boolean };
+    const { conn: id, seq, read, step } = data as { conn: string; seq: number; read?: boolean; step?: number };
     const conn = this.conns.get(id);
     if (!conn) return;
     if (read) {
       conn.readTimer = undefined;
-      if (conn.state !== "ESTABLISHED" || conn.bytesReceived > 0) return;
+      if (conn.state !== "ESTABLISHED") return;
+      // SSH: 기다리던 단계에서 멈춰 있을 때만, HTTP: 응답을 한 바이트도 못 받았을 때만
+      if (conn.ssh ? conn.ssh.open || conn.ssh.step !== step : conn.bytesReceived > 0) return;
       // 요청은 상대가 받았는데(ACK) 응답이 오지 않음: 중간 로드밸런서가 끊겼거나 백엔드에서 멈춤. RST 로 알리고 포기
       conn.state = "FAILED";
       conn.reason = `timeout · 응답 없음 (요청은 전달됨, ${TCP_READ_TIMEOUT / 1000}초)`;

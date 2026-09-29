@@ -748,8 +748,12 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.keyboard.press("Escape");
   await page.fill(".tcp-row .input.port", "22");
   await page.click(".tcp-row .btn");
-  await page.waitForFunction(() => { const t = document.querySelector(".inspector .tcp-log li")?.textContent ?? ""; return /192\.168\.112\.11:22/.test(t) && /종료됨|실패/.test(t); }, null, { timeout: 60000 });
-  console.log("ncp ssh:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
+  await page.waitForFunction(() => { const t = document.querySelector(".inspector .tcp-log li")?.textContent ?? ""; return /192\.168\.112\.11:22/.test(t) && /세션 열림|실패/.test(t); }, null, { timeout: 60000 });
+  console.log("ncp ssh:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "), "| button:", await page.locator(".tcp-row .btn").innerText());
+  await page.locator(".inspector .tcp-log li").first().screenshot({ path: `${OUT}/52-ssh-open.png` });
+  await page.click(".inspector .tcp-log li .btn:has-text('연결 해제')");
+  await page.waitForFunction(() => /종료됨|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? "") || [...document.querySelectorAll(".inspector .tcp-log li")].some((li) => /192\.168\.112\.11:22/.test(li.textContent ?? "") && /종료됨/.test(li.textContent ?? "")), null, { timeout: 60000 });
+  console.log("ncp ssh closed:", (await page.locator(".inspector .tcp-log li", { hasText: "192.168.112.11:22" }).first().innerText()).replace(/\s+/g, " "));
   console.log("ncp ipsec up logged:", await page.evaluate(() => document.body.textContent.includes("IPsec 터널 수립")) ? "yes" : "NO (로그 창이 접혀 있으면 확인 불가)");
   await clickDevice("NCP VPN Gateway");
   await goTab("설정");

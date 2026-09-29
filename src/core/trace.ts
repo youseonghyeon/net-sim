@@ -147,7 +147,8 @@ export type TraceKind =
   | "ha.state"
   | "ha.advert"
   | "ha.master"
-  | "ha.backup";
+  | "ha.backup"
+  | "ssh.open";
 
 export interface TraceEvent {
   seq: number;

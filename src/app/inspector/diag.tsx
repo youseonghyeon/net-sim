@@ -235,18 +235,21 @@ export function DiagSection({ d }: { d: Device }) {
       <div class="ping-row tcp-row">
         <TargetPicker value={tcpDst} onInput={setTcpDst} onSubmit={connect} placeholder="서버 주소 또는 이름" load={() => probeTargetsCached(topology.peek(), d.id, "tcp", port)} />
         <input class="input mono port" type="number" min={1} max={65535} value={tcpPort} onInput={(e) => setTcpPort(e.currentTarget.value)} title="포트" />
-        <button class="btn" onClick={connect} title="TCP 연결 (3-way handshake → 요청 → 응답 → 종료)">
+        <button class="btn" onClick={connect} title={port === 22 ? "SSH 접속 (3-way handshake → 버전·키 교환·인증 → 세션을 열어 둠)" : "TCP 연결 (3-way handshake → 요청 → 응답 → 종료)"}>
           <Icon name="send" size={14} />
-          연결
+          {port === 22 ? "SSH 접속" : "연결"}
         </button>
       </div>
       {(() => {
-        const conns = [...node.tcp.conns.values()].filter((c) => c.role === "client").slice(-3).reverse();
+        const clients = [...node.tcp.conns.values()].filter((c) => c.role === "client");
+        // 열린 SSH 세션은 오래됐어도 항상 보인다 (연결 해제 버튼)
+        const open = clients.filter((c) => c.ssh && c.state !== "CLOSED" && c.state !== "FAILED");
+        const conns = [...open, ...clients.filter((c) => !open.includes(c)).slice(-3).reverse()];
         if (conns.length === 0) return null;
         return (
           <ul class="ping-log tcp-log">
             {conns.map((c) => (
-              <li key={c.id} class={c.state === "FAILED" || c.status?.startsWith("HTTP 5") ? "failed" : c.state === "CLOSED" && c.bytesReceived > 0 ? "ok" : ""}>
+              <li key={c.id} class={c.state === "FAILED" || c.status?.startsWith("HTTP 5") ? "failed" : (c.state === "CLOSED" && c.bytesReceived > 0) || (c.ssh?.open && c.state === "ESTABLISHED") ? "ok" : ""}>
                 <span class="mono">
                   {c.remoteIp}:{c.remotePort}
                 </span>
@@ -257,14 +260,25 @@ export function DiagSection({ d }: { d: Device }) {
                       ? `${c.status}${c.servedBy ? ` · ${c.servedBy}` : ""}`
                       : c.state === "CLOSED"
                         ? `종료됨 · 받음 ${c.bytesReceived}B${c.servedBy ? ` · 응답 ${c.servedBy}` : ""}`
-                        : TCP_STATE_LABEL[c.state]}
+                        : c.ssh?.open && c.state === "ESTABLISHED"
+                          ? "SSH 세션 열림"
+                          : c.ssh && c.state === "ESTABLISHED"
+                            ? `SSH 키 교환 중 (${c.ssh.step}/6)`
+                            : TCP_STATE_LABEL[c.state]}
                 </span>
+                {c.ssh && c.state === "ESTABLISHED" && (
+                  <button class="btn ghost small" onClick={() => sim.act({ kind: "tcp-close", nodeId: d.id, conn: c.id })} title="FIN 을 보내 세션을 닫습니다">
+                    연결 해제
+                  </button>
+                )}
               </li>
             ))}
           </ul>
         );
       })()}
-      <p class="note">TCP 연결은 3-way handshake 뒤 "GET /" 요청을 보내고, 서버 응답 3세그먼트를 받은 다음 FIN 으로 닫습니다. 자세한 기록은 "표" 탭의 TCP 연결 표와 로그에서 봅니다.</p>
+      <p class="note">
+        TCP 연결은 3-way handshake 뒤 "GET /" 요청을 보내고, 서버 응답 3세그먼트를 받은 다음 FIN 으로 닫습니다. 포트 22 는 SSH 로, 키 교환·인증 뒤 세션을 열어 둡니다 — 그 사이 경로를 바꿔 보고 "연결 해제" 로 닫아 보세요. 자세한 기록은 "표" 탭의 TCP 연결 표와 로그에서 봅니다.
+      </p>
       {node.ipMode === "dhcp" && (
         <button class="btn wide" onClick={() => sim.act({ kind: "dhcp-renew", nodeId: d.id })} disabled={!node.linkUp}>
           <Icon name="refresh" size={14} />

@@ -48,6 +48,7 @@ export class Internet implements SimNode {
     this.dhcpServer = new DhcpServer({ enabled: true, ...(cfg.pool ?? { start: "203.0.113.100", end: "203.0.113.199" }) }, this.iface);
     this.tcp = new TcpStack({ send: (pkt, ctx) => ctx.timer(Internet.LATENCY * 2, "inet-send", { pkt }) });
     this.tcp.listening.add(80);
+    this.tcp.listening.add(22); // 인터넷 저편 서버들은 SSH 도 받는다 (오래 열린 세션 실험용)
   }
 
   private emit(ctx: NodeContext): Emit {
