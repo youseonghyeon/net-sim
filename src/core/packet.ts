@@ -232,7 +232,7 @@ export interface IkeMessage {
   /** IKE_AUTH 요청: 사전 공유 키로 만든 인증 값 (시뮬레이터는 키 문자열을 그대로 비교) */
   auth?: string;
   /** IKE_AUTH 응답의 실패 알림 */
-  error?: "AUTHENTICATION_FAILED" | "INTERNAL_ADDRESS_FAILURE";
+  error?: "AUTHENTICATION_FAILED" | "INTERNAL_ADDRESS_FAILURE" | "INVALID_SPI";
   /** 원격 접속(클라이언트 ↔ 서버) 협상 — 사이트 간 VPN 과 구분 */
   ra?: boolean;
   /** 원격 접속: 클라이언트 식별 (다시 붙으면 같은 가상 주소를 준다) */
@@ -355,7 +355,7 @@ export function bridgeIdLabel(b: BridgeId): string {
 }
 
 const ESP_LABEL = (e: EspPacket) => `ESP SPI 0x${e.spi.toString(16).padStart(8, "0")} seq=${e.seq} (암호화됨 · 안: ${e.inner.src} → ${e.inner.dst})`;
-const IKE_LABEL = (m: IkeMessage) => `IKE ${m.exchange} ${m.response ? (m.error ? `응답 (${m.error})` : "응답") : "요청"}`;
+const IKE_LABEL = (m: IkeMessage) => `IKE ${m.exchange} ${m.response ? (m.error ? `응답 (${m.error})` : "응답") : "요청"}${m.ra ? " · 원격 접속" : ""}`;
 
 const DHCP_LABEL: Record<DhcpOp, string> = { discover: "Discover", offer: "Offer", request: "Request", ack: "Ack", nak: "Nak", release: "Release" };
 
@@ -404,7 +404,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.kind === "pfsync") return "세션 동기화";
   if (inner.kind === "vrrp") return inner.priority === 0 ? "VRRP 물러남" : `VRRP ${inner.priority}`;
   if (inner.kind === "esp" || inner.payload.kind === "esp") return "ESP 터널";
-  if (inner.payload.kind === "ike") return inner.payload.exchange === "IKE_SA_INIT" ? "IKE 협상" : "IKE 인증";
+  if (inner.payload.kind === "ike") return inner.payload.exchange === "IKE_SA_INIT" ? "IKE 협상" : inner.payload.exchange === "IKE_AUTH" ? "IKE 인증" : "IKE 알림";
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";

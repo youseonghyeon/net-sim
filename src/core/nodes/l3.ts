@@ -19,6 +19,7 @@ import {
   type EthernetFrame,
   type IcmpPacket,
   type Ipv4Packet,
+  type EspPacket,
 } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient } from "./dhcp";
 import { hashCode } from "./host";
@@ -262,8 +263,9 @@ export class L3Node implements SimNode {
   }
 
   /** 원격 접속 클라이언트의 ESP: 풀어서 안으로 (안쪽 출발지 = 그 클라이언트의 가상 주소) */
-  private receiveRa(port: number, outer: Ipv4Packet, srcPort: number | undefined, inner: Ipv4Packet, frameId: number, ctx: NodeContext): void {
-    const c = this.ra.clientFor(outer, inner)!;
+  private receiveRa(port: number, outer: Ipv4Packet, srcPort: number | undefined, esp: EspPacket, frameId: number, ctx: NodeContext): void {
+    const c = this.ra.clientFor(outer, esp)!;
+    const inner = esp.inner;
     this.ra.follow(c, outer.src, srcPort);
     ctx.trace("vpn.decap", "L3", `원격 접속 복호화: ${outer.src} 의 ESP 를 풀어 ${inner.src}(가상 주소) → ${inner.dst} 패킷을 꺼냄`, { from: outer.src, inner: `${inner.src}>${inner.dst}` }, frameId);
     const mine = this.ownIndex(inner.dst);
@@ -587,8 +589,13 @@ export class L3Node implements SimNode {
       }
       // IPsec: IKE 협상(UDP 500/4500)과 NAT-T 로 온 ESP(UDP 4500)
       if (m.kind === "ike" && toMyIp && (udp.dstPort === IKE_PORT || udp.dstPort === NAT_T_PORT) && (this.ra.handleIke(pkt, udp.srcPort, udp.dstPort, m, ctx, frameId) || this.vpn.handleIke(pkt, udp.srcPort, udp.dstPort, m, ctx, frameId))) return;
-      if (m.kind === "esp" && toMyIp && udp.dstPort === NAT_T_PORT && this.ra.clientFor(pkt, m.inner)) {
-        this.receiveRa(port, pkt, udp.srcPort, m.inner, frameId, ctx);
+      if (m.kind === "esp" && toMyIp && udp.dstPort === NAT_T_PORT && this.ra.clientFor(pkt, m)) {
+        this.receiveRa(port, pkt, udp.srcPort, m, frameId, ctx);
+        return;
+      }
+      // 가상 주소 풀에서 온 모르는 원격 접속 ESP: INVALID_SPI 로 알려 클라이언트가 다시 접속하게
+      if (m.kind === "esp" && toMyIp && udp.dstPort === NAT_T_PORT && this.ra.inPool(m.inner.src)) {
+        this.ra.orphan(pkt, udp.srcPort, m, ctx, frameId);
         return;
       }
       if (m.kind === "esp" && toMyIp && udp.dstPort === NAT_T_PORT && this.vpn.config.enabled && this.vpn.mode === "ipsec") {
@@ -632,8 +639,12 @@ export class L3Node implements SimNode {
       return;
     }
     const mine = this.ownIndex(pkt.dst);
-    if (pkt.payload.kind === "esp" && mine >= 0 && this.ra.clientFor(pkt, pkt.payload.inner)) {
-      this.receiveRa(port, pkt, undefined, pkt.payload.inner, frameId, ctx);
+    if (pkt.payload.kind === "esp" && mine >= 0 && this.ra.clientFor(pkt, pkt.payload)) {
+      this.receiveRa(port, pkt, undefined, pkt.payload, frameId, ctx);
+      return;
+    }
+    if (pkt.payload.kind === "esp" && mine >= 0 && this.ra.inPool(pkt.payload.inner.src)) {
+      this.ra.orphan(pkt, undefined, pkt.payload, ctx, frameId);
       return;
     }
     if (pkt.payload.kind === "esp" && mine >= 0 && this.vpn.config.enabled && this.vpn.mode === "ipsec") {

@@ -1202,9 +1202,17 @@ export function lintTopology(t: Topology): LintIssue[] {
         add({ deviceId: d.id, severity: "warn", code: "ra.no-routes", message: "원격 접속 VPN 서버에 알려 줄 사내 대역이 없음 → 클라이언트가 붙어도 터널로 보낼 곳이 없음", fix: `${d.name} → 원격 접속 VPN 서버 → 사내 대역 추가 (예: 안쪽 LAN)` });
       }
       const a = validIp(ra.poolStart);
+      const b = validIp(ra.poolEnd);
+      if (!a || !b || ipInt(a)! > ipInt(b)!) {
+        add({ deviceId: d.id, severity: "error", code: "ra.pool-invalid", message: `가상 주소 풀(${ra.poolStart || "?"} ~ ${ra.poolEnd || "?"})이 올바르지 않음 → 클라이언트에게 줄 주소가 없어 INTERNAL_ADDRESS_FAILURE`, fix: `${d.name} → 원격 접속 VPN 서버 → 풀 시작 ≤ 끝 인 주소 두 개 (예: 10.99.0.10 ~ 10.99.0.50)` });
+        continue;
+      }
       const lans = m.allGws.filter((g) => g.device === d && g.subnet).map((g) => g.subnet!);
       const pushed = ra.routes.map((r) => subnetOf(validIp(r.dest), r.prefix)).filter((x): x is Subnet => !!x);
-      if (a && [...lans, ...pushed].some((n) => contains(n, a))) {
+      const siteRemote = d.l3!.vpn?.enabled ? d.l3!.vpn.remote.map((r) => subnetOf(validIp(r.dest), r.prefix)).filter((x): x is Subnet => !!x) : [];
+      // 풀 범위 [a, b] 와 대역이 조금이라도 겹치는지 (양 끝이 대역 안이거나, 대역이 풀 안에 들어감)
+      const overlapsPool = (n: Subnet) => contains(n, a) || contains(n, b) || (n.net >= ipInt(a)! && n.net <= ipInt(b)!);
+      if ([...lans, ...pushed, ...siteRemote].some(overlapsPool)) {
         add({ deviceId: d.id, severity: "error", code: "ra.pool-overlap", message: `가상 주소 풀(${ra.poolStart} ~ ${ra.poolEnd})이 이미 쓰는 대역과 겹침 → 같은 주소가 양쪽에 생겨 응답이 엉뚱한 곳으로 감`, fix: `${d.name} → 원격 접속 VPN 서버 → 풀을 쓰지 않는 대역으로 (예: 10.99.0.10 ~ 10.99.0.50)` });
       }
     }
@@ -1213,12 +1221,14 @@ export function lintTopology(t: Topology): LintIssue[] {
       if (!c?.enabled) continue;
       const server = validIp(c.server);
       if (!server) continue;
-      const srv = t.devices.find((x) => x !== d && ownsIp(x, server));
-      if (!srv) continue; // 토폴로지 밖이거나 DHCP 주소면 판단하지 않는다
-      if (!srv.l3?.ra?.enabled) {
-        add({ deviceId: d.id, severity: "warn", code: "ra.server-off", message: `${srv.name} (${server}) 에 원격 접속 VPN 서버가 꺼져 있음 → IKE 에 답이 없어 접속 실패`, fix: `${srv.name} → 원격 접속 VPN 서버 켜기`, related: [srv.id] });
-      } else if (srv.l3.ra.psk !== c.psk) {
-        add({ deviceId: d.id, severity: "error", code: "ra.psk-mismatch", message: `원격 접속 VPN 사전 공유 키(PSK)가 서버 ${srv.name} 와 다름 → 인증 실패 (AUTHENTICATION_FAILED)`, fix: `${d.name} 의 원격 접속 VPN → 사전 공유 키를 서버와 같게`, related: [srv.id] });
+      // 이중화 쌍이면 가상 주소를 가진 장비가 둘 — 모두 봐야 넘어가도 접속된다
+      const srvs = t.devices.filter((x) => x !== d && ownsIp(x, server));
+      for (const srv of srvs) {
+        if (!srv.l3?.ra?.enabled) {
+          add({ deviceId: d.id, severity: "warn", code: "ra.server-off", message: `${srv.name} (${server}) 에 원격 접속 VPN 서버가 꺼져 있음 → IKE 에 답이 없어 접속 실패${srvs.length > 1 ? " (이중화 쌍이면 넘어갈 때)" : ""}`, fix: `${srv.name} → 원격 접속 VPN 서버 켜기`, related: [srv.id] });
+        } else if (srv.l3.ra.psk !== c.psk) {
+          add({ deviceId: d.id, severity: "error", code: "ra.psk-mismatch", message: `원격 접속 VPN 사전 공유 키(PSK)가 서버 ${srv.name} 와 다름 → 인증 실패 (AUTHENTICATION_FAILED)`, fix: `${d.name} 의 원격 접속 VPN → 사전 공유 키를 서버와 같게`, related: [srv.id] });
+        }
       }
     }
   }

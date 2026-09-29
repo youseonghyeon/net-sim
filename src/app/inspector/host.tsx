@@ -348,6 +348,12 @@ export function RemoteVpnSection({ d, h }: { d: Device; h: HostSettings }) {
             <input class="input mono" value={ra.psk} placeholder="서버와 같은 문자열" onInput={(e) => set({ psk: e.currentTarget.value })} />
           </Field>
           {status && <p class={`note${status.startsWith("실패") ? " error-note" : ""}`}>{status}</p>}
+          {node instanceof Host && (node.ra.state === "failed" || node.ra.state === "up") && (
+            <button class="btn wide" onClick={() => sim.act({ kind: "ra-reconnect", nodeId: d.id })}>
+              <Icon name="refresh" size={14} />
+              다시 연결
+            </button>
+          )}
         </>
       )}
     </Section>

@@ -120,7 +120,7 @@ function udpText(u: UdpPacket): string {
   // tcpdump 는 터널 안을 풀지 못한다 — 암호화되어 있으므로 그냥 UDP 로 보인다
   if (m.kind === "vpn") return `UDP, length ${appLength(u)}`;
   if (m.kind === "esp") return `UDP-encap: ${espText(m)}, length ${appLength(u)}`;
-  if (m.kind === "ike") return `${u.dstPort === 4500 || u.srcPort === 4500 ? "NONESP-encap: " : ""}isakmp: ${m.exchange === "IKE_SA_INIT" ? "parent_sa ikev2_init" : "child_sa  ikev2_auth"}[${m.response ? "R" : "I"}]`;
+  if (m.kind === "ike") return `${u.dstPort === 4500 || u.srcPort === 4500 ? "NONESP-encap: " : ""}isakmp: ${m.exchange === "IKE_SA_INIT" ? "parent_sa ikev2_init" : m.exchange === "IKE_AUTH" ? "child_sa  ikev2_auth" : "child_sa  inf2"}[${m.response ? "R" : "I"}]`;
   if (m.kind === "dhcp") {
     const fromClient = m.op === "discover" || m.op === "request" || m.op === "release";
     return `BOOTP/DHCP, ${fromClient ? "Request" : "Reply"} from ${m.clientMac}, length ${appLength(u)} (DHCP-Message Option 53: ${DHCP_TYPE[m.op][1]})`;
@@ -250,14 +250,17 @@ function espLayer(e: EspPacket, natT: boolean): HeaderLayer {
 
 function ikeLayer(m: IkeMessage): HeaderLayer {
   const rows: [string, string][] = [
-    ["교환", `${m.exchange === "IKE_SA_INIT" ? "34 (IKE_SA_INIT)" : "35 (IKE_AUTH)"} ${m.response ? "응답" : "요청"}`],
+    ["교환", `${m.exchange === "IKE_SA_INIT" ? "34 (IKE_SA_INIT)" : m.exchange === "IKE_AUTH" ? "35 (IKE_AUTH)" : "37 (INFORMATIONAL)"} ${m.response ? "응답" : "요청"}`],
     ["SPI", `0x${m.spi.toString(16).padStart(8, "0")}`],
   ];
   if (m.natSrc) rows.push(["NAT_DETECTION_SOURCE_IP", `${m.natSrc} (실제로는 해시)`]);
   if (m.natDst) rows.push(["NAT_DETECTION_DESTINATION_IP", `${m.natDst} (실제로는 해시)`]);
   if (m.nat !== undefined) rows.push(["NAT 감지 결과", m.nat ? "NAT 있음 → 이후 UDP 4500" : "NAT 없음"]);
   if (m.auth !== undefined) rows.push(["AUTH", "사전 공유 키로 만든 인증 값 (키 자체는 보내지 않음)"]);
-  if (m.error) rows.push(["알림 (Notify)", `24 (${m.error})`]);
+  if (m.error) rows.push(["알림 (Notify)", `${m.error === "AUTHENTICATION_FAILED" ? 24 : m.error === "INTERNAL_ADDRESS_FAILURE" ? 36 : 11} (${m.error})`]);
+  if (m.assigned) rows.push(["가상 주소 (CP INTERNAL_IP4_ADDRESS)", m.assigned]);
+  if (m.routes?.length) rows.push(["사내 대역 (CP INTERNAL_IP4_SUBNET)", m.routes.map((r) => `${r.dest}/${r.prefix}`).join(", ")]);
+  if (m.exchange === "INFORMATIONAL" && !m.error) rows.push(["Delete", "터널을 내린다 (연결 해제)"]);
   return { title: "IKEv2 (앱)", rows };
 }
 

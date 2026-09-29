@@ -142,6 +142,7 @@ export class Host implements SimNode {
         source: () => this.iface.ip,
         send: (outer, ctx) => this.iface.sendIp(outer, ctx, this.emit(ctx)),
         myIp: () => (this.iface.usable && !this.iface.probing ? this.iface.ip : undefined),
+        local: (dst) => !!this.iface.ip && sameSubnet(dst, this.iface.ip, this.iface.prefix),
       },
       cfg.mac,
     );
