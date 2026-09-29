@@ -222,7 +222,7 @@ class LogRow extends Component<{ e: TraceEvent; name: string | undefined; open: 
   }
 }
 
-/** 펼친 로그 줄: 실무 표기(tcpdump·장비 명령 출력) → 계층별 헤더(받은/내보낸 프레임) → 원본 기록 */
+/** 펼친 로그 줄: 도구 출력(tcpdump·장비 명령) → 계층별 헤더(받은/내보낸 프레임) → 원본 기록 */
 function PacketDetail({ e, name }: { e: TraceEvent; name: string | undefined }) {
   const frames = e.packetId !== undefined ? sim.net.framesAt(e.packetId, e.nodeId, e.time) : {};
   const lines = practitionerLines(e, frames, () => name ?? e.nodeId);
@@ -249,7 +249,7 @@ function PacketDetail({ e, name }: { e: TraceEvent; name: string | undefined }) 
     <div class="pkt-detail" onClick={(ev) => ev.stopPropagation()}>
       {lines.length > 0 && (
         <section class="pkt-lines">
-          <h5>실무에서는</h5>
+          <h5>도구 출력</h5>
           {lines.map((l, i) => (
             <div key={i} class="pkt-line">
               <span class="pkt-tool">{l.tool}</span>

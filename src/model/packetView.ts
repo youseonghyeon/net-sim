@@ -1,4 +1,4 @@
-// 패킷 상세 보기 (순수): 로그 한 줄이 가리키는 프레임을 실무 표기로 바꾼다.
+// 패킷 상세 보기 (순수): 로그 한 줄이 가리키는 프레임을 실제 도구의 출력 형식으로 바꾼다.
 // - tcpdumpLine: 같은 패킷을 tcpdump -n -e 가 찍는 한 줄로
 // - headerLayers: 이더넷 → ARP/IPv4 → ICMP/TCP/UDP → DHCP/DNS/RIP 필드를 실제 번호(타입·코드·옵션)와 함께
 // - practitionerLines: 장치가 내린 판단을 실무 명령의 출력(시스코 debug, iptables LOG, dhclient, ping, curl …)으로

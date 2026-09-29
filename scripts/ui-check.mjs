@@ -636,7 +636,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("lb-1 section:", await page.locator(".inspector h3", { hasText: "로드밸런서" }).count(), "| backends:", await page.locator(".inspector .lb-row").count(), "| badge:", await device("lb-1").locator(".badge", { hasText: "LB" }).count());
   await page.screenshot({ path: `${OUT}/43-lb-config.png` });
 }
-// 패킷 상세 보기: 로그 줄을 펼치면 실무 표기(tcpdump·시스코 debug)와 계층별 헤더
+// 패킷 상세 보기: 로그 줄을 펼치면 도구 출력(tcpdump·시스코 debug)과 계층별 헤더
 {
   await loadEx("router");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
