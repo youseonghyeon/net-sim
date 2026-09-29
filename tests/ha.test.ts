@@ -1,34 +1,13 @@
 // 이중화 (VRRP 식): 우선순위로 master 선출, 가상 주소·가상 MAC, 링크 다운·장치 제거 시 backup 이 이어받음, 복구되면 preempt
 import { describe, expect, it } from "vitest";
-import { Host } from "../src/core/nodes/host";
-import { L3Node } from "../src/core/nodes/l3";
 import { lintTopology } from "../src/model/lint";
 import { NetworkSync } from "../src/model/netSync";
+import { loadTopology } from "./helpers";
 import { exampleHaTopology, exampleVpnTopology } from "../src/model/examples";
 import { createDevice, type Device } from "../src/model/topology";
 import type { Topology } from "../src/model/topology";
 
-function load(t: Topology = exampleHaTopology()) {
-  const s = new NetworkSync();
-  s.sync(t);
-  s.net.runToIdle();
-  const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
-  const host = (name: string) => s.net.nodes.get(id(name)) as Host;
-  const l3 = (name: string) => s.net.nodes.get(id(name)) as L3Node;
-  const act = (a: Parameters<typeof s.net.scheduleAction>[1]) => {
-    const from = s.net.trace.length;
-    s.net.scheduleAction(s.net.now, a);
-    s.net.runToIdle();
-    return s.net.trace.slice(from);
-  };
-  const apply = (next: Topology) => {
-    const from = s.net.trace.length;
-    s.sync(next);
-    s.net.runToIdle();
-    return s.net.trace.slice(from);
-  };
-  return { s, t, id, host, l3, act, apply };
-}
+const load = (t: Topology = exampleHaTopology()) => loadTopology(t);
 
 const withoutCable = (t: Topology, a: string, b: string): Topology => {
   const ids = (n: string) => t.devices.find((d) => d.name === n)!.id;

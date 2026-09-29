@@ -1,33 +1,11 @@
 // STP: 루트 선출, 한 포트 차단으로 루프 제거, 링크가 끊기면 막았던 포트가 열려 다른 길로
 import { describe, expect, it } from "vitest";
-import { Host } from "../src/core/nodes/host";
-import { Switch } from "../src/core/nodes/switch";
 import { lintTopology } from "../src/model/lint";
-import { NetworkSync } from "../src/model/netSync";
+import { loadTopology } from "./helpers";
 import { exampleStpTopology } from "../src/model/examples";
 import { createDevice, type Device, type Topology } from "../src/model/topology";
 
-function load(t: Topology = exampleStpTopology()) {
-  const s = new NetworkSync();
-  s.sync(t);
-  s.net.runToIdle();
-  const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
-  const host = (name: string) => s.net.nodes.get(id(name)) as Host;
-  const sw = (name: string) => s.net.nodes.get(id(name)) as Switch;
-  const act = (a: Parameters<typeof s.net.scheduleAction>[1]) => {
-    const from = s.net.trace.length;
-    s.net.scheduleAction(s.net.now, a);
-    s.net.runToIdle();
-    return s.net.trace.slice(from);
-  };
-  const apply = (next: Topology) => {
-    const from = s.net.trace.length;
-    s.sync(next);
-    s.net.runToIdle();
-    return s.net.trace.slice(from);
-  };
-  return { s, t, id, host, sw, act, apply };
-}
+const load = (t: Topology = exampleStpTopology()) => loadTopology(t);
 
 describe("STP", () => {
   it("core-1 이 루트, access-1 의 core-2 쪽 포트가 대체 포트(차단), 루프 없이 ping 이 간다", () => {

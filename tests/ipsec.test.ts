@@ -1,9 +1,7 @@
 // IPsec 모드: IKE_SA_INIT·IKE_AUTH 로 터널을 맺고 ESP 로 보낸다. NAT 가 끼면 UDP 4500 (NAT-T), PSK 가 다르면 인증 실패, 상대가 없으면 timeout
 import { describe, expect, it } from "vitest";
-import { Host } from "../src/core/nodes/host";
-import type { Ipv4Packet } from "../src/core/packet";
 import { lintTopology } from "../src/model/lint";
-import { NetworkSync } from "../src/model/netSync";
+import { loadTopology } from "./helpers";
 import { exampleNcpVpnTopology, exampleVpnTopology } from "../src/model/examples";
 import { createDevice, type Device, type Topology, type VpnSettings } from "../src/model/topology";
 import { L3Node } from "../src/core/nodes/l3";
@@ -22,21 +20,7 @@ function ipsec(a: Partial<VpnSettings> = {}, b: Partial<VpnSettings> = {}): Topo
   };
 }
 
-function load(t: Topology) {
-  const s = new NetworkSync();
-  s.sync(t);
-  s.net.runToIdle();
-  const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
-  const host = (name: string) => s.net.nodes.get(id(name)) as Host;
-  const act = (a: Parameters<typeof s.net.scheduleAction>[1]) => {
-    const from = s.net.trace.length;
-    s.net.scheduleAction(s.net.now, a);
-    s.net.runToIdle();
-    return s.net.trace.slice(from);
-  };
-  const wire = (nodeName: string) => [...s.net.frameLog.values()].flat().filter((x) => x.to === id(nodeName) && x.frame.payload.kind === "ipv4").map((x) => x.frame.payload as Ipv4Packet);
-  return { s, id, host, act, wire };
-}
+const load = (t: Topology) => loadTopology(t);
 
 describe("IPsec", () => {
   it("첫 패킷에 IKE_SA_INIT → IKE_AUTH 로 터널을 맺고, 기다리던 ping 을 ESP 로 보낸다 (NAT 없음 → ESP 그대로)", () => {

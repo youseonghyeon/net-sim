@@ -4,24 +4,12 @@ import { Host } from "../src/core/nodes/host";
 import { L3Node } from "../src/core/nodes/l3";
 import { lintTopology } from "../src/model/lint";
 import { NetworkSync } from "../src/model/netSync";
+import { loadTopology } from "./helpers";
 import { probeTargets } from "../src/model/reach";
 import { exampleVpnTopology } from "../src/model/examples";
 import { createDevice, parseTopology, serializeTopology, type Device, type Topology } from "../src/model/topology";
 
-function load(t: Topology = exampleVpnTopology()) {
-  const s = new NetworkSync();
-  s.sync(t);
-  s.net.runToIdle();
-  const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
-  const host = (name: string) => s.net.nodes.get(id(name)) as Host;
-  const act = (a: Parameters<typeof s.net.scheduleAction>[1]) => {
-    const from = s.net.trace.length;
-    s.net.scheduleAction(s.net.now, a);
-    s.net.runToIdle();
-    return s.net.trace.slice(from);
-  };
-  return { t, s, id, host, act };
-}
+const load = (t: Topology = exampleVpnTopology()) => loadTopology(t);
 
 describe("VPN", () => {
   it("구성 검사 이슈 없음, 사설 주소끼리 ping·TCP 가 터널로 닿는다 (NAT 하지 않음)", () => {

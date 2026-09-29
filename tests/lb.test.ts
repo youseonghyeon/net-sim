@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { Host } from "../src/core/nodes/host";
 import { NetworkSync } from "../src/model/netSync";
+import { loadTopology } from "./helpers";
 import { createDevice, DEFAULT_DHCP_SERVER, newId, type Cable, type Device, type Topology } from "../src/model/topology";
 
 /** 스위치 하나에 pc-1, LB(장비 또는 서버 토글), web-1..3 */
@@ -25,18 +26,13 @@ function lan(form: "device" | "server", backends = ["192.168.0.11", "192.168.0.1
   add("server", "web-1", "192.168.0.11", [80]);
   add("server", "web-2", "192.168.0.12", [80]);
   add("server", "web-3", "192.168.0.13", [80]);
-  const t: Topology = { devices, cables };
-  const s = new NetworkSync();
-  s.sync(t);
-  s.net.runToIdle();
-  const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
-  const pc = s.net.nodes.get(id("pc-1")) as Host;
+  const x = loadTopology({ devices, cables });
+  const pc = x.host("pc-1");
   const get = () => {
-    s.net.scheduleAction(s.net.now, { kind: "tcp-connect", nodeId: id("pc-1"), dst: "192.168.0.10", port: 80 });
-    s.net.runToIdle();
+    x.act({ kind: "tcp-connect", nodeId: x.id("pc-1"), dst: "192.168.0.10", port: 80 });
     return [...pc.tcp.conns.values()].at(-1)!;
   };
-  return { t, s, id, get };
+  return { t: x.t, s: x.s, id: x.id, get };
 }
 
 describe("로드밸런서", () => {
@@ -162,17 +158,12 @@ describe("로드밸런서: 순환·중단·루프백·상태 전달", () => {
       devices.push(d);
       cables.push({ id: newId("cable"), a: { device: (i < 7 ? sw : sw2).id, port: i % 7 }, b: { device: d.id, port: 0 } });
     });
-    const t: Topology = { devices, cables };
-    const s = new NetworkSync();
-    s.sync(t);
-    s.net.runToIdle(20_000);
-    const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
+    const x = loadTopology({ devices, cables }, { maxEvents: 20_000 });
     const connect = (from: string, dst: string, port = 80) => {
-      s.net.scheduleAction(s.net.now, { kind: "tcp-connect", nodeId: id(from), dst, port });
-      s.net.runToIdle(20_000);
-      return [...(s.net.nodes.get(id(from)) as Host).tcp.conns.values()].filter((c) => c.role === "client").at(-1)!;
+      x.act({ kind: "tcp-connect", nodeId: x.id(from), dst, port });
+      return x.lastConn(from);
     };
-    return { t, s, id, connect };
+    return { t: x.t, s: x.s, id: x.id, connect };
   }
 
   it("같은 호스트의 다른 포트를 백엔드로 (nginx → localhost 앱): 루프백 TCP 가 성공한다", () => {

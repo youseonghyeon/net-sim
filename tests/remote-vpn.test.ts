@@ -1,36 +1,12 @@
 // 원격 접속 VPN: 집 공유기 NAT 뒤 노트북이 회사 VPN 방화벽에 붙어 가상 주소를 받고, 사내 대역만 터널로 (split tunnel)
 import { describe, expect, it } from "vitest";
-import { Host } from "../src/core/nodes/host";
-import { L3Node } from "../src/core/nodes/l3";
-import type { TcpConn } from "../src/core/nodes/tcp";
-import type { Ipv4Packet } from "../src/core/packet";
 import { lintTopology } from "../src/model/lint";
-import { NetworkSync } from "../src/model/netSync";
+import { loadTopology } from "./helpers";
 import { exampleRemoteVpnTopology } from "../src/model/examples";
 import { createDevice, type Device, type Topology } from "../src/model/topology";
 import { tcpdumpLine } from "../src/model/packetView";
 
-function load(t: Topology = exampleRemoteVpnTopology()) {
-  const s = new NetworkSync();
-  s.sync(t);
-  s.net.runToIdle();
-  const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
-  const host = (name: string) => s.net.nodes.get(id(name)) as Host;
-  const l3 = (name: string) => s.net.nodes.get(id(name)) as L3Node;
-  const act = (a: Parameters<typeof s.net.scheduleAction>[1]) => {
-    const from = s.net.trace.length;
-    s.net.scheduleAction(s.net.now, a);
-    s.net.runToIdle();
-    return s.net.trace.slice(from);
-  };
-  const apply = (next: Topology) => {
-    s.sync(next);
-    s.net.runToIdle();
-  };
-  const lastConn = (name: string): TcpConn => [...host(name).tcp.conns.values()].filter((c) => c.role === "client").at(-1)!;
-  const wire = (name: string) => [...s.net.frameLog.values()].flat().filter((x) => x.to === id(name) && x.frame.payload.kind === "ipv4").map((x) => x.frame.payload as Ipv4Packet);
-  return { s, t, id, host, l3, act, apply, lastConn, wire };
-}
+const load = (t: Topology = exampleRemoteVpnTopology()) => loadTopology(t);
 
 describe("원격 접속 VPN", () => {
   it("노트북이 켜지면서 NAT-T 로 접속해 가상 주소를 받고, 사내 서버에 SSH 가 열린다", () => {

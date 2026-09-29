@@ -1,9 +1,7 @@
 // 로드밸런서 L4 모드(주소 변환, 연결 하나)와 세션 고정(같은 출발지 IP → 같은 백엔드)
 import { describe, expect, it } from "vitest";
-import { Host } from "../src/core/nodes/host";
-import type { TcpConn } from "../src/core/nodes/tcp";
 import { lintTopology } from "../src/model/lint";
-import { NetworkSync } from "../src/model/netSync";
+import { loadTopology } from "./helpers";
 import { exampleLoadBalancerTopology } from "../src/model/examples";
 import type { Topology } from "../src/model/topology";
 
@@ -12,22 +10,7 @@ function withLb(patch: LbPatch, name = "lb-1", t: Topology = exampleLoadBalancer
   return { ...t, devices: t.devices.map((d) => (d.name === name ? { ...d, host: { ...d.host!, lb: { ...d.host!.lb!, ...patch } } } : d)) };
 }
 
-function load(t: Topology) {
-  const s = new NetworkSync();
-  s.sync(t);
-  s.net.runToIdle();
-  const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
-  const host = (name: string) => s.net.nodes.get(id(name)) as Host;
-  const act = (a: Parameters<typeof s.net.scheduleAction>[1]) => {
-    const from = s.net.trace.length;
-    s.net.scheduleAction(s.net.now, a);
-    s.net.runToIdle();
-    return s.net.trace.slice(from);
-  };
-  const lastConn = (name: string): TcpConn => [...host(name).tcp.conns.values()].filter((c) => c.role === "client").at(-1)!;
-  const serverConns = (name: string) => [...host(name).tcp.conns.values()].filter((c) => c.role === "server");
-  return { s, id, host, act, lastConn, serverConns };
-}
+const load = (t: Topology) => loadTopology(t);
 
 describe("로드밸런서 L4 모드", () => {
   it("주소만 바꿔 넘긴다: LB 에는 TCP 연결이 없고, 연결 두 개가 라운드 로빈으로 백엔드 둘에 간다", () => {

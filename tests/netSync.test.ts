@@ -3,6 +3,7 @@ import { Host } from "../src/core/nodes/host";
 import { L3Node } from "../src/core/nodes/l3";
 import { Router } from "../src/core/nodes/router";
 import { NetworkSync } from "../src/model/netSync";
+import { loadTopology } from "./helpers";
 import { createDevice, newId, type Device, type Topology } from "../src/model/topology";
 import { EXAMPLES, exampleTopology, examplePartsTopology, exampleVlanTopology } from "../src/model/examples";
 
@@ -73,13 +74,7 @@ describe("NetworkSync: 예제 토폴로지가 그대로 동작한다", () => {
 });
 
 describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트가 재현된다", () => {
-  function load(id: keyof typeof EXAMPLES) {
-    const s = new NetworkSync();
-    const t = EXAMPLES[id].build();
-    s.sync(t);
-    s.net.runToIdle();
-    return { s, t };
-  }
+  const load = (id: keyof typeof EXAMPLES) => loadTopology(EXAMPLES[id].build());
 
   it("PC 2대 + 스위치: ARP 뒤 ping", () => {
     const { s, t } = load("starter");

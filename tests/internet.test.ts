@@ -1,22 +1,14 @@
 // 예제 "인터넷의 뼈대": 가장자리는 디폴트 라우트(트리), 중심은 RIP 그물. 공인 DNS 8.8.8.8, 백본 링크 절단 후 우회
 import { describe, expect, it } from "vitest";
-import { Host } from "../src/core/nodes/host";
 import { lintTopology } from "../src/model/lint";
-import { NetworkSync } from "../src/model/netSync";
+import type { ActionSpec } from "../src/core/network";
+import { loadTopology } from "./helpers";
 import { exampleInternetTopology } from "../src/model/examples";
 import type { Topology } from "../src/model/topology";
 
 function setup(t: Topology = exampleInternetTopology()) {
-  const s = new NetworkSync();
-  s.sync(t);
-  s.net.runToIdle();
-  const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
-  const host = (name: string) => s.net.nodes.get(id(name)) as Host;
-  const run = (action: Parameters<typeof s.net.scheduleAction>[1]) => {
-    s.net.scheduleAction(s.net.now, action);
-    s.net.runToIdle();
-  };
-  return { t, s, id, host, run };
+  const x = loadTopology(t);
+  return { ...x, run: (action: ActionSpec) => void x.act(action) };
 }
 
 describe("예제: 인터넷의 뼈대", () => {

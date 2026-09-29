@@ -1,9 +1,7 @@
 // SSH 흉내 (포트 22): 버전 교환 → 키 교환 → 인증 뒤 세션이 열린 채 유지, "연결 해제" 로 FIN 종료.
 // 오래 열린 연결이 망 변화에 어떻게 반응하는지: 조용한 동안 경로가 끊겨도 모르고, 닫을 때 알게 된다
 import { describe, expect, it } from "vitest";
-import { Host } from "../src/core/nodes/host";
-import type { TcpConn } from "../src/core/nodes/tcp";
-import { NetworkSync } from "../src/model/netSync";
+import { loadTopology } from "./helpers";
 import { exampleHaTopology } from "../src/model/examples";
 import type { Topology } from "../src/model/topology";
 import { L3Node } from "../src/core/nodes/l3";
@@ -11,25 +9,7 @@ import { Internet } from "../src/core/nodes/internet";
 import { lintTopology } from "../src/model/lint";
 
 /** HA 예제에 인터넷 쪽 대신 안쪽 서버를 하나 두고 SSH 22 를 연다 */
-function load(t: Topology = exampleHaTopology()) {
-  const s = new NetworkSync();
-  s.sync(t);
-  s.net.runToIdle();
-  const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
-  const host = (name: string) => s.net.nodes.get(id(name)) as Host;
-  const act = (a: Parameters<typeof s.net.scheduleAction>[1]) => {
-    const from = s.net.trace.length;
-    s.net.scheduleAction(s.net.now, a);
-    s.net.runToIdle();
-    return s.net.trace.slice(from);
-  };
-  const apply = (next: Topology) => {
-    s.sync(next);
-    s.net.runToIdle();
-  };
-  const lastConn = (name: string): TcpConn => [...host(name).tcp.conns.values()].filter((c) => c.role === "client").at(-1)!;
-  return { s, id, host, act, apply, lastConn };
-}
+const load = (t: Topology = exampleHaTopology()) => loadTopology(t);
 
 /** laptop-1 에 SSH 서버를 켠 HA 예제 (같은 LAN 안) */
 function withSshServer(): Topology {

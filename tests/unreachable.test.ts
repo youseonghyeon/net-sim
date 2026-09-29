@@ -4,23 +4,20 @@ import { describe, expect, it } from "vitest";
 import { Host } from "../src/core/nodes/host";
 import { Internet } from "../src/core/nodes/internet";
 import { Router } from "../src/core/nodes/router";
-import { NetworkSync } from "../src/model/netSync";
+import type { ActionSpec } from "../src/core/network";
+import { loadTopology } from "./helpers";
 import { EXAMPLES, exampleTopology } from "../src/model/examples";
 import type { Topology } from "../src/model/topology";
 
+/** 이 파일의 act 는 트레이스 대신 걸린 시간(ms)을 돌려준다 */
 function load(t: Topology) {
-  const s = new NetworkSync();
-  s.sync(t);
-  s.net.runToIdle();
-  const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
-  const host = (name: string) => s.net.nodes.get(id(name)) as Host;
-  const act = (a: Parameters<typeof s.net.scheduleAction>[1]) => {
-    const start = s.net.now;
-    s.net.scheduleAction(s.net.now, a);
-    s.net.runToIdle();
-    return s.net.now - start;
+  const x = loadTopology(t);
+  const act = (a: ActionSpec) => {
+    const start = x.s.net.now;
+    x.act(a);
+    return x.s.net.now - start;
   };
-  return { s, id, host, act };
+  return { ...x, act };
 }
 
 describe("ICMP Destination Unreachable", () => {

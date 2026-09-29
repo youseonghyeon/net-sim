@@ -1,25 +1,18 @@
 // 예제 "도메인으로 회사 웹 서버 접속": 집 DNS → 집 NAT → 공인 구간 → 회사 NAT 포트 포워딩 → 방화벽 → 웹 서버
 import { describe, expect, it } from "vitest";
-import { Host } from "../src/core/nodes/host";
 import { lintTopology } from "../src/model/lint";
-import { NetworkSync } from "../src/model/netSync";
+import { loadTopology } from "./helpers";
 import { examplePublishTopology } from "../src/model/examples";
 import type { Topology } from "../src/model/topology";
 
 function setup() {
-  const t = examplePublishTopology();
-  const s = new NetworkSync();
-  s.sync(t);
-  s.net.runToIdle();
-  const id = (name: string) => t.devices.find((d) => d.name === name)!.id;
-  const host = (name: string) => s.net.nodes.get(id(name)) as Host;
+  const x = loadTopology(examplePublishTopology());
+  /** 역할을 가리지 않고 마지막 연결 + 그동안의 트레이스 */
   const connect = (from: string, dst: string, port = 80) => {
-    const start = s.net.trace.length;
-    s.net.scheduleAction(s.net.now, { kind: "tcp-connect", nodeId: id(from), dst, port });
-    s.net.runToIdle();
-    return { conn: [...host(from).tcp.conns.values()].at(-1)!, trace: s.net.trace.slice(start) };
+    const trace = x.act({ kind: "tcp-connect", nodeId: x.id(from), dst, port });
+    return { conn: [...x.host(from).tcp.conns.values()].at(-1)!, trace };
   };
-  return { t, s, id, host, connect };
+  return { ...x, connect };
 }
 
 describe("예제: 도메인으로 회사 웹 서버 접속", () => {
