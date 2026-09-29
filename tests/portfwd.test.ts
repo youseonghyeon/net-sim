@@ -94,7 +94,7 @@ describe("포트 포워딩 — 가정용 라우터", () => {
 
     const table = rt.snapshot().tables.find((t) => t.title === "포트 포워딩");
     expect(table?.columns).toEqual(["공인 포트", "내부"]);
-    expect(table?.rows).toEqual([["공인 :80", "192.168.0.50:80"]]);
+    expect(table?.rows).toEqual([["TCP 공인 :80", "192.168.0.50:80"]]);
   });
 
   it("공인 포트가 다른 규칙(:8080 → :80): 8080 은 열리고 80 은 막힌다", () => {
@@ -243,7 +243,7 @@ describe("포트 포워딩 — NAT 박스", () => {
     expect(net.pendingEvents).toBe(0);
 
     const table = nat.snapshot().tables.find((t) => t.title === "포트 포워딩");
-    expect(table?.rows).toEqual([["공인 :80", "192.168.2.20:80"]]);
+    expect(table?.rows).toEqual([["TCP 공인 :80", "192.168.2.20:80"]]);
   });
 
   it("게이트웨이(NAT 없음)에는 규칙을 넣어도 무시된다", () => {

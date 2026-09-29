@@ -223,10 +223,10 @@ export function effectiveFirewall(f: FirewallSettings | undefined) {
   };
 }
 
-export function effectiveForwards(rules: { publicPort: number; lanIp: string; lanPort: number }[] | undefined) {
+export function effectiveForwards(rules: { publicPort: number; lanIp: string; lanPort: number; proto?: "tcp" | "udp" }[] | undefined) {
   return (rules ?? [])
     .filter((f) => validIp(f.lanIp) && f.publicPort >= 1 && f.publicPort <= 65535 && f.lanPort >= 1 && f.lanPort <= 65535)
-    .map((f) => ({ publicPort: f.publicPort, lanIp: f.lanIp, lanPort: f.lanPort }));
+    .map((f) => ({ publicPort: f.publicPort, lanIp: f.lanIp, lanPort: f.lanPort, proto: f.proto === "udp" ? ("udp" as const) : ("tcp" as const) }));
 }
 
 export function effectiveRouter(d: Device, current?: Router) {
@@ -236,7 +236,7 @@ export function effectiveRouter(d: Device, current?: Router) {
   return {
     lanIp: validIp(r.lanIp) ?? current?.lan.ip ?? "192.168.0.1",
     lanPrefix: r.lanPrefix,
-    dhcp: { enabled: r.dhcp.enabled, start: validIp(r.dhcp.start) ?? current?.dhcp.start ?? r.dhcp.start, end: validIp(r.dhcp.end) ?? current?.dhcp.end ?? r.dhcp.end },
+    dhcp: { enabled: r.dhcp.enabled, start: validIp(r.dhcp.start) ?? current?.dhcp.start ?? r.dhcp.start, end: validIp(r.dhcp.end) ?? current?.dhcp.end ?? r.dhcp.end, dns: validIp(r.dhcp.dns) },
     wan: w.ipMode === "static" ? { mode: "static" as const, ip: validIp(w.ip), prefix: w.prefix, gateway: validIp(w.gateway) } : { mode: "dhcp" as const },
     dns: { enabled: dns.enabled, records: [], upstream: validIp(dns.upstream) },
     forwards: effectiveForwards(r.forwards),

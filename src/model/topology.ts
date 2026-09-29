@@ -253,6 +253,8 @@ export interface PortForwardSettings {
   publicPort: number;
   lanIp: string;
   lanPort: number;
+  /** 없으면 TCP */
+  proto?: "tcp" | "udp";
 }
 
 export interface FirewallRuleSettings {
@@ -277,7 +279,8 @@ export const DEFAULT_FIREWALL_SETTINGS: FirewallSettings = { enabled: false, def
 export interface RouterSettings {
   lanIp: string;
   lanPrefix: number;
-  dhcp: { enabled: boolean; start: string; end: string };
+  /** dns: DHCP 가 안내할 DNS 서버(옵션 6). 비우면 공유기 자신(DNS 포워더) */
+  dhcp: { enabled: boolean; start: string; end: string; dns?: string };
   wan: WanSettings;
   /** DNS 포워더 (공유기 안의 dnsmasq) */
   dns?: { enabled: boolean; upstream: string };

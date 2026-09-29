@@ -157,7 +157,10 @@ export class Router implements SimNode {
     } else if (cfg.dhcp.start !== d.start || cfg.dhcp.end !== d.end) {
       ctx.trace("ip.config", "sys", `DHCP 범위 변경: ${cfg.dhcp.start} ~ ${cfg.dhcp.end}`, { ...cfg.dhcp });
     }
-    if (cfg.dhcp.start !== d.start || cfg.dhcp.end !== d.end || cfg.dhcp.enabled !== d.enabled) this.dhcpServer.setConfig(cfg.dhcp, ctx);
+    if ((cfg.dhcp.dns || undefined) !== (d.dns || undefined)) {
+      ctx.trace("ip.config", "sys", cfg.dhcp.dns ? `DHCP 가 안내할 DNS 서버(옵션 6): ${cfg.dhcp.dns} — 이미 주소를 받은 호스트는 DHCP 임대 갱신 뒤 반영` : `DHCP 가 안내할 DNS 서버: 공유기 자신(DNS 포워더)`, { dns: cfg.dhcp.dns });
+    }
+    if (cfg.dhcp.start !== d.start || cfg.dhcp.end !== d.end || cfg.dhcp.enabled !== d.enabled || (cfg.dhcp.dns || undefined) !== (d.dns || undefined)) this.dhcpServer.setConfig(cfg.dhcp, ctx);
 
     const w = cfg.wan;
     const wanChanged =
@@ -352,7 +355,9 @@ export class Router implements SimNode {
       ctx.trace("ip.drop", "L3", `[wan] 목적지 ${pkt.dst} 는 내 공인 주소(${this.wan.ip ?? "없음"}) 아님 → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
-    if (pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dns" && pkt.payload.dstPort === DNS_PORT) {
+    // UDP 포트 포워딩 규칙이 있는 포트(예: 53 → 안쪽 DNS 서버)는 내가 받지 않고 아래 NAT 역변환으로 안에 넘긴다
+    const udpForwarded = pkt.payload.kind === "udp" && this.nat.forwards.some((r) => r.proto === "udp" && r.publicPort === (pkt.payload as { dstPort: number }).dstPort);
+    if (!udpForwarded && pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dns" && pkt.payload.dstPort === DNS_PORT) {
       // 내가 업스트림 DNS 에 물어본 답 → 포워더가 LAN 클라이언트에게 전달
       this.dnsForwarder.handle(pkt, pkt.payload.srcPort, pkt.payload.payload, frameId, ctx, this.emitLan(ctx));
       return;
@@ -478,5 +483,5 @@ export class Router implements SimNode {
 
 /** 규칙 목록 비교용 키 (순서 포함) */
 function forwardsKey(rules: PortForward[]): string {
-  return rules.map((r) => `${r.publicPort}>${r.lanIp}:${r.lanPort}`).join(",");
+  return rules.map((r) => `${r.proto ?? "tcp"}:${r.publicPort}>${r.lanIp}:${r.lanPort}`).join(",");
 }

@@ -21,7 +21,12 @@ export interface PortForward {
   publicPort: number;
   lanIp: Ip;
   lanPort: number;
+  /** 없으면 TCP (예전 저장본 호환) */
+  proto?: "tcp" | "udp";
 }
+
+/** 규칙이 이 프로토콜에 해당하는지 (proto 가 없으면 TCP) */
+const ruleFor = (r: PortForward, proto: string) => (r.proto ?? "tcp") === proto;
 
 export class NatTable {
   /** "proto:공인id" → 매핑 */
@@ -57,10 +62,13 @@ export class NatTable {
     const p = pkt.payload;
     if (isIcmpError(p)) return this.translateError(pkt, p, publicIp, ctx, frameId);
     const proto = p.kind;
-    if (p.kind === "tcp") {
-      // 포트 포워딩으로 들어온 연결의 응답: 그 흐름이 들어온 공인 포트로 되돌린다 (동적 항목 없음)
-      const flowPort = this.ruleFlows.get(`${pkt.src}:${p.srcPort}:${pkt.dst}:${p.dstPort}`);
-      const rule = flowPort !== undefined ? this.forwards.find((r) => r.publicPort === flowPort) : this.forwards.find((r) => r.lanIp === pkt.src && r.lanPort === p.srcPort);
+    if (p.kind === "tcp" || p.kind === "udp") {
+      // 포트 포워딩으로 들어온 흐름의 응답: 그 흐름이 들어온 공인 포트로 되돌린다 (동적 항목 없음)
+      const flowPort = this.ruleFlows.get(`${p.kind}:${pkt.src}:${p.srcPort}:${pkt.dst}:${p.dstPort}`);
+      const rule =
+        flowPort !== undefined
+          ? this.forwards.find((r) => r.publicPort === flowPort && ruleFor(r, p.kind))
+          : this.forwards.find((r) => r.lanIp === pkt.src && r.lanPort === p.srcPort && ruleFor(r, p.kind));
       if (rule) {
         ctx.trace(
           "nat.forward.reply",
@@ -108,7 +116,7 @@ export class NatTable {
       original = { ...o, dst: publicIp, l4: o.l4.kind === "icmp" ? { ...o.l4, id: entry.publicId } : { ...o.l4, dstPort: entry.publicId } };
     } else if (o.l4.kind !== "icmp") {
       const port = o.l4.dstPort;
-      const rule = this.forwards.find((r) => r.lanIp === o.dst && r.lanPort === port);
+      const rule = this.forwards.find((r) => r.lanIp === o.dst && r.lanPort === port && ruleFor(r, o.l4.kind));
       if (rule) original = { ...o, dst: publicIp, l4: { ...o.l4, dstPort: rule.publicPort } };
     }
     ctx.trace("nat.translate", "L3", `NAT 변환: ${icmpErrorLabel(p)} 통지의 출발지 ${pkt.src} → ${publicIp} (안에 내장된 원래 패킷의 내부 주소도 공인 주소로)`, { proto: "icmp", lanIp: pkt.src }, frameId);
@@ -129,7 +137,7 @@ export class NatTable {
       lanIp = entry.lanIp;
       innerId = entry.innerId;
     } else {
-      const rule = proto !== "icmp" ? this.forwards.find((r) => r.publicPort === publicId) : undefined;
+      const rule = proto !== "icmp" ? this.forwards.find((r) => r.publicPort === publicId && ruleFor(r, proto)) : undefined;
       if (!rule) {
         ctx.trace("nat.miss", "L3", `${icmpErrorLabel(p)} 안의 원래 패킷(${what})이 NAT 테이블에 없음 → 드롭. 내부에서 시작한 통신의 오류 통지만 들어올 수 있음`, { proto, publicId }, frameId);
         return undefined;
@@ -157,22 +165,22 @@ export class NatTable {
     const what = p.kind === "icmp" ? `ICMP id ${publicId}` : `${proto.toUpperCase()} 포트 ${publicId}`;
     const entry = this.entries.get(`${proto}:${publicId}`);
     if (!entry) {
-      if (p.kind === "tcp") {
-        const rule = this.forwards.find((r) => r.publicPort === p.dstPort);
+      if (p.kind === "tcp" || p.kind === "udp") {
+        const rule = this.forwards.find((r) => r.publicPort === p.dstPort && ruleFor(r, p.kind));
         if (rule) {
           ctx.trace(
             "nat.forward.rule",
             "L3",
-            `포트 포워딩 규칙 적용: 공인 :${rule.publicPort} → ${rule.lanIp}:${rule.lanPort} — 바깥에서 시작한 연결이지만 규칙이 있어 안으로 들여보냄`,
+            `포트 포워딩 규칙 적용: 공인 ${p.kind.toUpperCase()} :${rule.publicPort} → ${rule.lanIp}:${rule.lanPort} — 바깥에서 시작한 ${p.kind === "tcp" ? "연결" : "UDP 패킷"}이지만 규칙이 있어 안으로 들여보냄`,
             { proto, publicPort: rule.publicPort, lanIp: rule.lanIp, lanPort: rule.lanPort },
             frameId,
           );
-          this.ruleFlows.set(`${rule.lanIp}:${rule.lanPort}:${pkt.src}:${p.srcPort}`, rule.publicPort);
+          this.ruleFlows.set(`${p.kind}:${rule.lanIp}:${rule.lanPort}:${pkt.src}:${p.srcPort}`, rule.publicPort);
           if (this.ruleFlows.size > 256) this.ruleFlows.delete(this.ruleFlows.keys().next().value!);
           return { ...pkt, dst: rule.lanIp, payload: { ...p, dstPort: rule.lanPort } };
         }
       }
-      const hint = p.kind === "tcp" ? " (포트 포워딩 규칙을 추가하면 열 수 있음)" : "";
+      const hint = p.kind !== "icmp" ? ` (${p.kind.toUpperCase()} 포트 포워딩 규칙을 추가하면 열 수 있음)` : "";
       ctx.trace("nat.miss", "L3", `NAT 테이블에 없는 ${what} → 드롭. 내부에서 시작하지 않은 통신은 들어올 수 없음${hint}`, { proto, publicId }, frameId);
       return undefined;
     }
@@ -196,6 +204,6 @@ export class NatTable {
   }
 
   forwardRows(_publicIp: Ip | undefined): string[][] {
-    return this.forwards.map((r) => [`공인 :${r.publicPort}`, `${r.lanIp}:${r.lanPort}`]);
+    return this.forwards.map((r) => [`${(r.proto ?? "tcp").toUpperCase()} 공인 :${r.publicPort}`, `${r.lanIp}:${r.lanPort}`]);
   }
 }

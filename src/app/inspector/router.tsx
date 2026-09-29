@@ -77,6 +77,9 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
             <Field label="끝 주소" error={rangeError(r, "end")}>
               <input class="input mono" value={r.dhcp.end} onInput={(e) => setDhcp({ end: e.currentTarget.value })} />
             </Field>
+            <Field label="DNS 서버" hint="옵션 6" error={ipError(r.dhcp.dns ?? "", false)}>
+              <input class="input mono" value={r.dhcp.dns ?? ""} placeholder="비우면 공유기 자신 (DNS 포워더)" onInput={(e) => setDhcp({ dns: e.currentTarget.value })} />
+            </Field>
             <p class="note">자동(DHCP) 로 설정된 호스트가 연결되면 이 범위에서 주소를 빌려줍니다. 기본 게이트웨이 옵션은 LAN 주소로 나갑니다. 이미 실패한 호스트는 그 호스트의 진단에서 "DHCP 임대 갱신" 을 누르세요.</p>
           </>
         ) : (

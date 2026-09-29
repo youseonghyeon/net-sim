@@ -679,6 +679,23 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForTimeout(200);
   console.log("card closed on play:", (await card.count()) === 0 ? "yes" : "NO", paused ? "" : "");
 }
+// 공유기 설정: DHCP 의 DNS 서버 칸, 포트 포워딩 두 줄 편집기(TCP/UDP)
+{
+  await loadEx("router");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await clickDevice("rt-1");
+  await goTab("설정");
+  const dnsField = page.locator(".inspector .field", { hasText: "DNS 서버" }).first();
+  console.log("router dhcp dns field:", await dnsField.count(), "| placeholder:", await dnsField.locator("input").getAttribute("placeholder"));
+  const fwd = page.locator(".inspector .fwd-row").first();
+  await fwd.scrollIntoViewIfNeeded();
+  await fwd.locator("select.proto").selectOption("udp");
+  await page.waitForTimeout(100);
+  const b = await fwd.boundingBox();
+  const ip = await fwd.locator(".fwd-ip").boundingBox();
+  console.log("fwd row: two lines", b.height > 50 ? "yes" : "NO", "| ip width", Math.round(ip.width), "| proto", await fwd.locator("select.proto").inputValue());
+  await fwd.screenshot({ path: `${OUT}/46-fwd-row.png` });
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

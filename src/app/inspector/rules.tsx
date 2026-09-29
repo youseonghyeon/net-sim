@@ -109,18 +109,23 @@ export function ForwardSection({ rules, onChange, lanHint }: { rules: PortForwar
   const port = (v: string, fallback: number) => Math.min(65535, Math.max(1, Number(v) || fallback));
   return (
     <Section id="forward-edit" title="포트 포워딩">
-      {rules.length === 0 && <p class="note">바깥에서 시작한 연결은 NAT 테이블에 없어 드롭됩니다. 규칙을 추가하면 공인 포트로 온 연결을 안쪽 서버로 들여보냅니다. {lanHint}</p>}
+      {rules.length === 0 && <p class="note">바깥에서 시작한 연결은 NAT 테이블에 없어 드롭됩니다. 규칙을 추가하면 공인 포트로 온 연결을 안쪽 서버로 들여보냅니다(웹은 TCP, DNS 는 UDP 53). {lanHint}</p>}
       {rules.map((r, i) => (
+        // 두 줄: [TCP/UDP] 공인 :포트 [삭제] / → 안쪽 주소 : 포트
         <div key={i} class="fwd-row">
-          <span class="muted">공인 :</span>
-          <input class="input mono port" type="number" min={1} max={65535} value={r.publicPort} onInput={(e) => { if (e.currentTarget.value === "") return; setRule(i, { publicPort: port(e.currentTarget.value, 80) }); }} />
-          <span class="muted">→</span>
-          <input class="input mono" value={r.lanIp} placeholder="192.168.0.20" onInput={(e) => setRule(i, { lanIp: e.currentTarget.value })} />
-          <span class="muted">:</span>
-          <input class="input mono port" type="number" min={1} max={65535} value={r.lanPort} onInput={(e) => { if (e.currentTarget.value === "") return; setRule(i, { lanPort: port(e.currentTarget.value, 80) }); }} />
+          <select class="input proto" value={r.proto ?? "tcp"} title="프로토콜" onChange={(e) => setRule(i, { proto: e.currentTarget.value as "tcp" | "udp" })}>
+            <option value="tcp">TCP</option>
+            <option value="udp">UDP</option>
+          </select>
+          <span class="muted fwd-publabel">공인 :</span>
+          <input class="input mono port fwd-pub" type="number" min={1} max={65535} value={r.publicPort} onInput={(e) => { if (e.currentTarget.value === "") return; setRule(i, { publicPort: port(e.currentTarget.value, 80) }); }} />
           <button class="icon-btn" title="규칙 삭제" onClick={() => onChange(rules.filter((_, k) => k !== i))}>
             <Icon name="trash" size={15} />
           </button>
+          <span class="muted fwd-arrow">→</span>
+          <input class="input mono fwd-ip" value={r.lanIp} placeholder="192.168.0.20" onInput={(e) => setRule(i, { lanIp: e.currentTarget.value })} />
+          <span class="muted fwd-colon">:</span>
+          <input class="input mono port fwd-lan" type="number" min={1} max={65535} value={r.lanPort} onInput={(e) => { if (e.currentTarget.value === "") return; setRule(i, { lanPort: port(e.currentTarget.value, 80) }); }} />
           {ipError(r.lanIp, true) && <div class="error fwd-error">{ipError(r.lanIp, true)}</div>}
         </div>
       ))}

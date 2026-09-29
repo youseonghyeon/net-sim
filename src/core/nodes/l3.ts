@@ -231,7 +231,7 @@ export class L3Node implements SimNode {
   /** 포트 포워딩 규칙 교체 (NAT 박스만). 바뀐 경우에만 트레이스 */
   setForwards(rules: PortForward[], ctx: NodeContext): void {
     if (!this.nat) return;
-    const key = (rs: PortForward[]) => rs.map((r) => `${r.publicPort}>${r.lanIp}:${r.lanPort}`).join(",");
+    const key = (rs: PortForward[]) => rs.map((r) => `${r.proto ?? "tcp"}:${r.publicPort}>${r.lanIp}:${r.lanPort}`).join(",");
     if (key(rules) === key(this.nat.forwards)) return;
     this.nat.setForwards(rules);
     ctx.trace("ip.config", "sys", `포트 포워딩 규칙 변경: ${rules.length}개`, { forwards: rules.map((r) => ({ ...r })) });

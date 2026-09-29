@@ -1138,11 +1138,41 @@ select.btn.example {
 }
 .fwd-row {
   display: grid;
-  grid-template-columns: auto 64px auto minmax(0, 1fr) auto 64px 30px;
+  /* 윗줄: 프로토콜 · 공인 : · 포트 · 삭제 / 아랫줄: → · 안쪽 주소(가운데 두 칸) · : · 포트 */
+  grid-template-columns: 64px auto minmax(0, 1fr) auto 64px 30px;
+  grid-template-areas: "proto pubL pubP pubP pubP del" "arrow ip ip colon lanP .";
   gap: 4px;
   align-items: center;
   margin-bottom: 6px;
   font-size: 12px;
+}
+.fwd-row .proto {
+  grid-area: proto;
+  padding: 0 6px;
+}
+.fwd-row .fwd-publabel {
+  grid-area: pubL;
+}
+.fwd-row .fwd-pub {
+  grid-area: pubP;
+  justify-self: start;
+  width: 72px;
+}
+.fwd-row .icon-btn {
+  grid-area: del;
+}
+.fwd-row .fwd-arrow {
+  grid-area: arrow;
+  justify-self: end;
+}
+.fwd-row .fwd-ip {
+  grid-area: ip;
+}
+.fwd-row .fwd-colon {
+  grid-area: colon;
+}
+.fwd-row .fwd-lan {
+  grid-area: lanP;
 }
 .fwd-row .port {
   padding: 0 6px;
