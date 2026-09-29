@@ -774,25 +774,25 @@ select.btn.example {
   padding: 0;
   background: transparent;
 }
-.packet.arp circle {
+.packet.arp circle:not(.packet-hit) {
   fill: var(--pkt-arp);
 }
-.packet.dhcp circle {
+.packet.dhcp circle:not(.packet-hit) {
   fill: var(--pkt-dhcp);
 }
-.packet.icmp circle {
+.packet.icmp circle:not(.packet-hit) {
   fill: var(--pkt-icmp);
 }
-.packet.tcp circle {
+.packet.tcp circle:not(.packet-hit) {
   fill: var(--pkt-tcp);
 }
-.packet.dns circle {
+.packet.dns circle:not(.packet-hit) {
   fill: var(--pkt-dns);
 }
-.packet.rip circle {
+.packet.rip circle:not(.packet-hit) {
   fill: var(--pkt-rip);
 }
-.packet.vpn circle {
+.packet.vpn circle:not(.packet-hit) {
   fill: var(--pkt-vpn);
 }
 .packet.lost path {

@@ -668,6 +668,11 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.click(".ping-row .btn:has-text('ping')");
   const pk = page.locator("g.packet[data-tx]").first();
   await pk.waitFor({ timeout: 10000 });
+  // 누르기용 히트 원(r=13)은 투명해야 한다 — 종류별 색 규칙(.packet.arp circle)이 덮어써 패킷이 커 보인 적이 있다
+  const hitFills = await page.evaluate(() => [...document.querySelectorAll("g.packet .packet-hit")].map((c) => getComputedStyle(c).fill));
+  const painted = hitFills.filter((f) => f !== "transparent" && f !== "rgba(0, 0, 0, 0)" && f !== "none");
+  console.log("packet hit circles transparent:", painted.length === 0 ? `yes (${hitFills.length})` : "NO " + painted.join(","));
+  if (painted.length) errors.push(`packet-hit painted: ${painted[0]} — 히트 원이 칠해짐 / 종류별 색 규칙에 :not(.packet-hit) / src/app/styles.css .packet.* circle`);
   const box = await pk.boundingBox();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   const card = page.locator(".packet-card");
