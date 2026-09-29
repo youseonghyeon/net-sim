@@ -901,7 +901,7 @@ export function lintTopology(t: Topology): LintIssue[] {
         fix: `${d.name} → 로드밸런서 → 백엔드에서 자기 자신이나 자기를 가리키는 로드밸런서를 빼고 실제 서버를 넣기`,
       });
     }
-    if (d.host?.lb?.port === 22) {
+    if (d.host?.lb?.port === 22 && d.host.lb.mode !== "l4") {
       add({
         deviceId: d.id,
         severity: "warn",

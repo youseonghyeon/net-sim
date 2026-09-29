@@ -190,6 +190,10 @@ export interface LbSettings {
   port: number;
   algorithm: "round-robin" | "least-conn";
   backends: { ip: string; port: number }[];
+  /** 없으면 L7 (리버스 프록시) */
+  mode?: "l7" | "l4";
+  /** 세션 고정 (같은 출발지 IP → 같은 백엔드) */
+  sticky?: boolean;
 }
 
 export const DEFAULT_LB_SETTINGS: LbSettings = { enabled: false, port: 80, algorithm: "round-robin", backends: [] };

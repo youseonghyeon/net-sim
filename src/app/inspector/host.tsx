@@ -244,6 +244,16 @@ function LbFields({ d, h }: { d: Device; h: HostSettings }) {
           <Field label="받는 포트">
             <input class="input mono" type="number" min={1} max={65535} value={lb.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 80)) }); }} />
           </Field>
+          <Field label="방식">
+            <div class="segmented" role="radiogroup">
+              <button class={lb.mode !== "l4" ? "on" : ""} onClick={() => set({ mode: undefined })} title="연결을 받아 대신 요청 (HTTP 를 봄)">
+                L7 프록시
+              </button>
+              <button class={lb.mode === "l4" ? "on" : ""} onClick={() => set({ mode: "l4" })} title="주소·포트만 바꿔 넘김 (연결 하나)">
+                L4 주소 변환
+              </button>
+            </div>
+          </Field>
           <Field label="분배 방식">
             <div class="segmented" role="radiogroup">
               <button class={lb.algorithm === "round-robin" ? "on" : ""} onClick={() => set({ algorithm: "round-robin" })}>
@@ -254,6 +264,13 @@ function LbFields({ d, h }: { d: Device; h: HostSettings }) {
               </button>
             </div>
           </Field>
+          <label class="toggle-row">
+            <span>
+              세션 고정
+              <small class="muted">같은 출발지 IP 는 계속 같은 백엔드로 (소스 IP 어피니티)</small>
+            </span>
+            <Toggle on={lb.sticky === true} onToggle={() => set({ sticky: !lb.sticky })} />
+          </label>
           {shadowsWeb && <p class="note">웹 서버도 포트 {lb.port} 인데, 이 포트로 온 연결은 로드밸런서가 받습니다.</p>}
           <h3 class="sub">백엔드</h3>
           {lb.backends.length === 0 && <p class="note error-note">백엔드가 없으면 모든 요청에 502 Bad Gateway 를 돌려줍니다. 뒤 서버의 주소와 포트를 추가하세요.</p>}
@@ -273,7 +290,15 @@ function LbFields({ d, h }: { d: Device; h: HostSettings }) {
             백엔드 추가
           </button>
           <p class="note">
-            클라이언트는 이 장치 주소로 접속하고, 로드밸런서가 백엔드 하나를 골라 <b>자기가 대신</b> 연결해 요청한 뒤 응답을 돌려줍니다(리버스 프록시, L7). 그래서 백엔드에게는 클라이언트가 로드밸런서로 보입니다. 백엔드가 거부하거나 응답이 없으면 10초 동안 빼고 곧바로 다음 백엔드로 다시 보냅니다(패시브 헬스 체크).
+            {lb.mode === "l4" ? (
+              <>
+                클라이언트의 패킷을 <b>주소·포트만 바꿔</b> 백엔드로 넘기고, 돌아오는 패킷도 바꿔 돌려줍니다(L4, LVS·NLB 식). TCP 연결은 클라이언트와 백엔드 사이 하나뿐이고 로드밸런서는 내용을 보지 않아 SSH 등 무엇이든 나눕니다. 대신 이미 시작한 연결은 다른 백엔드로 옮기지 못해, 백엔드가 거부(RST)하면 10초 빼 두고 클라이언트가 다시 연결해야 합니다.
+              </>
+            ) : (
+              <>
+                클라이언트는 이 장치 주소로 접속하고, 로드밸런서가 백엔드 하나를 골라 <b>자기가 대신</b> 연결해 요청한 뒤 응답을 돌려줍니다(리버스 프록시, L7). 그래서 백엔드에게는 클라이언트가 로드밸런서로 보입니다. 백엔드가 거부하거나 응답이 없으면 10초 동안 빼고 곧바로 다음 백엔드로 다시 보냅니다(패시브 헬스 체크).
+              </>
+            )}
           </p>
         </>
       )}

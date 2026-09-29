@@ -475,6 +475,9 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       else if (ev.summary.includes("PSK)가 다름 → AUTHENTICATION_FAILED")) out.push({ tool: "strongSwan (charon)", line: `05[IKE] tried 1 shared key for '${ip?.dst ?? "?"}' - '${ip?.src ?? "?"}', but MAC mismatched` });
       else if (ev.summary.includes("재전송") && ev.summary.includes("timeout")) out.push({ tool: "strongSwan (charon)", line: `11[IKE] giving up after 2 retransmits` });
       break;
+    case "lb.forward":
+      if (detail(ev, "vip")) out.push({ tool: "리눅스 ipvsadm -Lnc", line: `TCP 01:00  ESTABLISHED ${detail(ev, "client")}  ${detail(ev, "vip")}  ${detail(ev, "backend")}` });
+      break;
     case "lb.down":
       out.push({ tool: "nginx error.log", line: `connect() failed while connecting to upstream, upstream: "http://${detail(ev, "backend") ?? "?"}/" — upstream server temporarily disabled` });
       break;

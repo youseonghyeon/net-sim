@@ -3,7 +3,7 @@ import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, describeOr
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, type DnsServerConfig } from "./dns";
 import { NetInterface } from "./iface";
-import { LB_ALGORITHM_LABEL, LoadBalancer, type LbConfig } from "./lb";
+import { LB_ALGORITHM_LABEL, LB_MODE_LABEL, LoadBalancer, type LbConfig } from "./lb";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { TCP_TIMER_TAG, TcpStack } from "./tcp";
 import { RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
@@ -198,7 +198,7 @@ export class Host implements SimNode {
   /** 실제로 듣는 포트 = 서비스 포트 + (켜져 있으면) LB 포트 */
   private syncListening(ctx?: NodeContext): void {
     const next = new Set(this.services);
-    if (this.lb.config.enabled) next.add(this.lb.config.port);
+    if (this.lb.config.enabled && this.lb.config.mode !== "l4") next.add(this.lb.config.port); // L4 는 TCP 로 받지 않고 주소만 바꿔 넘긴다
     for (const p of [...this.tcp.listening]) {
       if (!next.has(p)) {
         this.tcp.listening.delete(p);
@@ -643,6 +643,12 @@ export class Host implements SimNode {
       return;
     }
     if (pkt.payload.kind === "tcp") {
+      // L4 로드밸런서: 내 TCP 로 받지 않고 주소·포트만 바꿔 백엔드(또는 클라이언트)로 넘긴다
+      const relayed = this.lb.l4(pkt, pkt.payload, ctx, frameId);
+      if (relayed) {
+        for (const out of relayed) this.iface.sendIp(out, ctx, this.emit(ctx));
+        return;
+      }
       this.tcp.handle(pkt, pkt.payload, ctx);
       return;
     }
@@ -785,13 +791,14 @@ export class Host implements SimNode {
           ? [["DNS 서버", `켜짐 · 레코드 ${this.dnsServer.config.records.length}개${this.dnsServer.config.upstream ? ` · 업스트림 DNS ${this.dnsServer.config.upstream}` : ""}`] as [string, string]]
           : []),
         ...(this.lb.config.enabled
-          ? [["로드밸런서", `켜짐 · 포트 ${this.lb.config.port} · ${LB_ALGORITHM_LABEL[this.lb.config.algorithm]} · 백엔드 ${this.lb.config.backends.length}대`] as [string, string]]
+          ? [["로드밸런서", `켜짐 · ${LB_MODE_LABEL[this.lb.config.mode ?? "l7"]} · 포트 ${this.lb.config.port} · ${LB_ALGORITHM_LABEL[this.lb.config.algorithm]}${this.lb.config.sticky ? " · 세션 고정" : ""} · 백엔드 ${this.lb.config.backends.length}대`] as [string, string]]
           : []),
       ],
       tables: [
         ...(this.dhcpServer.config.enabled ? [{ title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() }] : []),
         ...(this.dnsServer.config.enabled ? [{ title: "DNS 레코드·캐시", columns: ["이름", "IP", "출처"], rows: this.dnsServer.rows() }] : []),
         ...(this.lb.config.enabled ? [{ title: "로드밸런서 백엔드", columns: ["백엔드", "상태", "처리", "실패"], rows: this.lb.rows(this.clock) }] : []),
+        ...(this.lb.config.enabled && this.lb.config.mode === "l4" ? [{ title: "L4 흐름", columns: ["클라이언트", "변환 → 백엔드"], rows: this.lb.flowRows() }] : []),
         ...(this.resolver.cache.size > 0 ? [{ title: "DNS 캐시 (리졸버)", columns: ["이름", "IP", "시각"], rows: this.resolver.rows() }] : []),
         { title: "TCP 연결", columns: ["상대", "상태", "보냄 / 받음"], rows: this.tcp.rows() },
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: i.arpRows() },

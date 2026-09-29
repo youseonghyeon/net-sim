@@ -137,6 +137,7 @@ export type TraceKind =
   | "lb.relay"
   | "lb.down"
   | "lb.fail"
+  | "lb.forward"
   | "vpn.config"
   | "vpn.encap"
   | "vpn.decap"
