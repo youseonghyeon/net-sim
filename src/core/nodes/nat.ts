@@ -61,6 +61,10 @@ export class NatTable {
   translate(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
     if (isIcmpError(p)) return this.translateError(pkt, p, publicIp, ctx, frameId);
+    if (p.kind === "esp") {
+      ctx.trace("nat.miss", "L3", `ESP(IPsec) ${pkt.src} → ${pkt.dst}: ESP 에는 포트가 없어 NAT 가 누구 것인지 구분할 수 없음 → 드롭. 양쪽 VPN 이 NAT 를 감지하면 UDP 4500 (NAT-T) 로 싣는다`, { proto: "esp" }, frameId);
+      return undefined;
+    }
     const proto = p.kind;
     if (p.kind === "tcp" || p.kind === "udp") {
       // 포트 포워딩으로 들어온 흐름의 응답: 그 흐름이 들어온 공인 포트로 되돌린다 (동적 항목 없음)
@@ -160,6 +164,10 @@ export class NatTable {
   restore(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
     if (isIcmpError(p)) return this.restoreError(pkt, p, publicIp, ctx, frameId);
+    if (p.kind === "esp") {
+      ctx.trace("nat.miss", "L3", `ESP(IPsec) ${pkt.src} → ${pkt.dst}: ESP 에는 포트가 없어 NAT 가 누구 것인지 구분할 수 없음 → 드롭. 양쪽 VPN 이 NAT 를 감지하면 UDP 4500 (NAT-T) 로 싣는다`, { proto: "esp" }, frameId);
+      return undefined;
+    }
     const proto = p.kind;
     const publicId = p.kind === "icmp" ? p.id : p.dstPort;
     const what = p.kind === "icmp" ? `ICMP id ${publicId}` : `${proto.toUpperCase()} 포트 ${publicId}`;

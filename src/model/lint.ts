@@ -6,6 +6,8 @@ import { DEVICE_SPECS, portVlanOf, wirelessLinks, type Device, type PortRef, typ
 
 /** WireGuard 기본 포트 (코어 packet.ts 의 VPN_PORT 와 같은 값 — lint 는 코어에 의존하지 않는다) */
 const VPN_PORT = 51820;
+/** IPsec IKE 포트 (NAT 뒤 게이트웨이는 500·4500 을 포워딩해야 한다) */
+const IKE_PORT = 500;
 
 export interface LintIssue {
   /** 배지를 붙일 장치 */
@@ -998,7 +1000,8 @@ export function lintTopology(t: Topology): LintIssue[] {
     let peerDev = t.devices.find((x) => x !== d && x.l3 && publicIp(x) === peer);
     if (!peerDev) continue; // 상대가 이 토폴로지에 없거나 주소를 DHCP 로 받으면 판단하지 않는다
     // 상대 공인 주소가 VPN 을 안 켠 NAT 박스이고 UDP 51820 을 안쪽으로 포워딩하면, 그 안쪽 장비가 진짜 상대
-    const fwd = vpnOf(peerDev) ? undefined : peerDev.l3?.forwards?.find((f) => f.proto === "udp" && f.publicPort === VPN_PORT);
+    const tunnelPort = v.mode === "ipsec" ? IKE_PORT : VPN_PORT;
+    const fwd = vpnOf(peerDev) ? undefined : peerDev.l3?.forwards?.find((f) => f.proto === "udp" && f.publicPort === tunnelPort);
     if (fwd) {
       const inner = t.devices.find((x) => x.l3 && x.l3.interfaces.some((i) => i.ipMode === "static" && validIp(i.ip) === validIp(fwd.lanIp)));
       if (!inner) continue;
@@ -1009,9 +1012,34 @@ export function lintTopology(t: Topology): LintIssue[] {
       add({ deviceId: d.id, severity: "warn", code: "vpn.peer-off", message: `상대 ${peerDev.name} (${peer}) 가 VPN 을 켜지 않음 → 터널 패킷을 풀지 못해 드롭`, fix: `${peerDev.name} → VPN 을 켜고 상대 주소·대역을 이쪽과 짝으로 설정`, related: [peerDev.id] });
       continue;
     }
+    const modeName = (x: typeof v) => (x.mode === "ipsec" ? "IPsec" : "WireGuard");
+    if ((pv.mode ?? "wireguard") !== (v.mode ?? "wireguard")) {
+      add({
+        deviceId: d.id,
+        severity: "error",
+        code: "vpn.mode-mismatch",
+        message: `VPN 방식이 다름: 여기는 ${modeName(v)}, 상대 ${peerDev.name} 는 ${modeName(pv)} → 서로 알아듣지 못해 터널이 맺어지지 않음`,
+        fix: "양쪽 VPN 방식을 같게 (기업 방화벽·클라우드 VPN 게이트웨이끼리는 보통 IPsec)",
+        related: [peerDev.id],
+      });
+      continue;
+    }
+    if (v.mode === "ipsec" && (v.psk ?? "") !== (pv.psk ?? "")) {
+      add({
+        deviceId: d.id,
+        severity: "error",
+        code: "vpn.psk-mismatch",
+        message: `IPsec 사전 공유 키(PSK)가 상대 ${peerDev.name} 와 다름 → IKE_AUTH 에서 AUTHENTICATION_FAILED 로 인증 실패`,
+        fix: `${d.name} 와 ${peerDev.name} 의 VPN → 사전 공유 키를 똑같이`,
+        related: [peerDev.id],
+      });
+    }
     const theirRemotes = remotesOf(pv);
-    const missing = mine.filter((l) => !theirRemotes.some((r) => covers(r, l)));
-    if (missing.length && mine.length) {
+    // 우리 쪽 대역 = 직접 연결된 LAN + 스태틱 라우팅으로 뒤에 둔 대역. 장비 사이 연결 구간(/30 등)도 섞여 있으므로
+    // 상대가 그중 하나도 허용하지 않을 때만 지적한다 (일부만 터널에 태우는 것은 흔한 설계라 오탐이 된다)
+    const site = [...mine, ...(d.l3?.routes ?? []).map((r) => subnetOf(validIp(r.dest), r.prefix)).filter((x): x is Subnet => !!x && x.prefix > 0)];
+    const missing = site.some((l) => theirRemotes.some((r) => overlaps(r, l))) ? [] : site;
+    if (missing.length) {
       add({
         deviceId: d.id,
         severity: "warn",

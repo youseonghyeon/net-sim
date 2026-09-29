@@ -1,4 +1,4 @@
-// 예제 토폴로지 15종과 레지스트리. 파일 메뉴의 "예제" 와 테스트가 쓴다.
+// 예제 토폴로지와 레지스트리. 파일 메뉴의 "예제" 와 테스트가 쓴다.
 // 새 예제는 여기에 함수를 추가하고 EXAMPLES 에 등록한다 (구성 검사 이슈 0 은 tests/topology.test.ts 가 확인).
 import {
   type Cable,
@@ -799,7 +799,193 @@ export function exampleVpnTopology(): Topology {
   return t;
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "publish" | "internet" | "vpn" | "lb" | "roaming" | "docker";
+/**
+ * 망분리 사무실 + NCP(네이버 클라우드) IPsec VPN.
+ * - 사무실: 내부망(업무망)·외부망(인터넷망)이 회선·방화벽·게이트웨이·스위치까지 따로. 실물은 망마다 방화벽 한 대가
+ *   NAT·방화벽·라우팅을 다 하지만, 여기서는 역할별로 나누고 사이를 /30 연결 구간(10.255.0.0/30, 10.255.0.4/30)으로 잇는다.
+ * - 내부망 방화벽 NAT 가 NCP VPN Gateway 와 IPsec 터널(IKE → ESP)을 맺어, 내부망 PC 가 NCP 서버에 사설 주소로 SSH(22) 한다.
+ *   외부망에서는 NCP 서버에 닿지 않는다 (터널 대역이 아님).
+ * - NCP: VPN Gateway(방화벽 = ACG 역할: 사무실 내부망에서 오는 SSH·ping 만 허용) 뒤에 Dev VPC(서브넷 3개)와 Prod VPC.
+ * 공인 주소는 예시 대역(203.0.113.0/24).
+ */
+export function exampleNcpVpnTopology(): Topology {
+  const { devices, add } = builder();
+  const staticHost = (d: Device, ip: string, gw: string, services: number[] = [], prefix = 24) => {
+    d.host = { ipMode: "static", ip, prefix, gateway: gw, dns: "8.8.8.8", services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  const dhcpHost = (d: Device) => {
+    d.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  const denyIn = { enabled: true, defaultPolicy: "deny" as const, stateful: true, rules: [{ action: "allow" as const, proto: "any" as const, direction: "out" as const, src: "", dst: "", dstPort: "" }] };
+  const PSK = "office-ncp-psk";
+
+  // 인터넷: 통신사 구간(203.0.113.0/24) — 사무실 회선 두 개와 NCP 가 여기로 나간다
+  const inet = add("internet", 728, -600, "internet-1");
+  const isp = add("switch", 720, -480, "통신사 구간");
+  const modemA = add("switch", 400, -200, "KT 모뎀 (내부망 회선)");
+  const modemB = add("switch", 672, -200, "KT 모뎀 (외부망 회선)");
+  const meeting = add("switch", 944, -160, "회의실 스위치");
+  const printer = add("pc", 1256, -168, "프린터");
+  dhcpHost(printer);
+
+  // 내부망(업무망): 방화벽 NAT(IPsec) → 방화벽 → 게이트웨이 → 스위치 두 대(적층) → 고정 주소 PC·맥북
+  const natIn = add("nat", 680, 24, "내부망 방화벽 NAT");
+  natIn.l3 = {
+    interfaces: [iface("203.0.113.11", "203.0.113.1"), { ipMode: "static", ip: "10.255.0.1", prefix: 30, gateway: "" }],
+    routes: [{ dest: "10.50.10.0", prefix: 24, via: "10.255.0.2" }],
+    vpn: {
+      enabled: true,
+      mode: "ipsec",
+      psk: PSK,
+      peer: "203.0.113.50",
+      remote: [
+        { dest: "192.168.111.0", prefix: 24 },
+        { dest: "192.168.112.0", prefix: 24 },
+        { dest: "192.168.113.0", prefix: 24 },
+        { dest: "172.21.4.0", prefix: 24 },
+      ],
+    },
+  };
+  const fwIn = add("firewall", 680, 104, "내부망 방화벽");
+  fwIn.firewall = denyIn;
+  const gwIn = add("gateway", 680, 184, "내부망 게이트웨이");
+  gwIn.l3 = { interfaces: [{ ipMode: "static", ip: "10.255.0.2", prefix: 30, gateway: "10.255.0.1" }, iface("10.50.10.254"), iface("")], routes: [] };
+  const swIn1 = add("switch", 552, 288, "내부망 스위치 1");
+  const swIn2 = add("switch", 712, 288, "내부망 스위치 2");
+  const macbook2 = add("laptop", 344, 520, "맥북 2");
+  const macbook1 = add("laptop", 456, 520, "맥북 1");
+  const pcIn1 = add("pc", 568, 520, "내부망 PC 1");
+  const pcIn2 = add("pc", 680, 520, "내부망 PC 2");
+  const pcIn3 = add("pc", 792, 520, "내부망 PC 3");
+  staticHost(pcIn1, "10.50.10.1", "10.50.10.254");
+  staticHost(pcIn2, "10.50.10.2", "10.50.10.254");
+  staticHost(pcIn3, "10.50.10.3", "10.50.10.254");
+  staticHost(macbook1, "10.50.10.16", "10.50.10.254");
+  staticHost(macbook2, "10.50.10.17", "10.50.10.254");
+
+  // 외부망(인터넷망): 방화벽 NAT(유동 IP, DHCP) → 방화벽 → 게이트웨이 → 스위치 두 대 → DHCP 서버·PC·Wi-Fi
+  const natOut = add("nat", 936, 24, "외부망 방화벽 NAT");
+  natOut.l3 = {
+    interfaces: [{ ipMode: "dhcp", ip: "", prefix: 24, gateway: "" }, { ipMode: "static", ip: "10.255.0.5", prefix: 30, gateway: "" }],
+    routes: [{ dest: "192.168.100.0", prefix: 24, via: "10.255.0.6" }],
+  };
+  const fwOut = add("firewall", 936, 104, "외부망 방화벽");
+  fwOut.firewall = { ...denyIn, rules: [...denyIn.rules] };
+  const gwOut = add("gateway", 936, 184, "외부망 게이트웨이");
+  gwOut.l3 = { interfaces: [{ ipMode: "static", ip: "10.255.0.6", prefix: 30, gateway: "10.255.0.5" }, iface("192.168.100.254"), iface("")], routes: [] };
+  const swOut1 = add("switch", 888, 288, "외부망 스위치 1");
+  const swOut2 = add("switch", 1048, 288, "외부망 스위치 2");
+  const dhcpSrv = add("server", 1224, 280, "외부망 DHCP 서버");
+  staticHost(dhcpSrv, "192.168.100.1", "192.168.100.254");
+  dhcpSrv.host!.dhcpServer = { enabled: true, start: "192.168.100.2", end: "192.168.100.253", router: "192.168.100.254", dns: "8.8.8.8" };
+  const ap = add("ap", 1200, 200, "wifi");
+  ap.ap = { enabled: true, ssid: "office_5G" };
+  const pcOut1 = add("pc", 904, 520, "외부망 PC 1");
+  const pcOut2 = add("pc", 1016, 520, "외부망 PC 2");
+  const pcOut3 = add("pc", 1128, 520, "외부망 PC 3");
+  const phone1 = add("phone", 1472, 208, "phone-1");
+  const phone2 = add("phone", 1432, 336, "phone-2");
+  for (const d of [pcOut1, pcOut2, pcOut3, phone1, phone2]) dhcpHost(d);
+  phone1.wifi = { ssid: "office_5G" };
+  phone2.wifi = { ssid: "office_5G" };
+
+  // NCP: VPN Gateway(IPsec, ACG 역할 방화벽) → VPC 연결 → Dev VPC 라우터(서브넷 3개, VLAN 으로 나눔) / Prod VPC 라우터
+  const ncpInet = add("switch", 1840, -480, "인터넷 (NCP 쪽)");
+  const ncpGw = add("nat", 1840, -360, "NCP VPN Gateway");
+  ncpGw.l3 = {
+    interfaces: [iface("203.0.113.50", "203.0.113.1"), iface("10.250.0.1")],
+    routes: [
+      { dest: "192.168.0.0", prefix: 16, via: "10.250.0.2" },
+      { dest: "172.21.0.0", prefix: 16, via: "10.250.0.3" },
+    ],
+    vpn: { enabled: true, mode: "ipsec", psk: PSK, peer: "203.0.113.11", remote: [{ dest: "10.50.10.0", prefix: 24 }] },
+    // ACG 역할: 사무실 내부망에서 터널로 들어오는 SSH·ping 만 허용, 서버가 나가는 것은 허용 (응답은 Stateful 검사로)
+    firewall: {
+      enabled: true,
+      defaultPolicy: "deny",
+      stateful: true,
+      rules: [
+        { action: "allow", proto: "tcp", direction: "in", src: "10.50.10.0/24", dst: "", dstPort: "22" },
+        { action: "allow", proto: "icmp", direction: "in", src: "10.50.10.0/24", dst: "", dstPort: "" },
+        { action: "allow", proto: "any", direction: "out", src: "", dst: "", dstPort: "" },
+      ],
+    },
+  };
+  const ncpSw = add("switch", 1840, -240, "NCP VPC 연결");
+  const devRt = add("gateway", 1720, -120, "Dev VPC 라우터");
+  devRt.l3 = {
+    interfaces: [iface("10.250.0.2", "10.250.0.1"), iface(""), iface("")],
+    routes: [],
+    subinterfaces: [
+      { port: 1, vlan: 111, ip: "192.168.111.1", prefix: 24, relay: "" },
+      { port: 1, vlan: 112, ip: "192.168.112.1", prefix: 24, relay: "" },
+      { port: 1, vlan: 113, ip: "192.168.113.1", prefix: 24, relay: "" },
+    ],
+  };
+  const prodRt = add("gateway", 2000, -120, "Prod VPC 라우터");
+  prodRt.l3 = { interfaces: [iface("10.250.0.3", "10.250.0.1"), iface("172.21.4.1"), iface("")], routes: [] };
+  const devSw = add("switch", 1720, 0, "Dev 서브넷 스위치");
+  devSw.switch = { vlans: { 0: "trunk", 1: 111, 3: 112, 5: 113 } };
+  const dev1 = add("server", 1592, 144, "dev-1");
+  const dev2 = add("server", 1720, 144, "dev-2");
+  const dev3 = add("server", 1848, 144, "dev-3");
+  const prod = add("server", 2000, 40, "prod");
+  staticHost(dev1, "192.168.111.11", "192.168.111.1", [22]);
+  staticHost(dev2, "192.168.112.11", "192.168.112.1", [22]);
+  staticHost(dev3, "192.168.113.11", "192.168.113.1", [22]);
+  staticHost(prod, "172.21.4.11", "172.21.4.1", [22]);
+
+  const cables: Cable[] = [
+    cable(isp, 4, inet, 0),
+    cable(isp, 0, modemA, 1),
+    cable(isp, 7, modemB, 1),
+    cable(isp, 6, ncpInet, 0),
+    cable(modemA, 3, natIn, 0),
+    cable(modemB, 0, meeting, 0),
+    cable(meeting, 7, printer, 0),
+    cable(meeting, 1, natOut, 0),
+    cable(natIn, 1, fwIn, 0),
+    cable(fwIn, 1, gwIn, 0),
+    cable(gwIn, 1, swIn2, 1),
+    cable(swIn1, 7, swIn2, 0),
+    cable(swIn2, 6, macbook2, 0),
+    cable(swIn2, 7, macbook1, 0),
+    cable(swIn1, 4, pcIn1, 0),
+    cable(swIn2, 4, pcIn2, 0),
+    cable(swIn2, 5, pcIn3, 0),
+    cable(natOut, 1, fwOut, 0),
+    cable(fwOut, 1, gwOut, 0),
+    cable(gwOut, 1, swOut1, 6),
+    cable(swOut1, 7, swOut2, 0),
+    cable(swOut1, 0, pcOut1, 0),
+    cable(swOut1, 1, pcOut2, 0),
+    cable(swOut2, 1, pcOut3, 0),
+    cable(swOut2, 7, dhcpSrv, 0),
+    cable(swOut2, 6, ap, 0),
+    cable(ncpInet, 4, ncpGw, 0),
+    cable(ncpGw, 1, ncpSw, 3),
+    cable(ncpSw, 1, devRt, 0),
+    cable(ncpSw, 6, prodRt, 0),
+    cable(devRt, 1, devSw, 0), // 트렁크 (VLAN 111·112·113)
+    cable(devSw, 1, dev1, 0),
+    cable(devSw, 3, dev2, 0),
+    cable(devSw, 5, dev3, 0),
+    cable(prodRt, 1, prod, 0),
+  ];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "인터넷", tint: "amber", ...zoneAround(t, [inet.id, isp.id], 24)! },
+    { id: newId("zone"), label: "사무실 네트워크 랙", tint: "blue", ...zoneAround(t, [natIn.id, fwIn.id, gwIn.id, natOut.id, fwOut.id, gwOut.id, swIn1.id, swIn2.id, swOut1.id, swOut2.id], 24)! },
+    { id: newId("zone"), label: "내부망 방화벽 장비", tint: "amber", ...zoneAround(t, [natIn.id, fwIn.id, gwIn.id], 12)! },
+    { id: newId("zone"), label: "외부망 방화벽 장비", tint: "amber", ...zoneAround(t, [natOut.id, fwOut.id, gwOut.id], 12)! },
+    { id: newId("zone"), label: "NCP (네이버 클라우드)", tint: "green", ...zoneAround(t, [ncpInet.id, ncpGw.id, ncpSw.id, devRt.id, prodRt.id, devSw.id, dev1.id, dev2.id, dev3.id, prod.id], 32)! },
+    { id: newId("zone"), label: "Dev VPC", tint: "blue", ...zoneAround(t, [devRt.id, devSw.id, dev1.id, dev2.id, dev3.id], 16)! },
+    { id: newId("zone"), label: "Prod VPC", tint: "amber", ...zoneAround(t, [prodRt.id, prod.id], 16)! },
+  ];
+  return t;
+}
+
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "publish" | "internet" | "vpn" | "ncp" | "lb" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -924,6 +1110,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "VPN 으로 두 사무실 잇기 (터널·캡슐화)",
     blurb: "pc-a 에서 192.168.2.10 으로 ping 하면 사설 주소끼리 바로 닿습니다. 통신사 구간을 지나는 패킷을 눌러 보면 바깥은 공인 주소끼리의 UDP 51820 뿐이고, 원래 패킷은 \"터널 안\" 에 암호화돼 있습니다. NAT 박스 한쪽의 VPN 을 끄면 사설 주소는 인터넷으로 나갈 수 없어 실패합니다.",
     build: exampleVpnTopology,
+  },
+  ncp: {
+    id: "ncp",
+    group: "인터넷",
+    label: "망분리 사무실 + NCP (IPsec VPN)",
+    blurb: "내부망 PC 1 에서 dev-2(192.168.112.11)로 TCP 22 연결하면, 첫 패킷에 IKE 로 IPsec 터널을 맺은 뒤 ESP 로 NCP 서버에 닿습니다. 외부망 PC 에서는 닿지 않습니다. prod 는 172.21.4.11 입니다.",
+    build: exampleNcpVpnTopology,
   },
   roaming: {
     id: "roaming",

@@ -302,6 +302,7 @@ export function effectiveL3(d: Device) {
     rip: { enabled: l3.rip?.enabled === true, defaultRoute: l3.rip?.defaultRoute === true },
     vpn: {
       enabled: l3.vpn?.enabled === true,
+      ...(l3.vpn?.mode === "ipsec" ? { mode: "ipsec" as const, psk: l3.vpn.psk ?? "" } : {}),
       peer: validIp(l3.vpn?.peer),
       remote: (l3.vpn?.remote ?? []).filter((r) => validIp(r.dest) && Number.isInteger(r.prefix) && r.prefix >= 1 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix })),
     },

@@ -114,7 +114,7 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
   );
 }
 
-/** 사이트 간 VPN (WireGuard 식): 켜기 + 상대 공인 주소 + 상대 쪽 사설 대역 */
+/** 사이트 간 VPN: 켜기 + 방식(WireGuard 식 / IPsec) + 상대 공인 주소 + (IPsec 이면 사전 공유 키) + 상대 쪽 사설 대역 */
 export function VpnSection({ d, l3 }: { d: Device; l3: L3Settings }) {
   const vpn = l3.vpn ?? { enabled: false, peer: "", remote: [] };
   const set = (patch: Partial<NonNullable<L3Settings["vpn"]>>) =>
@@ -123,24 +123,40 @@ export function VpnSection({ d, l3 }: { d: Device; l3: L3Settings }) {
       return { ...x, l3: { ...cur, vpn: { ...(cur.vpn ?? { enabled: false, peer: "", remote: [] }), ...patch } } };
     });
   const setRemote = (i: number, patch: Partial<{ dest: string; prefix: number }>) => set({ remote: vpn.remote.map((r, k) => (k === i ? { ...r, ...patch } : r)) });
+  const ipsec = vpn.mode === "ipsec";
   return (
     <Section title="VPN (사이트 간)">
       <label class="toggle-row">
         <span>
-          {vpn.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">UDP 51820</span>
+          {vpn.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">{ipsec ? "IKE UDP 500 · ESP" : "UDP 51820"}</span>
         </span>
         <Toggle on={vpn.enabled} onToggle={() => set({ enabled: !vpn.enabled })} />
       </label>
       {!vpn.enabled && (
         <p class="note">
-          켜면 상대 사무실의 사설 대역으로 가는 패킷을 암호화해 UDP 에 담아 상대 공인 주소로 보냅니다(WireGuard 식 터널). 사설 주소끼리 NAT 없이 이어지고, 인터넷 위에서는 공인 주소끼리의 UDP 로만 보입니다. 상대 장비에도 이쪽 주소·대역으로 짝을 맞춰 켜야 합니다.
+          켜면 상대 사무실의 사설 대역으로 가는 패킷을 암호화해 상대 공인 주소로 보냅니다(WireGuard 식 또는 IPsec). 사설 주소끼리 NAT 없이 이어지고, 인터넷 위에서는 공인 주소끼리의 암호화된 패킷으로만 보입니다. 상대 장비에도 이쪽 주소·대역으로 짝을 맞춰 켜야 합니다.
         </p>
       )}
       {vpn.enabled && (
         <>
+          <Field label="방식">
+            <div class="segmented" role="radiogroup">
+              <button class={!ipsec ? "on" : ""} onClick={() => set({ mode: undefined, psk: undefined })}>
+                WireGuard
+              </button>
+              <button class={ipsec ? "on" : ""} onClick={() => set({ mode: "ipsec", psk: vpn.psk ?? "" })}>
+                IPsec
+              </button>
+            </div>
+          </Field>
           <Field label="상대 공인 주소" error={ipError(vpn.peer, true)}>
             <input class="input mono" value={vpn.peer} placeholder="203.0.113.22" onInput={(e) => set({ peer: e.currentTarget.value })} />
           </Field>
+          {ipsec && (
+            <Field label="사전 공유 키 (PSK)" error={vpn.psk ? undefined : "비어 있습니다. 양쪽에 같은 키를 넣으세요."}>
+              <input class="input mono" value={vpn.psk ?? ""} placeholder="양쪽이 같은 문자열" onInput={(e) => set({ psk: e.currentTarget.value })} />
+            </Field>
+          )}
           <h3 class="sub">상대 쪽 사설 대역</h3>
           {vpn.remote.length === 0 && <p class="note error-note">상대 사무실의 사설 대역(예: 192.168.2.0/24)을 넣어야 그쪽으로 가는 패킷이 터널을 탑니다.</p>}
           {vpn.remote.map((r, i) => (
@@ -159,7 +175,10 @@ export function VpnSection({ d, l3 }: { d: Device; l3: L3Settings }) {
             대역 추가
           </button>
           <p class="note">
-            이 대역으로 가는 패킷은 터널로 가고(NAT 하지 않음), 터널로 온 패킷은 이 대역에서 온 것만 받습니다(WireGuard 의 AllowedIPs). 상대가 NAT 뒤에 있으면 상대가 먼저 보낸 뒤 그 출발지로 답합니다. 양쪽 사설 대역이 겹치면 안 됩니다.
+            {ipsec
+              ? "이 대역으로 가는 첫 패킷이 오면 IKE 로 터널을 맺고(IKE_SA_INIT → IKE_AUTH), 그다음부터 ESP 로 암호화해 보냅니다(NAT 하지 않음). 사이에 NAT 가 있으면 알아채고 UDP 4500 에 싣습니다(NAT-T). 터널로 온 패킷은 이 대역에서 온 것만 받습니다. 상대가 NAT 뒤라면 그 NAT 에 UDP 500·4500 포트 포워딩이 필요합니다."
+              : "이 대역으로 가는 패킷은 터널로 가고(NAT 하지 않음), 터널로 온 패킷은 이 대역에서 온 것만 받습니다(WireGuard 의 AllowedIPs). 상대가 NAT 뒤에 있으면 상대가 먼저 보낸 뒤 그 출발지로 답합니다."}{" "}
+            양쪽 사설 대역이 겹치면 안 됩니다.
           </p>
         </>
       )}

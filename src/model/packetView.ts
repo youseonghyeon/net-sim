@@ -3,7 +3,7 @@
 // - headerLayers: 이더넷 → ARP/IPv4 → ICMP/TCP/UDP → DHCP/DNS/RIP 필드를 실제 번호(타입·코드·옵션)와 함께
 // - practitionerLines: 장치가 내린 판단을 실무 명령의 출력(시스코 debug, iptables LOG, dhclient, ping, curl …)으로
 // 시뮬레이터에 없는 필드(체크섬, 윈도우 크기, IP ID 등)는 넣지 않고, 길이는 근사값이다.
-import type { DhcpOp, EthernetFrame, IcmpPacket, Ipv4Packet, TcpSegment, UdpPacket } from "../core/packet";
+import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, IkeMessage, Ipv4Packet, TcpSegment, UdpPacket } from "../core/packet";
 import { describeOriginal, tcpFlags, UNREACHABLE_FLAG } from "../core/packet";
 import type { TraceEvent } from "../core/trace";
 
@@ -34,13 +34,20 @@ const ICMP_ECHO_LEN = 64; // ping 기본: 데이터 56 + ICMP 헤더 8
 function l4Length(p: Ipv4Packet["payload"]): number {
   if (p.kind === "icmp") return p.type === "echo-request" || p.type === "echo-reply" ? ICMP_ECHO_LEN : 36;
   if (p.kind === "tcp") return 20 + p.len;
+  if (p.kind === "esp") return espLength(p);
   return 8 + appLength(p);
+}
+/** ESP 머리(SPI 4 + seq 4) + IV 16 + 암호화된 원래 IP 패킷 + 패딩·무결성 값 약 16 */
+function espLength(e: EspPacket): number {
+  return 8 + 16 + 20 + l4Length(e.inner.payload) + 16;
 }
 function appLength(u: UdpPacket): number {
   const m = u.payload;
   if (m.kind === "dhcp") return 300;
   if (m.kind === "dns") return 12 + m.name.length + 6 + (m.answer ? 16 : 0);
   if (m.kind === "vpn") return 32 + 20 + l4Length(m.inner.payload); // WireGuard 머리 32 + 암호화된 원래 IP 패킷
+  if (m.kind === "esp") return espLength(m);
+  if (m.kind === "ike") return (u.dstPort === 4500 || u.srcPort === 4500 ? 4 : 0) + (m.exchange === "IKE_SA_INIT" ? 336 : 224); // NAT-T 는 앞에 0 4바이트(Non-ESP 표시)
   return 4 + m.entries.length * 20; // RIP
 }
 
@@ -60,6 +67,7 @@ function ipLine(pkt: Ipv4Packet): string {
   const p = pkt.payload;
   if (p.kind === "icmp") return `IP ${pkt.src} > ${pkt.dst}: ${icmpText(p)}, length ${l4Length(p)}`;
   if (p.kind === "tcp") return `IP ${pkt.src}.${p.srcPort} > ${pkt.dst}.${p.dstPort}: ${tcpText(p)}`;
+  if (p.kind === "esp") return `IP ${pkt.src} > ${pkt.dst}: ${espText(p)}, length ${espLength(p)}`;
   return `IP ${pkt.src}.${p.srcPort} > ${pkt.dst}.${p.dstPort}: ${udpText(p)}`;
 }
 
@@ -88,14 +96,22 @@ function tcpText(t: TcpSegment): string {
   if (t.ackFlag) parts.push(`ack ${t.ack}`);
   parts.push(`length ${t.len}`);
   let s = parts.join(", ");
-  if (t.len > 0 && t.data) s += `: HTTP: ${t.data.startsWith("GET") ? `${t.data} HTTP/1.1` : t.data.replace(/ \(\d+\/\d+\)$/, "").replace(/^HTTP (\d+)/, "HTTP/1.1 $1")}`;
+  // SSH(22)는 암호화되어 tcpdump 가 내용을 풀지 않는다
+  if (t.len > 0 && t.data && t.srcPort !== 22 && t.dstPort !== 22) s += `: HTTP: ${t.data.startsWith("GET") ? `${t.data} HTTP/1.1` : t.data.replace(/ \(\d+\/\d+\)$/, "").replace(/^HTTP (\d+)/, "HTTP/1.1 $1")}`;
   return s;
+}
+
+/** tcpdump 의 ESP 표기 (안은 암호화되어 풀지 못한다) */
+function espText(e: EspPacket): string {
+  return `ESP(spi=0x${e.spi.toString(16).padStart(8, "0")},seq=0x${e.seq.toString(16)})`;
 }
 
 function udpText(u: UdpPacket): string {
   const m = u.payload;
   // tcpdump 는 터널 안을 풀지 못한다 — 암호화되어 있으므로 그냥 UDP 로 보인다
   if (m.kind === "vpn") return `UDP, length ${appLength(u)}`;
+  if (m.kind === "esp") return `UDP-encap: ${espText(m)}, length ${appLength(u)}`;
+  if (m.kind === "ike") return `${u.dstPort === 4500 ? "NONESP-encap: " : ""}isakmp: ${m.exchange === "IKE_SA_INIT" ? "parent_sa ikev2_init" : "child_sa  ikev2_auth"}[${m.response ? "R" : "I"}]`;
   if (m.kind === "dhcp") {
     const fromClient = m.op === "discover" || m.op === "request" || m.op === "release";
     return `BOOTP/DHCP, ${fromClient ? "Request" : "Reply"} from ${m.clientMac}, length ${appLength(u)} (DHCP-Message Option 53: ${DHCP_TYPE[m.op][1]})`;
@@ -144,7 +160,7 @@ export function headerLayers(frame: EthernetFrame): HeaderLayer[] {
 function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
   const layers: HeaderLayer[] = [];
   const l4 = p.payload;
-  const proto = l4.kind === "icmp" ? "1 (ICMP)" : l4.kind === "tcp" ? "6 (TCP)" : "17 (UDP)";
+  const proto = l4.kind === "icmp" ? "1 (ICMP)" : l4.kind === "tcp" ? "6 (TCP)" : l4.kind === "esp" ? "50 (ESP — 포트 없음)" : "17 (UDP)";
   layers.push({
     title: "IPv4 (L3)",
     rows: [
@@ -157,8 +173,10 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
   });
   if (l4.kind === "icmp") layers.push(icmpLayer(l4));
   else if (l4.kind === "tcp") layers.push(tcpLayer(l4));
+  else if (l4.kind === "esp") layers.push(espLayer(l4, false), ...ipLayers(l4.inner, true));
   else {
     layers.push(...udpLayers(l4));
+    if (l4.payload.kind === "esp") layers.push(espLayer(l4.payload, true), ...ipLayers(l4.payload.inner, true));
     if (l4.payload.kind === "vpn") {
       const inner = l4.payload.inner;
       layers.push({
@@ -173,6 +191,31 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
     }
   }
   return inTunnel ? layers.map((l) => ({ ...l, title: `터널 안 · ${l.title}` })) : layers;
+}
+
+function espLayer(e: EspPacket, natT: boolean): HeaderLayer {
+  return {
+    title: natT ? "ESP (IPsec, UDP 4500 안 — NAT-T)" : "ESP (IPsec)",
+    rows: [
+      ["SPI", `0x${e.spi.toString(16).padStart(8, "0")} (이 터널의 번호)`],
+      ["순서 번호", `${e.seq} (재전송 공격 방지)`],
+      ["안쪽", "암호화됨 — 인터넷 위의 장비는 아래 원래 패킷을 볼 수 없다"],
+      ["원래 패킷 (복호화하면)", `${e.inner.src} → ${e.inner.dst}`],
+    ],
+  };
+}
+
+function ikeLayer(m: IkeMessage): HeaderLayer {
+  const rows: [string, string][] = [
+    ["교환", `${m.exchange === "IKE_SA_INIT" ? "34 (IKE_SA_INIT)" : "35 (IKE_AUTH)"} ${m.response ? "응답" : "요청"}`],
+    ["SPI", `0x${m.spi.toString(16).padStart(8, "0")}`],
+  ];
+  if (m.natSrc) rows.push(["NAT_DETECTION_SOURCE_IP", `${m.natSrc} (실제로는 해시)`]);
+  if (m.natDst) rows.push(["NAT_DETECTION_DESTINATION_IP", `${m.natDst} (실제로는 해시)`]);
+  if (m.nat !== undefined) rows.push(["NAT 감지 결과", m.nat ? "NAT 있음 → 이후 UDP 4500" : "NAT 없음"]);
+  if (m.auth !== undefined) rows.push(["AUTH", "사전 공유 키로 만든 인증 값 (키 자체는 보내지 않음)"]);
+  if (m.error) rows.push(["알림 (Notify)", `24 (${m.error})`]);
+  return { title: "IKEv2 (앱)", rows };
 }
 
 function icmpLayer(p: IcmpPacket): HeaderLayer {
@@ -202,13 +245,13 @@ function icmpLayer(p: IcmpPacket): HeaderLayer {
 function tcpLayer(t: TcpSegment): HeaderLayer {
   const rows: [string, string][] = [
     ["출발지 포트", String(t.srcPort)],
-    ["목적지 포트", `${t.dstPort}${t.dstPort === 80 ? " (HTTP)" : t.dstPort === 443 ? " (HTTPS)" : ""}`],
+    ["목적지 포트", `${t.dstPort}${t.dstPort === 80 ? " (HTTP)" : t.dstPort === 443 ? " (HTTPS)" : t.dstPort === 22 ? " (SSH)" : ""}`],
     ["순서 번호 (seq)", String(t.seq)],
     ["확인 번호 (ack)", t.ackFlag ? String(t.ack) : "- (ACK 플래그 없음)"],
     ["플래그", `${tcpFlags(t)} [${tcpFlagChars(t)}]`],
     ["데이터 길이", `${t.len}B`],
   ];
-  if (t.data) rows.push(["데이터 (요약)", t.data]);
+  if (t.data) rows.push(["데이터 (요약)", t.srcPort === 22 || t.dstPort === 22 ? "SSH 암호화 데이터 (내용은 다루지 않음)" : t.data]);
   if (t.via !== undefined) rows.push(["Via (HTTP 헤더 흉내)", `로드밸런서 ${t.via}개 거침`]);
   if (t.origin) rows.push(["X-Served-By (흉내)", t.origin]);
   return { title: "TCP (L4)", rows };
@@ -245,7 +288,8 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
     if (m.op === "response") rows.push(["응답", m.answer ? `${m.name} A ${m.answer}` : `없음 (rcode ${m.rcode === "NXDOMAIN" ? "3 NXDOMAIN" : "2 SERVFAIL"})`]);
     return [udp, { title: "DNS (앱)", rows }];
   }
-  if (m.kind === "vpn") return [udp];
+  if (m.kind === "vpn" || m.kind === "esp") return [udp];
+  if (m.kind === "ike") return [udp, ikeLayer(m)];
   return [
     udp,
     {
@@ -360,6 +404,20 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       if (ip && ip.payload.kind === "udp" && ip.payload.payload.kind === "dns" && ip.payload.payload.answer) {
         out.push({ tool: "dig", line: `${ip.payload.payload.name}.\t\t300\tIN\tA\t${ip.payload.payload.answer}` });
       }
+      break;
+    case "vpn.ike":
+      if (detail(ev, "spi") !== undefined) out.push({ tool: "strongSwan (charon)", line: `07[IKE] initiating IKE_SA vpn[1] to ${detail(ev, "peer") ?? "?"}` });
+      else if (detail(ev, "nat") === "true") out.push({ tool: "strongSwan (charon)", line: `08[IKE] remote host is behind NAT` });
+      else if (detail(ev, "natT") === "true") out.push({ tool: "strongSwan (charon)", line: `08[IKE] local host is behind NAT, sending keep alives` });
+      break;
+    case "vpn.up":
+      out.push({ tool: "strongSwan (charon)", line: `09[IKE] IKE_SA vpn[1] established between ${ip?.dst ?? "?"}...${detail(ev, "peer") ?? "?"}` });
+      out.push({ tool: "strongSwan (charon)", line: `09[IKE] CHILD_SA vpn{1} established${detail(ev, "natT") === "true" ? " (UDP-encapsulated, NAT-T)" : ""}` });
+      break;
+    case "vpn.drop":
+      if (ev.summary.includes("AUTHENTICATION_FAILED 로 거절 —")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] received AUTHENTICATION_FAILED notify error` });
+      else if (ev.summary.includes("PSK)가 다름 → AUTHENTICATION_FAILED")) out.push({ tool: "strongSwan (charon)", line: `05[IKE] tried 1 shared key for '${ip?.dst ?? "?"}' - '${ip?.src ?? "?"}', but MAC mismatched` });
+      else if (ev.summary.includes("응답 없음 (timeout")) out.push({ tool: "strongSwan (charon)", line: `11[IKE] giving up after 5 retransmits` });
       break;
     case "lb.down":
       out.push({ tool: "nginx error.log", line: `connect() failed while connecting to upstream, upstream: "http://${detail(ev, "backend") ?? "?"}/" — upstream server temporarily disabled` });

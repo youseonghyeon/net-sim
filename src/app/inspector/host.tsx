@@ -128,8 +128,10 @@ export function WifiBaseSection({ d }: { d: Device }) {
 }
 
 export function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
-  const on = (h.services ?? []).includes(80);
-  const toggle = () => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, services: on ? (x.host!.services ?? []).filter((p) => p !== 80) : [...(x.host!.services ?? []), 80] } }));
+  const has = (port: number) => (h.services ?? []).includes(port);
+  const toggle = (port: number) =>
+    updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, services: has(port) ? (x.host!.services ?? []).filter((p) => p !== port) : [...(x.host!.services ?? []), port] } }));
+  const on = has(80);
   const ds = h.dhcpServer ?? DEFAULT_DHCP_SERVER;
   const setDs = (patch: Partial<typeof ds>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, dhcpServer: { ...(x.host!.dhcpServer ?? DEFAULT_DHCP_SERVER), ...patch } } }));
   const staticIp = h.ipMode === "static" && validIp(h.ip) ? h.ip : undefined;
@@ -145,9 +147,16 @@ export function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
         <span>
           웹 서버 <span class="mono muted">TCP 80</span>
         </span>
-        <Toggle on={on} onToggle={toggle} />
+        <Toggle on={on} onToggle={() => toggle(80)} />
       </label>
       <p class="note">{on ? "포트 80 으로 오는 연결 요청(SYN)에 응답합니다. 다른 호스트에서 이 장치로 연결해 보세요." : "꺼져 있으면 연결 요청에 RST 로 거부합니다."}</p>
+      <label class="toggle-row">
+        <span>
+          SSH 서버 <span class="mono muted">TCP 22</span>
+        </span>
+        <Toggle on={has(22)} onToggle={() => toggle(22)} />
+      </label>
+      {has(22) && <p class="note">포트 22 로 연결을 받습니다. 진단에서 TCP 22 로 연결해 보세요(연결 과정만 보여 주고, 암호화된 SSH 대화 내용은 다루지 않습니다).</p>}
       <label class="toggle-row">
         <span>
           DHCP 서버 <span class="mono muted">UDP 67</span>

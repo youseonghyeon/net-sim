@@ -238,6 +238,7 @@ function normalizeVpn(v: Partial<VpnSettings>): VpnSettings {
   const remote = Array.isArray(v.remote) ? v.remote : [];
   return {
     enabled: v.enabled === true,
+    ...(v.mode === "ipsec" ? { mode: "ipsec" as const, psk: typeof v.psk === "string" ? v.psk : "" } : {}),
     peer: typeof v.peer === "string" ? v.peer : "",
     remote: remote
       .filter((r): r is { dest: string; prefix: number } => !!r && typeof r === "object" && typeof r.dest === "string")
@@ -247,6 +248,10 @@ function normalizeVpn(v: Partial<VpnSettings>): VpnSettings {
 
 export interface VpnSettings {
   enabled: boolean;
+  /** 없으면 WireGuard 식 */
+  mode?: "wireguard" | "ipsec";
+  /** IPsec 사전 공유 키 */
+  psk?: string;
   /** 상대 터널 끝의 공인 주소 */
   peer: string;
   /** 상대 쪽 사설 대역 */

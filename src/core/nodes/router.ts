@@ -330,6 +330,10 @@ export class Router implements SimNode {
         ctx.trace("ip.drop", "L4", `라우터 자신에게 온 TCP ${pkt.payload.dstPort} 포트 → 듣는 서비스 없음, 드롭`, { port: pkt.payload.dstPort }, frame.id);
         return;
       }
+      if (pkt.payload.kind === "esp") {
+        ctx.trace("ip.drop", "L3", `라우터 자신에게 온 ESP(IPsec) → 공유기에는 IPsec VPN 이 없어 드롭`, {}, frame.id);
+        return;
+      }
       // LAN 에서 내 WAN 주소로 온 ping 도 내 것: 응답은 WAN 주소를 출발지로 LAN 쪽으로 돌려준다
       this.handleIcmp(pkt, pkt.payload, frame.id, ctx, this.lan, emit, pkt.dst);
       return;

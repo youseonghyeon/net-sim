@@ -70,3 +70,18 @@ describe("실무 명령 출력 (시뮬레이션 로그에서)", () => {
     expect(ping.line).toMatch(/^64 bytes from 8\.8\.8\.8: icmp_seq=\d+ ttl=\d+ time=\d+ ms$/);
   });
 });
+
+describe("IPsec", () => {
+  const inner = { kind: "ipv4", src: "192.168.1.10", dst: "192.168.2.10", ttl: 63, payload: { kind: "icmp", type: "echo-request", id: 1, seq: 1 } };
+  it("tcpdump: ESP 는 포트 없이 spi·seq, NAT-T 는 UDP-encap, IKE 는 isakmp", () => {
+    expect(tcpdumpLine(ip({ kind: "esp", spi: 0xabcd, seq: 1, inner }, "203.0.113.11", "203.0.113.22"))).toMatch(/IP 203\.0\.113\.11 > 203\.0\.113\.22: ESP\(spi=0x0000abcd,seq=0x1\), length \d+$/);
+    expect(tcpdumpLine(ip({ kind: "udp", srcPort: 4500, dstPort: 4500, payload: { kind: "esp", spi: 1, seq: 2, inner } }, "203.0.113.11", "203.0.113.22"))).toContain("203.0.113.11.4500 > 203.0.113.22.4500: UDP-encap: ESP(spi=0x00000001,seq=0x2)");
+    expect(tcpdumpLine(ip({ kind: "udp", srcPort: 500, dstPort: 500, payload: { kind: "ike", exchange: "IKE_SA_INIT", response: false, spi: 1 } }, "203.0.113.11", "203.0.113.22"))).toContain("isakmp: parent_sa ikev2_init[I]");
+    expect(tcpdumpLine(ip({ kind: "udp", srcPort: 4500, dstPort: 4500, payload: { kind: "ike", exchange: "IKE_AUTH", response: true, spi: 1 } }, "203.0.113.22", "203.0.113.11"))).toContain("NONESP-encap: isakmp: child_sa  ikev2_auth[R]");
+  });
+  it("헤더: ESP 는 프로토콜 50, 그 아래 터널 안 원래 패킷", () => {
+    const titles = headerLayers(ip({ kind: "esp", spi: 1, seq: 1, inner }, "203.0.113.11", "203.0.113.22"));
+    expect(titles.map((l) => l.title)).toEqual(["이더넷 (L2)", "IPv4 (L3)", "ESP (IPsec)", "터널 안 · IPv4 (L3)", "터널 안 · ICMP"]);
+    expect(titles[1]!.rows.find((r) => r[0] === "프로토콜")![1]).toContain("50 (ESP");
+  });
+});

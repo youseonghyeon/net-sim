@@ -92,6 +92,7 @@ function flowKey(pkt: Ipv4Packet, reverse: boolean): string {
   const a = reverse ? pkt.dst : pkt.src;
   const b = reverse ? pkt.src : pkt.dst;
   if (p.kind === "icmp") return `icmp:${a}:${b}:${p.id}`;
+  if (p.kind === "esp") return `esp:${a}:${b}`; // ESP 는 포트가 없어 주소 쌍으로 본다
   const ap = reverse ? p.dstPort : p.srcPort;
   const bp = reverse ? p.srcPort : p.dstPort;
   return `${p.kind}:${a}:${ap}:${b}:${bp}`;
@@ -128,7 +129,7 @@ export class Firewall {
     if (r.src && !cidrContains(r.src, pkt.src)) return false;
     if (r.dst && !cidrContains(r.dst, pkt.dst)) return false;
     if (r.dstPort) {
-      if (p.kind === "icmp") return false;
+      if (p.kind === "icmp" || p.kind === "esp") return false;
       if (p.dstPort !== r.dstPort) return false;
     }
     return true;
@@ -183,5 +184,6 @@ function describePacket(pkt: Ipv4Packet): string {
   const p = pkt.payload;
   if (isIcmpError(p)) return `ICMP ${icmpErrorLabel(p)} ${pkt.src} → ${pkt.dst} (원래 ${describeOriginal(p.original)})`;
   if (p.kind === "icmp") return `ICMP ${p.type === "echo-request" ? "ping 요청" : "ping 응답"} ${pkt.src} → ${pkt.dst}`;
+  if (p.kind === "esp") return `ESP ${pkt.src} → ${pkt.dst} (IPsec)`;
   return `${p.kind.toUpperCase()} ${pkt.src}:${p.srcPort} → ${pkt.dst}:${p.dstPort}`;
 }

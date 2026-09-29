@@ -737,6 +737,29 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
     await page.keyboard.press("Space");
   } else console.log("vpn packet card: (터널 패킷을 누르지 못함)");
 }
+// 망분리 + NCP 예제: 내부망 PC 1 → dev-2 TCP 22 (IPsec 터널을 맺고 연결), VPN 설정에 IPsec·PSK, 서버에 SSH 토글
+{
+  await loadEx("ncp");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.screenshot({ path: `${OUT}/48-ncp-overview.png` });
+  await clickDevice("내부망 PC 1");
+  await goTab("진단");
+  await page.fill(".tcp-row .input:not(.port)", "192.168.112.11");
+  await page.keyboard.press("Escape");
+  await page.fill(".tcp-row .input.port", "22");
+  await page.click(".tcp-row .btn");
+  await page.waitForFunction(() => { const t = document.querySelector(".inspector .tcp-log li")?.textContent ?? ""; return /192\.168\.112\.11:22/.test(t) && /종료됨|실패/.test(t); }, null, { timeout: 60000 });
+  console.log("ncp ssh:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
+  console.log("ncp ipsec up logged:", await page.evaluate(() => document.body.textContent.includes("IPsec 터널 수립")) ? "yes" : "NO (로그 창이 접혀 있으면 확인 불가)");
+  await clickDevice("NCP VPN Gateway");
+  await goTab("설정");
+  const vpnSec = page.locator(".inspector section", { has: page.locator("h3", { hasText: "VPN" }) }).first();
+  console.log("ncp vpn mode:", await vpnSec.locator(".segmented button.on").textContent(), "| psk field:", await vpnSec.locator(".field", { hasText: "사전 공유 키" }).count());
+  await vpnSec.screenshot({ path: `${OUT}/49-ncp-vpn-section.png` });
+  await clickDevice("dev-2");
+  await goTab("설정");
+  console.log("ssh toggle:", await page.locator(".inspector .toggle-row", { hasText: "SSH 서버" }).count(), "| badge:", await device("dev-2").locator(".badge", { hasText: "SSH" }).count());
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

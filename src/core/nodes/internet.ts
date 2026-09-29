@@ -99,6 +99,10 @@ export class Internet implements SimNode {
       return;
     }
     const p = pkt.payload;
+    if (p.kind === "esp") {
+      ctx.trace("ip.drop", "L3", `ESP(IPsec) ${pkt.src} → ${pkt.dst}: 이 주소에 VPN 장비가 없음 → 시뮬레이션 밖이므로 드롭`, { dst: pkt.dst }, frameId);
+      return;
+    }
     if (pkt.dst === this.iface.ip) {
       if (p.kind === "tcp") {
         ctx.trace("ip.drop", "L4", `ISP 게이트웨이는 TCP 서비스를 열지 않음 → 드롭`, {}, frameId);

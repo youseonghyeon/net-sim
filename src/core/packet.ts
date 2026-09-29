@@ -30,7 +30,7 @@ export interface Ipv4Packet {
   src: Ip;
   dst: Ip;
   ttl: number;
-  payload: IcmpPacket | UdpPacket | TcpSegment;
+  payload: IcmpPacket | UdpPacket | TcpSegment | EspPacket;
 }
 
 export interface TcpSegment {
@@ -137,7 +137,8 @@ export function icmpErrorFor(from: Ip, dropped: Ipv4Packet, err: { type: "time-e
   if (p.kind === "icmp") {
     if (p.type !== "echo-request" && p.type !== "echo-reply") return undefined;
     l4 = { kind: "icmp", id: p.id, seq: p.seq };
-  } else l4 = { kind: p.kind, srcPort: p.srcPort, dstPort: p.dstPort };
+  } else if (p.kind === "esp") return undefined; // 터널 바깥 패킷의 오류는 VPN 장비가 쓰지 않으므로 생략 (터널은 IKE timeout 으로 알아챈다)
+  else l4 = { kind: p.kind, srcPort: p.srcPort, dstPort: p.dstPort };
   const original = { src: dropped.src, dst: dropped.dst, l4 };
   const payload: IcmpError = err.type === "time-exceeded" ? { kind: "icmp", type: "time-exceeded", original } : { kind: "icmp", type: "unreachable", code: err.code, original };
   return { kind: "ipv4", src: from, dst: dropped.src, ttl: 64, payload };
@@ -159,7 +160,7 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket;
 }
 
 /**
@@ -173,6 +174,43 @@ export interface VpnMessage {
 }
 
 export const VPN_PORT = 51820;
+
+/**
+ * IPsec ESP (IP 프로토콜 50): 원래 IP 패킷을 암호화해 담는다. 포트가 없어서 NAT 가 변환할 수 없다 —
+ * 그래서 두 끝 사이에 NAT 가 있으면 UDP 4500 안에 싣는다 (NAT-T). UdpPacket 의 payload 로도 쓰인다.
+ * spi 는 이 터널(SA)의 번호, seq 는 재전송 공격을 막는 일련번호 (시뮬레이터는 표시만 한다)
+ */
+export interface EspPacket {
+  kind: "esp";
+  spi: number;
+  seq: number;
+  inner: Ipv4Packet;
+}
+
+/**
+ * IKEv2 (UDP 500, NAT 가 있으면 4500): IPsec 터널을 맺는 협상. 요청·응답 두 번이면 끝난다.
+ * IKE_SA_INIT: 암호 방식 합의 + NAT 감지 (보낸 쪽이 적은 자기 주소·상대 주소가 받은 헤더와 다르면 중간에 NAT)
+ * IKE_AUTH: 사전 공유 키(PSK)로 서로 인증하고 터널(SA)을 만든다
+ */
+export interface IkeMessage {
+  kind: "ike";
+  exchange: "IKE_SA_INIT" | "IKE_AUTH";
+  response: boolean;
+  /** 이 협상의 번호 (시작한 쪽이 정함) */
+  spi: number;
+  /** NAT 감지용: 보낸 쪽이 알고 있는 자기 주소·상대 주소 (실제로는 해시) */
+  natSrc?: Ip;
+  natDst?: Ip;
+  /** 응답: 중간에 NAT 가 있다고 판단함 → 이후는 UDP 4500 (NAT-T) */
+  nat?: boolean;
+  /** IKE_AUTH 요청: 사전 공유 키로 만든 인증 값 (시뮬레이터는 키 문자열을 그대로 비교) */
+  auth?: string;
+  /** IKE_AUTH 응답의 실패 알림 */
+  error?: "AUTHENTICATION_FAILED";
+}
+
+export const IKE_PORT = 500;
+export const NAT_T_PORT = 4500;
 
 /**
  * RIPv2 메시지 (RFC 2453 축소판). 경로마다 목적지·프리픽스·메트릭(홉 수, 16 = 도달 불가)만 담는다.
@@ -238,6 +276,9 @@ export type Layer = "L1" | "L2" | "L3" | "L4" | "app" | "sys";
 
 export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns" | "rip" | "vpn";
 
+const ESP_LABEL = (e: EspPacket) => `ESP SPI 0x${e.spi.toString(16).padStart(8, "0")} seq=${e.seq} (암호화됨 · 안: ${e.inner.src} → ${e.inner.dst})`;
+const IKE_LABEL = (m: IkeMessage) => `IKE ${m.exchange} ${m.response ? (m.error ? `응답 (${m.error})` : "응답") : "요청"}`;
+
 const DHCP_LABEL: Record<DhcpOp, string> = { discover: "Discover", offer: "Offer", request: "Request", ack: "Ack", nak: "Nak", release: "Release" };
 
 /** UI 라벨/로그용 짧은 설명 */
@@ -252,7 +293,10 @@ export function describeFrame(frame: EthernetFrame): string {
     return inner.type === "echo-request" ? `ICMP Echo 요청 seq=${inner.seq}` : `ICMP Echo 응답 seq=${inner.seq}`;
   }
   if (inner.kind === "tcp") return `TCP ${tcpFlags(inner)} seq=${inner.seq} ack=${inner.ack}${inner.len ? ` len=${inner.len}` : ""}`;
+  if (inner.kind === "esp") return ESP_LABEL(inner);
   const d = inner.payload;
+  if (d.kind === "esp") return `UDP 4500 (NAT-T) · ${ESP_LABEL(d)}`;
+  if (d.kind === "ike") return IKE_LABEL(d);
   if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}?)` : `DNS 응답 (${d.name} = ${d.answer ?? d.rcode})`;
   if (d.kind === "rip") return d.command === "request" ? "RIP Request (전체 경로 요청)" : `RIP Response (경로 ${d.entries.length}개)`;
   if (d.kind === "vpn") return `VPN 터널 (암호화됨 · 안: ${d.inner.src} → ${d.inner.dst})`;
@@ -275,6 +319,8 @@ export function shortLabel(frame: EthernetFrame): string {
   const inner = p.payload;
   if (inner.kind === "icmp") return inner.type === "echo-request" ? "ping 요청" : inner.type === "echo-reply" ? "ping 응답" : inner.type === "time-exceeded" ? "TTL 초과" : "도달 불가";
   if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
+  if (inner.kind === "esp" || inner.payload.kind === "esp") return "ESP 터널";
+  if (inner.payload.kind === "ike") return inner.payload.exchange === "IKE_SA_INIT" ? "IKE 협상" : "IKE 인증";
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";
@@ -287,6 +333,7 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.kind === "arp") return "arp";
   if (p.payload.kind === "icmp") return "icmp";
   if (p.payload.kind === "tcp") return "tcp";
+  if (p.payload.kind === "esp") return "vpn";
   const k = p.payload.payload.kind;
-  return k === "dns" ? "dns" : k === "rip" ? "rip" : k === "vpn" ? "vpn" : "dhcp";
+  return k === "dns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" ? "vpn" : "dhcp";
 }

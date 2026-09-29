@@ -610,6 +610,10 @@ export class Host implements SimNode {
       this.tcp.handle(pkt, pkt.payload, ctx);
       return;
     }
+    if (pkt.payload.kind === "esp") {
+      ctx.trace("ip.drop", "L3", `ESP(IPsec) 패킷 수신 → 호스트에는 IPsec VPN 이 없어 드롭`, {}, frameId);
+      return;
+    }
     this.handleIcmp(pkt, pkt.payload, frameId, ctx);
   }
 
