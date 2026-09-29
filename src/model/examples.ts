@@ -766,7 +766,63 @@ export function exampleInternetTopology(): Topology {
   return t;
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "publish" | "internet" | "roaming" | "docker";
+/**
+ * 로드밸런서 두 형태 비교: 서버에 LB 서비스를 켠 "nginx 서버" 와 로드밸런서 전용 장비가 같은 웹 서버들 앞에 선다.
+ * 공유기의 포트 포워딩(공인 :80 → 로드밸런서 장비)으로 바깥 요청도 NAT → 로드밸런서 → 웹 서버로 간다.
+ */
+export function exampleLoadBalancerTopology(): Topology {
+  const devices: Device[] = [];
+  const add = (kind: DeviceKind, name: string, x: number, y: number) => {
+    const d = createDevice(kind, x, y, devices);
+    d.name = name;
+    devices.push(d);
+    return d;
+  };
+  const staticHost = (d: Device, ip: string, services: number[] = []) => {
+    d.host = { ...d.host!, ipMode: "static", ip, prefix: 24, gateway: "192.168.0.1", dns: "192.168.0.1", services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  const inet = add("internet", "internet-1", 344, -40);
+  const rt = add("router", "공유기", 344, 96);
+  rt.router = { ...rt.router!, forwards: [{ publicPort: 80, lanIp: "192.168.0.20", lanPort: 80 }] };
+  const sw = add("switch", "sw-1", 344, 272);
+  const pc1 = add("pc", "pc-1", -96, 448);
+  const pc2 = add("laptop", "laptop-1", 32, 448);
+  // 형태 1: 서버에 로드밸런서 서비스(nginx 같은 소프트웨어)를 켠다
+  const nginx = add("server", "nginx 서버", 200, 448);
+  staticHost(nginx, "192.168.0.10");
+  nginx.host!.lb = { enabled: true, port: 80, algorithm: "round-robin", backends: [{ ip: "192.168.0.11", port: 80 }, { ip: "192.168.0.12", port: 80 }] };
+  // 형태 2: 로드밸런서 전용 장비 (같은 모듈, 최소 연결)
+  const lbDev = add("lb", "lb-1", 328, 448);
+  staticHost(lbDev, "192.168.0.20");
+  lbDev.host!.lb = { enabled: true, port: 80, algorithm: "least-conn", backends: [{ ip: "192.168.0.11", port: 80 }, { ip: "192.168.0.12", port: 80 }, { ip: "192.168.0.13", port: 80 }] };
+  const webs = [
+    add("server", "web-1", 496, 448),
+    add("server", "web-2", 624, 448),
+    add("server", "web-3", 752, 448),
+  ];
+  webs.forEach((w, i) => staticHost(w, `192.168.0.1${i + 1}`, [80]));
+
+  const cable = (a: Device, ap: number, b: Device, bp: number): Cable => ({ id: newId("cable"), a: { device: a.id, port: ap }, b: { device: b.id, port: bp } });
+  const cables: Cable[] = [
+    cable(inet, 0, rt, 0),
+    cable(rt, 1, sw, 3),
+    cable(sw, 0, pc1, 0),
+    cable(sw, 1, pc2, 0),
+    cable(sw, 2, nginx, 0),
+    cable(sw, 4, lbDev, 0),
+    cable(sw, 5, webs[0]!, 0),
+    cable(sw, 6, webs[1]!, 0),
+    cable(sw, 7, webs[2]!, 0),
+  ];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "앞단: 로드밸런서 (서버 토글 · 전용 장비)", tint: "amber", ...zoneAround(t, [nginx.id, lbDev.id], 24)! },
+    { id: newId("zone"), label: "백엔드: 웹 서버", tint: "green", ...zoneAround(t, webs.map((w) => w.id), 24)! },
+  ];
+  return t;
+}
+
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "publish" | "internet" | "lb" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -863,6 +919,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "투명 방화벽 장비 (서버 앞)",
     blurb: "pc-1 → srv-1 ping 은 fw-1 에서 차단되지만 TCP 80 연결은 됩니다. srv-1 → pc-1 ping 은 응답이 Stateful 검사로 돌아오고, srv-1 → pc-1 traceroute 는 1홉 — fw-1 은 IP 가 없어 홉에 안 보입니다.",
     build: exampleFirewallApplianceTopology,
+  },
+  lb: {
+    id: "lb",
+    group: "서비스",
+    label: "로드밸런서 (서버 토글 vs 전용 장비)",
+    blurb: "pc-1 에서 192.168.0.10(nginx 서버) 이나 192.168.0.20(lb-1) 으로 TCP 연결을 여러 번 보내 보세요. 진단 목록의 \"응답\" 이 web-1 → web-2 로 바뀝니다. web-2 의 웹 서버를 끄면 그 차례 요청은 거부되고 곧바로 다른 서버로 넘어가며 10초 동안 빠집니다. 인터넷 노드의 외부 접속으로 공인 주소:80 에 들어오면 포트 포워딩 → lb-1 → 웹 서버로 갑니다.",
+    build: exampleLoadBalancerTopology,
   },
   internet: {
     id: "internet",

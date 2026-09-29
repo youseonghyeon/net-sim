@@ -77,7 +77,8 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
   if (node instanceof Host) {
     if (node.dhcpServer.config.enabled) out.push("DHCP");
     if (node.dnsServer.config.enabled) out.push("DNS");
-    if (node.tcp.listening.has(80)) out.push("웹");
+    if (node.tcp.listening.has(80) && !(node.lb.config.enabled && node.lb.config.port === 80)) out.push("웹");
+    if (node.lb.config.enabled) out.push(`LB ${node.lb.config.backends.length}대`);
   } else if (node instanceof Router) {
     if (node.dhcp.enabled) out.push("DHCP");
     if (node.dnsForwarder.config.enabled) out.push("DNS");

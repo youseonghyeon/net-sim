@@ -5,6 +5,7 @@ export type IconName =
   | "laptop"
   | "phone"
   | "server"
+  | "lb"
   | "switch"
   | "hub"
   | "ap"
@@ -67,6 +68,16 @@ const PATHS: Record<IconName, JSX.Element> = {
       <rect x="3.5" y="9.5" width="17" height="5" rx="1.2" />
       <rect x="3.5" y="15.5" width="17" height="5" rx="1.2" />
       <path d="M7 6h.01M7 12h.01M7 18h.01" stroke-width="2" />
+    </>
+  ),
+  // 로드밸런서: 한 점에서 세 갈래로 나뉨
+  lb: (
+    <>
+      <circle cx="5.5" cy="12" r="2" />
+      <path d="M7.5 12h3.5M11 12l5.5-6M11 12h5.5M11 12l5.5 6" />
+      <circle cx="18.5" cy="6" r="1.6" />
+      <circle cx="18.5" cy="12" r="1.6" />
+      <circle cx="18.5" cy="18" r="1.6" />
     </>
   ),
   switch: (

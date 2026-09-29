@@ -615,6 +615,27 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.locator(".inspector .ping-log li.ok, .inspector .ping-log li.failed").first().waitFor({ timeout: 30000 });
   console.log("pc-a → 192.168.3.10 via RIP:", (await page.locator(".inspector .ping-log li").first().textContent())?.replace(/\s+/g, " "));
 }
+// 로드밸런서 예제: nginx 서버(LB 서비스 토글)로 연결을 두 번 → 응답 서버가 바뀐다, lb-1 장비의 설정 섹션
+{
+  await loadEx("lb");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitAddr("pc-1", /^192\.168\.0\.1\d\d/);
+  await clickDevice("pc-1");
+  await page.locator(".inspector .picker .input").nth(1).fill("192.168.0.10");
+  await page.keyboard.press("Escape");
+  for (let k = 0; k < 2; k++) {
+    const before = await page.locator(".inspector .tcp-log li.ok").count();
+    await page.click(".inspector .btn:has-text('연결')");
+    for (let i = 0; i < 120 && (await page.locator(".inspector .tcp-log li.ok").count()) <= before; i++) await page.waitForTimeout(250);
+  }
+  const served = (await page.locator(".inspector .tcp-log li.ok").allTextContents()).map((x) => x.match(/응답 ([\d.]+)/)?.[1]);
+  console.log("lb served:", served.join(" , "));
+  await page.screenshot({ path: `${OUT}/42-lb.png` });
+  await clickDevice("lb-1");
+  await goTab("설정");
+  console.log("lb-1 section:", await page.locator(".inspector h3", { hasText: "로드밸런서" }).count(), "| backends:", await page.locator(".inspector .lb-row").count(), "| badge:", await device("lb-1").locator(".badge", { hasText: "LB" }).count());
+  await page.screenshot({ path: `${OUT}/43-lb-config.png` });
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

@@ -129,7 +129,12 @@ export type TraceKind =
   | "rip.receive"
   | "rip.learn"
   | "rip.withdraw"
-  | "rip.ignore";
+  | "rip.ignore"
+  | "lb.config"
+  | "lb.pick"
+  | "lb.relay"
+  | "lb.down"
+  | "lb.fail";
 
 export interface TraceEvent {
   seq: number;
@@ -182,4 +187,6 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "wifi.disassociate",
   "wifi.no-base",
   "vlan.drop",
+  "lb.down",
+  "lb.fail",
 ]);

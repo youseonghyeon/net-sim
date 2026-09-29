@@ -25,7 +25,7 @@ import {
 import { cableAt, DEFAULT_FIREWALL_SETTINGS, defaultL3, peerOf, specOf, type Device } from "../model/topology";
 import { Icon } from "./Icons";
 import { DiagSection, InternetDiagSection, LiveTables, StatusSection } from "./inspector/diag";
-import { HostSection, ServiceSection, WifiBaseSection, WifiClientSection } from "./inspector/host";
+import { HostSection, LbSection, ServiceSection, WifiBaseSection, WifiClientSection } from "./inspector/host";
 import { L3Section, VlanSection } from "./inspector/l3";
 import { CablePanel, LintSection, MultiPanel, NetworkPanel, ZonePanel, deviceName, portName } from "./inspector/panels";
 import { RouterSection } from "./inspector/router";
@@ -228,7 +228,7 @@ function DevicePanel({ d }: { d: Device }) {
           )}
           {d.kind === "switch" && <VlanSection d={d} />}
           {d.host && <HostSection d={d} h={d.host} />}
-          {d.host && <ServiceSection d={d} h={d.host} />}
+          {d.host && (d.kind === "lb" ? <LbSection d={d} h={d.host} /> : <ServiceSection d={d} h={d.host} />)}
           {d.router && <RouterSection d={d} r={d.router} />}
           {spec.role === "l3" && <L3Section d={d} l3={d.l3 ?? defaultL3(d.kind)} />}
         </>

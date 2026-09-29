@@ -845,6 +845,39 @@ export function lintTopology(t: Topology): LintIssue[] {
     });
   }
 
+  // 규칙 14: 로드밸런서 — 백엔드가 없거나, 백엔드로 적은 서버가 그 포트를 열지 않음
+  for (const d of t.devices) {
+    const lb = d.host?.lb;
+    if (!lb?.enabled) continue;
+    const backends = lb.backends.filter((b) => validIp(b.ip));
+    if (backends.length === 0) {
+      add({
+        deviceId: d.id,
+        severity: "warn",
+        code: "lb.no-backend",
+        message: `로드밸런서에 백엔드가 없음 → 포트 ${lb.port} 로 온 요청에 모두 502 Bad Gateway`,
+        fix: `${d.name} → 로드밸런서 → 백엔드 추가 (뒤 서버의 주소와 포트)`,
+      });
+      continue;
+    }
+    for (const b of backends) {
+      // 같은 주소가 여러 곳(다른 사설망)에 있으면 어느 것인지 알 수 없어 침묵
+      const owners = t.devices.filter((x) => x.host?.ipMode === "static" && x.host.ip === b.ip);
+      if (owners.length !== 1) continue;
+      const target = owners[0]!;
+      const listens = (target.host!.services ?? []).includes(b.port) || (target.host!.lb?.enabled === true && target.host!.lb.port === b.port);
+      if (listens) continue;
+      add({
+        deviceId: d.id,
+        severity: "warn",
+        code: "lb.backend-closed",
+        message: `백엔드 ${b.ip}:${b.port} (${target.name}) 가 포트 ${b.port} 를 열지 않음 → 그쪽으로 간 요청은 거부되고 다른 백엔드로 넘어감`,
+        fix: `${target.name} → 서비스에서 ${b.port === 80 ? "웹 서버" : `포트 ${b.port}`}를 켜거나, ${d.name} 의 백엔드 목록에서 빼기`,
+        related: [target.id],
+      });
+    }
+  }
+
   return finalize(issues, t);
 }
 

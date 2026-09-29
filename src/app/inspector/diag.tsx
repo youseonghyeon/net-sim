@@ -248,7 +248,7 @@ export function DiagSection({ d }: { d: Device }) {
                   {c.remoteIp}:{c.remotePort}
                 </span>
                 <span>
-                  {c.state === "FAILED" ? `실패 · ${c.reason ?? ""}` : c.state === "CLOSED" ? `종료됨 · 받음 ${c.bytesReceived}B` : TCP_STATE_LABEL[c.state]}
+                  {c.state === "FAILED" ? `실패 · ${c.reason ?? ""}` : c.state === "CLOSED" ? `종료됨 · 받음 ${c.bytesReceived}B${c.servedBy ? ` · 응답 ${c.servedBy}` : ""}` : TCP_STATE_LABEL[c.state]}
                 </span>
               </li>
             ))}

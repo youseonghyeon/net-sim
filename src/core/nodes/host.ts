@@ -3,6 +3,7 @@ import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, describeOr
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, type DnsServerConfig } from "./dns";
 import { NetInterface } from "./iface";
+import { LB_ALGORITHM_LABEL, LoadBalancer, type LbConfig } from "./lb";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { TCP_TIMER_TAG, TcpStack } from "./tcp";
 
@@ -23,6 +24,8 @@ export interface HostConfig {
   dhcpServer?: DhcpServerConfig;
   /** 이 호스트가 DNS 서버 역할을 할 때 */
   dnsServer?: DnsServerConfig;
+  /** 이 호스트가 로드밸런서(리버스 프록시) 역할을 할 때 */
+  lb?: LbConfig;
 }
 
 export interface PingRecord {
@@ -85,6 +88,12 @@ export class Host implements SimNode {
   readonly dnsServer: DnsServer;
   readonly resolver: DnsResolver;
   readonly tcp: TcpStack;
+  /** 로드밸런서 서비스 (꺼져 있으면 아무것도 안 함) */
+  readonly lb: LoadBalancer;
+  /** 웹 등 직접 응답하는 TCP 포트. 실제로 듣는 포트는 여기에 LB 포트를 더한 것 */
+  private services: number[];
+  /** 마지막으로 본 시뮬레이션 시각 (표시용: LB 가 빼 둔 백엔드가 언제 돌아오는지) */
+  private clock = 0;
   ipMode: IpMode;
   linkUp = false;
   readonly pings: PingRecord[] = [];
@@ -107,8 +116,15 @@ export class Host implements SimNode {
     this.icmpId = 0x1000 + (Math.abs(hashCode(cfg.id)) % 0x1000);
     this.trId = 0x2000 + (Math.abs(hashCode(cfg.id)) % 0x1000);
     this.dhcp = new DhcpClient(this.iface, hashCode(cfg.id));
-    this.tcp = new TcpStack({ send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)) });
-    for (const p of cfg.services ?? []) this.tcp.listening.add(p);
+    this.tcp = new TcpStack({
+      send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)),
+      onRequest: (conn, ctx) => this.lb.onRequest(conn, ctx),
+      onFinish: (conn, ctx) => void this.lb.onFinish(conn, ctx),
+    });
+    this.lb = new LoadBalancer(this.tcp, () => this.iface.ip);
+    if (cfg.lb) this.lb.config = { ...cfg.lb, backends: cfg.lb.backends.map((b) => ({ ...b })) };
+    this.services = [...(cfg.services ?? [])];
+    this.syncListening();
     this.dhcpServer = new DhcpServer(cfg.dhcpServer ?? { enabled: false, start: "", end: "" }, this.iface, false);
     this.dnsServer = new DnsServer(cfg.dnsServer ?? { enabled: false, records: [] }, this.iface);
     this.resolver = new DnsResolver(this.iface, hashCode(cfg.id));
@@ -146,17 +162,30 @@ export class Host implements SimNode {
 
   /** 듣는 포트 목록 교체 */
   setServices(ports: number[], ctx: NodeContext): void {
-    const next = new Set(ports);
+    this.services = [...ports];
+    this.syncListening(ctx);
+  }
+
+  /** 로드밸런서 설정 교체 */
+  setLb(cfg: LbConfig, ctx: NodeContext): void {
+    this.lb.setConfig(cfg, ctx);
+    this.syncListening(ctx);
+  }
+
+  /** 실제로 듣는 포트 = 서비스 포트 + (켜져 있으면) LB 포트 */
+  private syncListening(ctx?: NodeContext): void {
+    const next = new Set(this.services);
+    if (this.lb.config.enabled) next.add(this.lb.config.port);
     for (const p of [...this.tcp.listening]) {
       if (!next.has(p)) {
         this.tcp.listening.delete(p);
-        ctx.trace("ip.config", "sys", `TCP 포트 ${p} 서비스 중지`, { port: p });
+        ctx?.trace("ip.config", "sys", `TCP 포트 ${p} 서비스 중지`, { port: p });
       }
     }
     for (const p of next) {
       if (!this.tcp.listening.has(p)) {
         this.tcp.listening.add(p);
-        ctx.trace("ip.config", "sys", `TCP 포트 ${p} 에서 연결 받기 시작 (listen)`, { port: p });
+        ctx?.trace("ip.config", "sys", `TCP 포트 ${p} 에서 연결 받기 시작 (listen)${this.lb.config.enabled && p === this.lb.config.port ? " — 로드밸런서" : ""}`, { port: p });
       }
     }
   }
@@ -486,6 +515,7 @@ export class Host implements SimNode {
   // ---------- 수신 ----------
 
   receive(_port: number, frame: EthernetFrame, ctx: NodeContext): void {
+    this.clock = ctx.now;
     if (frame.vlan !== undefined) {
       ctx.trace("vlan.drop", "L2", `VLAN ${frame.vlan} 태그가 달린 프레임 → 호스트는 태그를 이해하지 못해 드롭 (스위치 포트를 액세스로 바꾸세요)`, { vlan: frame.vlan }, frame.id);
       return;
@@ -575,6 +605,7 @@ export class Host implements SimNode {
   // ---------- 타이머 ----------
 
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
+    this.clock = ctx.now;
     switch (tag) {
       case "arp-probe":
         if ((data as { mac: string }).mac === this.iface.mac) this.iface.finishProbe(ctx, this.emit(ctx));
@@ -653,10 +684,14 @@ export class Host implements SimNode {
         ...(this.dnsServer.config.enabled
           ? [["DNS 서버", `켜짐 · 레코드 ${this.dnsServer.config.records.length}개${this.dnsServer.config.upstream ? ` · 업스트림 DNS ${this.dnsServer.config.upstream}` : ""}`] as [string, string]]
           : []),
+        ...(this.lb.config.enabled
+          ? [["로드밸런서", `켜짐 · 포트 ${this.lb.config.port} · ${LB_ALGORITHM_LABEL[this.lb.config.algorithm]} · 백엔드 ${this.lb.config.backends.length}대`] as [string, string]]
+          : []),
       ],
       tables: [
         ...(this.dhcpServer.config.enabled ? [{ title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() }] : []),
         ...(this.dnsServer.config.enabled ? [{ title: "DNS 레코드·캐시", columns: ["이름", "IP", "출처"], rows: this.dnsServer.rows() }] : []),
+        ...(this.lb.config.enabled ? [{ title: "로드밸런서 백엔드", columns: ["백엔드", "상태", "처리", "실패"], rows: this.lb.rows(this.clock) }] : []),
         ...(this.resolver.cache.size > 0 ? [{ title: "DNS 캐시 (리졸버)", columns: ["이름", "IP", "시각"], rows: this.resolver.rows() }] : []),
         { title: "TCP 연결", columns: ["상대", "상태", "보냄 / 받음"], rows: this.tcp.rows() },
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: i.arpRows() },

@@ -11,7 +11,7 @@ import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { Switch, type PortVlan } from "../core/nodes/switch";
 import { validCidr } from "../core/nodes/firewall";
-import {
+import { DEFAULT_LB_SETTINGS,
   DEFAULT_DHCP_SERVER,
   DEFAULT_DNS_SERVER,
   DEFAULT_FIREWALL_SETTINGS,
@@ -99,7 +99,7 @@ export class NetworkSync {
       }
     }
     for (const d of t.devices) {
-      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d) }) };
+      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d) }) };
       const prev = this.syncedConfig.get(d.id);
       if (prev === undefined) {
         settle();
@@ -118,6 +118,8 @@ export class NetworkSync {
             if (dhcp) node.setDhcpServer(dhcp, net.contextFor(d.id));
             const dns = effectiveDnsServer(d);
             if (dns) node.setDnsServer(dns, net.contextFor(d.id));
+            const lb = effectiveLb(d);
+            if (lb) node.setLb(lb, net.contextFor(d.id));
           }
         }
       }
@@ -176,6 +178,19 @@ export function effectiveHost(d: Device) {
     prefix: h.prefix,
     gateway: h.ipMode === "static" ? validIp(h.gateway) : undefined,
     dns: h.ipMode === "static" ? validIp(h.dns) : undefined,
+  };
+}
+
+/** 로드밸런서 설정: 주소·포트가 올바른 백엔드만 */
+export function effectiveLb(d: Device) {
+  if (!d.host) return undefined;
+  const c = d.host.lb ?? DEFAULT_LB_SETTINGS;
+  const port = (n: number) => Number.isInteger(n) && n >= 1 && n <= 65535;
+  return {
+    enabled: c.enabled,
+    port: port(c.port) ? c.port : 80,
+    algorithm: c.algorithm === "least-conn" ? ("least-conn" as const) : ("round-robin" as const),
+    backends: c.backends.filter((b) => validIp(b.ip) && port(b.port)).map((b) => ({ ip: b.ip, port: b.port })),
   };
 }
 
@@ -329,7 +344,7 @@ export function makeNode(d: Device): SimNode {
       rip: cfg.rip,
     });
   }
-  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d) });
+  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d), lb: effectiveLb(d) });
 }
 
 export function applyConfig(net: Network, d: Device): void {

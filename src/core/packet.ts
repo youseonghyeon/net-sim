@@ -47,6 +47,8 @@ export interface TcpSegment {
   len: number;
   /** 데이터 내용 요약 (예: "GET /", "HTTP 200 (1/3)") */
   data?: string;
+  /** 응답을 실제로 만든 서버 (로드밸런서가 붙이는 X-Served-By 헤더 흉내). 학습용 표시 */
+  origin?: string;
 }
 
 export interface IcmpEcho {

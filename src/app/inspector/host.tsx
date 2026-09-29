@@ -1,9 +1,10 @@
-// 호스트 설정: IP 설정, 서비스(웹·DHCP 서버·DNS 서버), 무선 단말·AP.
+// 호스트 설정: IP 설정, 서비스(웹·DHCP 서버·DNS 서버·로드밸런서), 무선 단말·AP.
 import { prefixToMask, intToIp, sameSubnet } from "../../core/addr";
 import { topology, updateDevice } from "../../model/store";
 import {
   DEFAULT_DHCP_SERVER,
   DEFAULT_DNS_SERVER,
+  DEFAULT_LB_SETTINGS,
   DEFAULT_ROUTER_WIFI,
   DEFAULT_WIFI_BASE,
   type Device,
@@ -198,7 +199,74 @@ export function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
         </>
       )}
       <DnsServiceSection d={d} h={h} staticIp={staticIp} />
+      <LbFields d={d} h={h} />
     </Section>
+  );
+}
+
+/** 로드밸런서 전용 장비의 설정 (서버의 서비스 섹션과 같은 칸, 섹션 하나로) */
+export function LbSection({ d, h }: { d: Device; h: HostSettings }) {
+  return (
+    <Section title="로드밸런서">
+      <LbFields d={d} h={h} />
+    </Section>
+  );
+}
+
+/** 로드밸런서(리버스 프록시) 켜기 + 포트·분배 방식·백엔드 */
+function LbFields({ d, h }: { d: Device; h: HostSettings }) {
+  const lb = h.lb ?? DEFAULT_LB_SETTINGS;
+  const set = (patch: Partial<typeof lb>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, lb: { ...(x.host!.lb ?? DEFAULT_LB_SETTINGS), ...patch } } }));
+  const setBackend = (i: number, patch: Partial<{ ip: string; port: number }>) => set({ backends: lb.backends.map((b, k) => (k === i ? { ...b, ...patch } : b)) });
+  const shadowsWeb = lb.enabled && (h.services ?? []).includes(lb.port);
+  return (
+    <>
+      <label class="toggle-row">
+        <span>
+          로드밸런서 <span class="mono muted">TCP {lb.port}</span>
+        </span>
+        <Toggle on={lb.enabled} onToggle={() => set({ enabled: !lb.enabled })} />
+      </label>
+      {!lb.enabled && <p class="note">켜면 이 주소로 온 연결을 뒤 서버(백엔드)들에 나눕니다. 서버에 nginx·HAProxy 를 띄운 것과 같고, 로드밸런서 장비도 같은 방식으로 동작합니다.</p>}
+      {lb.enabled && (
+        <>
+          <Field label="받는 포트">
+            <input class="input mono" type="number" min={1} max={65535} value={lb.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 80)) }); }} />
+          </Field>
+          <Field label="분배 방식">
+            <div class="segmented" role="radiogroup">
+              <button class={lb.algorithm === "round-robin" ? "on" : ""} onClick={() => set({ algorithm: "round-robin" })}>
+                라운드 로빈
+              </button>
+              <button class={lb.algorithm === "least-conn" ? "on" : ""} onClick={() => set({ algorithm: "least-conn" })}>
+                최소 연결
+              </button>
+            </div>
+          </Field>
+          {shadowsWeb && <p class="note">웹 서버도 포트 {lb.port} 인데, 이 포트로 온 연결은 로드밸런서가 받습니다.</p>}
+          <h3 class="sub">백엔드</h3>
+          {lb.backends.length === 0 && <p class="note error-note">백엔드가 없으면 모든 요청에 502 Bad Gateway 를 돌려줍니다. 뒤 서버의 주소와 포트를 추가하세요.</p>}
+          {lb.backends.map((b, i) => (
+            <div key={i} class="lb-row">
+              <input class="input mono" value={b.ip} placeholder="192.168.0.11" onInput={(e) => setBackend(i, { ip: e.currentTarget.value })} />
+              <span class="mono muted">:</span>
+              <input class="input mono" type="number" min={1} max={65535} value={b.port} onInput={(e) => { if (e.currentTarget.value !== "") setBackend(i, { port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 80)) }); }} />
+              <button class="icon-btn" title="백엔드 삭제" onClick={() => set({ backends: lb.backends.filter((_, k) => k !== i) })}>
+                <Icon name="trash" size={15} />
+              </button>
+              {ipError(b.ip, true) && <div class="error lb-error">{ipError(b.ip, true)}</div>}
+            </div>
+          ))}
+          <button class="btn wide" onClick={() => set({ backends: [...lb.backends, { ip: "", port: 80 }] })}>
+            <Icon name="plus" size={14} />
+            백엔드 추가
+          </button>
+          <p class="note">
+            클라이언트는 이 장치 주소로 접속하고, 로드밸런서가 백엔드 하나를 골라 <b>자기가 대신</b> 연결해 요청한 뒤 응답을 돌려줍니다(리버스 프록시, L7). 그래서 백엔드에게는 클라이언트가 로드밸런서로 보입니다. 백엔드가 거부하거나 응답이 없으면 10초 동안 빼고 곧바로 다음 백엔드로 다시 보냅니다(패시브 헬스 체크).
+          </p>
+        </>
+      )}
+    </>
   );
 }
 

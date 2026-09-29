@@ -56,11 +56,25 @@ export interface TcpConn {
   createdAt: number;
   closedAt?: number;
   reason?: string;
+  /** 서버: 앱(로드밸런서)이 요청을 맡아 응답을 미뤘는지 */
+  deferred?: boolean;
+  /** 클라이언트: 응답을 실제로 만든 서버 (로드밸런서 뒤의 백엔드) */
+  servedBy?: string;
 }
 
 export interface TcpHost {
   /** 세그먼트를 IP 패킷으로 감싸 내보낸다 */
   send(pkt: Ipv4Packet, ctx: NodeContext): void;
+  /** 서버 연결에 요청이 도착: true 를 돌려주면 앱이 맡아 나중에 respond() 로 응답한다 (로드밸런서) */
+  onRequest?(conn: TcpConn, ctx: NodeContext): boolean;
+  /** 연결이 끝남 (정상 종료·거부·timeout·중단) */
+  onFinish?(conn: TcpConn, ctx: NodeContext): void;
+}
+
+/** 응답 세그먼트 하나 */
+export interface ResponsePart {
+  len: number;
+  data: string;
 }
 
 function connKey(localIp: Ip, localPort: number, remoteIp: Ip, remotePort: number): string {
@@ -143,6 +157,7 @@ export class TcpStack {
       conn.closedAt = ctx.now;
       this.cancelAll(conn);
       ctx.trace(conn.state === "FAILED" ? "tcp.refused" : "tcp.rst.received", "L4", conn.state === "FAILED" ? `RST 수신: ${endpoint(conn.remoteIp, conn.remotePort)} 에 그 포트를 듣는 서비스가 없음 → 연결 거부 (Connection refused)` : `RST 수신 → 연결 끊김`, { conn: conn.id });
+      this.host.onFinish?.(conn, ctx);
       return;
     }
 
@@ -303,17 +318,30 @@ export class TcpStack {
     conn.rcvNxt = seg.seq + seg.len;
     conn.bytesReceived += seg.len;
     ctx.trace("tcp.data.received", "L4", `데이터 수신: ${seg.data ?? ""} ${seg.len}B (seq ${seg.seq}) → 누적 ${conn.bytesReceived}B, 다음 기대 seq ${conn.rcvNxt}`, { conn: conn.id, seq: seg.seq, len: seg.len });
-    if (conn.role === "server" && conn.state === "ESTABLISHED" && conn.bytesSent === 0) {
+    if (seg.origin && conn.role === "client") conn.servedBy = seg.origin;
+    if (conn.role === "server" && conn.state === "ESTABLISHED" && conn.bytesSent === 0 && !conn.deferred) {
+      // 앱이 요청을 맡으면(로드밸런서) 받았다는 ACK 만 보내고 응답은 나중에
+      if (this.host.onRequest?.(conn, ctx)) {
+        conn.deferred = true;
+        this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt}) — 요청을 받았고, 응답은 뒤 서버에서 받아 오는 대로 보냄`, "tcp.ack.sent");
+        return;
+      }
       // 앱: 요청을 받았으니 응답 세그먼트를 연달아 보내고 FIN
       const n = conn.responseSegments;
-      for (let i = 1; i <= n; i++) {
-        this.transmit(conn, { ackFlag: true, len: RESPONSE_SEGMENT_BYTES, data: `HTTP 200 (${i}/${n})` }, ctx, `응답 데이터 전송 ${i}/${n}: ${RESPONSE_SEGMENT_BYTES}B (seq=${conn.sndNxt})`, "tcp.data.sent");
-      }
-      conn.state = "FIN_WAIT_1";
-      this.transmit(conn, { fin: true, ackFlag: true }, ctx, `FIN 전송: 응답을 다 보냈으니 종료 요청 (seq=${conn.sndNxt})`, "tcp.fin.sent");
+      this.respond(conn, Array.from({ length: n }, (_, k) => ({ len: RESPONSE_SEGMENT_BYTES, data: `HTTP 200 (${k + 1}/${n})` })), ctx);
       return;
     }
     this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
+  }
+
+  /** 서버 연결로 응답 세그먼트를 보내고 FIN. origin 을 주면 세그먼트에 "응답을 만든 서버" 를 싣는다 */
+  respond(conn: TcpConn, parts: ResponsePart[], ctx: NodeContext, origin?: string): void {
+    if (conn.state !== "ESTABLISHED") return; // 기다리는 동안 클라이언트가 끊었으면 보낼 곳이 없다
+    parts.forEach((p, k) => {
+      this.transmit(conn, { ackFlag: true, len: p.len, data: p.data, ...(origin ? { origin } : {}) }, ctx, `응답 데이터 전송 ${k + 1}/${parts.length}: ${p.data} ${p.len}B (seq=${conn.sndNxt})${origin ? ` — 만든 서버 ${origin}` : ""}`, "tcp.data.sent");
+    });
+    conn.state = "FIN_WAIT_1";
+    this.transmit(conn, { fin: true, ackFlag: true }, ctx, `FIN 전송: 응답을 다 보냈으니 종료 요청 (seq=${conn.sndNxt})`, "tcp.fin.sent");
   }
 
   private receiveFin(conn: TcpConn, seg: TcpSegment, ctx: NodeContext): void {
@@ -343,6 +371,7 @@ export class TcpStack {
     conn.closedAt = ctx.now;
     this.cancelAll(conn);
     ctx.trace("tcp.closed", "L4", `연결 종료 ${endpoint(conn.localIp, conn.localPort)} ↔ ${endpoint(conn.remoteIp, conn.remotePort)}: 보냄 ${conn.bytesSent}B, 받음 ${conn.bytesReceived}B, 재전송 ${conn.retransmits}회`, { conn: conn.id });
+    this.host.onFinish?.(conn, ctx);
   }
 
   // ---------- 송신 ----------
@@ -393,6 +422,7 @@ export class TcpStack {
           : `TCP timeout: seq ${seq} 를 ${TCP_MAX_RETRIES}번 다시 보냈지만 ACK 없음 → 연결 포기 (${endpoint(conn.remoteIp, conn.remotePort)})`,
         { conn: conn.id, seq },
       );
+      this.host.onFinish?.(conn, ctx);
       return;
     }
     u.retries += 1;
@@ -415,6 +445,7 @@ export class TcpStack {
       conn.state = "FAILED";
       conn.reason = reason;
       conn.closedAt = ctx.now;
+      this.host.onFinish?.(conn, ctx);
     }
   }
 

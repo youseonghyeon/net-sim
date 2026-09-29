@@ -1,6 +1,6 @@
 // 편집 가능한 토폴로지 모델. 시뮬레이션 코어(src/core)와 분리되어 있고, 실행 시 코어 Network 로 변환된다.
 
-export type DeviceKind = "pc" | "laptop" | "phone" | "server" | "switch" | "hub" | "ap" | "router" | "gateway" | "nat" | "firewall" | "internet";
+export type DeviceKind = "pc" | "laptop" | "phone" | "server" | "lb" | "switch" | "hub" | "ap" | "router" | "gateway" | "nat" | "firewall" | "internet";
 export type Role = "host" | "switch" | "hub" | "ap" | "router" | "l3" | "internet" | "firewall";
 export type PortSide = "top" | "bottom";
 
@@ -33,6 +33,8 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
   laptop: { kind: "laptop", label: "노트북", role: "host", width: 64, height: 64, ports: [{ name: "eth0", side: "top" }], namePrefix: "laptop" },
   phone: { kind: "phone", label: "스마트폰", role: "host", width: 44, height: 64, ports: [{ name: "wlan0", side: "top", radio: true }], namePrefix: "phone" },
   server: { kind: "server", label: "서버", role: "host", width: 64, height: 64, ports: [{ name: "eth0", side: "top" }], namePrefix: "srv" },
+  // 로드밸런서 전용 장비: 호스트처럼 주소 하나를 갖고(VIP) 뒤 서버들에 요청을 나눈다. 서버의 LB 서비스 토글과 같은 모듈(core/nodes/lb.ts)
+  lb: { kind: "lb", label: "로드밸런서", role: "host", width: 64, height: 64, ports: [{ name: "eth0", side: "top" }], namePrefix: "lb" },
   switch: {
     kind: "switch",
     label: "스위치",
@@ -125,7 +127,7 @@ export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
 export const PALETTE_GROUPS: { label: string; kinds: DeviceKind[] }[] = [
   { label: "단말", kinds: ["pc", "laptop", "phone", "server"] },
   { label: "스위칭", kinds: ["hub", "switch", "ap"] },
-  { label: "라우팅·경계", kinds: ["router", "gateway", "nat", "firewall", "internet"] },
+  { label: "라우팅·경계", kinds: ["router", "gateway", "nat", "firewall", "lb", "internet"] },
 ];
 export const PALETTE_ORDER: DeviceKind[] = PALETTE_GROUPS.flatMap((g) => g.kinds);
 
@@ -176,7 +178,19 @@ export interface HostSettings {
   dhcpServer: DhcpServerSettings;
   /** 이 호스트가 DNS 서버 역할을 할 때 */
   dnsServer?: DnsServerSettings;
+  /** 이 호스트가 로드밸런서(리버스 프록시) 역할을 할 때. 로드밸런서 장비는 켜진 채로 만들어진다 */
+  lb?: LbSettings;
 }
+
+export interface LbSettings {
+  enabled: boolean;
+  /** 클라이언트가 접속하는 포트 */
+  port: number;
+  algorithm: "round-robin" | "least-conn";
+  backends: { ip: string; port: number }[];
+}
+
+export const DEFAULT_LB_SETTINGS: LbSettings = { enabled: false, port: 80, algorithm: "round-robin", backends: [] };
 
 export const DEFAULT_DHCP_SERVER: DhcpServerSettings = { enabled: false, start: "192.168.0.100", end: "192.168.0.199", router: "192.168.0.1" };
 
@@ -425,6 +439,7 @@ export function createDevice(kind: DeviceKind, x: number, y: number, devices: De
   if (spec.role === "ap") device.ap = { ...DEFAULT_WIFI_BASE };
   if (spec.role === "firewall") device.firewall = { ...DEFAULT_FIREWALL_SETTINGS, enabled: true, rules: [] };
   if (kind === "phone") device.wifi = { ssid: "home" };
+  if (kind === "lb") device.host!.lb = { ...DEFAULT_LB_SETTINGS, enabled: true, backends: [] };
   return device;
 }
 
