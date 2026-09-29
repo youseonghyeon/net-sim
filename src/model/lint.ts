@@ -897,7 +897,7 @@ export function lintTopology(t: Topology): LintIssue[] {
         deviceId: d.id,
         severity: "error",
         code: "lb.loop",
-        message: `백엔드를 따라가면 이 로드밸런서로 돌아옴 → 요청이 로드밸런서 사이를 돌다 508 Loop Detected`,
+        message: d.host?.lb?.mode === "l4" ? `백엔드를 따라가면 이 로드밸런서로 돌아옴 → 패킷이 로드밸런서 사이를 돌다 TTL 이 다해 드롭 (연결 timeout)` : `백엔드를 따라가면 이 로드밸런서로 돌아옴 → 요청이 로드밸런서 사이를 돌다 508 Loop Detected`,
         fix: `${d.name} → 로드밸런서 → 백엔드에서 자기 자신이나 자기를 가리키는 로드밸런서를 빼고 실제 서버를 넣기`,
       });
     }

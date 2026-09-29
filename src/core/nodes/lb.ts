@@ -63,7 +63,16 @@ interface L4Flow {
   natPort: number;
   finFromClient: boolean;
   finFromBackend: boolean;
+  createdAt: number;
+  /** 백엔드의 SYN·ACK 를 넘겼는지 (못 봤는데 SYN 이 다시 오면 그 백엔드가 응답하지 않는 것) */
+  synAckSeen: boolean;
+  /** 끝난 시각 (양쪽 FIN 뒤 마지막 ACK, 또는 RST). TIME_WAIT 동안 남겨 두어 늦게 온 재전송도 넘긴다 */
+  closedAt?: number;
 }
+
+/** 끝난 흐름을 남겨 두는 시간 (늦게 온 FIN·ACK 재전송을 넘기려고, TIME_WAIT 흉내) */
+const L4_TIME_WAIT = 2000;
+const L4_MAX_FLOWS = 256;
 
 interface Pending {
   /** 클라이언트 쪽 연결 (응답을 기다리는 중) */
@@ -103,10 +112,11 @@ export class LoadBalancer {
     const same = JSON.stringify(cfg) === JSON.stringify(this.config);
     this.config = { ...cfg, backends: cfg.backends.map((b) => ({ ...b })) };
     if (same) return;
-    this.downUntil.clear();
-    this.affinity.clear();
-    this.flows.clear();
-    this.byNatPort.clear();
+    // 설정에 남은 백엔드의 상태·고정·흐름은 유지한다 (세션 고정만 켰는데 열린 연결이 끊기면 안 된다)
+    const kept = new Set(cfg.backends.map(keyOf));
+    for (const k of [...this.downUntil.keys()]) if (!kept.has(k)) this.downUntil.delete(k);
+    for (const [ip, k] of [...this.affinity]) if (!kept.has(k) || !cfg.sticky) this.affinity.delete(ip);
+    for (const f of [...this.flows.values()]) if (cfg.mode !== "l4" || !kept.has(keyOf(f.backend))) this.dropFlow(f);
     ctx.trace(
       "lb.config",
       "sys",
@@ -130,7 +140,7 @@ export class LoadBalancer {
   private active(b: LbBackend): number {
     let n = 0;
     for (const p of this.pending.values()) if (keyOf(p.backend) === keyOf(b)) n++;
-    for (const f of this.flows.values()) if (keyOf(f.backend) === keyOf(b)) n++;
+    for (const f of this.flows.values()) if (f.closedAt === undefined && keyOf(f.backend) === keyOf(b)) n++;
     return n;
   }
 
@@ -255,22 +265,39 @@ export class LoadBalancer {
   }
 
   private l4FromClient(pkt: Ipv4Packet, seg: TcpSegment, me: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet[] {
+    this.expire(ctx.now);
     const key = `${pkt.src}:${seg.srcPort}`;
     let flow = this.flows.get(key);
     const synOnly = seg.syn && !seg.ackFlag;
-    // 새 연결(SYN), 또는 SYN 재전송인데 그 백엔드가 빠져 있으면 다시 고른다
-    if (synOnly && (!flow || !this.isUp(flow.backend, ctx.now))) {
-      if (flow) this.dropFlow(flow);
-      const chosen = this.pick(ctx.now, new Set(), pkt.src);
+    if (synOnly && flow) {
+      if (flow.closedAt !== undefined || flow.finFromClient || flow.finFromBackend) {
+        // 끝난 연결의 포트를 다시 씀: 새 연결로
+        this.dropFlow(flow);
+        flow = undefined;
+      } else if (!flow.synAckSeen && ctx.now > flow.createdAt) {
+        // SYN 재전송인데 백엔드의 SYN·ACK 를 한 번도 못 봄: 그 백엔드가 응답하지 않는다 → 빼 두고 다시 고른다 (아직 연결 전이라 옮겨도 된다)
+        this.markDown(flow.backend, "SYN 에 응답 없음 (SYN 재전송이 옴)", ctx, frameId);
+        this.dropFlow(flow);
+        flow = undefined;
+      } else if (!this.isUp(flow.backend, ctx.now)) {
+        this.dropFlow(flow);
+        flow = undefined;
+      }
+    }
+    if (synOnly && !flow) {
+      // 자기 자신(같은 주소·포트)을 백엔드로 두면 패킷이 제자리를 돈다 → 후보에서 뺀다
+      const self = new Set(this.config.backends.filter((b) => b.ip === me && b.port === this.config.port).map(keyOf));
+      const chosen = this.pick(ctx.now, self, pkt.src);
       if (!chosen) {
-        ctx.trace("lb.fail", "L4", `로드밸런서(L4): ${pkt.src}:${seg.srcPort} 의 SYN — 살아 있는 백엔드가 없음 → RST 로 거절`, { client: pkt.src }, frameId);
+        const why = self.size && self.size === this.config.backends.length ? "백엔드가 로드밸런서 자신뿐" : "살아 있는 백엔드가 없음";
+        ctx.trace("lb.fail", "L4", `로드밸런서(L4): ${pkt.src}:${seg.srcPort} 의 SYN — ${why} → RST 로 거절`, { client: pkt.src }, frameId);
         return [{ kind: "ipv4", src: me, dst: pkt.src, ttl: 64, payload: { kind: "tcp", srcPort: seg.dstPort, dstPort: seg.srcPort, seq: 0, ack: seg.seq + 1, rst: true, ackFlag: true, len: 0 } }];
       }
+      this.makeRoom();
       const natPort = this.allocNatPort();
-      flow = { clientIp: pkt.src, clientPort: seg.srcPort, backend: chosen.backend, natPort, finFromClient: false, finFromBackend: false };
+      flow = { clientIp: pkt.src, clientPort: seg.srcPort, backend: chosen.backend, natPort, finFromClient: false, finFromBackend: false, createdAt: ctx.now, synAckSeen: false };
       this.flows.set(key, flow);
       this.byNatPort.set(natPort, flow);
-      if (this.flows.size > 256) this.dropFlow(this.flows.values().next().value!);
       const why = chosen.sticky ? "세션 고정" : this.config.algorithm === "least-conn" ? "최소 연결" : "라운드 로빈";
       ctx.trace("lb.pick", "L4", `로드밸런서(L4): ${pkt.src}:${seg.srcPort} 의 새 연결(SYN) → 백엔드 ${keyOf(chosen.backend)} (${why}). 연결을 끊지 않고 주소만 바꿔 넘김 — TCP 연결은 클라이언트와 백엔드 사이 하나`, { backend: keyOf(chosen.backend), client: pkt.src }, frameId);
     }
@@ -278,26 +305,28 @@ export class LoadBalancer {
       ctx.trace("lb.fail", "L4", `로드밸런서(L4): ${pkt.src}:${seg.srcPort} 의 세그먼트인데 흐름 기록이 없음 (SYN 없이 옴) → 드롭`, { client: pkt.src }, frameId);
       return [];
     }
+    if (pkt.ttl <= 1) {
+      ctx.trace("ip.drop", "L3", `로드밸런서(L4): TTL ${pkt.ttl} 로 도착 → 더 넘기면 0 → 드롭 (로드밸런서끼리 서로를 백엔드로 두면 여기서 끝난다)`, {}, frameId);
+      return [];
+    }
     if (seg.fin) flow.finFromClient = true;
     const out: Ipv4Packet = { ...pkt, src: me, dst: flow.backend.ip, ttl: pkt.ttl - 1, payload: { ...seg, srcPort: flow.natPort, dstPort: flow.backend.port } };
-    ctx.trace("lb.forward", "L4", `L4 변환(→ 백엔드): ${pkt.src}:${seg.srcPort} → ${me}:${seg.dstPort} 를 ${me}:${flow.natPort} → ${keyOf(flow.backend)} 로 바꿔 보냄`, { client: `${pkt.src}:${seg.srcPort}`, vip: `${me}:${seg.dstPort}`, backend: keyOf(flow.backend), natPort: flow.natPort }, frameId);
-    // 양쪽 FIN 뒤 클라이언트의 마지막 ACK 까지 넘겼으면 흐름을 치운다
-    if (flow.finFromClient && flow.finFromBackend && !seg.fin && seg.len === 0) this.dropFlow(flow);
-    if (seg.rst) this.dropFlow(flow);
+    ctx.trace("lb.forward", "L4", `L4 변환(→ 백엔드): ${pkt.src}:${seg.srcPort} → ${me}:${seg.dstPort} 를 ${me}:${flow.natPort} → ${keyOf(flow.backend)} 로 바꿔 보냄`, { client: `${pkt.src}:${seg.srcPort}`, vip: `${me}:${seg.dstPort}`, backend: keyOf(flow.backend), natPort: flow.natPort, state: ipvsState(seg, flow) }, frameId);
+    this.noteClose(flow, seg, ctx.now);
     return [out];
   }
 
   private l4FromBackend(pkt: Ipv4Packet, seg: TcpSegment, flow: L4Flow, me: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet[] {
-    if (seg.rst && !flow.finFromClient) {
+    if (seg.rst && !flow.finFromClient && !flow.synAckSeen) {
       // 백엔드가 연결을 거부(듣지 않는 포트): 패시브 헬스 체크로 빼 두고, 클라이언트에게도 RST 를 넘긴다
-      const key = keyOf(flow.backend);
-      this.downUntil.set(key, ctx.now + LB_FAIL_TIMEOUT);
-      const st = this.stats.get(key) ?? { served: 0, fails: 0 };
-      st.fails++;
-      this.stats.set(key, st);
-      ctx.trace("lb.down", "L4", `로드밸런서(L4): 백엔드 ${key} 가 RST 로 거부 → ${LB_FAIL_TIMEOUT / 1000}초 동안 빼고, 클라이언트에게도 RST (L4 는 이미 시작한 연결을 다른 백엔드로 옮기지 못함 — 클라이언트가 다시 연결해야 함)`, { backend: key }, frameId);
+      this.markDown(flow.backend, "RST 로 거부 — L4 는 이미 시작한 연결을 다른 백엔드로 옮기지 못함, 클라이언트가 다시 연결해야 함", ctx, frameId);
     }
-    if (seg.fin) {
+    if (seg.syn && seg.ackFlag) flow.synAckSeen = true;
+    if (pkt.ttl <= 1) {
+      ctx.trace("ip.drop", "L3", `로드밸런서(L4): TTL ${pkt.ttl} 로 도착 → 드롭`, {}, frameId);
+      return [];
+    }
+    if (seg.fin && !flow.finFromBackend) {
       flow.finFromBackend = true;
       if (!flow.finFromClient) {
         const st = this.stats.get(keyOf(flow.backend)) ?? { served: 0, fails: 0 };
@@ -306,9 +335,37 @@ export class LoadBalancer {
       }
     }
     const out: Ipv4Packet = { ...pkt, src: me, dst: flow.clientIp, ttl: pkt.ttl - 1, payload: { ...seg, srcPort: this.config.port, dstPort: flow.clientPort } };
-    ctx.trace("lb.forward", "L4", `L4 변환(→ 클라이언트): ${keyOf(flow.backend)} → ${me}:${flow.natPort} 를 ${me}:${this.config.port} → ${flow.clientIp}:${flow.clientPort} 로 바꿔 보냄`, { client: flow.clientIp, backend: keyOf(flow.backend), natPort: flow.natPort }, frameId);
-    if (seg.rst) this.dropFlow(flow);
+    ctx.trace("lb.forward", "L4", `L4 변환(→ 클라이언트): ${keyOf(flow.backend)} → ${me}:${flow.natPort} 를 ${me}:${this.config.port} → ${flow.clientIp}:${flow.clientPort} 로 바꿔 보냄`, { client: `${flow.clientIp}:${flow.clientPort}`, vip: `${me}:${this.config.port}`, backend: keyOf(flow.backend), natPort: flow.natPort, state: ipvsState(seg, flow) }, frameId);
+    this.noteClose(flow, seg, ctx.now);
     return [out];
+  }
+
+  /** 양쪽 FIN 뒤 순수 ACK(어느 쪽이든), 또는 RST 면 끝난 것으로 표시 — 바로 지우지 않고 TIME_WAIT 동안 남긴다 */
+  private noteClose(flow: L4Flow, seg: TcpSegment, now: number): void {
+    if (flow.closedAt !== undefined) return;
+    if (seg.rst || (flow.finFromClient && flow.finFromBackend && !seg.fin && seg.len === 0 && seg.ackFlag)) flow.closedAt = now;
+  }
+
+  private markDown(b: LbBackend, why: string, ctx: NodeContext, frameId?: number): void {
+    const key = keyOf(b);
+    this.downUntil.set(key, ctx.now + LB_FAIL_TIMEOUT);
+    const st = this.stats.get(key) ?? { served: 0, fails: 0 };
+    st.fails++;
+    this.stats.set(key, st);
+    for (const [ip, k] of [...this.affinity]) if (k === key) this.affinity.delete(ip); // 고정도 풀어 다른 백엔드로
+    ctx.trace("lb.down", "L4", `로드밸런서(L4): 백엔드 ${key} 실패 (${why}) → ${LB_FAIL_TIMEOUT / 1000}초 동안 뺌 (패시브 헬스 체크)`, { backend: key, reason: why }, frameId);
+  }
+
+  /** TIME_WAIT 이 지난 끝난 흐름을 치운다 */
+  private expire(now: number): void {
+    for (const f of [...this.flows.values()]) if (f.closedAt !== undefined && now - f.closedAt >= L4_TIME_WAIT) this.dropFlow(f);
+  }
+
+  /** 상한에 닿으면 끝난 흐름부터, 없으면 가장 오래된 것을 내보낸다 */
+  private makeRoom(): void {
+    if (this.flows.size < L4_MAX_FLOWS) return;
+    const closed = [...this.flows.values()].find((f) => f.closedAt !== undefined);
+    this.dropFlow(closed ?? this.flows.values().next().value!);
   }
 
   private allocNatPort(): number {
@@ -325,9 +382,14 @@ export class LoadBalancer {
     this.byNatPort.delete(f.natPort);
   }
 
-  /** 표시용: L4 흐름 */
+  /** 표시용: L4 흐름 (진행 중인 것만) */
   flowRows(): string[][] {
-    return [...this.flows.values()].map((f) => [`${f.clientIp}:${f.clientPort}`, `:${f.natPort} → ${keyOf(f.backend)}`]);
+    return [...this.flows.values()].filter((f) => f.closedAt === undefined).map((f) => [`${f.clientIp}:${f.clientPort}`, `:${f.natPort} → ${keyOf(f.backend)}`]);
+  }
+
+  /** 진행 중인 L4 흐름 수 */
+  get openFlows(): number {
+    return [...this.flows.values()].filter((f) => f.closedAt === undefined).length;
   }
 
   /** 표시용: 백엔드마다 상태·처리 수 */
@@ -339,4 +401,12 @@ export class LoadBalancer {
       return [keyOf(b), state, `${st.served}건`, st.fails ? `실패 ${st.fails}` : "-"];
     });
   }
+}
+
+/** ipvsadm -Lnc 의 연결 상태 표기 */
+function ipvsState(seg: TcpSegment, f: L4Flow): string {
+  if (seg.rst) return "CLOSE";
+  if (seg.syn) return "SYN_RECV";
+  if (f.finFromClient || f.finFromBackend) return f.finFromClient && f.finFromBackend ? "TIME_WAIT" : "FIN_WAIT";
+  return "ESTABLISHED";
 }
