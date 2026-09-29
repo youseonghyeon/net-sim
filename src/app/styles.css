@@ -729,6 +729,47 @@ select.btn.example {
   stroke: var(--canvas);
   stroke-width: 2;
 }
+/* 누르기 쉬운 투명 영역 (패킷은 작고 빨리 지나간다) */
+.packet .packet-hit {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
+  cursor: pointer;
+}
+.packet.picked circle:not(.packet-hit) {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+/* 누른 패킷의 상세 카드 */
+.packet-card {
+  position: absolute;
+  z-index: 5;
+  width: min(560px, calc(100% - 32px));
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.packet-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+.packet-card-route {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.packet-card .pkt-card-body {
+  margin: 0;
+  border-left: 0;
+  padding: 0;
+  background: transparent;
+}
 .packet.arp circle {
   fill: var(--pkt-arp);
 }

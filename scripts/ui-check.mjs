@@ -658,6 +658,27 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("nat debug line:", await detail.locator(".pkt-line", { hasText: "debug ip nat" }).locator("code").textContent().catch(() => "?"));
   await detail.screenshot({ path: `${OUT}/44-pkt-detail.png` });
 }
+// 캔버스의 패킷을 누르면 일시정지 + 상세 카드, 재생하면 닫힘
+{
+  await loadEx("starter");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await clickDevice("pc-1");
+  await page.locator(".ping-row .picker .input").first().fill("192.168.0.11");
+  await page.keyboard.press("Escape");
+  await page.click(".ping-row .btn:has-text('ping')");
+  const pk = page.locator("g.packet[data-tx]").first();
+  await pk.waitFor({ timeout: 10000 });
+  const box = await pk.boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const card = page.locator(".packet-card");
+  await card.waitFor({ timeout: 3000 });
+  const paused = await page.evaluate(() => document.querySelector(".topbar")?.textContent ?? "");
+  console.log("packet card:", (await card.locator(".packet-card-head b").textContent())?.slice(0, 40), "| layers:", (await card.locator(".pkt-layer-title").allTextContents()).join(","), "| route:", (await card.locator(".packet-card-route").textContent())?.split(" · ")[0]);
+  await page.screenshot({ path: `${OUT}/45-packet-card.png` });
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(200);
+  console.log("card closed on play:", (await card.count()) === 0 ? "yes" : "NO", paused ? "" : "");
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

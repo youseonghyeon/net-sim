@@ -1,9 +1,9 @@
 import type * as preact from "preact";
-import { useSignal } from "@preact/signals";
+import { effect, signal, useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
-import { frameCategory, shortLabel } from "../core/packet";
+import { describeFrame, frameCategory, shortLabel } from "../core/packet";
 import type { Transmission } from "../core/network";
-import { hostStatus, serviceBadges, sim, simTime, simVersion, wanStatus } from "../model/sim";
+import { hostStatus, running, serviceBadges, sim, simTime, simVersion, wanStatus } from "../model/sim";
 import {
   addZone,
   beginCoalesce,
@@ -57,6 +57,7 @@ function roleGroup(role: Role): "end" | "switching" | "routing" {
   return "routing";
 }
 import { GlyphInSvg, Icon } from "./Icons";
+import { FrameDetail } from "./PacketDetail";
 
 type Drag =
   /** 선택된 장치들을 함께 옮긴다. starts = 드래그 시작 시 각 장치 위치 */
@@ -130,6 +131,18 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
     if (e.button !== 0 && e.button !== 1) return;
     endCoalesce(); // 이전 드래그가 pointerup 없이 끝났어도 되돌리기 기록이 멈춰 있지 않게
     const target = e.target as Element;
+    // 날아가는 패킷을 누르면 시뮬레이션을 멈추고 그 자리에 상세 카드 (1배속에서 한 구간이 약 0.4초라 멈춰야 읽을 수 있다)
+    const txEl = e.button === 0 ? (target.closest("[data-tx]") as SVGGElement | null) : null;
+    if (txEl) {
+      const tx = sim.inFlight().find((x) => x.id === Number(txEl.dataset.tx));
+      const wrap = svgRef.current!.getBoundingClientRect();
+      if (tx) {
+        running.value = false;
+        packetPick.value = { tx, x: e.clientX - wrap.left, y: e.clientY - wrap.top, w: wrap.width, h: wrap.height };
+      }
+      return;
+    }
+    packetPick.value = null;
     const deviceEl = target.closest("[data-device]") as SVGGElement | null;
     const cableEl = target.closest("[data-cable]") as SVGGElement | null;
     svgRef.current!.setPointerCapture(e.pointerId);
@@ -458,6 +471,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
           )}
         </g>
       </svg>
+      <PacketCard />
       {t.devices.length === 0 && (
         <div class="canvas-empty">
           <h3>무엇부터 볼까요?</h3>
@@ -777,6 +791,51 @@ function ActiveCables({ byId, cables }: { byId: Map<string, Device>; cables: Cab
   return <g class="cables-active">{paths}</g>;
 }
 
+/** 캔버스에서 누른 패킷 (시뮬레이션을 멈추고 상세 카드를 띄운다) */
+const packetPick = signal<{ tx: Transmission; x: number; y: number; w: number; h: number } | null>(null);
+// 다시 재생하면 카드를 닫는다 (그 패킷은 곧 다음 장치로 넘어간다)
+effect(() => {
+  if (running.value) packetPick.value = null;
+});
+
+/** 누른 패킷의 상세 카드. 재생하거나 Esc·빈 곳 클릭으로 닫힌다 */
+function PacketCard() {
+  const pick = packetPick.value;
+  useEffect(() => {
+    if (!pick) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") packetPick.value = null;
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pick]);
+  if (!pick) return null;
+  // 누른 곳이 오른쪽·아래쪽 절반이면 반대 방향으로 펼쳐 캔버스 밖으로 잘리지 않게
+  const pos = {
+    ...(pick.x < pick.w / 2 ? { left: `${pick.x + 14}px` } : { right: `${pick.w - pick.x + 14}px` }),
+    ...(pick.y < pick.h / 2 ? { top: `${pick.y + 14}px` } : { bottom: `${pick.h - pick.y + 14}px` }),
+    // 펼치는 쪽에 남은 공간만큼만 (넘치면 카드 안에서 스크롤)
+    maxHeight: `${Math.max(160, (pick.y < pick.h / 2 ? pick.h - pick.y : pick.y) - 14 - 12)}px`,
+  };
+  const names = new Map(topology.value.devices.map((d) => [d.id, d.name]));
+  const { tx } = pick;
+  return (
+    <div class="packet-card" style={pos} onPointerDown={(e) => e.stopPropagation()}>
+      <div class="packet-card-head">
+        <b>{describeFrame(tx.frame)}</b>
+        <button class="icon-btn" title="닫기 (Esc)" onClick={() => (packetPick.value = null)}>
+          ×
+        </button>
+      </div>
+      <p class="packet-card-route">
+        {names.get(tx.from.node) ?? tx.from.node} → {names.get(tx.to.node) ?? tx.to.node}
+        {tx.lost ? " · 이 케이블에서 손실됨" : ""} · 시뮬레이션 일시정지 중 (재생하면 닫힘)
+      </p>
+      <FrameDetail frame={tx.frame} />
+    </div>
+  );
+}
+
 /** 직전 프레임에 라벨이 보이던 패킷 — 이번 프레임에도 자리를 먼저 잡아 라벨이 켜졌다 꺼졌다 하지 않게 한다 */
 let labelledLastFrame = new Set<number>();
 /** 동시에 나는 패킷이 이보다 많으면 라벨을 아예 그리지 않는다 (읽을 수 없고, 요소 수가 곧 프레임 비용) */
@@ -826,7 +885,8 @@ function PacketLayer({ byId, cables, wireless }: { byId: Map<string, Device>; ca
     const lost = tx.lost && tx.lostAt !== undefined;
     const fade = lost ? Math.max(0.15, 1 - (now - tx.departAt) / (tx.lostAt! - tx.departAt)) : 1;
     return (
-      <g key={tx.id} class={`packet ${frameCategory(tx.frame)}${lost ? " lost" : ""}`} transform={`translate(${p.x},${p.y})`} opacity={fade}>
+      <g key={tx.id} data-tx={tx.id} class={`packet ${frameCategory(tx.frame)}${lost ? " lost" : ""}${packetPick.value?.tx.id === tx.id ? " picked" : ""}`} transform={`translate(${p.x},${p.y})`} opacity={fade}>
+        <circle class="packet-hit" r={13} />
         <circle r={7} />
         {lost && <path d="M-3.5,-3.5 L3.5,3.5 M3.5,-3.5 L-3.5,3.5" />}
         {packets.length <= LABEL_LIMIT && (
