@@ -375,8 +375,7 @@ export class TcpStack {
       conn.readTimer = undefined;
     }
     if (conn.role === "server" && seg.via !== undefined) conn.via = seg.via;
-    // SSH 흉내: 상대 메시지를 받으면 다음 차례 메시지를 보낸다 (로드밸런서가 맡는 포트면 로드밸런서가 먼저)
-    if (conn.role === "server" && conn.localPort === SSH_PORT && !conn.ssh && conn.state === "ESTABLISHED" && !conn.deferred && conn.bytesSent === 0 && conn.via === undefined) conn.ssh = { step: 0, open: false };
+    // SSH 흉내: 상대 메시지를 받으면 다음 차례 메시지를 보낸다
     if (conn.ssh && conn.state === "ESTABLISHED") {
       conn.ssh.step++;
       this.sshNext(conn, ctx);
@@ -387,6 +386,12 @@ export class TcpStack {
       if (this.host.onRequest?.(conn, ctx)) {
         conn.deferred = true;
         this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt}) — 요청을 받았고, 응답은 뒤 서버에서 받아 오는 대로 보냄`, "tcp.ack.sent");
+        return;
+      }
+      // 로드밸런서가 맡지 않은 포트 22 = SSH 서버: 클라이언트의 첫 메시지(버전 알림)를 받았으니 내 차례
+      if (conn.localPort === SSH_PORT && conn.via === undefined) {
+        conn.ssh = { step: 1, open: false };
+        this.sshNext(conn, ctx);
         return;
       }
       // 앱: 요청을 받았으니 응답 세그먼트를 연달아 보내고 FIN
@@ -423,15 +428,15 @@ export class TcpStack {
       this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
       return;
     }
-    this.transmit(conn, { ackFlag: true, len: step.len, data: step.data }, ctx, `SSH ${ssh.step + 1}/${SSH_STEPS.length}: ${step.data} ${step.len}B 전송 (seq=${conn.sndNxt})`, "tcp.data.sent");
+    // 상태를 먼저 갱신하고 보낸다: 내 주소로 보내는 루프백은 transmit 안에서 상대 응답까지 돌아온다
+    const n = ssh.step;
     ssh.step++;
-    if (ssh.step >= SSH_STEPS.length && conn.role === "server") {
-      ssh.open = true;
-      ctx.trace("ssh.open", "app", `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 가 인증함 → 연결을 열어 둔 채 유지`, { conn: conn.id });
-      return;
-    }
+    const opens = ssh.step >= SSH_STEPS.length && conn.role === "server";
+    if (opens) ssh.open = true;
     // 클라이언트: 서버의 다음 메시지를 기다린다 (영원히 안 오면 끝나지 않으므로 timeout)
     if (conn.role === "client") conn.readTimer = ctx.timer(TCP_READ_TIMEOUT, TCP_TIMER_TAG, { conn: conn.id, read: true, step: ssh.step });
+    this.transmit(conn, { ackFlag: true, len: step.len, data: step.data }, ctx, `SSH ${n + 1}/${SSH_STEPS.length}: ${step.data} ${step.len}B 전송 (seq=${conn.sndNxt})`, "tcp.data.sent");
+    if (opens) ctx.trace("ssh.open", "app", `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 가 인증함 → 연결을 열어 둔 채 유지`, { conn: conn.id });
   }
 
   /** 사용자가 연결을 닫는다 (SSH "연결 해제"): FIN 을 보내 정상 종료를 시작 */

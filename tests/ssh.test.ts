@@ -6,6 +6,9 @@ import type { TcpConn } from "../src/core/nodes/tcp";
 import { NetworkSync } from "../src/model/netSync";
 import { exampleHaTopology } from "../src/model/examples";
 import type { Topology } from "../src/model/topology";
+import { L3Node } from "../src/core/nodes/l3";
+import { Internet } from "../src/core/nodes/internet";
+import { lintTopology } from "../src/model/lint";
 
 /** HA 예제에 인터넷 쪽 대신 안쪽 서버를 하나 두고 SSH 22 를 연다 */
 function load(t: Topology = exampleHaTopology()) {
@@ -110,5 +113,75 @@ describe("SSH 세션", () => {
     apply({ ...synced, devices: synced.devices.filter((d) => d.id !== a), cables: synced.cables.filter((c) => c.a.device !== a && c.b.device !== a) });
     act({ kind: "tcp-close", nodeId: id("pc-1"), conn: lastConn("pc-1").id });
     expect(lastConn("pc-1")).toMatchObject({ state: "CLOSED", reason: "정상 종료" });
+  });
+
+  // ---------- 리뷰에서 나온 경우들 ----------
+  const synced = (): Topology => {
+    const base = exampleHaTopology();
+    return { ...base, devices: base.devices.map((d) => (d.l3?.ha ? { ...d, l3: { ...d.l3, ha: { ...d.l3.ha, sync: true } } } : d)) };
+  };
+  const without = (t: Topology, name: string): Topology => {
+    const id = t.devices.find((d) => d.name === name)!.id;
+    return { ...t, devices: t.devices.filter((d) => d.id !== id), cables: t.cables.filter((c) => c.a.device !== id && c.b.device !== id) };
+  };
+
+  it("리뷰: B 가 master 인 동안 연 세션도, 우선순위 높은 A 가 돌아와 가져갈 때(preempt) 전체 복사로 이어진다", () => {
+    const t = synced();
+    const { id, act, apply, lastConn } = load(t);
+    apply(without(t, "방화벽 A"));
+    act({ kind: "tcp-connect", nodeId: id("pc-2"), dst: "93.184.216.34", port: 22 });
+    expect(lastConn("pc-2")).toMatchObject({ state: "ESTABLISHED", ssh: { open: true } });
+    apply(t); // A 복귀 → preempt
+    act({ kind: "tcp-close", nodeId: id("pc-2"), conn: lastConn("pc-2").id });
+    expect(lastConn("pc-2")).toMatchObject({ state: "CLOSED", reason: "정상 종료" });
+  });
+
+  it("리뷰: 갈라졌던 동안 양쪽이 같은 공인 id 를 따로 할당해도, 동기화로 덮어쓸 때 옛 연결을 지워 응답이 엉뚱한 호스트로 가지 않는다", () => {
+    const t = synced();
+    const { s, id, host, act, apply } = load(t);
+    act({ kind: "ping", nodeId: id("pc-1"), dst: "8.8.8.8" });
+    const cutA = { ...t, cables: t.cables.filter((c) => !([c.a.device, c.b.device].includes(id("방화벽 A")) && [c.a.device, c.b.device].includes(id("inside 스위치")))) };
+    apply(cutA);
+    act({ kind: "ping", nodeId: id("pc-2"), dst: "8.8.8.8" });
+    apply(t);
+    act({ kind: "ping", nodeId: id("laptop-1"), dst: "8.8.8.8" });
+    apply(without(t, "방화벽 A"));
+    act({ kind: "ping", nodeId: id("pc-2"), dst: "8.8.8.8" });
+    expect(host("pc-2").pings.at(-1)!.status).toBe("ok");
+    expect((s.net.nodes.get(id("방화벽 B")) as L3Node).nat).toBeDefined();
+  });
+
+  it("리뷰: 자기 주소로 SSH 접속(루프백)도 세션이 열린다", () => {
+    const { id, act, lastConn } = load(withSshServer());
+    act({ kind: "tcp-connect", nodeId: id("laptop-1"), dst: "192.168.0.12", port: 22 });
+    expect(lastConn("laptop-1")).toMatchObject({ state: "ESTABLISHED", ssh: { open: true, step: 6 } });
+  });
+
+  it("리뷰: 전체 복사는 같은 순간 한 번만 (VIP 인터페이스마다 후보 알림이 와도)", () => {
+    const t = synced();
+    const { id, act, apply, s } = load(without(t, "방화벽 B"));
+    act({ kind: "ping", nodeId: id("pc-1"), dst: "8.8.8.8" });
+    const from = s.net.trace.length;
+    apply(t);
+    const bulks = s.net.trace.slice(from).filter((e) => e.kind === "ha.sync" && e.nodeId === id("방화벽 A") && e.summary.includes("전체 복사"));
+    expect(bulks.length).toBe(1);
+  });
+
+  it("리뷰: 인터넷에서 포트 포워딩으로 들어온 SSH 세션도 인터넷 쪽에서 연결 해제할 수 있다", () => {
+    const base = withSshServer();
+    const t: Topology = { ...base, devices: base.devices.map((d) => (d.l3?.ha ? { ...d, l3: { ...d.l3, forwards: [{ publicPort: 22, lanIp: "192.168.0.12", lanPort: 22, proto: "tcp" as const }], firewall: { ...d.l3.firewall!, rules: [...d.l3.firewall!.rules, { action: "allow" as const, proto: "tcp" as const, direction: "in" as const, src: "", dst: "192.168.0.12", dstPort: "22" }] } } } : d)) };
+    const { s, id, act } = load(t);
+    act({ kind: "inet-connect", nodeId: id("internet-1"), dst: "203.0.113.10", port: 22 });
+    const inet = s.net.nodes.get(id("internet-1")) as Internet;
+    const c = [...inet.tcp.conns.values()].filter((x) => x.localIp === Internet.REMOTE_CLIENT).at(-1)!;
+    expect(c).toMatchObject({ state: "ESTABLISHED", ssh: { open: true } });
+    act({ kind: "tcp-close", nodeId: id("internet-1"), conn: c.id });
+    expect(c.state).toBe("CLOSED");
+  });
+
+  it("리뷰: 로드밸런서 포트를 22 로 두면 구성 검사가 경고한다", () => {
+    const base = withSshServer();
+    const t: Topology = { ...base, devices: base.devices.map((d) => (d.name === "laptop-1" ? { ...d, host: { ...d.host!, lb: { enabled: true, port: 22, algorithm: "round-robin" as const, backends: [{ ip: "192.168.0.11", port: 22 }] } } } : d)) };
+    expect(lintTopology(t).map((i) => i.code)).toContain("lb.ssh-port");
   });
 });

@@ -43,8 +43,14 @@ export class NatTable {
   /** 다른 장비(이중화 master)가 만든 매핑을 공인 id 그대로 받아 둔다. 이후 이 장비가 할당할 id 와 겹치지 않게 한다 */
   importEntry(e: Pick<NatEntry, "proto" | "lanIp" | "innerId" | "publicId">, now: number): void {
     const natKey = `${e.proto}:${e.publicId}`;
+    const innerKey = `${e.proto}:${e.lanIp}:${e.innerId}`;
+    // 같은 공인 id 를 다른 내부 호스트가 쓰고 있었으면(갈라졌던 동안 양쪽이 따로 할당) 그 연결을 지우고, 같은 내부 호스트의 옛 매핑도 지운다
+    const old = this.entries.get(natKey);
+    if (old) this.byInner.delete(`${old.proto}:${old.lanIp}:${old.innerId}`);
+    const prevKey = this.byInner.get(innerKey);
+    if (prevKey && prevKey !== natKey) this.entries.delete(prevKey);
     this.entries.set(natKey, { ...e, createdAt: now, lastUsed: now });
-    this.byInner.set(`${e.proto}:${e.lanIp}:${e.innerId}`, natKey);
+    this.byInner.set(innerKey, natKey);
     if (e.publicId >= this.seq) this.seq = e.publicId + 1;
   }
 

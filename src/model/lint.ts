@@ -901,6 +901,15 @@ export function lintTopology(t: Topology): LintIssue[] {
         fix: `${d.name} → 로드밸런서 → 백엔드에서 자기 자신이나 자기를 가리키는 로드밸런서를 빼고 실제 서버를 넣기`,
       });
     }
+    if (d.host?.lb?.port === 22) {
+      add({
+        deviceId: d.id,
+        severity: "warn",
+        code: "lb.ssh-port",
+        message: "로드밸런서가 포트 22 를 받음 → 이 로드밸런서는 HTTP 요청만 나누는 L7 프록시라 SSH 세션은 백엔드로 이어지지 않음",
+        fix: `${d.name} → 로드밸런서 → 받는 포트를 80 등 웹 포트로 (SSH 는 백엔드 서버에 바로 접속)`,
+      });
+    }
     const backends = lbBackends(d);
     if (backends.length === 0) {
       add({

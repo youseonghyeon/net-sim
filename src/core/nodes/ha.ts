@@ -216,6 +216,8 @@ export class Ha {
       }
       if (this.outranks(msg, mine)) {
         ctx.trace("ha.advert", "L3", `[${name}] 더 높은 우선순위 ${msg.priority} 의 ${src} 광고 수신 (나는 ${mine}) → master 를 넘긴다 (preempt)`, { from: src, priority: msg.priority }, frameId);
+        // 넘기기 전에 지금까지의 세션을 새 master(아직 후보) 에게 전부 복사해 준다 — 넘어가도 이어지게
+        if (msg.candidate) this.host.onBackupSeen?.(ctx);
         this.resign(ctx, `더 높은 우선순위의 ${src} 가 있음`);
         this.masterIp = src;
         return;

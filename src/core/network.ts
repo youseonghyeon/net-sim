@@ -327,7 +327,7 @@ export class Network {
         break;
       case "tcp-close":
         ctx.trace("action", "sys", `[사용자] 연결 해제 ${action.conn.split("-")[1] ?? action.conn}`, { ...action });
-        if (!this.getHost(action.nodeId).tcp.disconnect(action.conn, ctx)) ctx.trace("tcp.ignore", "L4", `닫을 연결이 없음 (이미 끝났거나 연결 중이 아님)`, { conn: action.conn });
+        if (!(node instanceof Internet ? node.tcp : this.getHost(action.nodeId).tcp).disconnect(action.conn, ctx)) ctx.trace("tcp.ignore", "L4", `닫을 연결이 없음 (이미 끝났거나 연결 중이 아님)`, { conn: action.conn });
         break;
       case "inet-connect":
         if (!(node instanceof Internet)) throw new Error(`${action.nodeId} is not an internet node`);

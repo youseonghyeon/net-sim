@@ -58,11 +58,24 @@ export function InternetDiagSection({ d }: { d: Device }) {
         return (
           <ul class="ping-log tcp-log">
             {conns.map((c) => (
-              <li key={c.id} class={c.state === "FAILED" ? "failed" : c.state === "CLOSED" && c.bytesReceived > 0 ? "ok" : ""}>
+              <li key={c.id} class={c.state === "FAILED" ? "failed" : (c.state === "CLOSED" && c.bytesReceived > 0) || (c.ssh?.open && c.state === "ESTABLISHED") ? "ok" : ""}>
                 <span class="mono">
                   → {c.remoteIp}:{c.remotePort}
                 </span>
-                <span>{c.state === "FAILED" ? `실패 · ${c.reason ?? ""}` : c.state === "CLOSED" ? `종료됨 · 받음 ${c.bytesReceived}B` : TCP_STATE_LABEL[c.state]}</span>
+                <span>
+                  {c.state === "FAILED"
+                    ? `실패 · ${c.reason ?? ""}`
+                    : c.state === "CLOSED"
+                      ? `종료됨 · 받음 ${c.bytesReceived}B`
+                      : c.ssh?.open && c.state === "ESTABLISHED"
+                        ? "SSH 세션 열림"
+                        : TCP_STATE_LABEL[c.state]}
+                </span>
+                {c.ssh && c.state === "ESTABLISHED" && (
+                  <button class="btn ghost small" onClick={() => sim.act({ kind: "tcp-close", nodeId: d.id, conn: c.id })} title="FIN 을 보내 세션을 닫습니다">
+                    연결 해제
+                  </button>
+                )}
               </li>
             ))}
           </ul>

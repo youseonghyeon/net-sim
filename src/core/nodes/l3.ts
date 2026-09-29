@@ -116,7 +116,9 @@ export class L3Node implements SimNode {
       this.rip.kick(ctx); // RIP 넥스트 홉(가상 주소)을 다시 알린다
     },
     onBackupSeen: (ctx) => {
-      if (!this.syncing()) return;
+      // 후보 알림은 VIP 인터페이스마다 오므로 같은 순간에는 한 번만 보낸다
+      if (!this.syncing() || this.lastBulkAt === ctx.now) return;
+      this.lastBulkAt = ctx.now;
       const nat = (this.nat?.values() ?? []).map((e) => ({ proto: e.proto, lanIp: e.lanIp, innerId: e.innerId, publicId: e.publicId }));
       this.sendSync({ kind: "pfsync", vrid: this.ha.config.vrid, nat, flows: this.firewall.flowKeys(), bulk: true }, ctx);
     },
@@ -462,6 +464,7 @@ export class L3Node implements SimNode {
   }
 
   private pendingSync: { nat: PfsyncPacket["nat"]; flows: string[] } | undefined;
+  private lastBulkAt: number | undefined;
 
   private syncing(): boolean {
     return this.ha.config.enabled && this.ha.config.sync === true && this.ha.state === "master";
