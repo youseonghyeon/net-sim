@@ -845,11 +845,43 @@ export function lintTopology(t: Topology): LintIssue[] {
     });
   }
 
-  // 규칙 14: 로드밸런서 — 백엔드가 없거나, 백엔드로 적은 서버가 그 포트를 열지 않음
+  // 규칙 14: 로드밸런서 — 백엔드가 없거나, 백엔드로 적은 서버가 그 포트를 열지 않거나, 로드밸런서끼리 순환
+  // 백엔드는 시뮬레이션(netSync effectiveLb)과 같은 기준으로 거른다: 올바른 주소 + 포트 1~65535
+  const validPort = (n: number) => Number.isInteger(n) && n >= 1 && n <= 65535;
+  const lbBackends = (d: Device) => (d.host?.lb?.backends ?? []).filter((b) => validIp(b.ip) && validPort(b.port));
+  // "주소:포트" → 그 자리에서 듣는 로드밸런서 장치 (수동 주소만: 주소를 모르면 판단하지 않는다)
+  const lbAt = new Map<string, Device>();
+  for (const d of t.devices) {
+    const lb = d.host?.lb;
+    if (lb?.enabled && d.host!.ipMode === "static" && validIp(d.host!.ip) && validPort(lb.port)) lbAt.set(`${d.host!.ip}:${lb.port}`, d);
+  }
   for (const d of t.devices) {
     const lb = d.host?.lb;
     if (!lb?.enabled) continue;
-    const backends = lb.backends.filter((b) => validIp(b.ip));
+    // 순환: 백엔드를 따라가다 자기 자신으로 돌아오면 요청이 로드밸런서 사이를 돈다 (시뮬레이션은 Via 5개에서 508 로 끊음)
+    const seen = new Set<string>();
+    const stack = lbBackends(d).map((b) => `${b.ip}:${b.port}`);
+    let loop = false;
+    while (stack.length && !loop) {
+      const k = stack.pop()!;
+      const next = lbAt.get(k);
+      if (!next) continue;
+      if (next === d) loop = true;
+      else if (!seen.has(next.id)) {
+        seen.add(next.id);
+        stack.push(...lbBackends(next).map((b) => `${b.ip}:${b.port}`));
+      }
+    }
+    if (loop) {
+      add({
+        deviceId: d.id,
+        severity: "error",
+        code: "lb.loop",
+        message: `백엔드를 따라가면 이 로드밸런서로 돌아옴 → 요청이 로드밸런서 사이를 돌다 508 Loop Detected`,
+        fix: `${d.name} → 로드밸런서 → 백엔드에서 자기 자신이나 자기를 가리키는 로드밸런서를 빼고 실제 서버를 넣기`,
+      });
+    }
+    const backends = lbBackends(d);
     if (backends.length === 0) {
       add({
         deviceId: d.id,

@@ -243,12 +243,18 @@ export function DiagSection({ d }: { d: Device }) {
         return (
           <ul class="ping-log tcp-log">
             {conns.map((c) => (
-              <li key={c.id} class={c.state === "FAILED" ? "failed" : c.state === "CLOSED" && c.bytesReceived > 0 ? "ok" : ""}>
+              <li key={c.id} class={c.state === "FAILED" || c.status?.startsWith("HTTP 5") ? "failed" : c.state === "CLOSED" && c.bytesReceived > 0 ? "ok" : ""}>
                 <span class="mono">
                   {c.remoteIp}:{c.remotePort}
                 </span>
                 <span>
-                  {c.state === "FAILED" ? `실패 · ${c.reason ?? ""}` : c.state === "CLOSED" ? `종료됨 · 받음 ${c.bytesReceived}B${c.servedBy ? ` · 응답 ${c.servedBy}` : ""}` : TCP_STATE_LABEL[c.state]}
+                  {c.state === "FAILED"
+                    ? `실패 · ${c.reason ?? ""}`
+                    : c.status?.startsWith("HTTP 5")
+                      ? `${c.status}${c.servedBy ? ` · ${c.servedBy}` : ""}`
+                      : c.state === "CLOSED"
+                        ? `종료됨 · 받음 ${c.bytesReceived}B${c.servedBy ? ` · 응답 ${c.servedBy}` : ""}`
+                        : TCP_STATE_LABEL[c.state]}
                 </span>
               </li>
             ))}

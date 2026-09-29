@@ -49,6 +49,8 @@ export interface TcpSegment {
   data?: string;
   /** 응답을 실제로 만든 서버 (로드밸런서가 붙이는 X-Served-By 헤더 흉내). 학습용 표시 */
   origin?: string;
+  /** 요청이 거친 로드밸런서 수 (HTTP Via 헤더 흉내). 로드밸런서끼리 순환하면 이 값으로 끊는다 */
+  via?: number;
 }
 
 export interface IcmpEcho {

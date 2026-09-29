@@ -21,6 +21,8 @@ export const TCP_STATE_LABEL: Record<TcpState, string> = {
 export const TCP_RTO = 400;
 export const TCP_MAX_RETRIES = 3;
 export const TCP_TIMER_TAG = "tcp-rto";
+/** 요청을 보낸 뒤 응답 첫 바이트를 기다리는 시간 (HTTP 클라이언트의 read timeout). 중간 로드밸런서가 끊겨도 영원히 기다리지 않게 */
+export const TCP_READ_TIMEOUT = 10_000;
 export const CLIENT_ISS = 1000;
 export const SERVER_ISS = 3000;
 const EPHEMERAL_START = 49152;
@@ -60,6 +62,12 @@ export interface TcpConn {
   deferred?: boolean;
   /** 클라이언트: 응답을 실제로 만든 서버 (로드밸런서 뒤의 백엔드) */
   servedBy?: string;
+  /** 클라이언트: 받은 응답의 상태 줄 (예: "HTTP 200", "HTTP 502 Bad Gateway") */
+  status?: string;
+  /** 요청이 거친 로드밸런서 수 (클라이언트: 보낼 값, 서버: 받은 값) */
+  via?: number;
+  /** 클라이언트: 응답 대기 timeout 타이머 */
+  readTimer?: TimerHandle;
 }
 
 export interface TcpHost {
@@ -98,7 +106,11 @@ export class TcpStack {
 
   // ---------- 클라이언트 ----------
 
-  connect(localIp: Ip, remoteIp: Ip, remotePort: number, ctx: NodeContext): TcpConn {
+  /**
+   * @param via 이 요청이 이미 거친 로드밸런서 수 (로드밸런서가 백엔드로 보낼 때만)
+   * @param onCreated SYN 을 보내기 전에 부른다. 내 주소로 가는 루프백은 connect 안에서 연결이 끝까지 진행되므로, 추적할 쪽은 여기서 등록한다
+   */
+  connect(localIp: Ip, remoteIp: Ip, remotePort: number, ctx: NodeContext, via?: number, onCreated?: (conn: TcpConn) => void): TcpConn {
     const localPort = this.nextPort++;
     const conn: TcpConn = {
       id: connKey(localIp, localPort, remoteIp, remotePort),
@@ -119,9 +131,11 @@ export class TcpStack {
       responseSegments: this.responseSegments,
       finReceived: false,
       createdAt: ctx.now,
+      ...(via !== undefined ? { via } : {}),
     };
     this.conns.set(conn.id, conn);
     this.prune();
+    onCreated?.(conn);
     ctx.trace("tcp.connect", "L4", `TCP 연결 시작: ${endpoint(localIp, localPort)} → ${endpoint(remoteIp, remotePort)} (초기 seq ${conn.iss})`, { conn: conn.id });
     this.transmit(conn, { syn: true }, ctx, `SYN 전송: "연결하자" seq=${conn.iss}`, "tcp.syn.sent");
     return conn;
@@ -185,8 +199,9 @@ export class TcpStack {
           ctx.trace("tcp.synack.received", "L4", `SYN·ACK 수신: 서버 초기 seq ${seg.seq}, 내 SYN 확인(ack ${seg.ack})`, { conn: conn.id });
           this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송: 3-way handshake 완료 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
           ctx.trace("tcp.established", "L4", `연결 성립 ${endpoint(conn.localIp, conn.localPort)} ↔ ${endpoint(conn.remoteIp, conn.remotePort)}`, { conn: conn.id });
-          // 앱: 요청 전송
-          this.transmit(conn, { ackFlag: true, len: REQUEST_BYTES, data: "GET /" }, ctx, `요청 데이터 전송: "GET /" ${REQUEST_BYTES}B (seq=${conn.sndNxt})`, "tcp.data.sent");
+          // 앱: 요청 전송. 응답이 영원히 안 오면 끝나지 않으므로 응답 대기 timeout 을 건다
+          this.transmit(conn, { ackFlag: true, len: REQUEST_BYTES, data: "GET /", ...(conn.via !== undefined ? { via: conn.via } : {}) }, ctx, `요청 데이터 전송: "GET /" ${REQUEST_BYTES}B (seq=${conn.sndNxt})${conn.via ? ` — 로드밸런서 ${conn.via}개 거침 (Via)` : ""}`, "tcp.data.sent");
+          conn.readTimer = ctx.timer(TCP_READ_TIMEOUT, TCP_TIMER_TAG, { conn: conn.id, read: true });
         } else {
           ctx.trace("tcp.ignore", "L4", `SYN_SENT 상태에서 기대하지 않은 ${flags} → 무시`, { conn: conn.id });
         }
@@ -318,7 +333,13 @@ export class TcpStack {
     conn.rcvNxt = seg.seq + seg.len;
     conn.bytesReceived += seg.len;
     ctx.trace("tcp.data.received", "L4", `데이터 수신: ${seg.data ?? ""} ${seg.len}B (seq ${seg.seq}) → 누적 ${conn.bytesReceived}B, 다음 기대 seq ${conn.rcvNxt}`, { conn: conn.id, seq: seg.seq, len: seg.len });
-    if (seg.origin && conn.role === "client") conn.servedBy = seg.origin;
+    if (conn.role === "client") {
+      if (seg.origin) conn.servedBy = seg.origin;
+      if (conn.status === undefined && seg.data) conn.status = /^HTTP \d{3}( [A-Za-z ]+)?/.exec(seg.data)?.[0].trim();
+      conn.readTimer?.cancel();
+      conn.readTimer = undefined;
+    }
+    if (conn.role === "server" && seg.via !== undefined) conn.via = seg.via;
     if (conn.role === "server" && conn.state === "ESTABLISHED" && conn.bytesSent === 0 && !conn.deferred) {
       // 앱이 요청을 맡으면(로드밸런서) 받았다는 ACK 만 보내고 응답은 나중에
       if (this.host.onRequest?.(conn, ctx)) {
@@ -388,13 +409,14 @@ export class TcpStack {
     };
     const consumes = seg.len + (seg.syn ? 1 : 0) + (seg.fin ? 1 : 0);
     ctx.trace(kind, "L4", summary, { conn: conn.id, seq: seg.seq, ack: seg.ack, len: seg.len });
-    this.host.send(this.packet(conn.localIp, conn.remoteIp, seg), ctx);
+    // 상태를 먼저 갱신하고 보낸다: 내 주소로 보내는 루프백은 그 자리에서 처리돼 곧바로 다음 세그먼트를 부르므로
     if (consumes > 0) {
       conn.sndNxt += consumes;
       conn.bytesSent += seg.len;
       const timer = ctx.timer(TCP_RTO, TCP_TIMER_TAG, { conn: conn.id, seq: seg.seq });
       conn.unacked.push({ seg, retries: 0, timer });
     }
+    this.host.send(this.packet(conn.localIp, conn.remoteIp, seg), ctx);
   }
 
   private packet(src: Ip, dst: Ip, seg: Omit<TcpSegment, "kind">): Ipv4Packet {
@@ -402,9 +424,22 @@ export class TcpStack {
   }
 
   onTimer(data: unknown, ctx: NodeContext): void {
-    const { conn: id, seq } = data as { conn: string; seq: number };
+    const { conn: id, seq, read } = data as { conn: string; seq: number; read?: boolean };
     const conn = this.conns.get(id);
     if (!conn) return;
+    if (read) {
+      conn.readTimer = undefined;
+      if (conn.state !== "ESTABLISHED" || conn.bytesReceived > 0) return;
+      // 요청은 상대가 받았는데(ACK) 응답이 오지 않음: 중간 로드밸런서가 끊겼거나 백엔드에서 멈춤. RST 로 알리고 포기
+      conn.state = "FAILED";
+      conn.reason = `timeout · 응답 없음 (요청은 전달됨, ${TCP_READ_TIMEOUT / 1000}초)`;
+      conn.closedAt = ctx.now;
+      this.cancelAll(conn);
+      ctx.trace("tcp.failed", "L4", `응답 timeout: 요청은 ${endpoint(conn.remoteIp, conn.remotePort)} 가 받았지만(ACK) ${TCP_READ_TIMEOUT / 1000}초 동안 응답이 없음 → RST 로 끊음. 상대 뒤의 서버(로드밸런서의 백엔드 등)를 확인`, { conn: conn.id });
+      this.host.send(this.packet(conn.localIp, conn.remoteIp, { srcPort: conn.localPort, dstPort: conn.remotePort, seq: conn.sndNxt, ack: conn.rcvNxt, rst: true, ackFlag: true, len: 0 }), ctx);
+      this.host.onFinish?.(conn, ctx);
+      return;
+    }
     const u = conn.unacked.find((x) => x.seg.seq === seq);
     if (!u) return;
     if (u.retries >= TCP_MAX_RETRIES) {
@@ -435,6 +470,8 @@ export class TcpStack {
   private cancelAll(conn: TcpConn): void {
     for (const u of conn.unacked) u.timer.cancel();
     conn.unacked = [];
+    conn.readTimer?.cancel();
+    conn.readTimer = undefined;
   }
 
   /** 노드 삭제/링크 끊김 등으로 모든 연결을 정리 */

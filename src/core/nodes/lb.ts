@@ -33,6 +33,9 @@ export const DEFAULT_LB: LbConfig = { enabled: false, port: 80, algorithm: "roun
 export const LB_FAIL_TIMEOUT = 10_000;
 /** 살아 있는 백엔드가 하나도 없을 때 돌려주는 응답 */
 const BAD_GATEWAY = { len: 200, data: "HTTP 502 Bad Gateway" };
+/** 요청이 로드밸런서를 이만큼 거쳤으면 순환 구성으로 보고 끊는다 (LB 끼리 서로를 백엔드로 둔 경우) */
+export const LB_MAX_HOPS = 5;
+const LOOP_DETECTED = { len: 200, data: "HTTP 508 Loop Detected" };
 const RESPONSE_SEGMENT_BYTES = 1000;
 
 const keyOf = (b: LbBackend) => `${b.ip}:${b.port}`;
@@ -124,6 +127,12 @@ export class LoadBalancer {
   }
 
   private forward(down: TcpConn, tried: Set<string>, ctx: NodeContext): void {
+    const hops = down.via ?? 0;
+    if (hops >= LB_MAX_HOPS) {
+      ctx.trace("lb.fail", "app", `로드밸런서: 요청이 이미 로드밸런서 ${hops}개를 거침 (Via) → 로드밸런서끼리 서로를 백엔드로 둔 순환으로 보고 508 Loop Detected`, { via: hops });
+      this.tcp.respond(down, [LOOP_DETECTED], ctx);
+      return;
+    }
     const me = this.localIp();
     const b = me ? this.pick(ctx.now, tried) : undefined;
     if (!b || !me) {
@@ -138,8 +147,7 @@ export class LoadBalancer {
         ? `최소 연결 (진행 중 ${this.active(b)}개)`
         : `라운드 로빈 (살아 있는 ${alive.length}대 중 차례)`;
     ctx.trace("lb.pick", "app", `로드밸런서: 클라이언트 ${down.remoteIp} 의 요청 → 백엔드 ${keyOf(b)} 선택 — ${why}. LB 가 대신 연결해 요청`, { backend: keyOf(b), client: down.remoteIp });
-    const up = this.tcp.connect(me, b.ip, b.port, ctx);
-    this.pending.set(up.id, { down, backend: b, tried });
+    this.tcp.connect(me, b.ip, b.port, ctx, hops + 1, (up) => this.pending.set(up.id, { down, backend: b, tried }));
   }
 
   /** 백엔드 연결이 끝남: 응답을 받았으면 클라이언트에게 전달, 실패면 빼 두고 다음 백엔드로. LB 가 처리한 연결이면 true */
@@ -150,21 +158,30 @@ export class LoadBalancer {
     const key = keyOf(p.backend);
     const st = this.stats.get(key) ?? { served: 0, fails: 0 };
     this.stats.set(key, st);
-    if (up.state === "CLOSED" && up.bytesReceived > 0) {
+    // 응답을 끝까지 받았으면(상대 FIN 까지) 마지막 종료 절차가 timeout 이어도 성공으로 본다
+    if (up.bytesReceived > 0 && (up.state === "CLOSED" || up.finReceived)) {
       st.served++;
+      // 받은 응답을 상태 줄 그대로 전달한다 (뒤에서 502·508 이 오면 그대로). 응답을 만든 서버는 뒤 LB 가 알려 준 것을 우선
+      const status = up.status ?? "HTTP 200";
+      const origin = up.servedBy ?? p.backend.ip;
       const n = Math.max(1, Math.ceil(up.bytesReceived / RESPONSE_SEGMENT_BYTES));
-      ctx.trace("lb.relay", "app", `로드밸런서: 백엔드 ${key} 의 응답 ${up.bytesReceived}B 를 클라이언트 ${p.down.remoteIp} 에게 전달`, { backend: key, bytes: up.bytesReceived });
+      ctx.trace("lb.relay", "app", `로드밸런서: 백엔드 ${key} 의 응답 (${status}, ${up.bytesReceived}B) 을 클라이언트 ${p.down.remoteIp} 에게 전달${origin !== p.backend.ip ? ` — 응답을 만든 서버는 그 뒤의 ${origin}` : ""}`, { backend: key, bytes: up.bytesReceived, status });
       this.tcp.respond(
         p.down,
-        Array.from({ length: n }, (_, k) => ({ len: Math.min(RESPONSE_SEGMENT_BYTES, up.bytesReceived - k * RESPONSE_SEGMENT_BYTES), data: `HTTP 200 (${k + 1}/${n})` })),
+        Array.from({ length: n }, (_, k) => ({ len: Math.min(RESPONSE_SEGMENT_BYTES, up.bytesReceived - k * RESPONSE_SEGMENT_BYTES), data: status === "HTTP 200" ? `HTTP 200 (${k + 1}/${n})` : status })),
         ctx,
-        p.backend.ip,
+        origin,
       );
       return true;
     }
-    // 거부(RST)나 timeout 만 백엔드 탓. 내 링크가 끊겨 중단된 것은 빼지 않는다
+    if (p.down.state !== "ESTABLISHED") return true; // 기다리던 클라이언트가 이미 없다
+    // 거부(RST)나 timeout 만 백엔드 탓. 내 링크가 끊기는 등으로 중단된 것은 빼지 않고, 기다리는 클라이언트에게 502 로 알린다
     const backendFault = up.reason?.startsWith("timeout") || up.reason === "연결 거부 (RST)";
-    if (!backendFault || p.down.state !== "ESTABLISHED") return true;
+    if (!backendFault) {
+      ctx.trace("lb.fail", "app", `로드밸런서: 백엔드 ${key} 연결이 중단됨 (${up.reason ?? "?"}) → 클라이언트 ${p.down.remoteIp} 에게 502 Bad Gateway`, { backend: key });
+      this.tcp.respond(p.down, [BAD_GATEWAY], ctx);
+      return true;
+    }
     st.fails++;
     this.downUntil.set(key, ctx.now + LB_FAIL_TIMEOUT);
     p.tried.add(key);

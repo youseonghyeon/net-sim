@@ -63,16 +63,21 @@ function failureReason(net: Network, fromIndex: number, fallback: string | undef
  * mode "tcp" 면 port 를 열어 둔 서버만 후보로 삼고 TCP 연결로 확인한다
  */
 export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", port = 80): ReachResult {
-  const sync = new NetworkSync();
-  const net = sync.net;
-  try {
-    sync.sync(t);
-    net.runToIdle(50_000);
-  } catch {
-    return { candidates: [], note: "구성이 커서 확인하지 못했습니다" };
-  }
-  const src = net.nodes.get(fromId);
-  if (!(src instanceof Host)) return { candidates: [] };
+  /** 복제본을 새로 만든다. 한 후보에서 이벤트 한도를 넘으면 큐가 어지러워지므로 다음 후보는 새 복제본에서 */
+  const fresh = (): { net: Network; src: Host } | undefined => {
+    const sync = new NetworkSync();
+    try {
+      sync.sync(t);
+      sync.net.runToIdle(50_000);
+    } catch {
+      return undefined;
+    }
+    const n = sync.net.nodes.get(fromId);
+    return n instanceof Host ? { net: sync.net, src: n } : undefined;
+  };
+  const first = fresh();
+  if (!first) return t.devices.some((d) => d.id === fromId && d.host) ? { candidates: [], note: "구성이 커서 확인하지 못했습니다" } : { candidates: [] };
+  let { net, src } = first;
   if (!src.ip) return { candidates: [], note: "이 장치에 IP 가 없어 닿는 곳을 확인할 수 없습니다 (IP 미설정)" };
   const srcIp = src.ip;
   const srcPrefix = src.iface.prefix;
@@ -141,12 +146,15 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
         net.scheduleAction(net.now, { kind: "tcp-connect", nodeId: fromId, dst: c.value, port });
         net.runToIdle(20_000);
         const conn = [...src.tcp.conns.values()].at(-1);
-        ok = conn?.state === "CLOSED" && conn.bytesReceived > 0;
-        reason = conn?.reason;
+        const httpError = conn?.status?.startsWith("HTTP 5");
+        ok = conn?.state === "CLOSED" && conn.bytesReceived > 0 && !httpError;
+        reason = httpError ? `${conn!.status} (로드밸런서 뒤 백엔드 문제)` : conn?.reason;
         resolved = c.isName ? conn?.remoteIp : undefined;
       }
     } catch {
-      reason = "확인 중 이벤트가 너무 많음";
+      reason = "확인 중 이벤트가 너무 많음 (순환 구성 의심)";
+      const again = fresh();
+      if (again) ({ net, src } = again);
     }
     // 같은 사설 주소를 쓰는 장치가 여러 대면(두 집이 모두 192.168.0.x) 실제로 응답한 장치 이름을 붙인다
     let label = c.label;
