@@ -4,8 +4,9 @@ import { Host } from "../src/core/nodes/host";
 import { L3Node } from "../src/core/nodes/l3";
 import { lintTopology } from "../src/model/lint";
 import { NetworkSync } from "../src/model/netSync";
+import { probeTargets } from "../src/model/reach";
 import { exampleVpnTopology } from "../src/model/examples";
-import type { Topology } from "../src/model/topology";
+import { createDevice, parseTopology, serializeTopology, type Device, type Topology } from "../src/model/topology";
 
 function load(t: Topology = exampleVpnTopology()) {
   const s = new NetworkSync();
@@ -85,5 +86,97 @@ describe("VPN", () => {
     const tr = act({ kind: "ping", nodeId: id("pc-b"), dst: "192.168.1.10" });
     expect(tr.some((e) => e.kind === "vpn.drop" && e.nodeId === id("사무실 A NAT") && e.summary.includes("허용하지 않은"))).toBe(true);
     expect(s).toBeDefined();
+  });
+
+  it("VPN 게이트웨이가 VPN 을 안 켠 NAT 박스 뒤에 있어도 UDP 51820 포워딩으로 터널이 이어진다 (구성 검사도 포워딩 너머를 상대로 본다)", () => {
+    const base = exampleVpnTopology();
+    const devices: Device[] = base.devices.map((d) =>
+      d.name === "사무실 B NAT"
+        ? { ...d, l3: { interfaces: [d.l3!.interfaces[0]!, { ipMode: "static", ip: "10.0.0.1", prefix: 24, gateway: "" }], routes: [{ dest: "192.168.2.0", prefix: 24, via: "10.0.0.2" }], forwards: [{ publicPort: 51820, lanIp: "10.0.0.2", lanPort: 51820, proto: "udp" }] } }
+        : d,
+    );
+    const gw = createDevice("gateway", 640, 128, devices);
+    gw.name = "vpn-gw-b";
+    gw.l3 = {
+      interfaces: [
+        { ipMode: "static", ip: "10.0.0.2", prefix: 24, gateway: "10.0.0.1" },
+        { ipMode: "static", ip: "192.168.2.1", prefix: 24, gateway: "" },
+        { ipMode: "static", ip: "", prefix: 24, gateway: "" },
+      ],
+      routes: [],
+      vpn: { enabled: true, peer: "203.0.113.11", remote: [{ dest: "192.168.1.0", prefix: 24 }] },
+    };
+    devices.push(gw);
+    const natB = devices.find((d) => d.name === "사무실 B NAT")!;
+    const swB = devices.find((d) => d.name === "sw-b")!;
+    const cables = base.cables.filter((c) => !(c.a.device === natB.id && c.b.device === swB.id));
+    cables.push({ id: "c-nat-gw", a: { device: natB.id, port: 1 }, b: { device: gw.id, port: 0 } }, { id: "c-gw-sw", a: { device: gw.id, port: 1 }, b: { device: swB.id, port: 3 } });
+    const t: Topology = { devices, cables };
+    expect(lintTopology(t).filter((i) => i.code.startsWith("vpn."))).toEqual([]);
+    const { id, host, act } = load(t);
+    const tr = act({ kind: "ping", nodeId: id("pc-a"), dst: "192.168.2.10" });
+    expect(host("pc-a").pings.at(-1)!.status).toBe("ok");
+    expect(tr.some((e) => e.kind === "vpn.decap" && e.nodeId === gw.id)).toBe(true);
+    expect(tr.some((e) => e.kind === "vpn.drop")).toBe(false);
+    act({ kind: "ping", nodeId: id("pc-b"), dst: "192.168.1.10" });
+    expect(host("pc-b").pings.at(-1)!.status).toBe("ok");
+  });
+
+  it("터널 너머의 없는 주소로 보내면 상대 NAT 가 보낸 Host Unreachable 이 터널로 돌아온다", () => {
+    const { id, act } = load();
+    const tr = act({ kind: "ping", nodeId: id("pc-a"), dst: "192.168.2.99" });
+    expect(tr.some((e) => e.kind === "icmp.unreachable.sent" && e.nodeId === id("사무실 B NAT"))).toBe(true);
+    expect(tr.some((e) => e.kind === "icmp.unreachable.received" && e.nodeId === id("pc-a"))).toBe(true);
+    expect(tr.some((e) => e.kind === "vpn.drop")).toBe(false);
+  });
+
+  it("방화벽: 터널로 나가는 것은 아웃바운드, 풀려서 들어오는 것은 인바운드 (Stateful 이면 응답은 통과)", () => {
+    const base = exampleVpnTopology();
+    const t: Topology = {
+      ...base,
+      devices: base.devices.map((d) =>
+        d.name === "사무실 A NAT" ? { ...d, l3: { ...d.l3!, firewall: { enabled: true, defaultPolicy: "deny", stateful: true, rules: [{ action: "allow", proto: "any", direction: "out", src: "", dst: "", dstPort: "" }] } } } : d,
+      ),
+    };
+    const { id, host, act } = load(t);
+    act({ kind: "ping", nodeId: id("pc-a"), dst: "192.168.2.10" });
+    expect(host("pc-a").pings.at(-1)!.status).toBe("ok");
+    const tr = act({ kind: "ping", nodeId: id("pc-b"), dst: "192.168.1.10" });
+    expect(host("pc-b").pings.at(-1)!.status).toBe("failed");
+    expect(tr.some((e) => e.kind === "fw.deny" && e.nodeId === id("사무실 A NAT"))).toBe(true);
+  });
+
+  it("불러온 JSON 의 VPN 설정이 깨져 있어도(대역 목록 없음) 정리해서 연다", () => {
+    const doc = JSON.parse(serializeTopology(exampleVpnTopology()));
+    const a = doc.devices.find((d: Device) => d.name === "사무실 A NAT");
+    a.l3.vpn = { enabled: true, peer: 5, remote: null };
+    const b = doc.devices.find((d: Device) => d.name === "사무실 B NAT");
+    b.l3.vpn = { enabled: true, peer: "203.0.113.11", remote: [null, { dest: "192.168.1.0", prefix: 99 }] };
+    const { topology, error } = parseTopology(JSON.stringify(doc));
+    expect(error).toBeUndefined();
+    const vpnOf = (n: string) => topology!.devices.find((d) => d.name === n)!.l3!.vpn;
+    expect(vpnOf("사무실 A NAT")).toEqual({ enabled: true, peer: "", remote: [] });
+    expect(vpnOf("사무실 B NAT")).toEqual({ enabled: true, peer: "203.0.113.11", remote: [{ dest: "192.168.1.0", prefix: 24 }] });
+    expect(() => lintTopology(topology!)).not.toThrow();
+    expect(() => new NetworkSync().sync(topology!)).not.toThrow();
+  });
+
+  it("두 사이트가 같은 상대에 VPN 을 연결하면 구성 검사가 경고한다 (상대는 터널 하나라 응답을 빼앗음)", () => {
+    const base = exampleVpnTopology();
+    const devices = [...base.devices];
+    const c = createDevice("nat", 400, 48, devices);
+    c.name = "사무실 C NAT";
+    c.l3 = { interfaces: [{ ipMode: "static", ip: "203.0.113.33", prefix: 24, gateway: "" }, { ipMode: "static", ip: "192.168.3.1", prefix: 24, gateway: "" }], routes: [], vpn: { enabled: true, peer: "203.0.113.22", remote: [{ dest: "192.168.2.0", prefix: 24 }] } };
+    devices.push(c);
+    const issues = lintTopology({ devices, cables: base.cables }).filter((i) => i.code === "vpn.shared-peer");
+    expect(issues.map((i) => i.deviceId).sort()).toEqual([devices.find((d) => d.name === "사무실 A NAT")!.id, c.id].sort());
+  });
+
+  it("진단 자동완성: 상대가 AllowedIPs 로 버리면 실패 이유가 VPN 드롭", () => {
+    const base = exampleVpnTopology();
+    const t: Topology = { ...base, devices: base.devices.map((d) => (d.name === "사무실 B NAT" ? { ...d, l3: { ...d.l3!, vpn: { ...d.l3!.vpn!, remote: [{ dest: "192.168.9.0", prefix: 24 }] } } } : d)) };
+    const pcA = t.devices.find((d) => d.name === "pc-a")!.id;
+    const c = probeTargets(t, pcA, "ping").candidates.find((x) => x.value === "192.168.2.10");
+    expect(c?.reason).toBe("VPN 드롭 (사무실 B NAT)");
   });
 });

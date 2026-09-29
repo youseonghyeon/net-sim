@@ -420,7 +420,8 @@ export class L3Node implements SimNode {
         return;
       }
       // 나에게 온 VPN 터널 패킷은 NAT 역변환보다 먼저 푼다 (지나가는 것이면 아래에서 보통 UDP 처럼 전달)
-      if (m.kind === "vpn" && this.ifaces.some((i) => i.ip !== undefined && i.ip === pkt.dst)) {
+      // VPN 을 켜지 않은 장비(예: VPN 게이트웨이 앞의 NAT 박스)는 보통 UDP 로 보고 NAT 역변환·포트 포워딩으로 넘긴다
+      if (m.kind === "vpn" && this.vpn.config.enabled && this.ifaces.some((i) => i.ip !== undefined && i.ip === pkt.dst)) {
         this.receiveTunnel(port, pkt, udp.srcPort, m.inner, frameId, ctx);
         return;
       }
@@ -592,12 +593,14 @@ export class L3Node implements SimNode {
   private hostUnreachable(pkt: Ipv4Packet, dropIface: NetInterface, ctx: NodeContext): void {
     if (this.ifaces.some((f) => f.ip === pkt.src)) return; // 내가 만든 패킷(또는 NAT 가 바꾼 것)은 통지할 상대가 없다
     const back = this.route(pkt.src);
-    const from = back ? this.ifaces[back.out]! : dropIface;
+    // 터널 너머에서 온 패킷이면 안쪽(LAN) 주소로 보내고 NAT 하지 않는다 — 공인 주소면 상대가 AllowedIPs 로 버린다
+    const tunnel = back?.kind === "vpn";
+    const from = back && !tunnel ? this.ifaces[back.out]! : dropIface;
     let notice = from.unreachable(pkt, "host", ctx);
     if (!notice) return;
     const outside = this.outside;
     const publicIp = outside !== undefined ? this.ifaces[outside]?.ip : undefined;
-    if (this.nat && back?.out === outside && publicIp) notice = this.nat.translate(notice, publicIp, ctx);
+    if (this.nat && !tunnel && back?.out === outside && publicIp) notice = this.nat.translate(notice, publicIp, ctx);
     if (notice) this.sendVia(notice, ctx);
   }
 
@@ -630,7 +633,7 @@ export class L3Node implements SimNode {
     return this.ifaces[i >= 0 ? i : inPort]!;
   }
 
-  /** @param tunnel VPN 터널에서 풀려 나온 패킷 (바깥에서 왔지만 NAT·바깥 방향 규칙을 적용하지 않고 안쪽끼리로 본다) */
+  /** @param tunnel VPN 터널에서 풀려 나온 패킷 (바깥에서 왔지만 NAT 하지 않는다. 방화벽은 인바운드로 본다) */
   private forward(pkt: Ipv4Packet, inPort: number, frameId: number, ctx: NodeContext, received: Ipv4Packet = pkt, tunnel = false): void {
     if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
       ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 드롭`, { dst: pkt.dst }, frameId);
@@ -656,15 +659,16 @@ export class L3Node implements SimNode {
       return;
     }
     if (r.kind === "vpn") {
-      // 사설 대역끼리: NAT 하지 않고 터널로. 방화벽은 안쪽끼리(양방향) 규칙으로 본다
-      if (!this.firewall.check(pkt, "lan", ctx, frameId)) return;
+      // 사설 대역끼리: NAT 하지 않고 터널로. 방화벽은 터널로 나가는 것을 아웃바운드로 본다 (Stateful 이면 돌아오는 응답도 통과)
+      if (!this.firewall.check(pkt, tunnel ? "lan" : "out", ctx, frameId)) return;
       ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 VPN 상대 대역 → 터널로 (NAT 하지 않음), TTL ${pkt.ttl} → ${pkt.ttl - 1}`, { dst: pkt.dst, out: "VPN", kind: r.kind }, frameId);
       this.sendTunnel({ ...pkt, ttl: pkt.ttl - 1 }, ctx, frameId);
       return;
     }
     const outName = this.names[r.out]!;
     const outIface = this.ifaces[r.out]!;
-    if (!this.firewall.check(pkt, tunnel ? "lan" : this.flowDirection(inPort, r.out), ctx, frameId)) return;
+    // 터널에서 풀려 들어온 것은 인바운드 (상대 사이트가 연 연결은 인바운드 허용 규칙이 있어야 들어온다)
+    if (!this.firewall.check(pkt, tunnel ? "in" : this.flowDirection(inPort, r.out), ctx, frameId)) return;
     let out: Ipv4Packet = { ...pkt, ttl: pkt.ttl - 1 };
     if (this.nat && r.out === this.outside) {
       if (inPort === this.outside && !tunnel) {

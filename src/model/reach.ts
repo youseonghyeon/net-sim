@@ -49,6 +49,8 @@ function failureReason(net: Network, fromIndex: number, fallback: string | undef
   if (fw) return `방화벽 차단 (${at(fw.nodeId)})`;
   const priv = recent.find((e) => e.kind === "ip.drop" && e.summary.includes("사설"));
   if (priv) return `NAT 뒤 사설 주소 (${at(priv.nodeId)} 에서 드롭)`;
+  const vpn = recent.find((e) => e.kind === "vpn.drop");
+  if (vpn) return `VPN 드롭 (${at(vpn.nodeId)})`;
   const noRoute = recent.find((e) => e.kind === "ip.no-route");
   if (noRoute) return `경로 없음 (${at(noRoute.nodeId)})`;
   const vlan = recent.find((e) => e.kind === "vlan.drop");

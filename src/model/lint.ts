@@ -4,6 +4,9 @@
 // 오탐이 미탐보다 나쁘므로, 확신이 없는 경우(주소를 아직 모르는 DHCP 인터페이스 등)는 조용히 넘어간다.
 import { DEVICE_SPECS, portVlanOf, wirelessLinks, type Device, type PortRef, type Topology } from "./topology";
 
+/** WireGuard 기본 포트 (코어 packet.ts 의 VPN_PORT 와 같은 값 — lint 는 코어에 의존하지 않는다) */
+const VPN_PORT = 51820;
+
 export interface LintIssue {
   /** 배지를 붙일 장치 */
   deviceId: string;
@@ -953,7 +956,7 @@ export function lintTopology(t: Topology): LintIssue[] {
     });
   }
 
-  // 규칙 17: 사이트 간 VPN — 상대 주소 없음, 상대 대역이 우리 LAN 과 겹침, 상대가 VPN 을 안 켬, 상대 대역 목록에 우리 LAN 이 없음
+  // 규칙 17: 사이트 간 VPN — 상대 주소 없음, 상대 대역이 우리 LAN 과 겹침, 두 사이트가 같은 상대에 연결, 상대가 VPN 을 안 켬(포워딩 너머까지 따라감), 상대 대역 목록에 우리 LAN 이 없음
   const vpnOf = (d: Device) => (d.l3?.vpn?.enabled ? d.l3.vpn : undefined);
   const publicIp = (d: Device) => {
     const c = d.l3?.interfaces[0];
@@ -981,8 +984,26 @@ export function lintTopology(t: Topology): LintIssue[] {
         fix: "한쪽 사무실의 사설 대역을 바꾸기 (예: 192.168.1.0/24 와 192.168.2.0/24)",
       });
     }
-    const peerDev = t.devices.find((x) => x !== d && x.l3 && publicIp(x) === peer);
+    const shared = t.devices.filter((x) => x !== d && vpnOf(x) && validIp(vpnOf(x)!.peer) === peer);
+    if (shared.length) {
+      add({
+        deviceId: d.id,
+        severity: "warn",
+        code: "vpn.shared-peer",
+        message: `${shared.map((x) => x.name).join(", ")} 도 같은 상대 ${peer} 로 VPN 을 연결함 → 상대는 터널 하나만 두므로 마지막에 보낸 쪽으로 답이 가서 서로의 응답을 빼앗음`,
+        fix: "상대 하나에는 한 사이트만 연결하기 (여러 사이트를 잇는다면 사이트마다 상대 쪽 터널 장비를 따로 두기)",
+        related: shared.map((x) => x.id),
+      });
+    }
+    let peerDev = t.devices.find((x) => x !== d && x.l3 && publicIp(x) === peer);
     if (!peerDev) continue; // 상대가 이 토폴로지에 없거나 주소를 DHCP 로 받으면 판단하지 않는다
+    // 상대 공인 주소가 VPN 을 안 켠 NAT 박스이고 UDP 51820 을 안쪽으로 포워딩하면, 그 안쪽 장비가 진짜 상대
+    const fwd = vpnOf(peerDev) ? undefined : peerDev.l3?.forwards?.find((f) => f.proto === "udp" && f.publicPort === VPN_PORT);
+    if (fwd) {
+      const inner = t.devices.find((x) => x.l3 && x.l3.interfaces.some((i) => i.ipMode === "static" && validIp(i.ip) === validIp(fwd.lanIp)));
+      if (!inner) continue;
+      peerDev = inner;
+    }
     const pv = vpnOf(peerDev);
     if (!pv) {
       add({ deviceId: d.id, severity: "warn", code: "vpn.peer-off", message: `상대 ${peerDev.name} (${peer}) 가 VPN 을 켜지 않음 → 터널 패킷을 풀지 못해 드롭`, fix: `${peerDev.name} → VPN 을 켜고 상대 주소·대역을 이쪽과 짝으로 설정`, related: [peerDev.id] });

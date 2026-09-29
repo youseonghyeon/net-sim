@@ -233,6 +233,18 @@ export interface L3Settings {
   vpn?: VpnSettings;
 }
 
+/** 불러온 JSON 의 VPN 설정 정리: 빠지거나 잘못된 칸은 기본값으로 (remote 가 없으면 구성 검사·동기화가 멈춘다) */
+function normalizeVpn(v: Partial<VpnSettings>): VpnSettings {
+  const remote = Array.isArray(v.remote) ? v.remote : [];
+  return {
+    enabled: v.enabled === true,
+    peer: typeof v.peer === "string" ? v.peer : "",
+    remote: remote
+      .filter((r): r is { dest: string; prefix: number } => !!r && typeof r === "object" && typeof r.dest === "string")
+      .map((r) => ({ dest: r.dest, prefix: Number.isInteger(r.prefix) && r.prefix >= 0 && r.prefix <= 32 ? r.prefix : 24 })),
+  };
+}
+
 export interface VpnSettings {
   enabled: boolean;
   /** 상대 터널 끝의 공인 주소 */
@@ -793,6 +805,7 @@ export function normalizeTopology(t: Topology): Topology {
           interfaces: def.interfaces.map((d, i) => (ifs[i] ? { ...d, ...ifs[i] } : d)),
           routes: fixed.l3.routes ?? [],
           ...(fixed.l3.firewall ? { firewall: { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.l3.firewall, rules: fixed.l3.firewall.rules ?? [] } } : {}),
+          ...(fixed.l3.vpn ? { vpn: normalizeVpn(fixed.l3.vpn) } : {}),
         };
       }
     }
