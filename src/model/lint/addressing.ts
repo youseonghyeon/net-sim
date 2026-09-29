@@ -4,7 +4,25 @@ import { contains, fmtSubnet, overlaps, subnetOf, validIp } from "./addr";
 import { names, pickGw, uniqueDevices, type LintContext } from "./context";
 import { portName, type Addr, type GwIface } from "./segments";
 
-// 규칙 1·2·5(DHCP 서버 쪽): 호스트 DHCP 서비스의 게이트웨이/DNS 안내
+/**
+ * 규칙 21: 기본 게이트웨이 옵션(3)이 세그먼트 라우터 인터페이스 주소(실제·HA 가상) 어느 것과도 다른가.
+ * 주소를 모르는(DHCP·입력 중) 라우터 인터페이스가 끼면 그 주소일 수 있으므로 판단하지 않는다
+ */
+function gatewayMismatch(gws: GwIface[], router: string): boolean {
+  return gws.length > 0 && gws.every((g) => g.ip) && !gws.some((g) => g.ip === router || g.vip === router);
+}
+
+/** 문구용: 세그먼트 라우터 주소 목록 (가상 주소는 표시) */
+function gwAddrList(gws: GwIface[]): string {
+  return [...new Set(gws.flatMap((g) => [g.ip!, ...(g.vip ? [`${g.vip}(가상 주소)`] : [])]))].join(", ");
+}
+
+/** 문구용: 추천할 게이트웨이 주소 — 이중화 쌍이면 가상 주소 */
+function gwSuggest(g: GwIface): string {
+  return g.vip ? `${g.vip} (${g.label} 가상 주소)` : `${g.ip} (${g.label})`;
+}
+
+// 규칙 1·2·5·21(DHCP 서버 쪽): 호스트 DHCP 서비스의 게이트웨이/DNS 안내
 export function dhcpServiceRules({ t, m, add }: LintContext): void {
   for (const d of t.devices) {
     const h = d.host;
@@ -48,6 +66,18 @@ export function dhcpServiceRules({ t, m, add }: LintContext): void {
           fix: `게이트웨이/NAT 박스나 공유기를 이 스위치에 연결하고 그 인터페이스 주소를 ${router} 로 맞추거나, DHCP 서비스의 게이트웨이 칸을 비우기`,
         });
       }
+      if (!m.stranded.has(key) && gatewayMismatch(gws, router)) {
+        const pick = pickGw(gws, validIp(srv.start) ?? ownIp)!;
+        const own = subnetOf(ownIp, h.prefix);
+        add({
+          deviceId: d.id,
+          severity: "warn",
+          code: "dhcp.gateway-mismatch",
+          message: `기본 게이트웨이 옵션(3) ${router} 가 이 세그먼트의 라우터 주소(${gwAddrList(gws)})와 다름${own && !contains(own, router) ? `, 풀 서브넷 ${fmtSubnet(own)} 밖이기도 함` : ""} → 단말이 주소는 받지만 게이트웨이를 ARP 로 찾지 못해(ARP timeout) 다른 네트워크로 못 나감`,
+          fix: `${d.name} → DHCP 서비스 → 기본 게이트웨이 칸을 ${gwSuggest(pick)} 로 바꾸고, 이미 주소를 받은 호스트에서 DHCP 임대 갱신`,
+          related: uniqueDevices(gws).map((x) => x.id),
+        });
+      }
     }
     (srv.extraPools ?? []).forEach((p, i) => {
       const start = validIp(p.start);
@@ -74,11 +104,26 @@ export function dhcpServiceRules({ t, m, add }: LintContext): void {
           fix: `${d.name} → DHCP 서비스 → 추가 풀 ${i + 1} → DNS 칸에 ${ownDns ?? "8.8.8.8"} 입력`,
         });
       }
+      if (poolRouter) {
+        // 이 풀을 받는 단말의 세그먼트 = 주소가 풀 서브넷 안인 라우터 인터페이스(릴레이 giaddr 가 될 곳)가 있는 세그먼트
+        const relays = m.allGws.filter((g) => g.ip && contains(poolNet, g.ip) && m.linked.has(g.key) && !m.stranded.has(g.key));
+        const segGws = [...new Map(relays.flatMap((g) => m.gwsOf(g.key)).map((g) => [g.key, g])).values()];
+        if (relays.length === 0 || !gatewayMismatch(segGws, poolRouter)) return;
+        const pick = pickGw(segGws, start)!;
+        add({
+          deviceId: d.id,
+          severity: "warn",
+          code: "dhcp.gateway-mismatch",
+          message: `추가 풀 ${fmtSubnet(poolNet)} 의 기본 게이트웨이 옵션(3) ${poolRouter} 가 그 세그먼트의 라우터 주소(${gwAddrList(segGws)})와 다름${contains(poolNet, poolRouter) ? "" : ", 풀 서브넷 밖이기도 함"} → 그 서브넷 단말이 주소는 받지만 게이트웨이를 ARP 로 찾지 못해(ARP timeout) 다른 네트워크로 못 나감`,
+          fix: `${d.name} → DHCP 서비스 → 추가 풀 ${i + 1} → 게이트웨이 칸을 ${gwSuggest(pick)} 로 바꾸고, 이미 주소를 받은 호스트에서 DHCP 임대 갱신`,
+          related: uniqueDevices(segGws).map((x) => x.id),
+        });
+      }
     });
   }
 }
 
-// 규칙 3·4·5·11(호스트 쪽): 수동 호스트의 게이트웨이와 서브넷
+// 규칙 3·4·5·11·22(호스트 쪽): 수동 호스트의 게이트웨이와 서브넷
 export function staticHostRules({ t, m, add }: LintContext): void {
   /** 규칙 3·4 에 이미 걸린 호스트 (규칙 11 은 같은 원인의 약한 진술이라 생략) */
   const flaggedHosts = new Set<string>();
@@ -147,6 +192,36 @@ export function staticHostRules({ t, m, add }: LintContext): void {
           message: `IP ${ip}/${h.prefix} 가 이 세그먼트 라우터의 서브넷(${refs.map((g) => fmtSubnet(g.subnet!)).join(", ")}) 밖 → 라우터가 응답을 돌려보내지 못함`,
           fix: `${d.name} → IP 설정 → IP 를 ${fmtSubnet(pick.subnet!)} 안의 주소로 바꾸기 (게이트웨이 ${pick.ip})`,
           related: uniqueDevices(refs).map((x) => x.id),
+        });
+      }
+    }
+    // 규칙 22: IP 는 라우터 서브넷 안인데 프리픽스 길이가 다름. 게이트웨이가 내 서브넷 밖이면 규칙 3 이 이미 지적(고치는 법에 서브넷 마스크 포함),
+    // 서브넷을 모르는(DHCP) 라우터 인터페이스가 끼거나 같은 길이의 라우터가 하나라도 있으면 침묵
+    if (ip && own && inSegment && !(gw && !contains(own, gw)) && gws.every((g) => g.subnet)) {
+      const refs = gws.filter((g) => contains(g.subnet!, ip));
+      if (refs.length > 0 && !refs.some((g) => g.subnet!.prefix === h.prefix)) {
+        const pick = refs.find((g) => g.ip === gw || g.vip === gw) ?? refs[0]!;
+        const rs = pick.subnet!;
+        const via = gw ? gws.find((g) => g.ip === gw || g.vip === gw) : undefined;
+        const result =
+          h.prefix < rs.prefix
+            ? `${fmtSubnet(own)} 안이지만 ${fmtSubnet(rs)} 밖인 주소도 같은 네트워크로 보고 ARP 로 직접 찾다가 실패(ARP timeout)`
+            : `같은 서브넷 ${fmtSubnet(rs)} 인데 ${fmtSubnet(own)} 밖인 주소를 다른 네트워크로 보고 ${
+                !gw
+                  ? "게이트웨이 설정이 없어 드롭"
+                  : via?.gwKind === "router"
+                    ? `게이트웨이 ${gw} 로 보냄 → 공유기가 "LAN 안의 주소" 라며 드롭`
+                    : via?.gwKind === "l3"
+                      ? `게이트웨이 ${gw} 로 돌려 보냄 → 라우터를 거쳐 되돌아오는 우회 경로 (응답은 직접 와서 비대칭)`
+                      : `게이트웨이 ${gw} 로 돌려 보냄`
+              }`;
+        add({
+          deviceId: d.id,
+          severity: "warn",
+          code: "host.prefix-mismatch",
+          message: `서브넷 /${h.prefix} 가 이 세그먼트 라우터 ${pick.label} 의 /${rs.prefix} 보다 ${h.prefix < rs.prefix ? "짧음" : "김"} → ${result}`,
+          fix: `${d.name} → IP 설정 → 서브넷을 /${rs.prefix} 로 (${pick.label} ${fmtSubnet(rs)} 와 같게)`,
+          related: [pick.device.id],
         });
       }
     }

@@ -10,7 +10,7 @@ import {
   type HostSettings,
   type Topology,
 } from "../src/model/topology";
-import { exampleTopology, examplePartsTopology, exampleVlanTopology } from "../src/model/examples";
+import { exampleHaTopology, exampleTopology, examplePartsTopology, exampleVlanTopology } from "../src/model/examples";
 
 /** createDevice + newId("cable") 로 토폴로지를 조립하는 도우미 */
 function build() {
@@ -612,6 +612,195 @@ describe("규칙 13 VLAN 배선", () => {
     const g = b.add("gateway");
     g.l3!.subinterfaces = [{ port: 1, vlan: 10, ip: "192.168.10.1", prefix: 24, relay: "" }];
     expect(lintTopology(b.t)).toEqual([]);
+  });
+});
+
+describe("규칙 21 dhcp.gateway-mismatch", () => {
+  /** 게이트웨이 if1(192.168.1.1) 아래 스위치에 DHCP 서버 호스트 */
+  function dhcpLan(router: string) {
+    const b = build();
+    const gw = b.add("gateway");
+    const sw = b.add("switch");
+    const srv = staticHost(b.add("server"), "192.168.1.2", "192.168.1.1", { dns: "8.8.8.8", dhcpServer: { enabled: true, start: "192.168.1.100", end: "192.168.1.199", router, dns: "8.8.8.8" } });
+    b.link(gw, 1, sw, 0);
+    b.link(sw, 1, srv, 0);
+    b.link(sw, 2, b.add("pc"), 0);
+    return { ...b, gw, sw, srv };
+  }
+
+  it("기본 게이트웨이 옵션(3)이 세그먼트의 어떤 라우터 주소와도 다르면 경고하고 실제 주소를 추천한다", () => {
+    const { t, gw, srv } = dhcpLan("192.168.1.254");
+    const issues = lintTopology(t);
+    expect(codes(issues, srv.id)).toEqual(["dhcp.gateway-mismatch"]);
+    const i = issue(issues, srv.id, "dhcp.gateway-mismatch");
+    expect(i.severity).toBe("warn");
+    expect(i.message).toContain("192.168.1.254");
+    expect(i.message).toContain("192.168.1.1");
+    expect(i.message).not.toContain("풀 서브넷");
+    expect(i.fix).toContain("기본 게이트웨이 칸을 192.168.1.1 (");
+    expect(i.fix).toContain("DHCP 임대 갱신");
+    expect(i.related).toEqual([gw.id]);
+  });
+
+  it("옵션이 풀 서브넷 밖이면 그 사실을 덧붙이되 이슈는 하나, 옵션이 비면 규칙 1 만", () => {
+    const x = dhcpLan("10.0.0.1");
+    const issues = lintTopology(x.t);
+    expect(codes(issues, x.srv.id)).toEqual(["dhcp.gateway-mismatch"]);
+    expect(issue(issues, x.srv.id, "dhcp.gateway-mismatch").message).toContain("풀 서브넷 192.168.1.0/24 밖");
+    const y = dhcpLan("");
+    expect(codes(lintTopology(y.t), y.srv.id)).toEqual(["dhcp.no-router"]);
+    const z = dhcpLan("192.168.1.1");
+    expect(lintTopology(z.t)).toEqual([]);
+  });
+
+  it("이중화 쌍의 가상 주소나 실제 주소를 안내하면 통과, 둘 다 아니면 가상 주소를 추천한다", () => {
+    const t = exampleHaTopology();
+    const swIn = t.devices.find((d) => d.name === "inside 스위치")!;
+    const fwA = t.devices.find((d) => d.name === "방화벽 A")!;
+    const fwB = t.devices.find((d) => d.name === "방화벽 B")!;
+    const srv = createDevice("server", 0, 0, t.devices);
+    t.devices.push(srv);
+    staticHost(srv, "192.168.0.5", "192.168.0.1", { dns: "8.8.8.8", dhcpServer: { enabled: true, start: "192.168.0.100", end: "192.168.0.199", router: "192.168.0.1", dns: "8.8.8.8" } });
+    t.cables.push({ id: newId("cable"), a: { device: swIn.id, port: 3 }, b: { device: srv.id, port: 0 } });
+    expect(lintTopology(t)).toEqual([]);
+    srv.host!.dhcpServer.router = "192.168.0.3"; // 방화벽 B 의 실제 주소: 그 장비가 게이트웨이로 응답은 한다
+    expect(codes(lintTopology(t), srv.id)).toEqual([]);
+    srv.host!.dhcpServer.router = "192.168.0.9";
+    const i = issue(lintTopology(t), srv.id, "dhcp.gateway-mismatch");
+    expect(i.message).toContain("192.168.0.1(가상 주소)");
+    expect(i.fix).toContain("192.168.0.1 (방화벽 A");
+    expect(i.fix).toContain("가상 주소");
+    expect(i.related).toEqual([fwA.id, fwB.id]);
+  });
+
+  it("주소를 모르는(DHCP) 라우터 인터페이스가 세그먼트에 있으면 침묵, 케이블이 없어도 침묵", () => {
+    const c = twoTier();
+    c.gw.l3!.interfaces[0] = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" };
+    const sw2 = c.add("switch");
+    c.t.cables.splice(1, 1); // nat ↔ gw 직결을 스위치 경유로
+    c.link(c.nat, 1, sw2, 0);
+    c.link(sw2, 1, c.gw, 0);
+    const srv = staticHost(c.add("server"), "10.0.0.5", "10.0.0.1", { dns: "8.8.8.8", dhcpServer: { enabled: true, start: "10.0.0.100", end: "10.0.0.199", router: "10.0.0.7", dns: "8.8.8.8" } });
+    c.link(sw2, 2, srv, 0);
+    expect(codes(lintTopology(c.t), srv.id)).toEqual([]);
+    // 케이블 없는 DHCP 서버
+    const b = build();
+    b.add("gateway");
+    const lone = staticHost(b.add("server"), "192.168.1.2", "", { dhcpServer: { enabled: true, start: "192.168.1.100", end: "192.168.1.199", router: "192.168.1.254", dns: "8.8.8.8" } });
+    expect(codes(lintTopology(b.t), lone.id)).toEqual([]);
+  });
+
+  it("릴레이용 추가 풀: 풀 서브넷의 라우터 인터페이스(giaddr)가 있는 세그먼트 기준으로 검사한다", () => {
+    const t = examplePartsTopology();
+    const srv = t.devices.find((d) => d.name === "dhcp-srv")!;
+    const gw = t.devices.find((d) => d.kind === "gateway")!;
+    const pool = srv.host!.dhcpServer.extraPools![0]!;
+    pool.router = "192.168.2.254";
+    const issues = lintTopology(t);
+    expect(codes(issues, srv.id)).toEqual(["dhcp.gateway-mismatch"]);
+    const i = issue(issues, srv.id, "dhcp.gateway-mismatch");
+    expect(i.message).toContain("추가 풀 192.168.2.0/24");
+    expect(i.message).toContain("192.168.2.254");
+    expect(i.fix).toContain("추가 풀 1");
+    expect(i.fix).toContain("192.168.2.1 (");
+    expect(i.related).toEqual([gw.id]);
+    // 다른 서브넷(if1)의 라우터 주소는 이 풀의 게이트웨이가 될 수 없다
+    pool.router = "192.168.1.1";
+    expect(issue(lintTopology(t), srv.id, "dhcp.gateway-mismatch").message).toContain("풀 서브넷 밖");
+    pool.router = "192.168.2.1";
+    expect(lintTopology(t)).toEqual([]);
+  });
+
+  it("추가 풀: 릴레이 인터페이스 주소를 모르거나 풀 서브넷에 라우터 인터페이스가 없으면 침묵", () => {
+    const t = examplePartsTopology();
+    const srv = t.devices.find((d) => d.name === "dhcp-srv")!;
+    const gw = t.devices.find((d) => d.kind === "gateway")!;
+    const pool = srv.host!.dhcpServer.extraPools![0]!;
+    pool.router = "192.168.2.254";
+    gw.l3!.interfaces[2] = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", relay: "192.168.1.2" };
+    expect(codes(lintTopology(t), srv.id)).toEqual([]);
+    const t2 = examplePartsTopology();
+    const srv2 = t2.devices.find((d) => d.name === "dhcp-srv")!;
+    srv2.host!.dhcpServer.extraPools!.push({ start: "172.16.0.100", end: "172.16.0.199", prefix: 24, router: "172.16.0.1", dns: "8.8.8.8" });
+    expect(codes(lintTopology(t2), srv2.id)).toEqual([]);
+  });
+});
+
+describe("규칙 22 host.prefix-mismatch", () => {
+  /** 게이트웨이 if1(192.168.1.1/24) 아래 스위치에 수동 호스트 */
+  function lan(prefix: number, gateway = "192.168.1.1", ip = "192.168.1.10") {
+    const b = build();
+    const gw = b.add("gateway");
+    const sw = b.add("switch");
+    const pc = staticHost(b.add("pc"), ip, gateway, { prefix });
+    b.link(gw, 1, sw, 0);
+    b.link(sw, 1, pc, 0);
+    return { ...b, gw, sw, pc };
+  }
+
+  it("호스트 프리픽스가 라우터보다 짧으면 라우터 서브넷 밖 주소를 ARP 로 직접 찾다가 실패한다고 경고", () => {
+    const { t, gw, pc } = lan(16);
+    const issues = lintTopology(t);
+    expect(codes(issues, pc.id)).toEqual(["host.prefix-mismatch"]);
+    const i = issue(issues, pc.id, "host.prefix-mismatch");
+    expect(i.severity).toBe("warn");
+    expect(i.message).toContain("/16");
+    expect(i.message).toContain("짧음");
+    expect(i.message).toContain("192.168.0.0/16 안이지만 192.168.1.0/24 밖");
+    expect(i.message).toContain("ARP timeout");
+    expect(i.fix).toContain("서브넷을 /24 로");
+    expect(i.related).toEqual([gw.id]);
+  });
+
+  it("더 길면 같은 서브넷 일부를 게이트웨이로 돌려 보냄: 게이트웨이는 우회, 공유기는 드롭, 게이트웨이 없으면 드롭", () => {
+    const x = lan(28);
+    const i = issue(lintTopology(x.t), x.pc.id, "host.prefix-mismatch");
+    expect(i.message).toContain("김");
+    expect(i.message).toContain("같은 서브넷 192.168.1.0/24 인데 192.168.1.0/28 밖");
+    expect(i.message).toContain("우회");
+    // 공유기: LAN 안 주소를 게이트웨이로 받으면 드롭한다
+    const b = build();
+    const rt = b.add("router");
+    const sw = b.add("switch");
+    const pc = staticHost(b.add("pc"), "192.168.0.10", "192.168.0.1", { prefix: 28 });
+    b.link(rt, 1, sw, 0);
+    b.link(sw, 1, pc, 0);
+    const j = issue(lintTopology(b.t), pc.id, "host.prefix-mismatch");
+    expect(j.message).toContain("공유기");
+    expect(j.message).toContain("드롭");
+    expect(j.related).toEqual([rt.id]);
+    pc.host!.gateway = "";
+    expect(issue(lintTopology(b.t), pc.id, "host.prefix-mismatch").message).toContain("게이트웨이 설정이 없어 드롭");
+  });
+
+  it("프리픽스가 같으면 통과, DHCP 로 받는 호스트는 침묵, 게이트웨이가 서브넷 밖이면 규칙 3 만", () => {
+    expect(lintTopology(lan(24).t)).toEqual([]);
+    const d = lan(16);
+    d.pc.host!.ipMode = "dhcp"; // 칸에 남은 옛 값은 쓰이지 않는다
+    expect(lintTopology(d.t)).toEqual([]);
+    const o = lan(28, "192.168.1.1", "192.168.1.100"); // /28 이면 192.168.1.96/28 → 게이트웨이 .1 이 밖
+    expect(codes(lintTopology(o.t), o.pc.id)).toEqual(["host.gateway-outside-subnet"]);
+  });
+
+  it("라우터 서브넷 밖 IP 는 규칙 11 만, 같은 길이의 라우터가 하나라도 있거나 서브넷을 모르는 라우터가 끼면 침묵", () => {
+    const m = lan(16, "", "192.168.5.10");
+    expect(codes(lintTopology(m.t), m.pc.id)).toEqual(["segment.mixed-subnet"]);
+    // 같은 세그먼트에 /16 라우터도 있으면 호스트가 그쪽에 맞춘 것일 수 있다
+    const two = lan(16);
+    const nat = two.add("nat");
+    nat.l3!.interfaces[1] = { ipMode: "static", ip: "192.168.200.1", prefix: 16, gateway: "" };
+    two.link(nat, 1, two.sw, 2);
+    expect(codes(lintTopology(two.t), two.pc.id)).toEqual([]);
+    // NAT if1 + 게이트웨이 if0(DHCP, 서브넷 모름) 세그먼트의 /16 호스트
+    const c = twoTier();
+    c.gw.l3!.interfaces[0] = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" };
+    const sw2 = c.add("switch");
+    c.t.cables.splice(1, 1);
+    c.link(c.nat, 1, sw2, 0);
+    c.link(sw2, 1, c.gw, 0);
+    const pc = staticHost(c.add("pc"), "10.0.0.50", "10.0.0.1", { prefix: 16 });
+    c.link(sw2, 2, pc, 0);
+    expect(codes(lintTopology(c.t), pc.id)).toEqual([]);
   });
 });
 
