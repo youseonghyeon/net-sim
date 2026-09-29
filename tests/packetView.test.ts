@@ -95,3 +95,13 @@ describe("VRRP", () => {
     expect(layers[2]!.rows.find((r) => r[0].startsWith("가상 라우터"))![1]).toContain("00:00:5e:00:01:0a");
   });
 });
+
+describe("STP BPDU", () => {
+  it("tcpdump 는 802.3 + LLC, 헤더는 루트·비용·보낸 브리지", () => {
+    const f: EthernetFrame = { kind: "ethernet", id: 1, src: A, dst: "01:80:c2:00:00:00", payload: { kind: "bpdu", root: { prio: 4096, mac: "02:00:00:00:00:01" }, cost: 4, bridge: { prio: 8192, mac: "02:00:00:00:00:02" }, port: 2, age: 1 } };
+    expect(tcpdumpLine(f)).toContain("802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003");
+    const layers = headerLayers(f);
+    expect(layers.map((l) => l.title)).toEqual(["이더넷 (L2)", "STP BPDU (Configuration)"]);
+    expect(layers[1]!.rows[0]![1]).toContain("4096.02:00:00:00:00:01");
+  });
+});

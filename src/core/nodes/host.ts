@@ -568,7 +568,7 @@ export class Host implements SimNode {
     }
     ctx.trace("frame.receive", "L2", `프레임 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === this.iface.mac ? "내 MAC" : "브로드캐스트"}]`, { src: frame.src, dst: frame.dst }, frame.id);
     if (frame.payload.kind === "arp") this.iface.handleArp(frame.payload, frame.id, ctx, this.emit(ctx));
-    else this.handleIp(frame.payload, frame.id, ctx);
+    else if (frame.payload.kind === "ipv4") this.handleIp(frame.payload, frame.id, ctx);
   }
 
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {

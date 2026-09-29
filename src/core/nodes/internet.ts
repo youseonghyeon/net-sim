@@ -84,7 +84,7 @@ export class Internet implements SimNode {
       this.iface.handleArp(frame.payload, frame.id, ctx, this.emit(ctx));
       return;
     }
-    this.handleIp(frame.payload, frame.id, ctx);
+    if (frame.payload.kind === "ipv4") this.handleIp(frame.payload, frame.id, ctx);
   }
 
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {

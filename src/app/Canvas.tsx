@@ -3,6 +3,7 @@ import { effect, signal, useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
 import { describeFrame, frameCategory, shortLabel } from "../core/packet";
 import type { Transmission } from "../core/network";
+import { Switch } from "../core/nodes/switch";
 import { hostStatus, running, serviceBadges, sim, simTime, simVersion, wanStatus } from "../model/sim";
 import {
   addZone,
@@ -430,6 +431,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
             })}
           </g>
           <g class="cables">
+            <StpBlocks cables={t.cables} byId={byId} />
             {t.cables.map((c) => (
               <CableView key={c.id} cable={c} byId={byId} selected={sel?.type === "cable" && sel.id === c.id} />
             ))}
@@ -525,6 +527,12 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
           <span>
             <i class="vpn" />
             VPN
+          </span>
+        )}
+        {t.devices.some((d) => d.switch?.stp?.enabled) && (
+          <span>
+            <i class="stp" />
+            STP
           </span>
         )}
         {t.devices.some((d) => d.l3?.ha?.enabled) && (
@@ -726,6 +734,36 @@ function textWidth(s: string): number {
   let w = 0;
   for (const ch of s) w += ch.charCodeAt(0) > 0x2e80 ? 10.5 : ch === " " ? 3.2 : 6.4;
   return w;
+}
+
+/** STP 가 막은(대체) 포트: 그 케이블을 점선으로 덮고 막힌 쪽 포트에 표시 */
+function StpBlocks({ cables, byId }: { cables: Cable[]; byId: Map<string, Device> }) {
+  void simVersion.value;
+  const blocked = (dev: string, port: number) => {
+    const n = sim.node(dev);
+    return n instanceof Switch && n.stp.config.enabled && n.stp.roles[port] === "alternate";
+  };
+  const out: preact.JSX.Element[] = [];
+  for (const c of cables) {
+    const a = byId.get(c.a.device);
+    const b = byId.get(c.b.device);
+    if (!a || !b) continue;
+    const ends = [blocked(c.a.device, c.a.port) ? portAnchor(a, c.a.port) : undefined, blocked(c.b.device, c.b.port) ? portAnchor(b, c.b.port) : undefined].filter((x) => !!x);
+    if (ends.length === 0) continue;
+    out.push(
+      <g key={c.id} class="stp-blocked">
+        <title>STP 대체 포트 (차단) — 루프를 끊으려고 이 링크로는 데이터를 보내지 않음</title>
+        <path class="stp-dash" d={cablePath(portAnchor(a, c.a.port), portAnchor(b, c.b.port))} />
+        {ends.map((p, k) => (
+          <g key={k} transform={`translate(${p!.x},${p!.y + (p!.side === "top" ? -14 : 14)})`}>
+            <circle r={6} />
+            <path d="M-3.5,3.5 L3.5,-3.5" />
+          </g>
+        ))}
+      </g>,
+    );
+  }
+  return <g class="stp-layer">{out}</g>;
 }
 
 function CableView({ cable, byId, selected }: { cable: Cable; byId: Map<string, Device>; selected: boolean }) {

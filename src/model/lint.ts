@@ -1132,6 +1132,37 @@ export function lintTopology(t: Topology): LintIssue[] {
     }
   }
 
+  // 규칙 19: 스위치(·허브)끼리 이어 고리가 생겼는데 STP 를 안 켠 스위치가 있음 → 브로드캐스트가 끝없이 돈다 (안전장치가 드롭)
+  {
+    const l2 = new Set(t.devices.filter((d) => d.kind === "switch" || d.kind === "hub").map((d) => d.id));
+    const parent = new Map<string, string>();
+    const find = (x: string): string => {
+      let r = x;
+      while (parent.has(r) && parent.get(r) !== r) r = parent.get(r)!;
+      parent.set(x, r);
+      return r;
+    };
+    const loopRoots = new Set<string>();
+    for (const c of t.cables) {
+      if (!l2.has(c.a.device) || !l2.has(c.b.device) || c.a.device === c.b.device) continue;
+      const ra = find(c.a.device);
+      const rb = find(c.b.device);
+      if (ra === rb) loopRoots.add(ra);
+      else parent.set(ra, rb);
+    }
+    const inLoop = new Set([...loopRoots].map((r) => find(r)));
+    for (const d of t.devices) {
+      if (d.kind !== "switch" || !l2.has(d.id) || !inLoop.has(find(d.id)) || d.switch?.stp?.enabled) continue;
+      add({
+        deviceId: d.id,
+        severity: "warn",
+        code: "switch.loop-no-stp",
+        message: "스위치끼리 이은 케이블이 고리(루프)를 이루는데 이 스위치는 STP 가 꺼져 있음 → 브로드캐스트가 고리를 끝없이 돈다 (여기서는 안전장치가 드롭)",
+        fix: `${d.name} → STP 를 켜기 (고리에 있는 스위치 모두). 실제 스위치는 기본으로 켜져 있다`,
+      });
+    }
+  }
+
   return finalize(issues, t);
 }
 

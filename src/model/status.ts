@@ -95,8 +95,9 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.firewall.config.enabled) out.push("방화벽");
   } else if (node instanceof Internet) {
     out.push("ISP DHCP", "DNS", "웹");
-  } else if (node instanceof Switch && node.vlanAware) {
-    out.push("VLAN");
+  } else if (node instanceof Switch && (node.vlanAware || node.stp.config.enabled)) {
+    if (node.vlanAware) out.push("VLAN");
+    if (node.stp.config.enabled) out.push(node.stp.isRoot ? "STP 루트" : "STP");
   } else if (node instanceof FirewallBridge) {
     if (node.firewall.config.enabled && node.firewall.config.stateful) out.push("Stateful");
   }

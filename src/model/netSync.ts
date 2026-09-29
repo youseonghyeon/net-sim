@@ -9,6 +9,7 @@ import { Internet } from "../core/nodes/internet";
 import { L3Node } from "../core/nodes/l3";
 import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
+import type { StpConfig } from "../core/nodes/stp";
 import { Switch, type PortVlan } from "../core/nodes/switch";
 import { validCidr } from "../core/nodes/firewall";
 import { DEFAULT_LB_SETTINGS,
@@ -108,6 +109,7 @@ export class NetworkSync {
         net.addNode(node);
         // 이중화는 시작할 때 광고·타이머가 필요해 만든 뒤에 켠다
         if (node instanceof L3Node && d.l3?.ha?.enabled) node.setHa(effectiveL3(d).ha, net.contextFor(d.id));
+        if (node instanceof Switch && d.switch?.stp?.enabled) node.setStp(effectiveStp(d), d.mac, net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -280,6 +282,13 @@ export function effectiveDhcpServer(d: Device, current?: Host) {
   };
 }
 
+/** 스위치의 STP 설정 (우선순위는 4096 단위로 내림) */
+export function effectiveStp(d: Device): StpConfig {
+  const st = d.switch?.stp;
+  const prio = st && Number.isInteger(st.priority) && st.priority >= 0 && st.priority <= 61440 ? st.priority - (st.priority % 4096) : 32768;
+  return { enabled: st?.enabled === true, priority: prio };
+}
+
 export function effectiveSwitchVlans(d: Device): Map<number, PortVlan> {
   const out = new Map<number, PortVlan>();
   const v = (d.switch ?? ({ vlans: {} } as SwitchSettings)).vlans;
@@ -332,7 +341,7 @@ export function effectiveApSsid(d: Device): string {
 export function configKey(d: Device): string {
   if (d.kind === "ap") return JSON.stringify({ mac: d.mac, ssid: effectiveApSsid(d) });
   if (d.kind === "firewall") return JSON.stringify({ mac: d.mac, fw: effectiveFirewall(d.firewall) });
-  if (d.kind === "switch") return JSON.stringify({ mac: d.mac, vlans: [...effectiveSwitchVlans(d).entries()] });
+  if (d.kind === "switch") return JSON.stringify({ mac: d.mac, vlans: [...effectiveSwitchVlans(d).entries()], stp: effectiveStp(d) });
   if (d.host) return JSON.stringify({ mac: d.mac, host: effectiveHost(d) });
   if (d.router) return JSON.stringify({ mac: d.mac, router: effectiveRouter(d) });
   if (DEVICE_SPECS[d.kind].role === "l3") return JSON.stringify({ mac: d.mac, l3: effectiveL3(d) });
@@ -373,7 +382,10 @@ export function makeNode(d: Device): SimNode {
 export function applyConfig(net: Network, d: Device): void {
   const node = net.nodes.get(d.id);
   if (node instanceof Host && d.host) node.configure(effectiveHost(d), net.contextFor(d.id));
-  else if (node instanceof Switch) node.setVlans(effectiveSwitchVlans(d), net.contextFor(d.id));
+  else if (node instanceof Switch) {
+    node.setVlans(effectiveSwitchVlans(d), net.contextFor(d.id));
+    node.setStp(effectiveStp(d), d.mac, net.contextFor(d.id));
+  }
   else if (node instanceof FirewallBridge) node.configure(effectiveFirewall(d.firewall), net.contextFor(d.id));
   else if (node instanceof AccessPoint) {
     node.ssid = effectiveApSsid(d);

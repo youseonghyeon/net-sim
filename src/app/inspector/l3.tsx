@@ -296,6 +296,36 @@ export function RipSection({ d, l3 }: { d: Device; l3: L3Settings }) {
 }
 
 /** 스위치 포트별 VLAN (액세스 번호 또는 트렁크) */
+/** 스위치 STP: 켜기 + 브리지 우선순위 */
+export function StpSection({ d }: { d: Device }) {
+  const stp = d.switch?.stp ?? { enabled: false, priority: 32768 };
+  const set = (patch: Partial<typeof stp>) => updateDevice(d.id, (x) => ({ ...x, switch: { ...(x.switch ?? { vlans: {} }), stp: { ...(x.switch?.stp ?? { enabled: false, priority: 32768 }), ...patch } } }));
+  return (
+    <Section title="스패닝 트리 (STP)">
+      <label class="toggle-row">
+        <span>{stp.enabled ? "켜짐" : "꺼짐"}</span>
+        <Toggle on={stp.enabled} onToggle={() => set({ enabled: !stp.enabled })} />
+      </label>
+      {!stp.enabled && <p class="note">스위치끼리 여러 경로로 이으면(고리) 브로드캐스트가 끝없이 돕니다. 켜면 스위치끼리 BPDU 를 주고받아 루트를 정하고, 포트 하나를 막아 고리를 끊습니다. 실제 스위치는 기본으로 켜져 있습니다.</p>}
+      {stp.enabled && (
+        <>
+          <Field label="브리지 우선순위">
+            <select class="input" value={stp.priority} onChange={(e) => set({ priority: Number(e.currentTarget.value) })}>
+              {Array.from({ length: 16 }, (_, k) => k * 4096).map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                  {p === 32768 ? " (기본)" : ""}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <p class="note">작을수록 루트 브리지가 되기 쉽습니다(같으면 MAC 이 작은 쪽). 가운데(코어) 스위치를 작게 두어 루트로 정하는 게 보통입니다. 막힌 포트는 캔버스에서 점선과 ⊘ 로 보이고, "표" 탭에 포트 역할이 나옵니다.</p>
+        </>
+      )}
+    </Section>
+  );
+}
+
 export function VlanSection({ d }: { d: Device }) {
   const spec = specOf(d);
   const vlans = d.switch?.vlans ?? {};

@@ -497,6 +497,43 @@ export function exampleFirewallTopology(): Topology {
 }
 
 /**
+ * 스위치 이중화 (STP): 스위치 세 대를 삼각형으로 이어 경로를 두 개로 만든다. STP 가 한 포트를 막아(대체 포트) 루프를 끊고,
+ * 쓰던 링크가 끊기면 막았던 포트를 열어 다른 경로로 돌아간다. core-1 의 우선순위를 가장 낮게(4096) 두어 루트로 정한다.
+ */
+export function exampleStpTopology(): Topology {
+  const { devices, add } = builder();
+  const staticHost = (d: Device, ip: string) => {
+    d.host = { ipMode: "static", ip, prefix: 24, gateway: "", services: d.kind === "server" ? [80, 22] : [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  const core1 = add("switch", 200, 0, "core-1");
+  core1.switch = { vlans: {}, stp: { enabled: true, priority: 4096 } };
+  const core2 = add("switch", 520, 0, "core-2");
+  core2.switch = { vlans: {}, stp: { enabled: true, priority: 8192 } };
+  const access = add("switch", 360, 200, "access-1");
+  access.switch = { vlans: {}, stp: { enabled: true, priority: 32768 } };
+  const pc1 = add("pc", 296, 360, "pc-1");
+  const pc2 = add("pc", 424, 360, "pc-2");
+  const srv = add("server", 648, 160, "srv-1");
+  const srv2 = add("server", 72, 160, "srv-2");
+  staticHost(pc1, "192.168.0.11");
+  staticHost(pc2, "192.168.0.12");
+  staticHost(srv, "192.168.0.21");
+  staticHost(srv2, "192.168.0.22");
+  const cables: Cable[] = [
+    cable(core1, 7, core2, 0),
+    cable(core1, 5, access, 1),
+    cable(core2, 2, access, 6),
+    cable(access, 3, pc1, 0),
+    cable(access, 4, pc2, 0),
+    cable(core2, 7, srv, 0),
+    cable(core1, 0, srv2, 0),
+  ];
+  const t: Topology = { devices, cables };
+  t.zones = [{ id: newId("zone"), label: "스위치 삼각형 (경로 두 개) — STP 가 한 포트를 막음", tint: "blue", ...zoneAround(t, [core1.id, core2.id, access.id], 24)! }];
+  return t;
+}
+
+/**
  * 방화벽 이중화 (VRRP 식): NAT 박스 두 대가 가상 주소(바깥 203.0.113.10, 안쪽 192.168.0.1)를 함께 두고 한 대만 일한다.
  * 호스트의 기본 게이트웨이는 가상 주소라, master(방화벽 A)의 케이블을 뽑거나 지워도 backup(방화벽 B)이 이어받아 설정 변경 없이 계속 나간다.
  * 두 대의 규칙은 같게 둔다 (실제 HA 쌍은 설정을 자동으로 맞추지만 여기서는 손으로).
@@ -1039,7 +1076,7 @@ export function exampleNcpVpnTopology(): Topology {
   return t;
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "lb" | "roaming" | "docker";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "lb" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -1122,6 +1159,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "VLAN 으로 나눈 사무실 (트렁크)",
     blurb: "같은 스위치인데 VLAN 10 과 20 은 게이트웨이 서브 인터페이스를 거쳐야 통신됩니다.",
     build: exampleVlanTopology,
+  },
+  stp: {
+    id: "stp",
+    group: "L2",
+    label: "스위치 이중화 (STP)",
+    blurb: "스위치 셋을 삼각형으로 이어 경로가 둘입니다. STP 가 access-1 의 한 포트를 막아(점선) 루프를 끊습니다. pc-1 에서 srv-1 로 ping 한 뒤 core-1 ↔ access-1 케이블을 지우면 막혔던 포트가 열려 다른 길로 갑니다.",
+    build: exampleStpTopology,
   },
   firewall: {
     id: "firewall",

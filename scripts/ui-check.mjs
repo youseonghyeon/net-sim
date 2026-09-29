@@ -792,6 +792,24 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("ha ping via B:", await pingOnce());
   await page.screenshot({ path: `${OUT}/51-ha-failover.png` });
 }
+// 스위치 이중화 (STP): 막힌 포트 표시(점선·⊘), 루트 배지, ping
+{
+  await loadEx("stp");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => document.querySelectorAll(".stp-blocked").length > 0, null, { timeout: 20000 });
+  console.log("stp blocked marks:", await page.locator(".stp-blocked").count(), "| root badge:", await device("core-1").locator(".badge", { hasText: "STP 루트" }).count());
+  await clickDevice("pc-1");
+  await goTab("진단");
+  await page.locator(".ping-row .picker .input").first().fill("192.168.0.21");
+  await page.keyboard.press("Escape");
+  await page.click(".ping-row .btn:has-text('ping')");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".inspector .ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("stp ping:", (await page.locator(".inspector .ping-log li").first().innerText()).replace(/\s+/g, " "));
+  await clickDevice("access-1");
+  await goTab("설정");
+  console.log("stp section:", await page.locator(".inspector h3", { hasText: "스패닝 트리" }).count());
+  await page.screenshot({ path: `${OUT}/53-stp.png` });
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

@@ -26,7 +26,7 @@ import { cableAt, DEFAULT_FIREWALL_SETTINGS, defaultL3, peerOf, specOf, type Dev
 import { Icon } from "./Icons";
 import { DiagSection, InternetDiagSection, LiveTables, StatusSection } from "./inspector/diag";
 import { HostSection, LbSection, ServiceSection, WifiBaseSection, WifiClientSection } from "./inspector/host";
-import { L3Section, VlanSection } from "./inspector/l3";
+import { L3Section, StpSection, VlanSection } from "./inspector/l3";
 import { CablePanel, LintSection, MultiPanel, NetworkPanel, ZonePanel, deviceName, portName } from "./inspector/panels";
 import { RouterSection } from "./inspector/router";
 import { FirewallSection } from "./inspector/rules";
@@ -226,6 +226,7 @@ function DevicePanel({ d }: { d: Device }) {
           {d.kind === "firewall" && (
             <FirewallSection value={d.firewall ?? { ...DEFAULT_FIREWALL_SETTINGS, enabled: true }} onChange={(v) => updateDevice(d.id, (x) => ({ ...x, firewall: v }))} uplinkName="outside" />
           )}
+          {d.kind === "switch" && <StpSection d={d} />}
           {d.kind === "switch" && <VlanSection d={d} />}
           {d.host && <HostSection d={d} h={d.host} />}
           {d.host && (d.kind === "lb" ? <LbSection d={d} h={d.host} /> : <ServiceSection d={d} h={d.host} />)}

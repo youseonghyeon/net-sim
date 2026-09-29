@@ -242,7 +242,7 @@ export class Router implements SimNode {
       }
       ctx.trace("frame.receive", "L2", `wan 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === BROADCAST_MAC ? "브로드캐스트" : "내 WAN MAC"}]`, { src: frame.src, dst: frame.dst }, frame.id);
       if (frame.payload.kind === "arp") this.wan.handleArp(frame.payload, frame.id, ctx, this.emitWan(ctx));
-      else this.handleWanIp(frame.payload, frame.id, ctx);
+      else if (frame.payload.kind === "ipv4") this.handleWanIp(frame.payload, frame.id, ctx);
       return;
     }
 
@@ -312,6 +312,7 @@ export class Router implements SimNode {
       return;
     }
     const pkt = frame.payload;
+    if (pkt.kind !== "ipv4") return;
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
       const m = udp.payload;

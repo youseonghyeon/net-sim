@@ -149,7 +149,14 @@ export type TraceKind =
   | "ha.master"
   | "ha.backup"
   | "ha.sync"
-  | "ssh.open";
+  | "ssh.open"
+  | "stp.config"
+  | "stp.bpdu"
+  | "stp.root"
+  | "stp.port"
+  | "stp.block"
+  | "stp.discard"
+  | "stp.tc";
 
 export interface TraceEvent {
   seq: number;

@@ -293,6 +293,8 @@ export interface RipSettings {
 /** 스위치 포트별 VLAN: 숫자(액세스) 또는 "trunk". 없으면 VLAN 1 */
 export interface SwitchSettings {
   vlans: Record<number, number | "trunk">;
+  /** 스패닝 트리. 없으면 꺼짐 (실제 스위치는 기본으로 켜져 있지만, 여기서는 켜야 BPDU 가 오간다) */
+  stp?: { enabled: boolean; priority: number };
 }
 
 export interface WanSettings {
@@ -825,6 +827,11 @@ export function normalizeTopology(t: Topology): Topology {
     if (spec.role === "ap" && !fixed.ap) fixed.ap = { ...DEFAULT_WIFI_BASE };
     if (spec.role === "firewall") fixed.firewall = fixed.firewall ? { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.firewall, rules: fixed.firewall.rules ?? [] } : { ...DEFAULT_FIREWALL_SETTINGS, enabled: true, rules: [] };
     if (spec.role === "switch" && !fixed.switch) fixed.switch = { vlans: {} };
+    if (fixed.switch?.stp) {
+      const st = fixed.switch.stp as Partial<{ enabled: boolean; priority: number }>;
+      const prio = typeof st.priority === "number" && Number.isInteger(st.priority) && st.priority >= 0 && st.priority <= 61440 ? st.priority - (st.priority % 4096) : 32768;
+      fixed.switch = { ...fixed.switch, stp: { enabled: st.enabled === true, priority: prio } };
+    }
     if (fixed.kind === "phone" && !fixed.wifi) fixed.wifi = { ssid: "home" };
     if (spec.role === "l3") {
       const def = defaultL3(fixed.kind);

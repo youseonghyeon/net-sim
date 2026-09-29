@@ -6,7 +6,7 @@ export interface EthernetFrame {
   id: number; // 추적용 ID (같은 패킷이 여러 링크를 지나도 유지)
   src: Mac;
   dst: Mac;
-  payload: ArpPacket | Ipv4Packet;
+  payload: ArpPacket | Ipv4Packet | BpduPacket;
   /** 스위치를 거친 횟수. 실제 이더넷엔 없지만 L2 루프 폭주를 막기 위한 안전장치 */
   hops?: number;
   /** 802.1Q VLAN 태그. 트렁크 링크 위에서만 붙는다 */
@@ -15,6 +15,29 @@ export interface EthernetFrame {
 
 /** 이 횟수를 넘긴 프레임은 루프로 간주해 버린다 */
 export const MAX_L2_HOPS = 16;
+
+/** 브리지 ID: 우선순위(작을수록 앞) + MAC (같으면 작은 MAC) */
+export interface BridgeId {
+  prio: number;
+  mac: Mac;
+}
+
+/**
+ * STP BPDU (802.1D Configuration BPDU 축소판, 목적지 MAC 01:80:c2:00:00:00, IP 없이 이더넷 위에 바로):
+ * "내가 아는 루트는 root, 거기까지 비용 cost, 보낸 나는 bridge 의 port 번 포트"
+ */
+export interface BpduPacket {
+  kind: "bpdu";
+  root: BridgeId;
+  cost: number;
+  bridge: BridgeId;
+  port: number;
+  /** 루트에서 몇 번 전달됐는지 (Message Age). 20 을 넘으면 버린다 — 루트가 사라졌을 때 옛 정보가 끝없이 돌지 않게 */
+  age: number;
+}
+
+export const STP_MULTICAST_MAC: Mac = "01:80:c2:00:00:00";
+export const STP_MAX_AGE = 20;
 
 export interface ArpPacket {
   kind: "arp";
@@ -313,7 +336,12 @@ export const LIMITED_BROADCAST_IP: Ip = "255.255.255.255";
 
 export type Layer = "L1" | "L2" | "L3" | "L4" | "app" | "sys";
 
-export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns" | "rip" | "vpn" | "vrrp";
+export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns" | "rip" | "vpn" | "vrrp" | "stp";
+
+/** 브리지 ID 표기: 우선순위.MAC (예: 32768.02:00:00:00:00:05) */
+export function bridgeIdLabel(b: BridgeId): string {
+  return `${b.prio}.${b.mac}`;
+}
 
 const ESP_LABEL = (e: EspPacket) => `ESP SPI 0x${e.spi.toString(16).padStart(8, "0")} seq=${e.seq} (암호화됨 · 안: ${e.inner.src} → ${e.inner.dst})`;
 const IKE_LABEL = (m: IkeMessage) => `IKE ${m.exchange} ${m.response ? (m.error ? `응답 (${m.error})` : "응답") : "요청"}`;
@@ -326,6 +354,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (p.kind === "arp") {
     return p.op === "request" ? `ARP 요청 (${p.targetIp}?)` : `ARP 응답 (${p.senderIp}=${p.senderMac})`;
   }
+  if (p.kind === "bpdu") return `STP BPDU (루트 ${bridgeIdLabel(p.root)}, 비용 ${p.cost}, 보낸 스위치 ${bridgeIdLabel(p.bridge)} 포트 ${p.port})`;
   const inner = p.payload;
   if (inner.kind === "icmp") {
     if (inner.type === "time-exceeded" || inner.type === "unreachable") return `ICMP ${icmpErrorLabel(inner)} (원래 ${describeOriginal(inner.original)})`;
@@ -357,6 +386,7 @@ export function tcpFlags(t: TcpSegment): string {
 export function shortLabel(frame: EthernetFrame): string {
   const p = frame.payload;
   if (p.kind === "arp") return p.op === "request" ? "ARP 요청" : "ARP 응답";
+  if (p.kind === "bpdu") return "BPDU";
   const inner = p.payload;
   if (inner.kind === "icmp") return inner.type === "echo-request" ? "ping 요청" : inner.type === "echo-reply" ? "ping 응답" : inner.type === "time-exceeded" ? "TTL 초과" : "도달 불가";
   if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
@@ -374,6 +404,7 @@ export function shortLabel(frame: EthernetFrame): string {
 export function frameCategory(frame: EthernetFrame): FrameCategory {
   const p = frame.payload;
   if (p.kind === "arp") return "arp";
+  if (p.kind === "bpdu") return "stp";
   if (p.payload.kind === "icmp") return "icmp";
   if (p.payload.kind === "tcp") return "tcp";
   if (p.payload.kind === "esp") return "vpn";

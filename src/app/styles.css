@@ -26,6 +26,7 @@
   --pkt-rip: #d6589b;
   --pkt-vpn: #64748b;
   --pkt-vrrp: #d9713c;
+  --pkt-stp: #7c8a2e;
   /* 영역(주석 네모) 채움·테두리: 크롬 톤에 살짝 물든 정도 */
   --zone-gray: rgba(100, 107, 120, 0.07);
   --zone-gray-line: rgba(100, 107, 120, 0.45);
@@ -466,6 +467,9 @@ select.btn.example {
 .legend .vrrp {
   background: var(--pkt-vrrp);
 }
+.legend .stp {
+  background: var(--pkt-stp);
+}
 .zoom {
   position: absolute;
   right: 12px;
@@ -801,6 +805,26 @@ select.btn.example {
 }
 .packet.vrrp circle:not(.packet-hit) {
   fill: var(--pkt-vrrp);
+}
+.packet.stp circle:not(.packet-hit) {
+  fill: var(--pkt-stp);
+}
+/* STP 차단 포트: 케이블 위에 점선, 막힌 쪽 포트에 ⊘ */
+.stp-blocked .stp-dash {
+  fill: none;
+  stroke: var(--canvas);
+  stroke-width: 3;
+  stroke-dasharray: 6 6;
+  pointer-events: none;
+}
+.stp-blocked circle {
+  fill: var(--canvas);
+  stroke: var(--ink-3);
+  stroke-width: 1.5;
+}
+.stp-blocked g path {
+  stroke: var(--ink-3);
+  stroke-width: 1.5;
 }
 .packet.lost path {
   stroke: #fff;
@@ -1799,6 +1823,9 @@ select.btn.example {
 .row .cat.vrrp {
   background: var(--pkt-vrrp);
 }
+.row .cat.stp {
+  background: var(--pkt-stp);
+}
 .row .cat.dns {
   background: var(--pkt-dns);
 }
@@ -2126,6 +2153,7 @@ select.btn.example {
 .cable-active.rip { stroke: var(--pkt-rip); }
 .cable-active.vpn { stroke: var(--pkt-vpn); }
 .cable-active.vrrp { stroke: var(--pkt-vrrp); }
+.cable-active.stp { stroke: var(--pkt-stp); }
 .tile-dot {
   stroke: var(--tile);
   stroke-width: 1.5;

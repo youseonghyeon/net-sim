@@ -57,8 +57,13 @@ function appLength(u: UdpPacket): number {
 
 /** 같은 패킷을 tcpdump -n -e 형식 한 줄로 (MAC 주소 포함) */
 export function tcpdumpLine(frame: EthernetFrame): string {
-  const eth = `${frame.src} > ${frame.dst}${frame.vlan !== undefined ? `, 802.1Q vlan ${frame.vlan}` : ""}, ethertype ${frame.payload.kind === "arp" ? "ARP (0x0806)" : "IPv4 (0x0800)"}: `;
   const p = frame.payload;
+  if (p.kind === "bpdu") {
+    // BPDU 는 EtherType 이 아니라 802.3 길이 + LLC (DSAP 0x42) 로 실린다
+    const port = (0x8000 + p.port + 1).toString(16);
+    return `${frame.src} > ${frame.dst}, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id ${p.bridge.prio.toString(16)}.${p.bridge.mac}.${port}, length 35 (root ${p.root.prio.toString(16)}.${p.root.mac}, root-pathcost ${p.cost}, message-age ${p.age}s)`;
+  }
+  const eth = `${frame.src} > ${frame.dst}${frame.vlan !== undefined ? `, 802.1Q vlan ${frame.vlan}` : ""}, ethertype ${p.kind === "arp" ? "ARP (0x0806)" : "IPv4 (0x0800)"}: `;
   if (p.kind === "arp") {
     return eth + (p.op === "request" ? `ARP, Request who-has ${p.targetIp} tell ${p.senderIp}, length 28` : `ARP, Reply ${p.senderIp} is-at ${p.senderMac}, length 28`);
   }
@@ -152,6 +157,20 @@ export function headerLayers(frame: EthernetFrame): HeaderLayer[] {
         ["보낸이 IP", `${p.senderIp}${p.senderIp === "0.0.0.0" ? " (ARP Probe — 아직 주소를 쓰지 않음)" : ""}`],
         ["대상 MAC", p.targetMac],
         ["대상 IP", p.targetIp],
+      ],
+    });
+    return layers;
+  }
+  if (p.kind === "bpdu") {
+    eth.rows[2] = ["길이 / LLC", "802.3 길이 필드 + LLC (DSAP·SSAP 0x42 = STP) — IP 없이 이더넷 위에 바로"];
+    layers.push({
+      title: "STP BPDU (Configuration)",
+      rows: [
+        ["루트 브리지 ID", `${p.root.prio}.${p.root.mac} (우선순위.MAC — 가장 작은 스위치가 루트)`],
+        ["루트까지 비용", String(p.cost)],
+        ["보낸 브리지 ID", `${p.bridge.prio}.${p.bridge.mac}`],
+        ["보낸 포트", `${p.port}`],
+        ["Message Age", `${p.age} (루트에서 거친 스위치 수, 20 을 넘으면 버림)`],
       ],
     });
     return layers;

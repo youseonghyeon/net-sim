@@ -1,6 +1,8 @@
 import { isBroadcastMac, type Mac } from "../addr";
 import { describeFrame, MAX_L2_HOPS, type EthernetFrame } from "../packet";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
+import { Stp, type StpConfig } from "./stp";
+import { bridgeIdLabel } from "../packet";
 
 interface MacEntry {
   port: number;
@@ -27,12 +29,29 @@ export class Switch implements SimNode {
   readonly portVlan = new Map<number, PortVlan>();
   /** 최근 본 프레임 id → 수신 포트. 같은 프레임이 다시 오면 L2 루프 */
   private readonly seen = new Map<number | string, number>();
+  /** 연결 상태 (STP 가 포트 역할을 정할 때 본다) */
+  private readonly up = new Set<number>();
+  readonly stp: Stp = new Stp({
+    portCount: () => this.portCount,
+    portName: (p) => this.portName(p),
+    connected: (p) => this.up.has(p),
+    send: (p, frame, ctx) => ctx.send(p, frame),
+    topologyChanged: (ctx) => {
+      if (this.macTable.size === 0) return;
+      this.macTable.clear();
+      ctx.trace("stp.tc", "L2", `STP 토폴로지 변경 → MAC 테이블 비움 (경로가 바뀌었으니 다시 배운다)`, {});
+    },
+  });
 
   /** ports: 포트 개수(이름은 port N) 또는 포트 이름 목록 */
   constructor(id: string, ports: number | string[] = 4) {
     this.id = id;
     this.portNames = typeof ports === "number" ? Array.from({ length: ports }, (_, i) => `port ${i}`) : ports;
     this.portCount = this.portNames.length;
+  }
+
+  setStp(cfg: StpConfig, mac: string, ctx: NodeContext): void {
+    this.stp.setConfig(cfg, mac, ctx);
   }
 
   portName(port: number): string {
@@ -74,6 +93,15 @@ export class Switch implements SimNode {
     const pn = this.portName(port);
     const mode = this.vlanOf(port);
     ctx.trace("frame.receive", "L2", `${pn} 수신: ${label} [${frame.src} → ${frame.dst}]${frame.vlan !== undefined ? ` (VLAN ${frame.vlan} 태그)` : ""}`, { port, src: frame.src, dst: frame.dst, vlan: frame.vlan }, frame.id);
+    // STP: BPDU 는 내가 처리하고 넘기지 않는다 (STP 를 끈 스위치는 보통 멀티캐스트처럼 넘긴다)
+    if (frame.payload.kind === "bpdu" && this.stp.config.enabled) {
+      this.stp.handle(port, frame.payload, frame.id, ctx);
+      return;
+    }
+    if (!this.stp.forwarding(port)) {
+      ctx.trace("stp.discard", "L2", `${pn} 는 STP 대체 포트(차단) → 데이터 프레임을 받지 않고 버림 (루프 방지)`, { port }, frame.id);
+      return;
+    }
     // 같은 프레임이 다른 VLAN 으로 돌아오는 건 루프가 아니다 (예: 투명 방화벽이 VLAN 10 과 20 을 이음). VLAN 별로 본다
     const scope = mode === "trunk" ? `t${frame.vlan ?? "-"}` : `a${mode}`;
     if (!guardLoop(this.seen, port, frame, ctx, pn, scope)) return;
@@ -118,6 +146,10 @@ export class Switch implements SimNode {
       this.flood(port, vlan, frame, ctx, `${frame.dst} 는 ${this.vlanAware ? `VLAN ${vlan} 의 ` : ""}MAC 테이블에 없음`);
       return;
     }
+    if (!this.stp.forwarding(entry.port)) {
+      ctx.trace("stp.discard", "L2", `${this.portName(entry.port)} 는 STP 차단 포트 → 보내지 않음`, { port: entry.port }, frame.id);
+      return;
+    }
     if (entry.port === port) {
       ctx.trace("switch.filter", "L2", `목적지 ${frame.dst} 가 수신 포트(${pn})와 같음 → 필터링(전달 안 함)`, { port }, frame.id);
       return;
@@ -141,7 +173,7 @@ export class Switch implements SimNode {
     const ports: number[] = [];
     const excluded: number[] = [];
     for (let p = 0; p < this.portCount; p++) {
-      if (p === inPort || !ctx.isPortConnected(p)) continue;
+      if (p === inPort || !ctx.isPortConnected(p) || !this.stp.forwarding(p)) continue;
       const m = this.vlanOf(p);
       if (m === "trunk" || m === vlan) ports.push(p);
       else excluded.push(p);
@@ -158,9 +190,13 @@ export class Switch implements SimNode {
   }
 
   onLink(port: number, up: boolean, ctx: NodeContext): void {
-    if (up) return;
-    for (const [k, e] of this.macTable) if (e.port === port) this.macTable.delete(k);
-    ctx.trace("link.down", "L1", `${this.portName(port)} 링크 다운 → 그 포트의 MAC 학습 정보 삭제`, { port });
+    if (up) this.up.add(port);
+    else this.up.delete(port);
+    if (!up) {
+      for (const [k, e] of this.macTable) if (e.port === port) this.macTable.delete(k);
+      ctx.trace("link.down", "L1", `${this.portName(port)} 링크 다운 → 그 포트의 MAC 학습 정보 삭제`, { port });
+    }
+    this.stp.onLink(port, up, ctx);
   }
 
   onTimer(): void {}
@@ -178,8 +214,12 @@ export class Switch implements SimNode {
       info: [
         ["포트 수", String(this.portCount)],
         ...(this.vlanAware ? [["VLAN", [...vlans].sort((a, b) => a - b).join(", ")] as [string, string]] : []),
+        ...(this.stp.config.enabled
+          ? [["STP", `${this.stp.isRoot ? "루트 브리지" : `루트 ${bridgeIdLabel(this.stp.root)} · 비용 ${this.stp.rootCost}`} · 내 ID ${bridgeIdLabel(this.stp.me)}`] as [string, string]]
+          : []),
       ],
       tables: [
+        ...(this.stp.config.enabled ? [{ title: "STP 포트", columns: ["포트", "역할", "건너편 스위치"], rows: this.stp.rows() }] : []),
         {
           title: "MAC 테이블",
           columns: this.vlanAware ? ["VLAN", "MAC", "포트", "학습 시각"] : ["MAC", "포트", "학습 시각"],

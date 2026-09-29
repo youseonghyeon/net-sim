@@ -540,7 +540,7 @@ export class L3Node implements SimNode {
       iface.handleArp(frame.payload, frame.id, ctx, this.emit(i, ctx));
       return;
     }
-    this.handleIp(i, frame.payload, frame.id, ctx);
+    if (frame.payload.kind === "ipv4") this.handleIp(i, frame.payload, frame.id, ctx);
   }
 
   private handleIp(port: number, pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
