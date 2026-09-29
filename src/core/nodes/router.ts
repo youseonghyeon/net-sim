@@ -1,5 +1,5 @@
 import { BROADCAST_MAC, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
+import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, isControl, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_UPSTREAM_TIMER_TAG, DnsServer, type DnsServerConfig } from "./dns";
 import { Firewall, type FirewallConfig } from "./firewall";
@@ -331,7 +331,7 @@ export class Router implements SimNode {
         ctx.trace("ip.drop", "L4", `라우터 자신에게 온 TCP ${pkt.payload.dstPort} 포트 → 듣는 서비스 없음, 드롭`, { port: pkt.payload.dstPort }, frame.id);
         return;
       }
-      if (pkt.payload.kind === "vrrp" || pkt.payload.kind === "pfsync") return;
+      if (isControl(pkt.payload)) return;
       if (pkt.payload.kind === "esp") {
         ctx.trace("ip.drop", "L3", `라우터 자신에게 온 ESP(IPsec) → 공유기에는 IPsec VPN 이 없어 드롭`, {}, frame.id);
         return;

@@ -1,7 +1,7 @@
 // 방화벽: 라우터/게이트웨이/NAT 박스를 "지나가는" 패킷을 규칙으로 거른다 (iptables 의 FORWARD 체인에 해당).
 // 규칙은 위에서부터 첫 일치가 이긴다. Stateful 검사를 켜면 안에서 시작한 통신의 응답은 규칙과 무관하게 통과한다.
 import { ipToInt, prefixToMask, type Ip } from "../addr";
-import { describeOriginal, icmpErrorLabel, isIcmpError, type Ipv4Packet } from "../packet";
+import { describeOriginal, hasPorts, icmpErrorLabel, isIcmpError, type Ipv4Packet } from "../packet";
 import type { NodeContext } from "./node";
 
 export type FwAction = "allow" | "deny";
@@ -92,8 +92,7 @@ function flowKey(pkt: Ipv4Packet, reverse: boolean): string {
   const a = reverse ? pkt.dst : pkt.src;
   const b = reverse ? pkt.src : pkt.dst;
   if (p.kind === "icmp") return `icmp:${a}:${b}:${p.id}`;
-  if (p.kind === "esp") return `esp:${a}:${b}`; // ESP 는 포트가 없어 주소 쌍으로 본다
-  if (p.kind === "vrrp" || p.kind === "pfsync") return `${p.kind}:${a}:${b}`;
+  if (!hasPorts(p)) return `${p.kind}:${a}:${b}`; // ESP·제어 멀티캐스트는 포트가 없어 주소 쌍으로 본다
   const ap = reverse ? p.dstPort : p.srcPort;
   const bp = reverse ? p.srcPort : p.dstPort;
   return `${p.kind}:${a}:${ap}:${b}:${bp}`;
@@ -143,7 +142,7 @@ export class Firewall {
     if (r.src && !cidrContains(r.src, pkt.src)) return false;
     if (r.dst && !cidrContains(r.dst, pkt.dst)) return false;
     if (r.dstPort) {
-      if (p.kind === "icmp" || p.kind === "esp" || p.kind === "vrrp" || p.kind === "pfsync") return false;
+      if (!hasPorts(p)) return false;
       if (p.dstPort !== r.dstPort) return false;
     }
     return true;
@@ -200,7 +199,6 @@ function describePacket(pkt: Ipv4Packet): string {
   const p = pkt.payload;
   if (isIcmpError(p)) return `ICMP ${icmpErrorLabel(p)} ${pkt.src} → ${pkt.dst} (원래 ${describeOriginal(p.original)})`;
   if (p.kind === "icmp") return `ICMP ${p.type === "echo-request" ? "ping 요청" : "ping 응답"} ${pkt.src} → ${pkt.dst}`;
-  if (p.kind === "esp") return `ESP ${pkt.src} → ${pkt.dst} (IPsec)`;
-  if (p.kind === "vrrp" || p.kind === "pfsync") return `${p.kind.toUpperCase()} ${pkt.src} → ${pkt.dst}`;
+  if (!hasPorts(p)) return `${p.kind.toUpperCase()} ${pkt.src} → ${pkt.dst}${p.kind === "esp" ? " (IPsec)" : ""}`;
   return `${p.kind.toUpperCase()} ${pkt.src}:${p.srcPort} → ${pkt.dst}:${p.dstPort}`;
 }

@@ -1,6 +1,6 @@
 // NAT 변환 테이블. 라우터(공유기)와 NAT 박스가 공유한다. ICMP 는 id, TCP 는 포트로 구분한다.
 import type { Ip } from "../addr";
-import { icmpErrorLabel, isIcmpError, type IcmpError, type Ipv4Packet } from "../packet";
+import { icmpErrorLabel, isControl, isIcmpError, type IcmpError, type Ipv4Packet } from "../packet";
 import type { NodeContext } from "./node";
 
 export interface NatEntry {
@@ -77,7 +77,7 @@ export class NatTable {
   translate(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
     if (isIcmpError(p)) return this.translateError(pkt, p, publicIp, ctx, frameId);
-    if (p.kind === "vrrp" || p.kind === "pfsync") return undefined; // 멀티캐스트 광고·동기화는 NAT 대상이 아님
+    if (isControl(p)) return undefined; // 멀티캐스트 광고·동기화는 NAT 대상이 아님
     if (p.kind === "esp") {
       ctx.trace("nat.miss", "L3", `ESP(IPsec) ${pkt.src} → ${pkt.dst}: ESP 에는 포트가 없어 NAT 가 누구 것인지 구분할 수 없음 → 드롭. 양쪽 VPN 이 NAT 를 감지하면 UDP 4500 (NAT-T) 로 싣는다`, { proto: "esp" }, frameId);
       return undefined;
@@ -182,7 +182,7 @@ export class NatTable {
   restore(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
     if (isIcmpError(p)) return this.restoreError(pkt, p, publicIp, ctx, frameId);
-    if (p.kind === "vrrp" || p.kind === "pfsync") return undefined; // 멀티캐스트 광고·동기화는 NAT 대상이 아님
+    if (isControl(p)) return undefined; // 멀티캐스트 광고·동기화는 NAT 대상이 아님
     if (p.kind === "esp") {
       ctx.trace("nat.miss", "L3", `ESP(IPsec) ${pkt.src} → ${pkt.dst}: ESP 에는 포트가 없어 NAT 가 누구 것인지 구분할 수 없음 → 드롭. 양쪽 VPN 이 NAT 를 감지하면 UDP 4500 (NAT-T) 로 싣는다`, { proto: "esp" }, frameId);
       return undefined;

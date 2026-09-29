@@ -1,5 +1,5 @@
 import { isMulticastMac, isPrivateIp, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, UNREACHABLE_LABEL, type DnsMessage, type EthernetFrame, type Ipv4Packet } from "../packet";
+import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, isControl, UNREACHABLE_LABEL, type DnsMessage, type EthernetFrame, type Ipv4Packet } from "../packet";
 import { DhcpServer } from "./dhcp";
 import { normalizeName, PUBLIC_ZONE } from "./dns";
 import { NetInterface, type Emit } from "./iface";
@@ -100,7 +100,7 @@ export class Internet implements SimNode {
       return;
     }
     const p = pkt.payload;
-    if (p.kind === "vrrp" || p.kind === "pfsync") return;
+    if (isControl(p)) return;
     if (p.kind === "esp") {
       ctx.trace("ip.drop", "L3", `ESP(IPsec) ${pkt.src} → ${pkt.dst}: 이 주소에 VPN 장비가 없음 → 시뮬레이션 밖이므로 드롭`, { dst: pkt.dst }, frameId);
       return;

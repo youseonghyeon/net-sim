@@ -4,7 +4,7 @@
 // - practitionerLines: 장치가 내린 판단을 실무 명령의 출력(시스코 debug, iptables LOG, dhclient, ping, curl …)으로
 // 시뮬레이터에 없는 필드(체크섬, 윈도우 크기, IP ID 등)는 넣지 않고, 길이는 근사값이다.
 import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, IkeMessage, Ipv4Packet, TcpSegment, UdpPacket } from "../core/packet";
-import { describeOriginal, tcpFlags, UNREACHABLE_FLAG } from "../core/packet";
+import { describeOriginal, IP_PROTO, tcpFlags, UNREACHABLE_FLAG } from "../core/packet";
 import type { TraceEvent } from "../core/trace";
 
 export interface HeaderLayer {
@@ -183,7 +183,7 @@ export function headerLayers(frame: EthernetFrame): HeaderLayer[] {
 function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
   const layers: HeaderLayer[] = [];
   const l4 = p.payload;
-  const proto = l4.kind === "icmp" ? "1 (ICMP)" : l4.kind === "tcp" ? "6 (TCP)" : l4.kind === "esp" ? "50 (ESP — 포트 없음)" : l4.kind === "vrrp" ? "112 (VRRP)" : l4.kind === "pfsync" ? "240 (pfsync)" : "17 (UDP)";
+  const proto = `${IP_PROTO[l4.kind].num} (${IP_PROTO[l4.kind].label})`;
   layers.push({
     title: "IPv4 (L3)",
     rows: [

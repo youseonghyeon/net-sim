@@ -1,5 +1,5 @@
 import { ipToInt, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, describeOriginal, type EthernetFrame, type IcmpPacket, type IcmpTimeExceeded, type Ipv4Packet, UNREACHABLE_FLAG, UNREACHABLE_LABEL, type IcmpUnreachable } from "../packet";
+import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, describeOriginal, isControl, type EthernetFrame, type IcmpPacket, type IcmpTimeExceeded, type Ipv4Packet, UNREACHABLE_FLAG, UNREACHABLE_LABEL, type IcmpUnreachable } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, type DnsServerConfig } from "./dns";
 import { NetInterface } from "./iface";
@@ -652,7 +652,7 @@ export class Host implements SimNode {
       this.tcp.handle(pkt, pkt.payload, ctx);
       return;
     }
-    if (pkt.payload.kind === "vrrp" || pkt.payload.kind === "pfsync") return; // 가입하지 않은 멀티캐스트
+    if (isControl(pkt.payload)) return; // 가입하지 않은 멀티캐스트
     if (pkt.payload.kind === "esp") {
       ctx.trace("ip.drop", "L3", `ESP(IPsec) 패킷 수신 → 호스트에는 IPsec VPN 이 없어 드롭`, {}, frameId);
       return;

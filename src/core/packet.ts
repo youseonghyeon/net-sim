@@ -58,6 +58,32 @@ export interface Ipv4Packet {
   payload: IcmpPacket | UdpPacket | TcpSegment | EspPacket | VrrpPacket | PfsyncPacket;
 }
 
+/** IPv4 안에 실리는 것 (프로토콜 번호로 구분) */
+export type IpPayload = Ipv4Packet["payload"];
+
+/**
+ * IP 프로토콜 번호와 이름. 새 종류를 넣으면 여기와 아래 두 판별 함수부터 본다 —
+ * 장비들은 종류를 하나하나 나열하지 않고 "포트가 있나(hasPorts)", "라우터끼리의 제어 멀티캐스트인가(isControl)" 로 나눈다.
+ */
+export const IP_PROTO: Record<IpPayload["kind"], { num: number; label: string }> = {
+  icmp: { num: 1, label: "ICMP" },
+  tcp: { num: 6, label: "TCP" },
+  udp: { num: 17, label: "UDP" },
+  esp: { num: 50, label: "ESP — 포트 없음" },
+  vrrp: { num: 112, label: "VRRP" },
+  pfsync: { num: 240, label: "pfsync" },
+};
+
+/** 포트가 있는 전송 계층 (TCP·UDP) — NAT 가 포트로 구분하고, 방화벽 규칙의 포트 칸이 뜻을 가진다 */
+export function hasPorts(p: IpPayload): p is TcpSegment | UdpPacket {
+  return p.kind === "tcp" || p.kind === "udp";
+}
+
+/** 라우터끼리만 주고받는 제어 멀티캐스트 (VRRP·pfsync): 호스트·공유기·인터넷은 조용히 거르고, NAT·ICMP 오류와 무관 */
+export function isControl(p: IpPayload): p is VrrpPacket | PfsyncPacket {
+  return p.kind === "vrrp" || p.kind === "pfsync";
+}
+
 export interface TcpSegment {
   kind: "tcp";
   srcPort: number;
@@ -162,7 +188,7 @@ export function icmpErrorFor(from: Ip, dropped: Ipv4Packet, err: { type: "time-e
   if (p.kind === "icmp") {
     if (p.type !== "echo-request" && p.type !== "echo-reply") return undefined;
     l4 = { kind: "icmp", id: p.id, seq: p.seq };
-  } else if (p.kind === "esp" || p.kind === "vrrp" || p.kind === "pfsync") return undefined; // 터널 바깥 패킷의 오류는 VPN 장비가 쓰지 않으므로 생략 (터널은 IKE timeout 으로 알아챈다)
+  } else if (!hasPorts(p)) return undefined; // ESP(터널은 IKE timeout 으로 알아챈다)·제어 멀티캐스트에는 오류를 만들지 않는다
   else l4 = { kind: p.kind, srcPort: p.srcPort, dstPort: p.dstPort };
   const original = { src: dropped.src, dst: dropped.dst, l4 };
   const payload: IcmpError = err.type === "time-exceeded" ? { kind: "icmp", type: "time-exceeded", original } : { kind: "icmp", type: "unreachable", code: err.code, original };
@@ -419,7 +445,7 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.payload.kind === "icmp") return "icmp";
   if (p.payload.kind === "tcp") return "tcp";
   if (p.payload.kind === "esp") return "vpn";
-  if (p.payload.kind === "vrrp" || p.payload.kind === "pfsync") return "vrrp";
+  if (isControl(p.payload)) return "vrrp";
   const k = p.payload.payload.kind;
   return k === "dns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" ? "vpn" : "dhcp";
 }
