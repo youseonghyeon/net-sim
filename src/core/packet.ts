@@ -30,7 +30,7 @@ export interface Ipv4Packet {
   src: Ip;
   dst: Ip;
   ttl: number;
-  payload: IcmpPacket | UdpPacket | TcpSegment | EspPacket | VrrpPacket;
+  payload: IcmpPacket | UdpPacket | TcpSegment | EspPacket | VrrpPacket | PfsyncPacket;
 }
 
 export interface TcpSegment {
@@ -137,7 +137,7 @@ export function icmpErrorFor(from: Ip, dropped: Ipv4Packet, err: { type: "time-e
   if (p.kind === "icmp") {
     if (p.type !== "echo-request" && p.type !== "echo-reply") return undefined;
     l4 = { kind: "icmp", id: p.id, seq: p.seq };
-  } else if (p.kind === "esp" || p.kind === "vrrp") return undefined; // 터널 바깥 패킷의 오류는 VPN 장비가 쓰지 않으므로 생략 (터널은 IKE timeout 으로 알아챈다)
+  } else if (p.kind === "esp" || p.kind === "vrrp" || p.kind === "pfsync") return undefined; // 터널 바깥 패킷의 오류는 VPN 장비가 쓰지 않으므로 생략 (터널은 IKE timeout 으로 알아챈다)
   else l4 = { kind: p.kind, srcPort: p.srcPort, dstPort: p.dstPort };
   const original = { src: dropped.src, dst: dropped.dst, l4 };
   const payload: IcmpError = err.type === "time-exceeded" ? { kind: "icmp", type: "time-exceeded", original } : { kind: "icmp", type: "unreachable", code: err.code, original };
@@ -224,6 +224,24 @@ export interface VrrpPacket {
   /** master 가 아닌 후보의 알림 (시작·복구 때). 이것만으로는 backup 이 기다림을 멈추지 않는다 */
   candidate?: boolean;
 }
+
+/**
+ * 세션 동기화 (pfsync 식, IP 프로토콜 240, 224.0.0.240): 이중화 master 가 새로 만든 NAT 매핑·방화벽 흐름을 backup 에 복사해 둔다.
+ * 넘어가도 backup 이 같은 공인 포트·같은 흐름으로 이어 가므로 진행 중인 연결이 끊기지 않는다
+ */
+export interface PfsyncPacket {
+  kind: "pfsync";
+  vrid: number;
+  /** 새 NAT 매핑 (공인 id 까지 그대로 복사) */
+  nat: { proto: "icmp" | "tcp" | "udp"; lanIp: Ip; innerId: number; publicId: number }[];
+  /** 새 방화벽 흐름 (Stateful 검사의 흐름 키) */
+  flows: string[];
+  /** 전체 복사 (새 backup 이 들어왔을 때) */
+  bulk?: boolean;
+}
+
+export const PFSYNC_MULTICAST_IP: Ip = "224.0.0.240";
+export const PFSYNC_MULTICAST_MAC: Mac = "01:00:5e:00:00:f0";
 
 export const VRRP_MULTICAST_IP: Ip = "224.0.0.18";
 export const VRRP_MULTICAST_MAC: Mac = "01:00:5e:00:00:12";
@@ -315,6 +333,7 @@ export function describeFrame(frame: EthernetFrame): string {
   }
   if (inner.kind === "tcp") return `TCP ${tcpFlags(inner)} seq=${inner.seq} ack=${inner.ack}${inner.len ? ` len=${inner.len}` : ""}`;
   if (inner.kind === "esp") return ESP_LABEL(inner);
+  if (inner.kind === "pfsync") return `세션 동기화 (pfsync${inner.bulk ? " 전체" : ""}: NAT 매핑 ${inner.nat.length}개, 흐름 ${inner.flows.length}개)`;
   if (inner.kind === "vrrp") return `VRRP 광고 (그룹 ${inner.vrid}, 우선순위 ${inner.priority}${inner.priority === 0 ? " — 물러남" : ""}, 가상 주소 ${inner.vip})`;
   const d = inner.payload;
   if (d.kind === "esp") return `UDP 4500 (NAT-T) · ${ESP_LABEL(d)}`;
@@ -341,6 +360,7 @@ export function shortLabel(frame: EthernetFrame): string {
   const inner = p.payload;
   if (inner.kind === "icmp") return inner.type === "echo-request" ? "ping 요청" : inner.type === "echo-reply" ? "ping 응답" : inner.type === "time-exceeded" ? "TTL 초과" : "도달 불가";
   if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
+  if (inner.kind === "pfsync") return "세션 동기화";
   if (inner.kind === "vrrp") return inner.priority === 0 ? "VRRP 물러남" : `VRRP ${inner.priority}`;
   if (inner.kind === "esp" || inner.payload.kind === "esp") return "ESP 터널";
   if (inner.payload.kind === "ike") return inner.payload.exchange === "IKE_SA_INIT" ? "IKE 협상" : "IKE 인증";
@@ -357,7 +377,7 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.payload.kind === "icmp") return "icmp";
   if (p.payload.kind === "tcp") return "tcp";
   if (p.payload.kind === "esp") return "vpn";
-  if (p.payload.kind === "vrrp") return "vrrp";
+  if (p.payload.kind === "vrrp" || p.payload.kind === "pfsync") return "vrrp";
   const k = p.payload.payload.kind;
   return k === "dns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" ? "vpn" : "dhcp";
 }

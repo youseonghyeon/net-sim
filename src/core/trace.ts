@@ -148,6 +148,7 @@ export type TraceKind =
   | "ha.advert"
   | "ha.master"
   | "ha.backup"
+  | "ha.sync"
   | "ssh.open";
 
 export interface TraceEvent {

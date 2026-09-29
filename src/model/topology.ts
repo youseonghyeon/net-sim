@@ -243,6 +243,8 @@ export interface HaSettings {
   priority: number;
   /** 인터페이스별 가상 주소 (인덱스 = 인터페이스, "" = 참여 안 함) */
   vips: string[];
+  /** 세션 동기화 (없으면 꺼짐) */
+  sync?: boolean;
 }
 
 /** 불러온 JSON 의 이중화 설정 정리 */
@@ -253,6 +255,7 @@ function normalizeHa(h: Partial<HaSettings>): HaSettings {
     vrid: int(h.vrid, 1, 255, 1),
     priority: int(h.priority, 1, 254, 100),
     vips: Array.isArray(h.vips) ? h.vips.map((v) => (typeof v === "string" ? v : "")) : [],
+    ...(h.sync === true ? { sync: true } : {}),
   };
 }
 

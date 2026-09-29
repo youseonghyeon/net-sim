@@ -93,7 +93,7 @@ function flowKey(pkt: Ipv4Packet, reverse: boolean): string {
   const b = reverse ? pkt.src : pkt.dst;
   if (p.kind === "icmp") return `icmp:${a}:${b}:${p.id}`;
   if (p.kind === "esp") return `esp:${a}:${b}`; // ESP 는 포트가 없어 주소 쌍으로 본다
-  if (p.kind === "vrrp") return `vrrp:${a}:${b}`;
+  if (p.kind === "vrrp" || p.kind === "pfsync") return `${p.kind}:${a}:${b}`;
   const ap = reverse ? p.dstPort : p.srcPort;
   const bp = reverse ? p.srcPort : p.dstPort;
   return `${p.kind}:${a}:${ap}:${b}:${bp}`;
@@ -102,6 +102,19 @@ function flowKey(pkt: Ipv4Packet, reverse: boolean): string {
 export class Firewall {
   /** 허용되어 지나간 흐름 (정방향 키) */
   private readonly flows = new Set<string>();
+  /** 새 흐름이 생길 때 (이중화 세션 동기화) */
+  onFlow?: (key: string, ctx: NodeContext) => void;
+
+  /** 지금 기억하는 흐름 (세션 동기화의 전체 복사용) */
+  flowKeys(): string[] {
+    return [...this.flows];
+  }
+
+  /** 다른 장비(이중화 master)가 알려 준 흐름을 받아 둔다 */
+  importFlow(key: string): void {
+    this.flows.add(key);
+    if (this.flows.size > 512) this.flows.delete(this.flows.values().next().value!);
+  }
 
   constructor(public config: FirewallConfig = { ...DEFAULT_FIREWALL, rules: [] }) {}
 
@@ -130,7 +143,7 @@ export class Firewall {
     if (r.src && !cidrContains(r.src, pkt.src)) return false;
     if (r.dst && !cidrContains(r.dst, pkt.dst)) return false;
     if (r.dstPort) {
-      if (p.kind === "icmp" || p.kind === "esp" || p.kind === "vrrp") return false;
+      if (p.kind === "icmp" || p.kind === "esp" || p.kind === "vrrp" || p.kind === "pfsync") return false;
       if (p.dstPort !== r.dstPort) return false;
     }
     return true;
@@ -170,8 +183,10 @@ export class Firewall {
       ctx.trace("fw.allow", "L3", `방화벽 허용: ${dirLabel} ${what} — 규칙 ${idx + 1} (${describeRule(rule)})`, { rule: idx, dir }, frameId);
     }
     if (this.config.stateful && !established && isInitiator(pkt)) {
-      this.flows.add(flowKey(pkt, false));
+      const key = flowKey(pkt, false);
+      this.flows.add(key);
       if (this.flows.size > 512) this.flows.delete(this.flows.values().next().value!);
+      this.onFlow?.(key, ctx);
     }
     return true;
   }
@@ -186,6 +201,6 @@ function describePacket(pkt: Ipv4Packet): string {
   if (isIcmpError(p)) return `ICMP ${icmpErrorLabel(p)} ${pkt.src} → ${pkt.dst} (원래 ${describeOriginal(p.original)})`;
   if (p.kind === "icmp") return `ICMP ${p.type === "echo-request" ? "ping 요청" : "ping 응답"} ${pkt.src} → ${pkt.dst}`;
   if (p.kind === "esp") return `ESP ${pkt.src} → ${pkt.dst} (IPsec)`;
-  if (p.kind === "vrrp") return `VRRP ${pkt.src} → ${pkt.dst}`;
+  if (p.kind === "vrrp" || p.kind === "pfsync") return `${p.kind.toUpperCase()} ${pkt.src} → ${pkt.dst}`;
   return `${p.kind.toUpperCase()} ${pkt.src}:${p.srcPort} → ${pkt.dst}:${p.dstPort}`;
 }

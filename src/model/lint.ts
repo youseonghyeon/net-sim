@@ -1116,6 +1116,9 @@ export function lintTopology(t: Topology): LintIssue[] {
             continue;
           }
           peers++;
+          if (i === vipIfs[0]!.i && (ha.sync === true) !== (other.sync === true)) {
+            add({ deviceId: d.id, severity: "warn", code: "ha.sync-mismatch", message: `짝 ${g.device.name} 와 세션 동기화 설정이 다름 → 한쪽으로 넘어갈 때만 진행 중인 연결이 끊김`, fix: "쌍의 두 장비 모두 세션 동기화를 켜거나 끄기", related: [g.device.id] });
+          }
           if (theirVip !== vip) {
             add({ deviceId: d.id, severity: "error", code: "ha.vip-mismatch", message: `짝 ${g.device.name} 의 ${portName(g.device, g.port)} 가상 주소(${theirVip ?? "없음"})가 내 것(${vip})과 다름 → 넘어가면 호스트가 쓰던 주소가 사라짐`, fix: "쌍의 두 장비에 같은 가상 주소를 넣기", related: [g.device.id] });
           }

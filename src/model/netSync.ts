@@ -314,6 +314,7 @@ export function effectiveL3(d: Device) {
       vrid: Number.isInteger(l3.ha?.vrid) && l3.ha!.vrid >= 1 && l3.ha!.vrid <= 255 ? l3.ha!.vrid : 1,
       priority: Number.isInteger(l3.ha?.priority) && l3.ha!.priority >= 1 && l3.ha!.priority <= 254 ? l3.ha!.priority : 100,
       vips: spec.ports.map((_, i) => validIp(l3.ha?.vips?.[i])),
+      sync: l3.ha?.sync === true,
     },
     vpn: {
       enabled: l3.vpn?.enabled === true,

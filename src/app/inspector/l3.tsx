@@ -189,7 +189,7 @@ export function VpnSection({ d, l3 }: { d: Device; l3: L3Settings }) {
 
 /** 이중화 (VRRP 식): 켜기 + 그룹 번호 + 우선순위 + 인터페이스별 가상 주소 */
 export function HaSection({ d, l3 }: { d: Device; l3: L3Settings }) {
-  const empty = { enabled: false, vrid: 1, priority: 100, vips: [] as string[] };
+  const empty: NonNullable<L3Settings["ha"]> = { enabled: false, vrid: 1, priority: 100, vips: [] };
   const ha = l3.ha ?? empty;
   const names = specOf(d).ports.map((p) => p.name);
   const set = (patch: Partial<NonNullable<L3Settings["ha"]>>) =>
@@ -229,6 +229,13 @@ export function HaSection({ d, l3 }: { d: Device; l3: L3Settings }) {
           <Field label="우선순위">
             <input class="input mono" type="number" min={1} max={254} value={ha.priority} onInput={(e) => { if (e.currentTarget.value !== "") set({ priority: clamp(e.currentTarget.value, 1, 254, 100) }); }} />
           </Field>
+          <label class="toggle-row">
+            <span>
+              세션 동기화 <span class="mono muted">pfsync</span>
+              <small class="muted">master 의 NAT 매핑·방화벽 흐름을 backup 에 복사</small>
+            </span>
+            <Toggle on={ha.sync === true} onToggle={() => set({ sync: !ha.sync })} />
+          </label>
           <h3 class="sub">가상 주소</h3>
           {names.map((n, i) => (
             <Field key={n} label={n} error={vipError(i)}>
@@ -241,7 +248,7 @@ export function HaSection({ d, l3 }: { d: Device; l3: L3Settings }) {
             </Field>
           ))}
           <p class="note">
-            짝 장비에도 같은 그룹 번호·가상 주소로 켜고, 우선순위만 다르게 둡니다(높은 쪽이 master, 돌아오면 다시 가져감). 가상 MAC 은 00:00:5e:00:01:{ha.vrid.toString(16).padStart(2, "0")} 입니다. NAT·방화벽 흐름·IPsec 터널은 넘어가지 않아 진행 중이던 연결은 끊기고 새 연결부터 됩니다.
+            짝 장비에도 같은 그룹 번호·가상 주소로 켜고, 우선순위만 다르게 둡니다(높은 쪽이 master, 돌아오면 다시 가져감). 가상 MAC 은 00:00:5e:00:01:{ha.vrid.toString(16).padStart(2, "0")} 입니다. {ha.sync ? "세션 동기화를 켜 두면 NAT 매핑·방화벽 흐름이 backup 에도 있어 넘어가도 진행 중인 연결(SSH 세션 등)이 이어집니다. IPsec 터널은 복사되지 않아 다시 협상합니다." : "세션 동기화가 꺼져 있으면 NAT 매핑·방화벽 흐름이 넘어가지 않아, 진행 중이던 연결은 끊기고 새 연결부터 됩니다."}
           </p>
         </>
       )}

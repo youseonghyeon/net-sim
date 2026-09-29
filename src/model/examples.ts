@@ -1141,7 +1141,7 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     id: "ha",
     group: "보안",
     label: "방화벽 이중화 (VRRP)",
-    blurb: "pc-1 에서 8.8.8.8 로 ping 하면 master 인 방화벽 A 가 NAT 합니다. 방화벽 A 의 케이블을 지우고(또는 장치를 지우고) 다시 ping 하면 방화벽 B 가 가상 주소를 이어받아 그대로 나갑니다. 케이블을 되돌리면 우선순위가 높은 A 가 다시 가져갑니다.",
+    blurb: "pc-1 에서 8.8.8.8 로 ping 하면 master 인 방화벽 A 가 NAT 합니다. 방화벽 A 의 케이블을 지우고(또는 장치를 지우고) 다시 ping 하면 방화벽 B 가 가상 주소를 이어받아 그대로 나갑니다. 케이블을 되돌리면 우선순위가 높은 A 가 다시 가져갑니다. pc-1 에서 93.184.216.34 로 SSH(22) 세션을 열어 둔 채 A 를 지우고 '연결 해제' 하면 끊기지만, 두 방화벽의 이중화 설정에서 세션 동기화를 켜면 이어집니다.",
     build: exampleHaTopology,
   },
   lb: {

@@ -12,6 +12,9 @@ import {
   RIP_PORT,
   VPN_PORT,
   VRRP_MULTICAST_MAC,
+  PFSYNC_MULTICAST_IP,
+  PFSYNC_MULTICAST_MAC,
+  type PfsyncPacket,
   type DhcpMessage,
   type EthernetFrame,
   type IcmpPacket,
@@ -26,6 +29,9 @@ import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { Rip, RIP_TIMER_TAG, type RipConfig } from "./rip";
 import { HA_TIMER_TAG, Ha, type HaConfig } from "./ha";
 import { IKE_TIMER_TAG, VPN_MODE_LABEL, Vpn, type VpnConfig } from "./vpn";
+
+/** 이중화 세션 동기화: 같은 순간 생긴 상태를 모아 한 패킷으로 보내는 타이머 */
+const HA_SYNC_TAG = "ha-sync";
 
 export interface L3IfaceConfig {
   name: string;
@@ -109,6 +115,11 @@ export class L3Node implements SimNode {
       if (vip) iface.announceVip(ctx, this.emit(i, ctx));
       this.rip.kick(ctx); // RIP 넥스트 홉(가상 주소)을 다시 알린다
     },
+    onBackupSeen: (ctx) => {
+      if (!this.syncing()) return;
+      const nat = (this.nat?.values() ?? []).map((e) => ({ proto: e.proto, lanIp: e.lanIp, innerId: e.innerId, publicId: e.publicId }));
+      this.sendSync({ kind: "pfsync", vrid: this.ha.config.vrid, nat, flows: this.firewall.flowKeys(), bulk: true }, ctx);
+    },
   });
   readonly vpn: Vpn = new Vpn({
     source: (dst) => {
@@ -145,6 +156,9 @@ export class L3Node implements SimNode {
     this.macBase = cfg.interfaces[0]?.mac ?? "02:00:00:10:00:00";
     if (this.nat && cfg.forwards) this.nat.setForwards(cfg.forwards);
     this.firewall = new Firewall(cfg.firewall);
+    // 이중화 세션 동기화: master 가 새로 만든 매핑·흐름을 backup 에 복사한다
+    if (this.nat) this.nat.onNew = (e, ctx) => this.queueSync({ nat: [e], flows: [] }, ctx);
+    this.firewall.onFlow = (key, ctx) => this.queueSync({ nat: [], flows: [key] }, ctx);
     if (cfg.subinterfaces) this.setSubinterfaces(cfg.subinterfaces);
     const self = this; // 객체 리터럴 getter 안의 this 는 그 객체라 별칭으로 잡는다
     this.rip = new Rip({
@@ -447,6 +461,52 @@ export class L3Node implements SimNode {
     this.ha.setConfig(cfg, ctx);
   }
 
+  private pendingSync: { nat: PfsyncPacket["nat"]; flows: string[] } | undefined;
+
+  private syncing(): boolean {
+    return this.ha.config.enabled && this.ha.config.sync === true && this.ha.state === "master";
+  }
+
+  /** 새 상태를 모아 두었다가 같은 순간의 것은 한 패킷으로 보낸다 */
+  private queueSync(add: { nat: { proto: "icmp" | "tcp" | "udp"; lanIp: Ip; innerId: number; publicId: number }[]; flows: string[] }, ctx: NodeContext): void {
+    if (!this.syncing()) return;
+    if (!this.pendingSync) {
+      this.pendingSync = { nat: [], flows: [] };
+      ctx.timer(0, HA_SYNC_TAG, {});
+    }
+    for (const e of add.nat) this.pendingSync.nat.push({ proto: e.proto, lanIp: e.lanIp, innerId: e.innerId, publicId: e.publicId });
+    this.pendingSync.flows.push(...add.flows);
+  }
+
+  /** 세션 동기화 패킷을 보낼 인터페이스: 가상 주소를 둔 안쪽 인터페이스 (없으면 아무 VIP 인터페이스) */
+  private syncIface(): number | undefined {
+    const ifs = this.ha.config.vips.map((v, i) => (v && this.linkUp[i] && this.ifaces[i]?.usable ? i : -1)).filter((i) => i >= 0);
+    return ifs.find((i) => i !== this.outside) ?? ifs[0];
+  }
+
+  private sendSync(msg: PfsyncPacket, ctx: NodeContext): void {
+    const i = this.syncIface();
+    if (i === undefined || (msg.nat.length === 0 && msg.flows.length === 0)) return;
+    ctx.trace("ha.sync", "L3", `세션 동기화 송신 (pfsync${msg.bulk ? ", 전체 복사" : ""}): NAT 매핑 ${msg.nat.length}개, 방화벽 흐름 ${msg.flows.length}개 → backup 이 받아 두면 넘어가도 진행 중인 연결이 이어진다`, { nat: msg.nat.length, flows: msg.flows.length, bulk: msg.bulk === true });
+    this.ifaces[i]!.sendToMac(PFSYNC_MULTICAST_MAC, { kind: "ipv4", src: this.ifaces[i]!.ip!, dst: PFSYNC_MULTICAST_IP, ttl: 255, payload: msg }, ctx, this.emit(i, ctx));
+  }
+
+  private flushSync(ctx: NodeContext): void {
+    const p = this.pendingSync;
+    this.pendingSync = undefined;
+    if (!p || !this.syncing()) return;
+    this.sendSync({ kind: "pfsync", vrid: this.ha.config.vrid, nat: p.nat, flows: p.flows }, ctx);
+  }
+
+  /** 받은 세션 동기화: backup 이면 매핑·흐름을 그대로 받아 둔다 */
+  private receiveSync(port: number, pkt: Ipv4Packet, msg: PfsyncPacket, frameId: number, ctx: NodeContext): void {
+    const ha = this.ha.config;
+    if (!ha.enabled || !ha.sync || msg.vrid !== ha.vrid || this.ha.state === "master") return;
+    for (const e of msg.nat) this.nat?.importEntry(e, ctx.now);
+    for (const k of msg.flows) this.firewall.importFlow(k);
+    ctx.trace("ha.sync", "L3", `[${this.names[port]}] ${pkt.src} 의 세션 동기화 수신${msg.bulk ? " (전체 복사)" : ""}: NAT 매핑 ${msg.nat.length}개, 방화벽 흐름 ${msg.flows.length}개를 받아 둠`, { from: pkt.src, nat: msg.nat.length, flows: msg.flows.length }, frameId);
+  }
+
   // ---------- 수신 ----------
 
   receive(port: number, rawFrame: EthernetFrame, ctx: NodeContext): void {
@@ -469,7 +529,7 @@ export class L3Node implements SimNode {
     const name = this.names[i]!;
     // 멀티캐스트: RIP 를 켰으면 RIP 그룹(224.0.0.9)만 받고, 나머지는 NIC 가 조용히 거른다
     const ripFrame = frame.dst === RIP_MULTICAST_MAC && this.rip.config.enabled;
-    const vrrpFrame = frame.dst === VRRP_MULTICAST_MAC && this.ha.config.enabled;
+    const vrrpFrame = (frame.dst === VRRP_MULTICAST_MAC && this.ha.config.enabled) || (frame.dst === PFSYNC_MULTICAST_MAC && this.ha.config.enabled && this.ha.config.sync === true);
     if (isMulticastMac(frame.dst) && !ripFrame && !vrrpFrame) return;
     if (!ripFrame && !vrrpFrame && !iface.accepts(frame)) {
       ctx.trace("frame.drop", "L2", `${name} 수신: 목적지 MAC ${frame.dst} 가 내 MAC 아님 → 드롭`, { dst: frame.dst }, frame.id);
@@ -530,6 +590,10 @@ export class L3Node implements SimNode {
         if (restored) this.forward(restored, port, frameId, ctx, pkt);
       } else if (m.kind !== "dhcp" && this.ownIndex(pkt.dst) < 0) this.forward(pkt, port, frameId, ctx);
       else ctx.trace("ip.drop", "L4", `[${name}] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
+      return;
+    }
+    if (pkt.payload.kind === "pfsync") {
+      this.receiveSync(port, pkt, pkt.payload, frameId, ctx);
       return;
     }
     if (pkt.payload.kind === "vrrp") {
@@ -807,6 +871,10 @@ export class L3Node implements SimNode {
     }
     if (tag === RIP_TIMER_TAG) {
       this.rip.onTimer(ctx);
+      return;
+    }
+    if (tag === HA_SYNC_TAG) {
+      this.flushSync(ctx);
       return;
     }
     if (tag === HA_TIMER_TAG) {

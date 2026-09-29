@@ -82,4 +82,33 @@ describe("SSH 세션", () => {
     expect(lastConn("pc-1").state).toBe("FAILED");
     expect(lastConn("pc-1").reason).toContain("timeout");
   });
+
+  it("세션 동기화를 켜면 master 가 NAT 매핑·흐름을 backup 에 복사해 두어, 넘어가도 SSH 세션을 정상으로 닫는다", () => {
+    const base = exampleHaTopology();
+    const t: Topology = { ...base, devices: base.devices.map((d) => (d.l3?.ha ? { ...d, l3: { ...d.l3, ha: { ...d.l3.ha, sync: true } } } : d)) };
+    const { id, act, apply, lastConn } = load(t);
+    const tr = act({ kind: "tcp-connect", nodeId: id("pc-1"), dst: "93.184.216.34", port: 22 });
+    expect(tr.some((e) => e.kind === "ha.sync" && e.nodeId === id("방화벽 A"))).toBe(true);
+    expect(tr.some((e) => e.kind === "ha.sync" && e.nodeId === id("방화벽 B"))).toBe(true);
+    expect(lastConn("pc-1")).toMatchObject({ state: "ESTABLISHED", ssh: { open: true } });
+    const a = id("방화벽 A");
+    apply({ ...t, devices: t.devices.filter((d) => d.id !== a), cables: t.cables.filter((c) => c.a.device !== a && c.b.device !== a) });
+    const bye = act({ kind: "tcp-close", nodeId: id("pc-1"), conn: lastConn("pc-1").id });
+    expect(bye.some((e) => e.kind === "fw.deny")).toBe(false);
+    expect(lastConn("pc-1")).toMatchObject({ state: "CLOSED", reason: "정상 종료" });
+  });
+
+  it("세션 동기화: 나중에 켜진 backup 도 master 가 전체 복사(bulk)를 보내 따라잡는다", () => {
+    const base = exampleHaTopology();
+    const synced: Topology = { ...base, devices: base.devices.map((d) => (d.l3?.ha ? { ...d, l3: { ...d.l3, ha: { ...d.l3.ha, sync: true } } } : d)) };
+    const bId = base.devices.find((d) => d.name === "방화벽 B")!.id;
+    const noB: Topology = { ...synced, devices: synced.devices.filter((d) => d.id !== bId), cables: synced.cables.filter((c) => c.a.device !== bId && c.b.device !== bId) };
+    const { id, act, apply, lastConn } = load(noB);
+    act({ kind: "tcp-connect", nodeId: id("pc-1"), dst: "93.184.216.34", port: 22 });
+    apply(synced); // B 합류 → 후보 알림 → A 가 전체 복사
+    const a = id("방화벽 A");
+    apply({ ...synced, devices: synced.devices.filter((d) => d.id !== a), cables: synced.cables.filter((c) => c.a.device !== a && c.b.device !== a) });
+    act({ kind: "tcp-close", nodeId: id("pc-1"), conn: lastConn("pc-1").id });
+    expect(lastConn("pc-1")).toMatchObject({ state: "CLOSED", reason: "정상 종료" });
+  });
 });

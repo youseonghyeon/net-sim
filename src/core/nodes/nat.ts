@@ -37,6 +37,16 @@ export class NatTable {
   forwards: PortForward[] = [];
   /** 규칙으로 들어온 흐름: "내부IP:내부포트:상대IP:상대포트" → 공인 포트 (같은 내부 서버를 가리키는 규칙이 여럿일 때 구분) */
   private readonly ruleFlows = new Map<string, number>();
+  /** 새 매핑이 생길 때 (이중화 세션 동기화) */
+  onNew?: (e: NatEntry, ctx: NodeContext) => void;
+
+  /** 다른 장비(이중화 master)가 만든 매핑을 공인 id 그대로 받아 둔다. 이후 이 장비가 할당할 id 와 겹치지 않게 한다 */
+  importEntry(e: Pick<NatEntry, "proto" | "lanIp" | "innerId" | "publicId">, now: number): void {
+    const natKey = `${e.proto}:${e.publicId}`;
+    this.entries.set(natKey, { ...e, createdAt: now, lastUsed: now });
+    this.byInner.set(`${e.proto}:${e.lanIp}:${e.innerId}`, natKey);
+    if (e.publicId >= this.seq) this.seq = e.publicId + 1;
+  }
 
   setForwards(rules: PortForward[]): void {
     this.forwards = [...rules];
@@ -45,7 +55,7 @@ export class NatTable {
   /** 동적 공인 id 할당. TCP/UDP 포트는 포워딩 규칙의 공인 포트와 겹치지 않게 건너뛴다 */
   private allocPublicId(proto: NatEntry["proto"]): number {
     let id = this.seq++;
-    if (proto !== "icmp") while (this.forwards.some((r) => r.publicPort === id)) id = this.seq++;
+    while ((proto !== "icmp" && this.forwards.some((r) => r.publicPort === id)) || this.entries.has(`${proto}:${id}`)) id = this.seq++;
     return id;
   }
 
@@ -61,7 +71,7 @@ export class NatTable {
   translate(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
     if (isIcmpError(p)) return this.translateError(pkt, p, publicIp, ctx, frameId);
-    if (p.kind === "vrrp") return undefined; // 멀티캐스트 광고는 NAT 대상이 아님
+    if (p.kind === "vrrp" || p.kind === "pfsync") return undefined; // 멀티캐스트 광고·동기화는 NAT 대상이 아님
     if (p.kind === "esp") {
       ctx.trace("nat.miss", "L3", `ESP(IPsec) ${pkt.src} → ${pkt.dst}: ESP 에는 포트가 없어 NAT 가 누구 것인지 구분할 수 없음 → 드롭. 양쪽 VPN 이 NAT 를 감지하면 UDP 4500 (NAT-T) 로 싣는다`, { proto: "esp" }, frameId);
       return undefined;
@@ -93,6 +103,7 @@ export class NatTable {
       natKey = `${proto}:${publicId}`;
       this.byInner.set(key, natKey);
       this.entries.set(natKey, { proto, lanIp: pkt.src, innerId, publicId, createdAt: ctx.now, lastUsed: ctx.now });
+      this.onNew?.(this.entries.get(natKey)!, ctx);
     }
     const entry = this.entries.get(natKey)!;
     entry.lastUsed = ctx.now;
@@ -165,7 +176,7 @@ export class NatTable {
   restore(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
     if (isIcmpError(p)) return this.restoreError(pkt, p, publicIp, ctx, frameId);
-    if (p.kind === "vrrp") return undefined; // 멀티캐스트 광고는 NAT 대상이 아님
+    if (p.kind === "vrrp" || p.kind === "pfsync") return undefined; // 멀티캐스트 광고·동기화는 NAT 대상이 아님
     if (p.kind === "esp") {
       ctx.trace("nat.miss", "L3", `ESP(IPsec) ${pkt.src} → ${pkt.dst}: ESP 에는 포트가 없어 NAT 가 누구 것인지 구분할 수 없음 → 드롭. 양쪽 VPN 이 NAT 를 감지하면 UDP 4500 (NAT-T) 로 싣는다`, { proto: "esp" }, frameId);
       return undefined;

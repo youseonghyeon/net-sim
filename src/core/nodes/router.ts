@@ -330,7 +330,7 @@ export class Router implements SimNode {
         ctx.trace("ip.drop", "L4", `라우터 자신에게 온 TCP ${pkt.payload.dstPort} 포트 → 듣는 서비스 없음, 드롭`, { port: pkt.payload.dstPort }, frame.id);
         return;
       }
-      if (pkt.payload.kind === "vrrp") return;
+      if (pkt.payload.kind === "vrrp" || pkt.payload.kind === "pfsync") return;
       if (pkt.payload.kind === "esp") {
         ctx.trace("ip.drop", "L3", `라우터 자신에게 온 ESP(IPsec) → 공유기에는 IPsec VPN 이 없어 드롭`, {}, frame.id);
         return;

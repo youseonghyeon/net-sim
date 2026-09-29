@@ -36,6 +36,7 @@ function l4Length(p: Ipv4Packet["payload"]): number {
   if (p.kind === "tcp") return 20 + p.len;
   if (p.kind === "esp") return espLength(p);
   if (p.kind === "vrrp") return 12; // VRRPv3 머리 8 + 가상 주소 4
+  if (p.kind === "pfsync") return 12 + (p.nat.length + p.flows.length) * 64; // 머리 + 상태 하나당 대략
   return 8 + appLength(p);
 }
 /** ESP 머리(SPI 4 + seq 4) + IV 16 + 암호화된 원래 IP 패킷 + 패딩·무결성 값 약 16 */
@@ -69,6 +70,7 @@ function ipLine(pkt: Ipv4Packet): string {
   if (p.kind === "icmp") return `IP ${pkt.src} > ${pkt.dst}: ${icmpText(p)}, length ${l4Length(p)}`;
   if (p.kind === "tcp") return `IP ${pkt.src}.${p.srcPort} > ${pkt.dst}.${p.dstPort}: ${tcpText(p)}`;
   if (p.kind === "esp") return `IP ${pkt.src} > ${pkt.dst}: ${espText(p)}, length ${espLength(p)}`;
+  if (p.kind === "pfsync") return `IP ${pkt.src} > ${pkt.dst}: pfsync${p.bulk ? " (bulk update)" : ""}, INS ST count ${p.nat.length + p.flows.length}, length ${l4Length(p)}`;
   if (p.kind === "vrrp") return `IP ${pkt.src} > ${pkt.dst}: VRRPv3, Advertisement, vrid ${p.vrid}, prio ${p.priority}, intvl 100cs, length 12`;
   return `IP ${pkt.src}.${p.srcPort} > ${pkt.dst}.${p.dstPort}: ${udpText(p)}`;
 }
@@ -162,7 +164,7 @@ export function headerLayers(frame: EthernetFrame): HeaderLayer[] {
 function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
   const layers: HeaderLayer[] = [];
   const l4 = p.payload;
-  const proto = l4.kind === "icmp" ? "1 (ICMP)" : l4.kind === "tcp" ? "6 (TCP)" : l4.kind === "esp" ? "50 (ESP — 포트 없음)" : l4.kind === "vrrp" ? "112 (VRRP)" : "17 (UDP)";
+  const proto = l4.kind === "icmp" ? "1 (ICMP)" : l4.kind === "tcp" ? "6 (TCP)" : l4.kind === "esp" ? "50 (ESP — 포트 없음)" : l4.kind === "vrrp" ? "112 (VRRP)" : l4.kind === "pfsync" ? "240 (pfsync)" : "17 (UDP)";
   layers.push({
     title: "IPv4 (L3)",
     rows: [
@@ -176,6 +178,16 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
   if (l4.kind === "icmp") layers.push(icmpLayer(l4));
   else if (l4.kind === "tcp") layers.push(tcpLayer(l4));
   else if (l4.kind === "esp") layers.push(espLayer(l4, false), ...ipLayers(l4.inner, true));
+  else if (l4.kind === "pfsync")
+    layers.push({
+      title: "세션 동기화 (pfsync)",
+      rows: [
+        ["종류", l4.bulk ? "전체 복사 (새 backup 에게)" : "새 상태 추가 (INS ST)"],
+        ["그룹 (VRID)", String(l4.vrid)],
+        ["NAT 매핑", l4.nat.length ? l4.nat.slice(0, 4).map((e) => `${e.lanIp}:${e.innerId} → 공인 ${e.publicId} (${e.proto.toUpperCase()})`).join(", ") + (l4.nat.length > 4 ? ` 외 ${l4.nat.length - 4}` : "") : "없음"],
+        ["방화벽 흐름", `${l4.flows.length}개`],
+      ],
+    });
   else if (l4.kind === "vrrp")
     layers.push({
       title: "VRRP",

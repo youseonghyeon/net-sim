@@ -25,6 +25,8 @@ export interface HaConfig {
   priority: number;
   /** 인터페이스별 가상 주소 (인덱스 = 인터페이스, 없으면 그 인터페이스는 HA 에 참여하지 않음) */
   vips: (Ip | undefined)[];
+  /** 세션 동기화 (pfsync 식): master 의 NAT 매핑·방화벽 흐름을 backup 에 복사 */
+  sync?: boolean;
 }
 
 export const DEFAULT_HA: HaConfig = { enabled: false, vrid: 1, priority: 100, vips: [] };
@@ -53,6 +55,8 @@ export interface HaHost {
   linkUp(i: number): boolean;
   /** 인터페이스 i 로 VRRP 광고 (224.0.0.18 멀티캐스트) */
   send(i: number, pkt: Ipv4Packet, ctx: NodeContext): void;
+  /** master 가 backup(후보)의 알림을 들음: 세션 동기화면 지금까지의 상태를 전부 복사해 준다 */
+  onBackupSeen?(ctx: NodeContext): void;
   /** master 가 되면 VIP·가상 MAC 을 켜고 Gratuitous ARP, 물러나면 끈다 */
   setVip(i: number, vip: { ip: Ip; mac: Mac } | undefined, ctx: NodeContext): void;
 }
@@ -218,6 +222,7 @@ export class Ha {
       }
       ctx.trace("ha.advert", "L3", `[${name}] 낮은 우선순위 ${msg.priority} 의 ${src} 광고 수신 (나는 ${mine}) → 내가 master 임을 광고로 알림`, { from: src, priority: msg.priority }, frameId);
       this.advertise(ctx, this.config.priority);
+      if (msg.candidate) this.host.onBackupSeen?.(ctx);
       return;
     }
     // backup (또는 시작 전)
