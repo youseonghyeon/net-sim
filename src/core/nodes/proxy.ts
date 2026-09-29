@@ -7,6 +7,7 @@
 //   리버스 = 서버들을 대신한다 (클라이언트는 LB 주소가 곧 서버인 줄 안다)
 //   포워드 = 클라이언트들을 대신한다 (클라이언트가 프록시를 알고 설정해 둔다)
 // 실패는 Squid 처럼: 대상 없음(프록시 설정 없이 직접 접속) 400, 차단 403, 이름을 못 찾음·연결 실패 503.
+// 차단 목록의 주소는 이름을 푼 뒤에도 비교한다 (Squid dst ACL) — 주소로 막은 사이트를 이름으로 돌아가지 못하게.
 // HTTP(포트 80 요청)만 다룬다 — HTTPS 의 CONNECT 터널은 없다.
 import { ipToInt, type Ip } from "../addr";
 import type { NodeContext } from "./node";
@@ -100,20 +101,26 @@ export class ForwardProxy {
     if (!this.handles(down)) return false;
     const target = down.target;
     if (!target) {
-      ctx.trace("proxy.fail", "app", `프록시: ${down.remoteIp} 의 요청에 대상(절대 URI)이 없음 — 프록시 설정 없이 프록시 주소로 직접 접속한 것 → 400 Bad Request`, { client: down.remoteIp });
+      ctx.trace("proxy.fail", "app", `프록시: ${down.remoteIp} 의 요청에 대상(절대 URI)이 없음 — 프록시 설정 없이 프록시 주소로 직접 접속한 것 → 400 Bad Request`, { client: down.remoteIp, result: "TAG_NONE/400", url: "/" });
       this.finish(down, "-", "TAG_NONE/400", [BAD_REQUEST], ctx);
       return true;
     }
     const { host, port } = splitTarget(target);
     const rule = denied(host, this.config.deny);
-    if (rule) {
-      ctx.trace("proxy.deny", "app", `프록시: ${down.remoteIp} 가 부탁한 ${target} 는 차단 목록(${rule})에 있음 → 대상에 연결하지 않고 403 Forbidden`, { client: down.remoteIp, target, rule });
+    const deny = (why: string, r: string) => {
+      ctx.trace("proxy.deny", "app", `프록시: ${down.remoteIp} 가 부탁한 ${target}${why} 는 차단 목록(${r})에 있음 → 대상에 연결하지 않고 403 Forbidden`, { client: down.remoteIp, target, rule: r, result: "TCP_DENIED/403" });
       this.finish(down, target, "TCP_DENIED/403", [FORBIDDEN], ctx);
+    };
+    if (rule) {
+      deny("", rule);
       return true;
     }
     const go = (ip: Ip) => {
       const me = this.localIp();
       if (!me || down.state !== "ESTABLISHED") return;
+      // 이름을 푼 주소도 차단 목록과 비교 (주소로 막은 사이트를 이름으로 우회하지 못하게)
+      const byIp = ip !== host ? denied(ip, this.config.deny) : undefined;
+      if (byIp) return deny(` (${ip})`, byIp);
       ctx.trace(
         "proxy.request",
         "app",
@@ -129,7 +136,7 @@ export class ForwardProxy {
     // 이름은 프록시가 찾는다 (PC 는 대상의 이름을 풀지 않았다)
     this.resolve(host, ctx, (ip, err) => {
       if (ip) return go(ip);
-      ctx.trace("proxy.fail", "app", `프록시: ${target} 의 이름을 주소로 바꾸지 못함 (${err ?? "이름 해석 실패"}) → 503 Service Unavailable (프록시의 DNS 설정을 확인)`, { client: down.remoteIp, target });
+      ctx.trace("proxy.fail", "app", `프록시: ${target} 의 이름을 주소로 바꾸지 못함 (${err ?? "이름 해석 실패"}) → 503 Service Unavailable (프록시의 DNS 설정을 확인)`, { client: down.remoteIp, target, result: "TCP_MISS/503" });
       this.finish(down, target, "TCP_MISS/503", [UNAVAILABLE], ctx);
     });
     return true;
@@ -140,14 +147,15 @@ export class ForwardProxy {
     const p = this.pending.get(up.id);
     if (!p) return false;
     this.pending.delete(up.id);
-    if (up.bytesReceived > 0 && (up.state === "CLOSED" || up.finReceived)) {
+    // 응답을 끝까지(대상의 FIN 까지) 받았을 때만 전달. FIN 없이 끊긴(RST·timeout) 일부 응답은 503
+    if (up.bytesReceived > 0 && up.finReceived) {
       const status = up.status ?? "HTTP 200";
       const n = Math.max(1, Math.ceil(up.bytesReceived / RESPONSE_SEGMENT_BYTES));
       ctx.trace(
         "proxy.relay",
         "app",
         `프록시: ${p.target} 의 응답 (${status}, ${up.bytesReceived}B) 을 ${p.down.remoteIp} 에게 전달${up.setCookie ? ` — Set-Cookie 도 그대로` : ""}`,
-        { client: p.down.remoteIp, target: p.target, ip: up.remoteIp, status, bytes: up.bytesReceived },
+        { client: p.down.remoteIp, target: p.target, ip: up.remoteIp, status, bytes: up.bytesReceived, result: `TCP_MISS/${status.split(" ")[1] ?? "200"}` },
       );
       this.finish(
         p.down,
@@ -159,16 +167,29 @@ export class ForwardProxy {
       );
       return true;
     }
-    if (p.down.state !== "ESTABLISHED") return true; // 기다리던 클라이언트가 이미 없다
-    ctx.trace("proxy.fail", "app", `프록시: ${p.target} 에 연결하지 못함 (${up.reason ?? "?"}) → ${p.down.remoteIp} 에게 503 Service Unavailable`, { client: p.down.remoteIp, target: p.target, reason: up.reason });
+    if (p.down.state !== "ESTABLISHED") {
+      // 기다리던 클라이언트가 이미 끊었다 (Squid 는 TCP_MISS_ABORTED 로 남긴다)
+      this.record(p.down, p.target, "TCP_MISS_ABORTED/000", ctx);
+      return true;
+    }
+    ctx.trace(
+      "proxy.fail",
+      "app",
+      `프록시: ${p.target} ${up.bytesReceived > 0 ? `의 응답이 중간에 끊김 (${up.bytesReceived}B 받음, ${up.reason ?? "?"})` : `에 연결하지 못함 (${up.reason ?? "?"})`} → ${p.down.remoteIp} 에게 503 Service Unavailable`,
+      { client: p.down.remoteIp, target: p.target, reason: up.reason, result: "TCP_MISS/503" },
+    );
     this.finish(p.down, p.target, "TCP_MISS/503", [UNAVAILABLE], ctx);
     return true;
   }
 
   private finish(down: TcpConn, target: string, result: string, parts: { len: number; data: string }[], ctx: NodeContext, meta: { origin?: string; setCookie?: string } = {}): void {
+    this.record(down, target, result, ctx);
+    this.tcp.respond(down, parts, ctx, meta);
+  }
+
+  private record(down: TcpConn, target: string, result: string, ctx: NodeContext): void {
     this.log.push({ at: ctx.now, client: down.remoteIp, target, result });
     if (this.log.length > LOG_MAX) this.log.shift();
-    this.tcp.respond(down, parts, ctx, meta);
   }
 
   rows(): string[][] {

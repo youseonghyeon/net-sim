@@ -11,7 +11,7 @@ import { loopStpRule, vlanTrunkRules } from "./lint/l2";
 import { lbRules } from "./lint/lb";
 import { relayRouteRule, returnRouteRule, uplinkDefaultRule } from "./lint/routing";
 import { analyze } from "./lint/segments";
-import { forwardClosedRule, httpProxyRule, routerDnsRule } from "./lint/services";
+import { forwardClosedRule, httpProxyRule, proxyPortClashRule, routerDnsRule } from "./lint/services";
 import { remoteAccessRules, siteVpnRules } from "./lint/vpn";
 
 export type { LintIssue } from "./lint/context";
@@ -47,6 +47,7 @@ const RULES: ((ctx: LintContext) => void)[] = [
   loopStpRule, // 19
   remoteAccessRules, // 20
   httpProxyRule, // 21
+  proxyPortClashRule, // 21b
 ];
 
 export function lintTopology(t: Topology): LintIssue[] {

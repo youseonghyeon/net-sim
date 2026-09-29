@@ -221,7 +221,8 @@ export function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
 function ProxyFields({ d, h }: { d: Device; h: HostSettings }) {
   const px = h.proxy ?? DEFAULT_PROXY_SETTINGS;
   const set = (patch: Partial<typeof px>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, proxy: { ...(x.host!.proxy ?? DEFAULT_PROXY_SETTINGS), ...patch } } }));
-  const clash = px.enabled && ((h.services ?? []).includes(px.port) || (h.lb?.enabled && h.lb.port === px.port));
+  const lbClash = px.enabled && h.lb?.enabled === true && h.lb.port === px.port;
+  const serviceClash = px.enabled && !lbClash && (h.services ?? []).includes(px.port);
   return (
     <>
       <label class="toggle-row">
@@ -236,7 +237,8 @@ function ProxyFields({ d, h }: { d: Device; h: HostSettings }) {
           <Field label="받는 포트">
             <input class="input mono" type="number" min={1} max={65535} value={px.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 3128)) }); }} />
           </Field>
-          {clash && <p class="note error-note">포트 {px.port} 는 이 장치의 다른 서비스가 이미 받습니다. 프록시 포트를 바꾸세요(보통 3128).</p>}
+          {lbClash && <p class="note error-note">포트 {px.port} 는 이 장치의 로드밸런서가 먼저 받아 프록시로 동작하지 않습니다. 프록시 포트를 바꾸세요(보통 3128).</p>}
+          {serviceClash && <p class="note">포트 {px.port} 로 온 연결은 프록시가 받아, 같은 포트의 다른 서비스는 쓸 수 없습니다.</p>}
           <h3 class="sub">차단 목록</h3>
           {px.deny.length === 0 && <p class="note">비어 있으면 모든 사이트를 대신 받아 옵니다.</p>}
           {px.deny.map((v, i) => (

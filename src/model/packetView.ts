@@ -495,10 +495,12 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
     case "proxy.deny":
     case "proxy.fail": {
       // Squid access.log: 시각 경과ms 클라이언트 결과/상태 바이트 메서드 URL 사용자 계층/상대 형식
-      const target = String(detail(ev, "target") ?? "-");
-      const code = ev.kind === "proxy.deny" ? "TCP_DENIED/403" : ev.kind === "proxy.fail" ? (ev.summary.includes("400") ? "TAG_NONE/400" : "TCP_MISS/503") : `TCP_MISS/${String(detail(ev, "status") ?? "HTTP 200").split(" ")[1] ?? "200"}`;
-      const hier = ev.kind === "proxy.relay" ? `HIER_DIRECT/${detail(ev, "ip") ?? "-"}` : "HIER_NONE/-";
-      out.push({ tool: "Squid access.log", line: `${(ev.time / 1000).toFixed(3)}      0 ${detail(ev, "client") ?? "-"} ${code} ${detail(ev, "bytes") ?? 200} GET http://${target.replace(/:80$/, "")}/ - ${hier} text/html` });
+      const target = detail(ev, "target");
+      const url = detail(ev, "url") ?? (target ? `http://${target.replace(/:80$/, "")}/` : "-");
+      const code = detail(ev, "result") ?? "-";
+      // 대상에 연결해 본 것(응답 전달·연결 실패)은 HIER_DIRECT, 연결하지 않은 것(차단·이름 실패·대상 없음)은 HIER_NONE
+      const hier = detail(ev, "ip") ? `HIER_DIRECT/${detail(ev, "ip")}` : "HIER_NONE/-";
+      out.push({ tool: "Squid access.log", line: `${(ev.time / 1000).toFixed(3)}      0 ${detail(ev, "client") ?? "-"} ${code} ${detail(ev, "bytes") ?? 200} GET ${url} - ${hier} text/html` });
       break;
     }
     case "lb.relay":

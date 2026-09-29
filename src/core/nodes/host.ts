@@ -592,7 +592,7 @@ export class Host implements SimNode {
           return;
         }
         ctx.trace("dns.resolved", "app", `${target} = ${ip} → 이 주소의 ${port} 포트로 연결`, { name: target, ip });
-        if (this.iface.ip) this.tcp.connect(this.iface.ip, ip, port, ctx);
+        if (this.iface.ip) this.tcp.connect(this.iface.ip, ip, port, ctx, { site: target }); // 쿠키는 적은 이름 기준 (브라우저처럼)
       });
       return;
     }

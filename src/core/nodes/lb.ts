@@ -221,7 +221,8 @@ export class LoadBalancer {
       : (this.config.algorithm === "least-conn" ? `최소 연결 (진행 중 ${this.active(b)}개)` : `라운드 로빈 (살아 있는 ${alive.length}대 중 차례)`) +
         (stale ? ` — 쿠키가 가리키는 ${stale} 는 빠져 있거나 없어 다시 고름` : "");
     ctx.trace("lb.pick", "app", `로드밸런서: 클라이언트 ${down.remoteIp} 의 요청 → 백엔드 ${keyOf(b)} 선택 — ${why}. LB 가 대신 연결해 요청`, { backend: keyOf(b), client: down.remoteIp });
-    this.tcp.connect(me, b.ip, b.port, ctx, { via: hops + 1, onCreated: (up) => this.pending.set(up.id, { down, backend: b, tried }) });
+    // 요청 줄은 그대로 넘긴다: 절대 URI(프록시에게 온 요청)면 뒤의 프록시 팜이 대상을 알아야 한다
+    this.tcp.connect(me, b.ip, b.port, ctx, { via: hops + 1, ...(down.target ? { target: down.target } : {}), onCreated: (up) => this.pending.set(up.id, { down, backend: b, tried }) });
   }
 
   /** 백엔드 연결이 끝남: 응답을 받았으면 클라이언트에게 전달, 실패면 빼 두고 다음 백엔드로. LB 가 처리한 연결이면 true */
@@ -232,8 +233,8 @@ export class LoadBalancer {
     const key = keyOf(p.backend);
     const st = this.stats.get(key) ?? { served: 0, fails: 0 };
     this.stats.set(key, st);
-    // 응답을 끝까지 받았으면(상대 FIN 까지) 마지막 종료 절차가 timeout 이어도 성공으로 본다
-    if (up.bytesReceived > 0 && (up.state === "CLOSED" || up.finReceived)) {
+    // 응답을 끝까지 받았으면(상대 FIN 까지) 마지막 종료 절차가 timeout 이어도 성공으로 본다. FIN 없이 끊긴(RST·timeout) 일부 응답은 실패
+    if (up.bytesReceived > 0 && up.finReceived) {
       st.served++;
       // 받은 응답을 상태 줄 그대로 전달한다 (뒤에서 502·508 이 오면 그대로). 응답을 만든 서버는 뒤 LB 가 알려 준 것을 우선
       const status = up.status ?? "HTTP 200";

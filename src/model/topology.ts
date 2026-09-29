@@ -292,6 +292,32 @@ export interface HaSettings {
 }
 
 /** 불러온 JSON 의 원격 접속 VPN 서버 설정 정리 */
+/** 로드밸런서 세션 고정·프록시·HTTP 프록시 설정을 타입대로 정리 (JSON 은 믿을 수 없다) */
+function normalizeHostExtras(h: HostSettings): HostSettings {
+  const port = (v: unknown, fallback: number) => {
+    const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
+    return typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 65535 ? n : fallback;
+  };
+  const out: HostSettings = { ...h };
+  if (h.lb) {
+    // 예전 저장본: 세션 고정이 켜기/끄기(true)였다 → 출발지 IP. 모르는 값은 버린다
+    const st = h.lb.sticky as unknown;
+    const { sticky: _drop, ...rest } = h.lb;
+    void _drop;
+    out.lb = { ...rest, ...(st === true || st === "ip" ? { sticky: "ip" as const } : st === "cookie" ? { sticky: "cookie" as const } : {}) };
+  }
+  if (h.proxy) {
+    const p = h.proxy as Partial<ProxySettings>;
+    const deny = typeof p.deny === "string" ? [p.deny] : Array.isArray(p.deny) ? p.deny.filter((x): x is string => typeof x === "string") : [];
+    out.proxy = { enabled: p.enabled === true, port: port(p.port, 3128), deny };
+  }
+  if (h.httpProxy) {
+    const p = h.httpProxy as Partial<HttpProxySettings>;
+    out.httpProxy = { enabled: p.enabled === true, server: typeof p.server === "string" ? p.server : typeof p.server === "number" ? String(p.server) : "", port: port(p.port, 3128) };
+  }
+  return out;
+}
+
 function normalizeRaServer(r: Partial<RaServerSettings>): RaServerSettings {
   const str = (v: unknown, d: string) => (typeof v === "string" ? v : d);
   return {
@@ -883,8 +909,7 @@ export function normalizeTopology(t: Topology): Topology {
         };
       }
     }
-    // 예전 저장본: 세션 고정이 켜기/끄기(true)였다 → 출발지 IP
-    if (fixed.host?.lb && (fixed.host.lb.sticky as unknown) === true) fixed.host = { ...fixed.host, lb: { ...fixed.host.lb, sticky: "ip" } };
+    if (fixed.host) fixed.host = normalizeHostExtras(fixed.host);
     if (spec.role === "ap" && !fixed.ap) fixed.ap = { ...DEFAULT_WIFI_BASE };
     if (spec.role === "firewall") fixed.firewall = fixed.firewall ? { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.firewall, rules: fixed.firewall.rules ?? [] } : { ...DEFAULT_FIREWALL_SETTINGS, enabled: true, rules: [] };
     if (spec.role === "switch" && !fixed.switch) fixed.switch = { vlans: {} };

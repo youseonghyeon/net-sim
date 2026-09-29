@@ -86,6 +86,8 @@ export interface TcpConn {
   setCookie?: string;
   /** 프록시 경유 요청의 대상 "호스트:포트" (클라이언트: 프록시에게 부탁한 곳, 서버: 받은 값) */
   target?: string;
+  /** 끝 클라이언트: 쿠키를 저장·찾는 사이트 (사용자가 적은 호스트 — 이름 또는 주소) */
+  site?: string;
   /** 클라이언트: 응답 대기 timeout 타이머 */
   readTimer?: TimerHandle;
   /** SSH 흉내 (포트 22): 지금까지 주고받은 메시지 수, 세션이 열렸는지 */
@@ -115,6 +117,8 @@ export interface ConnectOptions {
   target?: string;
   /** 보낼 Cookie. 없으면 끝 클라이언트는 쿠키 저장소에서 찾는다 */
   cookie?: string;
+  /** 쿠키의 사이트 (사용자가 적은 이름). 없으면 프록시 대상의 호스트, 그것도 없으면 접속한 주소 */
+  site?: string;
   /** SYN 을 보내기 전에 부른다. 내 주소로 가는 루프백은 connect 안에서 연결이 끝까지 진행되므로, 추적할 쪽은 여기서 등록한다 */
   onCreated?: (conn: TcpConn) => void;
 }
@@ -135,15 +139,15 @@ function endpoint(ip: Ip, port: number): string {
   return `${ip}:${port}`;
 }
 
-/** 쿠키의 사이트: 프록시 경유면 부탁한 대상의 호스트, 아니면 접속한 주소 */
-function siteOf(remoteIp: Ip, target?: string): string {
-  return target ? target.replace(/:\d+$/, "") : remoteIp;
+/** 쿠키의 사이트: 사용자가 적은 이름, 프록시 경유면 부탁한 대상의 호스트, 아니면 접속한 주소 (브라우저처럼 호스트 이름 기준, 대소문자 무시) */
+function siteOf(remoteIp: Ip, target?: string, name?: string): string {
+  return (name ?? (target ? target.replace(/:\d+$/, "") : remoteIp)).toLowerCase();
 }
 
 export class TcpStack {
   readonly conns = new Map<string, TcpConn>();
   readonly listening = new Set<number>();
-  /** 쿠키 저장소 (브라우저): 사이트(접속한 호스트 — 주소 또는 이름, 포트는 보지 않음) → 받은 Set-Cookie. 끝 클라이언트만 쓴다 */
+  /** 쿠키 저장소 (브라우저): 사이트(사용자가 적은 호스트 — 이름 또는 주소, 포트는 보지 않음) → 받은 Set-Cookie. 끝 클라이언트만 쓴다 */
   readonly cookies = new Map<string, string>();
   private nextPort = EPHEMERAL_START;
 
@@ -158,7 +162,9 @@ export class TcpStack {
   connect(localIp: Ip, remoteIp: Ip, remotePort: number, ctx: NodeContext, opts: ConnectOptions = {}): TcpConn {
     const { via, target, onCreated } = opts;
     const localPort = this.nextPort++;
-    const cookie = opts.cookie ?? (via === undefined ? this.cookies.get(siteOf(remoteIp, target)) : undefined);
+    // 쿠키는 끝 클라이언트(브라우저)만: 중계 연결(via 가 있는 로드밸런서·프록시)은 저장소를 쓰지 않는다
+    const site = via === undefined ? siteOf(remoteIp, target, opts.site) : undefined;
+    const cookie = opts.cookie ?? (site !== undefined ? this.cookies.get(site) : undefined);
     const conn: TcpConn = {
       id: connKey(localIp, localPort, remoteIp, remotePort),
       role: "client",
@@ -181,6 +187,7 @@ export class TcpStack {
       ...(via !== undefined ? { via } : {}),
       ...(target !== undefined ? { target } : {}),
       ...(cookie !== undefined ? { cookie } : {}),
+      ...(site !== undefined ? { site } : {}),
     };
     this.conns.set(conn.id, conn);
     this.prune();
@@ -421,13 +428,15 @@ export class TcpStack {
       if (seg.setCookie) {
         conn.setCookie = seg.setCookie;
         // 끝 클라이언트(브라우저)만 저장해 다음 요청부터 싣는다. 중계 연결(로드밸런서·프록시)은 받은 것을 앞으로 넘길 뿐
-        if (conn.via === undefined) {
-          this.cookies.set(siteOf(conn.remoteIp, conn.target), seg.setCookie);
+        if (conn.site !== undefined) {
+          this.cookies.set(conn.site, seg.setCookie);
           ctx.trace("tcp.cookie", "app", `Set-Cookie 수신: ${seg.setCookie} → 쿠키 저장, 이 사이트로 가는 다음 요청부터 Cookie 헤더로 보냄`, { conn: conn.id, cookie: seg.setCookie });
         }
       }
+      // 응답 대기 timeout 은 "마지막으로 받은 뒤 10초" (HTTP read timeout 처럼 받을 때마다 다시 잰다) — 응답이 중간에 멈춰도 끝난다.
+      // FIN 을 받으면 끝(receiveFin). SSH 는 단계마다 sshNext 가 따로 건다
       conn.readTimer?.cancel();
-      conn.readTimer = undefined;
+      conn.readTimer = !conn.ssh && conn.state === "ESTABLISHED" ? ctx.timer(TCP_READ_TIMEOUT, TCP_TIMER_TAG, { conn: conn.id, read: true }) : undefined;
     }
     if (conn.role === "server") {
       if (seg.via !== undefined) conn.via = seg.via;
@@ -441,12 +450,14 @@ export class TcpStack {
       return;
     }
     if (conn.role === "server" && conn.state === "ESTABLISHED" && conn.bytesSent === 0 && !conn.deferred) {
-      // 앱이 요청을 맡으면(로드밸런서) 받았다는 ACK 만 보내고 응답은 나중에
+      // 앱이 요청을 맡으면(로드밸런서·프록시) 받았다는 ACK 만 보내고 응답은 나중에.
+      // 상태를 먼저 세운다: 뒤 서버가 내 주소(루프백)면 onRequest 안에서 응답까지 끝날 수 있고, 그때는 응답이 곧 ACK 다
+      conn.deferred = true;
       if (this.host.onRequest?.(conn, ctx)) {
-        conn.deferred = true;
-        this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt}) — 요청을 받았고, 응답은 뒤 서버에서 받아 오는 대로 보냄`, "tcp.ack.sent");
+        if (conn.state === "ESTABLISHED" && conn.bytesSent === 0) this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt}) — 요청을 받았고, 응답은 뒤 서버에서 받아 오는 대로 보냄`, "tcp.ack.sent");
         return;
       }
+      delete conn.deferred;
       // 로드밸런서가 맡지 않은 포트 22 = SSH 서버: 클라이언트의 첫 메시지(버전 알림)를 받았으니 내 차례
       if (conn.localPort === SSH_PORT && conn.via === undefined) {
         conn.ssh = { step: 1, open: false };
@@ -535,6 +546,8 @@ export class TcpStack {
     }
     conn.rcvNxt = seg.seq + 1;
     conn.finReceived = true;
+    conn.readTimer?.cancel(); // 응답이 끝났다
+    conn.readTimer = undefined;
     ctx.trace("tcp.fin.received", "L4", `FIN 수신: 상대가 더 보낼 데이터 없음 → ACK 후 나도 종료`, { conn: conn.id });
     if (conn.state === "ESTABLISHED") {
       conn.state = "CLOSE_WAIT";
@@ -592,14 +605,22 @@ export class TcpStack {
     if (read) {
       conn.readTimer = undefined;
       if (conn.state !== "ESTABLISHED") return;
-      // SSH: 기다리던 단계에서 멈춰 있을 때만, HTTP: 응답을 한 바이트도 못 받았을 때만
-      if (conn.ssh ? conn.ssh.open || conn.ssh.step !== step : conn.bytesReceived > 0) return;
-      // 요청은 상대가 받았는데(ACK) 응답이 오지 않음: 중간 로드밸런서가 끊겼거나 백엔드에서 멈춤. RST 로 알리고 포기
+      // SSH: 기다리던 단계에서 멈춰 있을 때만. HTTP: 마지막으로 받은 뒤 10초 (받을 때마다 다시 건다)
+      if (conn.ssh && (conn.ssh.open || conn.ssh.step !== step)) return;
+      const partial = !conn.ssh && conn.bytesReceived > 0;
+      // 요청은 상대가 받았는데(ACK) 응답이 오지 않거나 중간에 멈춤: 중간 로드밸런서가 끊겼거나 백엔드에서 멈춤. RST 로 알리고 포기
       conn.state = "FAILED";
-      conn.reason = `timeout · 응답 없음 (요청은 전달됨, ${TCP_READ_TIMEOUT / 1000}초)`;
+      conn.reason = partial ? `timeout · 응답이 중간에 멈춤 (${conn.bytesReceived}B 받은 뒤 ${TCP_READ_TIMEOUT / 1000}초)` : `timeout · 응답 없음 (요청은 전달됨, ${TCP_READ_TIMEOUT / 1000}초)`;
       conn.closedAt = ctx.now;
       this.cancelAll(conn);
-      ctx.trace("tcp.failed", "L4", `응답 timeout: 요청은 ${endpoint(conn.remoteIp, conn.remotePort)} 가 받았지만(ACK) ${TCP_READ_TIMEOUT / 1000}초 동안 응답이 없음 → RST 로 끊음. 상대 뒤의 서버(로드밸런서의 백엔드 등)를 확인`, { conn: conn.id });
+      ctx.trace(
+        "tcp.failed",
+        "L4",
+        partial
+          ? `응답 timeout: ${endpoint(conn.remoteIp, conn.remotePort)} 의 응답을 ${conn.bytesReceived}B 받은 뒤 ${TCP_READ_TIMEOUT / 1000}초 동안 더 오지 않음 → RST 로 끊음. 상대(또는 그 뒤의 서버)가 중간에 끊겼는지 확인`
+          : `응답 timeout: 요청은 ${endpoint(conn.remoteIp, conn.remotePort)} 가 받았지만(ACK) ${TCP_READ_TIMEOUT / 1000}초 동안 응답이 없음 → RST 로 끊음. 상대 뒤의 서버(로드밸런서의 백엔드 등)를 확인`,
+        { conn: conn.id },
+      );
       this.host.send(this.packet(conn.localIp, conn.remoteIp, { srcPort: conn.localPort, dstPort: conn.remotePort, seq: conn.sndNxt, ack: conn.rcvNxt, rst: true, ackFlag: true, len: 0 }), ctx);
       this.host.onFinish?.(conn, ctx);
       return;

@@ -62,15 +62,33 @@ export function httpProxyRule({ t, add }: LintContext): void {
     const target = owners[0]!;
     const p = target.host!.proxy;
     if (p?.enabled && p.port === hp.port) continue;
+    // 그 포트의 로드밸런서는 뒤의 프록시 팜으로 넘길 수 있다 (요청 대상을 그대로 넘김) — 뒤를 모르니 침묵
+    if (target.host!.lb?.enabled === true && target.host!.lb.port === hp.port) continue;
     const other = p?.enabled ? ` (프록시는 포트 ${p.port} 에서 듣는 중)` : "";
-    const listens = (target.host!.services ?? []).includes(hp.port) || (target.host!.lb?.enabled === true && target.host!.lb.port === hp.port);
+    const listens = (target.host!.services ?? []).includes(hp.port);
     add({
       deviceId: d.id,
       severity: "warn",
       code: "proxy.not-running",
-      message: `HTTP 프록시로 ${server}:${hp.port} (${target.name}) 를 쓰는데 그곳에 프록시가 없음${other} → 웹 요청이 ${listens ? "프록시가 아닌 서비스로 가서 400 등으로 실패" : "모두 거부(RST)"}`,
+      message: `HTTP 프록시로 ${server}:${hp.port} (${target.name}) 를 쓰는데 그곳에 프록시가 없음${other} → ${listens ? "그곳의 웹 서비스가 요청을 받아, 부탁한 사이트가 아니라 그 서버 자신의 응답이 옴" : "웹 요청이 모두 거부(RST)"}`,
       fix: p?.enabled ? `${d.name} → HTTP 프록시 포트를 ${p.port} 로 맞추기` : `${target.name} → 서비스에서 프록시를 켜거나, ${d.name} 의 HTTP 프록시 주소를 고치기`,
       related: [target.id],
+    });
+  }
+}
+
+// 규칙 21b: 프록시 포트를 같은 장비의 로드밸런서가 먼저 받음 → 프록시로 동작하지 않음
+export function proxyPortClashRule({ t, add }: LintContext): void {
+  for (const d of t.devices) {
+    const p = d.host?.proxy;
+    const lb = d.host?.lb;
+    if (!p?.enabled || !lb?.enabled || lb.port !== p.port) continue;
+    add({
+      deviceId: d.id,
+      severity: "warn",
+      code: "proxy.port-clash",
+      message: `프록시 포트 ${p.port} 를 이 장비의 로드밸런서도 받음 → 로드밸런서가 먼저 받아 요청 대상과 상관없이 자기 백엔드로 보냄 (프록시로 동작하지 않음)`,
+      fix: `${d.name} → 서비스에서 프록시 포트(보통 3128)나 로드밸런서 포트를 바꾸기`,
     });
   }
 }

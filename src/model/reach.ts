@@ -151,7 +151,8 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
         const httpError = /^HTTP [45]/.test(conn?.status ?? "");
         ok = conn?.state === "CLOSED" && conn.bytesReceived > 0 && !httpError;
         reason = httpError ? `${conn!.status} (${conn!.target ? "프록시" : "로드밸런서 뒤 백엔드 문제"})` : conn?.reason;
-        resolved = c.isName ? conn?.remoteIp : undefined;
+        // 프록시 경유면 접속한 곳은 프록시다: 이름이 가리킨 주소는 응답을 만든 서버 쪽
+        resolved = c.isName ? (conn?.target ? conn.servedBy : conn?.remoteIp) : undefined;
       }
     } catch {
       reason = "확인 중 이벤트가 너무 많음 (순환 구성 의심)";
