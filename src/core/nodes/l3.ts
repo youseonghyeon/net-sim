@@ -29,6 +29,7 @@ import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { Rip, RIP_TIMER_TAG, type RipConfig } from "./rip";
 import { HA_TIMER_TAG, Ha, type HaConfig } from "./ha";
 import { IKE_TIMER_TAG, VPN_MODE_LABEL, Vpn, type VpnConfig } from "./vpn";
+import { RaServer, type RaServerConfig } from "./ravpn";
 
 /** 이중화 세션 동기화: 같은 순간 생긴 상태를 모아 한 패킷으로 보내는 타이머 */
 const HA_SYNC_TAG = "ha-sync";
@@ -79,7 +80,7 @@ export interface L3Config {
 interface Route {
   out: number;
   nextHop: Ip;
-  kind: "connected" | "static" | "default" | "rip" | "vpn";
+  kind: "connected" | "static" | "default" | "rip" | "vpn" | "ra";
   /** RIP 경로의 홉 수 */
   metric?: number;
 }
@@ -123,12 +124,13 @@ export class L3Node implements SimNode {
       this.sendSync({ kind: "pfsync", vrid: this.ha.config.vrid, nat, flows: this.firewall.flowKeys(), bulk: true }, ctx);
     },
   });
-  readonly vpn: Vpn = new Vpn({
-    source: (dst) => {
+  /** VPN 이 장치에 부탁하는 바깥 송신 (사이트 간·원격 접속이 같이 쓴다): 바깥 경로로, NAT 하지 않음, 출발지는 가상 주소 우선 */
+  private readonly tunnelIo = {
+    source: (dst: Ip) => {
       const u = this.underlay(dst);
       return u ? this.addrOf(u.out) : undefined;
     },
-    send: (outer, ctx, frameId) => {
+    send: (outer: Ipv4Packet, ctx: NodeContext, frameId?: number) => {
       const u = this.underlay(outer.dst);
       if (!u) {
         ctx.trace("vpn.drop", "L3", `VPN: 상대 ${outer.dst} 로 가는 바깥 경로가 없음 → 드롭 (디폴트 라우트를 확인)`, { dst: outer.dst }, frameId);
@@ -136,7 +138,10 @@ export class L3Node implements SimNode {
       }
       this.ifaces[u.out]!.sendIp(outer, ctx, this.emit(u.out, ctx), u.nextHop);
     },
-  });
+  };
+  /** 원격 접속 VPN 서버 */
+  readonly ra: RaServer = new RaServer(this.tunnelIo);
+  readonly vpn: Vpn = new Vpn(this.tunnelIo);
   /** 인터페이스 i 가 붙은 물리 포트와 VLAN 태그. 물리 인터페이스는 i === port, 서브 인터페이스는 그 뒤에 붙는다 */
   meta: { port: number; vlan?: number }[];
   private readonly macBase: Mac;
@@ -254,6 +259,24 @@ export class L3Node implements SimNode {
       return;
     }
     this.forward(inner, port, frameId, ctx, inner, true);
+  }
+
+  /** 원격 접속 클라이언트의 ESP: 풀어서 안으로 (안쪽 출발지 = 그 클라이언트의 가상 주소) */
+  private receiveRa(port: number, outer: Ipv4Packet, srcPort: number | undefined, inner: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    const c = this.ra.clientFor(outer, inner)!;
+    this.ra.follow(c, outer.src, srcPort);
+    ctx.trace("vpn.decap", "L3", `원격 접속 복호화: ${outer.src} 의 ESP 를 풀어 ${inner.src}(가상 주소) → ${inner.dst} 패킷을 꺼냄`, { from: outer.src, inner: `${inner.src}>${inner.dst}` }, frameId);
+    const mine = this.ownIndex(inner.dst);
+    if (mine >= 0) {
+      if (inner.payload.kind === "icmp") this.handleIcmp(mine, inner, inner.payload, frameId, ctx);
+      else ctx.trace("ip.drop", "L4", `터널로 온 ${inner.payload.kind.toUpperCase()} 가 나에게 왔지만 듣는 서비스 없음 → 드롭`, {}, frameId);
+      return;
+    }
+    this.forward(inner, port, frameId, ctx, inner, true);
+  }
+
+  setRa(cfg: RaServerConfig, ctx: NodeContext): void {
+    this.ra.setConfig(cfg, ctx);
   }
 
   /** RIP 를 주고받는 인터페이스: 주소가 확정됨(Probe 끝·충돌 없음)·링크 업·NAT outside 아님 */
@@ -563,7 +586,11 @@ export class L3Node implements SimNode {
         return;
       }
       // IPsec: IKE 협상(UDP 500/4500)과 NAT-T 로 온 ESP(UDP 4500)
-      if (m.kind === "ike" && toMyIp && (udp.dstPort === IKE_PORT || udp.dstPort === NAT_T_PORT) && this.vpn.handleIke(pkt, udp.srcPort, udp.dstPort, m, ctx, frameId)) return;
+      if (m.kind === "ike" && toMyIp && (udp.dstPort === IKE_PORT || udp.dstPort === NAT_T_PORT) && (this.ra.handleIke(pkt, udp.srcPort, udp.dstPort, m, ctx, frameId) || this.vpn.handleIke(pkt, udp.srcPort, udp.dstPort, m, ctx, frameId))) return;
+      if (m.kind === "esp" && toMyIp && udp.dstPort === NAT_T_PORT && this.ra.clientFor(pkt, m.inner)) {
+        this.receiveRa(port, pkt, udp.srcPort, m.inner, frameId, ctx);
+        return;
+      }
       if (m.kind === "esp" && toMyIp && udp.dstPort === NAT_T_PORT && this.vpn.config.enabled && this.vpn.mode === "ipsec") {
         this.receiveTunnel(port, pkt, udp.srcPort, m.inner, frameId, ctx);
         return;
@@ -605,6 +632,10 @@ export class L3Node implements SimNode {
       return;
     }
     const mine = this.ownIndex(pkt.dst);
+    if (pkt.payload.kind === "esp" && mine >= 0 && this.ra.clientFor(pkt, pkt.payload.inner)) {
+      this.receiveRa(port, pkt, undefined, pkt.payload.inner, frameId, ctx);
+      return;
+    }
     if (pkt.payload.kind === "esp" && mine >= 0 && this.vpn.config.enabled && this.vpn.mode === "ipsec") {
       this.receiveTunnel(port, pkt, undefined, pkt.payload.inner, frameId, ctx);
       return;
@@ -727,6 +758,11 @@ export class L3Node implements SimNode {
       if (best && (best.prefix > r.prefix || (best.prefix === r.prefix && (best.kind === "static" || (best.metric ?? 99) <= r.metric)))) continue;
       best = { out: r.out, nextHop: r.nextHop, kind: "rip", metric: r.metric, prefix: r.prefix };
     }
+    // 원격 접속 클라이언트의 가상 주소: 그 클라이언트 터널로 (/32 라 가장 구체적)
+    if (includeVpn && this.ra.owns(dst)) {
+      const peer = this.ra.clients.get(dst)!.peer.ip;
+      return { out: this.underlay(peer)?.out ?? this.outside ?? 0, nextHop: peer, kind: "ra" };
+    }
     // VPN 으로 가는 상대 대역: 스태틱과 같은 급 (같은 마스크면 스태틱이 우선)
     const tunnel = includeVpn ? this.vpn.match(dst) : undefined;
     if (tunnel && (!best || tunnel.prefix > best.prefix)) {
@@ -756,7 +792,7 @@ export class L3Node implements SimNode {
     if (this.ownIndex(pkt.src) >= 0) return; // 내가 만든 패킷(또는 NAT 가 바꾼 것)은 통지할 상대가 없다
     const back = this.route(pkt.src);
     // 터널 너머에서 온 패킷이면 안쪽(LAN) 주소로 보내고 NAT 하지 않는다 — 공인 주소면 상대가 AllowedIPs 로 버린다
-    const tunnel = back?.kind === "vpn";
+    const tunnel = back?.kind === "vpn" || back?.kind === "ra";
     const from = back && !tunnel ? this.ifaces[back.out]! : dropIface;
     let notice = from.unreachable(pkt, "host", ctx);
     if (!notice) return;
@@ -771,6 +807,10 @@ export class L3Node implements SimNode {
     const r = this.route(pkt.dst);
     if (r?.kind === "vpn") {
       this.sendTunnel(pkt, ctx, frameId);
+      return;
+    }
+    if (r?.kind === "ra") {
+      this.ra.sendTo(pkt, ctx, frameId);
       return;
     }
     if (!r) {
@@ -818,6 +858,12 @@ export class L3Node implements SimNode {
       ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 로 가는 경로가 없음 (연결된 서브넷·스태틱 라우팅·디폴트 라우트 모두 해당 없음) → 드롭. ${hint}`, { dst: pkt.dst }, frameId);
       const notice = this.noticeFrom(pkt, inPort, tunnel).unreachable(received, "net", ctx, frameId);
       if (notice) this.sendVia(notice, ctx, frameId);
+      return;
+    }
+    if (r.kind === "ra") {
+      if (!this.firewall.check(pkt, tunnel ? "lan" : "out", ctx, frameId)) return;
+      ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 원격 접속 클라이언트의 가상 주소 → 그 클라이언트 터널로 (NAT 하지 않음), TTL ${pkt.ttl} → ${pkt.ttl - 1}`, { dst: pkt.dst, out: "원격 접속", kind: r.kind }, frameId);
+      this.ra.sendTo({ ...pkt, ttl: pkt.ttl - 1 }, ctx, frameId);
       return;
     }
     if (r.kind === "vpn") {
@@ -920,6 +966,7 @@ export class L3Node implements SimNode {
     if (def) routes.push(["0.0.0.0/0", this.names[def.out]!, def.nextHop, "디폴트 라우트"]);
     const tables: NodeSnapshot["tables"] = [{ title: "라우팅 테이블", columns: ["목적지", "인터페이스", "넥스트 홉", "출처"], rows: routes }];
     if (this.firewall.config.enabled) tables.push({ title: "방화벽 규칙", columns: ["#", "규칙"], rows: this.firewall.rows() });
+    if (this.ra.config.enabled) tables.push({ title: "원격 접속 클라이언트", columns: ["가상 주소", "바깥 주소", "방식"], rows: this.ra.rows() });
     if (this.nat) {
       const publicIp = this.ifaces[this.outside!]!.ip;
       tables.push({ title: "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(publicIp) });
@@ -943,6 +990,7 @@ export class L3Node implements SimNode {
             ]
           : []),
         ...(this.ha.config.enabled ? [["이중화", this.ha.summary()!] as [string, string]] : []),
+        ...(this.ra.config.enabled ? [["원격 접속 VPN 서버", `켜짐 · 풀 ${this.ra.config.poolStart} ~ ${this.ra.config.poolEnd} · 접속 ${this.ra.clients.size}명`] as [string, string]] : []),
         ...(this.rip.config.enabled ? [["RIP", `켜짐 · 배운 경로 ${this.rip.rows().length}개${this.rip.config.defaultRoute ? " · 디폴트 라우트 광고" : ""}`] as [string, string]] : []),
         ...(this.firewall.config.enabled
           ? [["방화벽", `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}`] as [string, string]]

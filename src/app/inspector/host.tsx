@@ -15,6 +15,8 @@ import {
 } from "../../model/topology";
 import { Icon } from "../Icons";
 import { Field, Section, Toggle, ipError, validIp } from "./ui";
+import { sim, simVersion } from "../../model/sim";
+import { Host } from "../../core/nodes/host";
 
 export function HostSection({ d, h }: { d: Device; h: HostSettings }) {
   const set = (patch: Partial<HostSettings>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ...patch } }));
@@ -318,5 +320,36 @@ export function DnsServiceSection({ d, h, staticIp }: { d: Device; h: HostSettin
         </>
       )}
     </>
+  );
+}
+
+/** 원격 접속 VPN 클라이언트: 켜기 + 회사 VPN 장비 공인 주소 + PSK + 연결 상태 */
+export function RemoteVpnSection({ d, h }: { d: Device; h: HostSettings }) {
+  void simVersion.value;
+  const ra = h.ra ?? { enabled: false, server: "", psk: "" };
+  const set = (patch: Partial<typeof ra>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ra: { ...(x.host!.ra ?? { enabled: false, server: "", psk: "" }), ...patch } } }));
+  const node = sim.node(d.id);
+  const status = node instanceof Host ? node.ra.summary() : undefined;
+  return (
+    <Section title="원격 접속 VPN">
+      <label class="toggle-row">
+        <span>
+          {ra.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">IPsec</span>
+        </span>
+        <Toggle on={ra.enabled} onToggle={() => set({ enabled: !ra.enabled })} />
+      </label>
+      {!ra.enabled && <p class="note">켜면 회사 VPN 장비에 IPsec 으로 붙어 가상 주소를 받고, 회사가 알려 준 사내 대역으로 가는 패킷만 터널로 보냅니다(나머지는 평소처럼). 재택근무 노트북이 회사 내부 서버에 접속하는 방식입니다.</p>}
+      {ra.enabled && (
+        <>
+          <Field label="VPN 서버 (공인 주소)" error={ipError(ra.server, true)}>
+            <input class="input mono" value={ra.server} placeholder="203.0.113.11" onInput={(e) => set({ server: e.currentTarget.value })} />
+          </Field>
+          <Field label="사전 공유 키 (PSK)" error={ra.psk ? undefined : "비어 있습니다. 서버와 같은 키를 넣으세요."}>
+            <input class="input mono" value={ra.psk} placeholder="서버와 같은 문자열" onInput={(e) => set({ psk: e.currentTarget.value })} />
+          </Field>
+          {status && <p class={`note${status.startsWith("실패") ? " error-note" : ""}`}>{status}</p>}
+        </>
+      )}
+    </Section>
   );
 }

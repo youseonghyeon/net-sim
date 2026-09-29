@@ -810,6 +810,24 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("stp section:", await page.locator(".inspector h3", { hasText: "스패닝 트리" }).count());
   await page.screenshot({ path: `${OUT}/53-stp.png` });
 }
+// 재택근무 원격 접속 VPN: 노트북이 접속(배지), 사내 서버로 SSH
+{
+  await loadEx("remote");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => /재택 노트북/.test(el.textContent ?? "") && /VPN 연결됨/.test(el.textContent ?? "")), null, { timeout: 30000 });
+  console.log("remote vpn badge: yes");
+  await clickDevice("재택 노트북");
+  await goTab("진단");
+  await page.fill(".tcp-row .input:not(.port)", "10.50.10.20");
+  await page.keyboard.press("Escape");
+  await page.fill(".tcp-row .input.port", "22");
+  await page.click(".tcp-row .btn");
+  await page.waitForFunction(() => /세션 열림|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 60000 });
+  console.log("remote ssh:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
+  await goTab("설정");
+  console.log("remote status:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "원격 접속 VPN" }) }).locator(".note").first().innerText()).slice(0, 60));
+  await page.screenshot({ path: `${OUT}/54-remote-vpn.png` });
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

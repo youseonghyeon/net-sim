@@ -1172,6 +1172,37 @@ export function lintTopology(t: Topology): LintIssue[] {
     }
   }
 
+  // 규칙 20: 원격 접속 VPN — 서버 대역·풀, 클라이언트가 가리키는 서버의 PSK·켜짐
+  {
+    const ownsIp = (x: Device, ip: string) => !!x.l3 && (x.l3.interfaces.some((c) => c.ipMode === "static" && validIp(c.ip) === ip) || (x.l3.ha?.enabled === true && x.l3.ha.vips.includes(ip)));
+    for (const d of t.devices) {
+      const ra = d.l3?.ra;
+      if (!ra?.enabled) continue;
+      if (ra.routes.length === 0) {
+        add({ deviceId: d.id, severity: "warn", code: "ra.no-routes", message: "원격 접속 VPN 서버에 알려 줄 사내 대역이 없음 → 클라이언트가 붙어도 터널로 보낼 곳이 없음", fix: `${d.name} → 원격 접속 VPN 서버 → 사내 대역 추가 (예: 안쪽 LAN)` });
+      }
+      const a = validIp(ra.poolStart);
+      const lans = m.allGws.filter((g) => g.device === d && g.subnet).map((g) => g.subnet!);
+      const pushed = ra.routes.map((r) => subnetOf(validIp(r.dest), r.prefix)).filter((x): x is Subnet => !!x);
+      if (a && [...lans, ...pushed].some((n) => contains(n, a))) {
+        add({ deviceId: d.id, severity: "error", code: "ra.pool-overlap", message: `가상 주소 풀(${ra.poolStart} ~ ${ra.poolEnd})이 이미 쓰는 대역과 겹침 → 같은 주소가 양쪽에 생겨 응답이 엉뚱한 곳으로 감`, fix: `${d.name} → 원격 접속 VPN 서버 → 풀을 쓰지 않는 대역으로 (예: 10.99.0.10 ~ 10.99.0.50)` });
+      }
+    }
+    for (const d of t.devices) {
+      const c = d.host?.ra;
+      if (!c?.enabled) continue;
+      const server = validIp(c.server);
+      if (!server) continue;
+      const srv = t.devices.find((x) => x !== d && ownsIp(x, server));
+      if (!srv) continue; // 토폴로지 밖이거나 DHCP 주소면 판단하지 않는다
+      if (!srv.l3?.ra?.enabled) {
+        add({ deviceId: d.id, severity: "warn", code: "ra.server-off", message: `${srv.name} (${server}) 에 원격 접속 VPN 서버가 꺼져 있음 → IKE 에 답이 없어 접속 실패`, fix: `${srv.name} → 원격 접속 VPN 서버 켜기`, related: [srv.id] });
+      } else if (srv.l3.ra.psk !== c.psk) {
+        add({ deviceId: d.id, severity: "error", code: "ra.psk-mismatch", message: `원격 접속 VPN 사전 공유 키(PSK)가 서버 ${srv.name} 와 다름 → 인증 실패 (AUTHENTICATION_FAILED)`, fix: `${d.name} 의 원격 접속 VPN → 사전 공유 키를 서버와 같게`, related: [srv.id] });
+      }
+    }
+  }
+
   return finalize(issues, t);
 }
 

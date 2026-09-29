@@ -49,6 +49,8 @@ export class NetInterface {
   private lastDefendAt = -Infinity;
   /** nextHop IP → ARP 해석을 기다리는 패킷들 */
   readonly pending = new Map<Ip, PendingPacket[]>();
+  /** 내보낼 IP 패킷을 먼저 가로챌 기회 (원격 접속 VPN 클라이언트가 사내 대역 패킷을 터널로). true 면 처리됨 */
+  outbound: ((pkt: Ipv4Packet, ctx: NodeContext) => boolean) | undefined;
   /** 이중화(HA) master 일 때만: 이 인터페이스가 함께 쓰는 가상 주소·가상 MAC (ARP 응답·수신을 이것으로도 한다) */
   vip: { ip: Ip; mac: Mac } | undefined;
   private readonly arpTimers = new Map<Ip, TimerHandle>();
@@ -106,6 +108,7 @@ export class NetInterface {
    * nextHopOverride 가 있으면(라우터가 라우팅 테이블로 이미 정한 넥스트 홉) 인터페이스 자체 라우팅을 건너뛴다.
    */
   sendIp(pkt: Ipv4Packet, ctx: NodeContext, emit: Emit, nextHopOverride?: Ip): void {
+    if (this.outbound?.(pkt, ctx)) return;
     if (!this.ip) {
       ctx.trace("ip.no-address", "L3", `IP 주소가 없어 ${pkt.dst} 로 보낼 수 없음`, { dst: pkt.dst });
       return;

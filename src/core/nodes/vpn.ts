@@ -192,7 +192,7 @@ export class Vpn {
 
   /** IKE 메시지 처리. IPsec VPN 이 아니면 false (장치가 보통 UDP 로 처리) */
   handleIke(outer: Ipv4Packet, srcPort: number, dstPort: number, m: IkeMessage, ctx: NodeContext, frameId?: number): boolean {
-    if (!this.config.enabled || this.mode !== "ipsec") return false;
+    if (!this.config.enabled || this.mode !== "ipsec" || m.ra) return false; // 원격 접속 협상은 원격 접속 서버가
     const me = outer.dst;
     if (m.exchange === "IKE_SA_INIT" && !m.response) {
       // 응답자: 적혀 온 주소와 실제 헤더가 다르면 중간 어딘가에 NAT 가 있다 (보낸 쪽 앞 또는 내 앞)

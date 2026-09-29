@@ -10,6 +10,7 @@ import { L3Node } from "../core/nodes/l3";
 import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import type { StpConfig } from "../core/nodes/stp";
+import type { RaClientConfig } from "../core/nodes/ravpn";
 import { Switch, type PortVlan } from "../core/nodes/switch";
 import { validCidr } from "../core/nodes/firewall";
 import { DEFAULT_LB_SETTINGS,
@@ -101,7 +102,7 @@ export class NetworkSync {
       }
     }
     for (const d of t.devices) {
-      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d) }) };
+      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d) }) };
       const prev = this.syncedConfig.get(d.id);
       if (prev === undefined) {
         settle();
@@ -110,6 +111,8 @@ export class NetworkSync {
         // 이중화는 시작할 때 광고·타이머가 필요해 만든 뒤에 켠다
         if (node instanceof L3Node && d.l3?.ha?.enabled) node.setHa(effectiveL3(d).ha, net.contextFor(d.id));
         if (node instanceof Switch && d.switch?.stp?.enabled) node.setStp(effectiveStp(d), d.mac, net.contextFor(d.id));
+        if (node instanceof L3Node && d.l3?.ra?.enabled) node.setRa(effectiveL3(d).ra, net.contextFor(d.id));
+        if (node instanceof Host && d.host?.ra?.enabled) node.setRemoteVpn(effectiveRaClient(d)!, net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -126,6 +129,7 @@ export class NetworkSync {
             if (dns) node.setDnsServer(dns, net.contextFor(d.id));
             const lb = effectiveLb(d);
             if (lb) node.setLb(lb, net.contextFor(d.id));
+            node.setRemoteVpn(effectiveRaClient(d) ?? { enabled: false, psk: "" }, net.contextFor(d.id));
           }
         }
       }
@@ -190,6 +194,14 @@ export function effectiveHost(d: Device) {
     gateway: h.ipMode === "static" ? validIp(h.gateway) : undefined,
     dns: h.ipMode === "static" ? validIp(h.dns) : undefined,
   };
+}
+
+/** 원격 접속 VPN 클라이언트 설정 */
+export function effectiveRaClient(d: Device): RaClientConfig | undefined {
+  const r = d.host?.ra;
+  if (!r) return undefined;
+  const server = validIp(r.server);
+  return { enabled: r.enabled === true, ...(server ? { server } : {}), psk: r.psk };
 }
 
 /** 로드밸런서 설정: 주소·포트가 올바른 백엔드만 */
@@ -318,6 +330,13 @@ export function effectiveL3(d: Device) {
       .filter((s) => Number.isInteger(s.vlan) && s.vlan >= 1 && s.vlan <= 4094 && s.port >= 1 && s.port < spec.ports.length && !spec.ports[s.port]!.radio)
       .map((s) => ({ port: s.port, vlan: s.vlan, ip: validIp(s.ip), prefix: s.prefix, relay: validIp(s.relay) })),
     rip: { enabled: l3.rip?.enabled === true, defaultRoute: l3.rip?.defaultRoute === true },
+    ra: {
+      enabled: l3.ra?.enabled === true,
+      psk: l3.ra?.psk ?? "",
+      poolStart: validIp(l3.ra?.poolStart) ?? "",
+      poolEnd: validIp(l3.ra?.poolEnd) ?? "",
+      routes: (l3.ra?.routes ?? []).filter((r) => validIp(r.dest) && Number.isInteger(r.prefix) && r.prefix >= 1 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix })),
+    },
     ha: {
       enabled: l3.ha?.enabled === true,
       vrid: Number.isInteger(l3.ha?.vrid) && l3.ha!.vrid >= 1 && l3.ha!.vrid <= 255 ? l3.ha!.vrid : 1,
@@ -401,5 +420,6 @@ export function applyConfig(net: Network, d: Device): void {
     node.setRip(cfg.rip, net.contextFor(d.id));
     node.setVpn(cfg.vpn, net.contextFor(d.id));
     node.setHa(cfg.ha, net.contextFor(d.id));
+    node.setRa(cfg.ra, net.contextFor(d.id));
   }
 }

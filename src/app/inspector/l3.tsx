@@ -98,6 +98,7 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
       </Section>
       <RipSection d={d} l3={l3} />
       <VpnSection d={d} l3={l3} />
+      <RaServerSection d={d} l3={l3} />
       <HaSection d={d} l3={l3} />
       {isNat && (
         <ForwardSection
@@ -181,6 +182,60 @@ export function VpnSection({ d, l3 }: { d: Device; l3: L3Settings }) {
               : "이 대역으로 가는 패킷은 터널로 가고(NAT 하지 않음), 터널로 온 패킷은 이 대역에서 온 것만 받습니다(WireGuard 의 AllowedIPs). 상대가 NAT 뒤에 있으면 상대가 먼저 보낸 뒤 그 출발지로 답합니다."}{" "}
             양쪽 사설 대역이 겹치면 안 됩니다.
           </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** 원격 접속 VPN 서버: 켜기 + PSK + 가상 주소 풀 + 알려 줄 사내 대역 */
+export function RaServerSection({ d, l3 }: { d: Device; l3: L3Settings }) {
+  const empty: NonNullable<L3Settings["ra"]> = { enabled: false, psk: "", poolStart: "10.99.0.10", poolEnd: "10.99.0.50", routes: [] };
+  const ra = l3.ra ?? empty;
+  const set = (patch: Partial<NonNullable<L3Settings["ra"]>>) =>
+    updateDevice(d.id, (x) => {
+      const cur = x.l3 ?? defaultL3(x.kind);
+      return { ...x, l3: { ...cur, ra: { ...(cur.ra ?? empty), ...patch } } };
+    });
+  const setRoute = (i: number, patch: Partial<{ dest: string; prefix: number }>) => set({ routes: ra.routes.map((r, k) => (k === i ? { ...r, ...patch } : r)) });
+  return (
+    <Section title="원격 접속 VPN 서버">
+      <label class="toggle-row">
+        <span>
+          {ra.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">IPsec · IKE UDP 500</span>
+        </span>
+        <Toggle on={ra.enabled} onToggle={() => set({ enabled: !ra.enabled })} />
+      </label>
+      {!ra.enabled && <p class="note">켜면 재택 노트북 같은 클라이언트가 인터넷 너머에서 붙을 수 있습니다. 붙은 클라이언트마다 가상 주소를 하나씩 주고, 아래 사내 대역으로 가는 것만 터널로 보내라고 알려 줍니다.</p>}
+      {ra.enabled && (
+        <>
+          <Field label="사전 공유 키 (PSK)" error={ra.psk ? undefined : "비어 있습니다. 클라이언트와 같은 키를 넣으세요."}>
+            <input class="input mono" value={ra.psk} placeholder="클라이언트와 같은 문자열" onInput={(e) => set({ psk: e.currentTarget.value })} />
+          </Field>
+          <Field label="가상 주소 풀 시작" error={ipError(ra.poolStart, true)}>
+            <input class="input mono" value={ra.poolStart} placeholder="10.99.0.10" onInput={(e) => set({ poolStart: e.currentTarget.value })} />
+          </Field>
+          <Field label="가상 주소 풀 끝" error={ipError(ra.poolEnd, true)}>
+            <input class="input mono" value={ra.poolEnd} placeholder="10.99.0.50" onInput={(e) => set({ poolEnd: e.currentTarget.value })} />
+          </Field>
+          <h3 class="sub">알려 줄 사내 대역</h3>
+          {ra.routes.length === 0 && <p class="note error-note">클라이언트가 터널로 보낼 사내 대역(예: 안쪽 LAN)을 넣어야 합니다.</p>}
+          {ra.routes.map((r, i) => (
+            <div key={i} class="lb-row">
+              <input class="input mono" value={r.dest} placeholder="10.50.10.0" onInput={(e) => setRoute(i, { dest: e.currentTarget.value })} />
+              <span class="mono muted">/</span>
+              <input class="input mono" type="number" min={1} max={32} value={r.prefix} onInput={(e) => { if (e.currentTarget.value !== "") setRoute(i, { prefix: Math.min(32, Math.max(1, Number(e.currentTarget.value) || 24)) }); }} />
+              <button class="icon-btn" title="대역 삭제" onClick={() => set({ routes: ra.routes.filter((_, k) => k !== i) })}>
+                <Icon name="trash" size={15} />
+              </button>
+              {ipError(r.dest, true) && <div class="error lb-error">{ipError(r.dest, true)}</div>}
+            </div>
+          ))}
+          <button class="btn wide" onClick={() => set({ routes: [...ra.routes, { dest: "", prefix: 24 }] })}>
+            <Icon name="plus" size={14} />
+            대역 추가
+          </button>
+          <p class="note">방화벽이 인바운드를 막고 있으면 가상 주소 풀에서 사내 대역으로 들어오는 것을 허용하세요. 안쪽 라우터가 따로 있으면 그 라우터에 풀 대역을 이 장비로 보내는 경로가 필요합니다. 접속한 클라이언트는 "표" 탭에 보입니다.</p>
         </>
       )}
     </Section>

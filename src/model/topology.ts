@@ -180,6 +180,8 @@ export interface HostSettings {
   dnsServer?: DnsServerSettings;
   /** 이 호스트가 로드밸런서(리버스 프록시) 역할을 할 때. 로드밸런서 장비는 켜진 채로 만들어진다 */
   lb?: LbSettings;
+  /** 원격 접속 VPN 클라이언트. 없으면 꺼짐 */
+  ra?: RaClientSettings;
 }
 
 export interface LbSettings {
@@ -233,6 +235,24 @@ export interface L3Settings {
   vpn?: VpnSettings;
   /** 이중화 (VRRP 식). 없으면 꺼짐 */
   ha?: HaSettings;
+  /** 원격 접속 VPN 서버. 없으면 꺼짐 */
+  ra?: RaServerSettings;
+}
+
+export interface RaServerSettings {
+  enabled: boolean;
+  psk: string;
+  poolStart: string;
+  poolEnd: string;
+  /** 클라이언트에게 알려 줄 사내 대역 */
+  routes: { dest: string; prefix: number }[];
+}
+
+export interface RaClientSettings {
+  enabled: boolean;
+  /** 회사 VPN 장비의 공인 주소 */
+  server: string;
+  psk: string;
 }
 
 export interface HaSettings {
@@ -245,6 +265,20 @@ export interface HaSettings {
   vips: string[];
   /** 세션 동기화 (없으면 꺼짐) */
   sync?: boolean;
+}
+
+/** 불러온 JSON 의 원격 접속 VPN 서버 설정 정리 */
+function normalizeRaServer(r: Partial<RaServerSettings>): RaServerSettings {
+  const str = (v: unknown, d: string) => (typeof v === "string" ? v : d);
+  return {
+    enabled: r.enabled === true,
+    psk: str(r.psk, ""),
+    poolStart: str(r.poolStart, "10.99.0.10"),
+    poolEnd: str(r.poolEnd, "10.99.0.50"),
+    routes: (Array.isArray(r.routes) ? r.routes : [])
+      .filter((x): x is { dest: string; prefix: number } => !!x && typeof x === "object" && typeof x.dest === "string")
+      .map((x) => ({ dest: x.dest, prefix: Number.isInteger(x.prefix) && x.prefix >= 0 && x.prefix <= 32 ? x.prefix : 24 })),
+  };
 }
 
 /** 불러온 JSON 의 이중화 설정 정리 */
@@ -821,6 +855,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...fixed.host,
           services: fixed.host.services ?? (fixed.kind === "server" ? [80] : []),
           dhcpServer: fixed.host.dhcpServer ?? { ...DEFAULT_DHCP_SERVER },
+          ...(fixed.host.ra ? { ra: { enabled: fixed.host.ra.enabled === true, server: typeof fixed.host.ra.server === "string" ? fixed.host.ra.server : "", psk: typeof fixed.host.ra.psk === "string" ? fixed.host.ra.psk : "" } } : {}),
         };
       }
     }
@@ -845,6 +880,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...(fixed.l3.firewall ? { firewall: { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.l3.firewall, rules: fixed.l3.firewall.rules ?? [] } } : {}),
           ...(fixed.l3.vpn ? { vpn: normalizeVpn(fixed.l3.vpn) } : {}),
           ...(fixed.l3.ha ? { ha: normalizeHa(fixed.l3.ha) } : {}),
+          ...(fixed.l3.ra ? { ra: normalizeRaServer(fixed.l3.ra) } : {}),
         };
       }
     }

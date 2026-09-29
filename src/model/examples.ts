@@ -891,6 +891,57 @@ export function exampleVpnTopology(): Topology {
 }
 
 /**
+ * 재택근무 원격 접속 VPN: 집 공유기 뒤의 노트북이 인터넷 너머 회사 VPN 방화벽에 붙어 가상 주소(10.99.0.x)를 받고,
+ * 사내 대역(10.50.10.0/24)으로 가는 것만 터널로 보낸다(split tunnel). 공유기 NAT 뒤라 UDP 4500 (NAT-T) 로 간다.
+ * 회사 방화벽은 인바운드 기본 차단이지만 VPN 가상 주소 대역에서 들어오는 것은 허용한다.
+ */
+export function exampleRemoteVpnTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -296, "internet-1");
+  const isp = add("switch", 344, -168, "통신사 구간");
+  // 집: 공유기(WAN 은 통신사 DHCP, LAN 은 DHCP 로 노트북에 주소) + 재택 노트북
+  const home = add("router", 120, -24, "집 공유기");
+  const laptop = add("laptop", 120, 152, "재택 노트북");
+  laptop.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER }, ra: { enabled: true, server: "203.0.113.11", psk: "remote-psk" } };
+  // 회사: VPN 방화벽(NAT 박스, 원격 접속 VPN 서버) → 사내 스위치 → 사내 서버·PC
+  const fw = add("nat", 568, -24, "회사 VPN 방화벽");
+  fw.l3 = {
+    interfaces: [iface("203.0.113.11", "203.0.113.1"), iface("10.50.10.1")],
+    routes: [],
+    firewall: {
+      enabled: true,
+      defaultPolicy: "deny",
+      stateful: true,
+      rules: [
+        { action: "allow", proto: "any", direction: "out", src: "", dst: "", dstPort: "" },
+        { action: "allow", proto: "any", direction: "in", src: "10.99.0.0/24", dst: "10.50.10.0/24", dstPort: "" },
+      ],
+    },
+    ra: { enabled: true, psk: "remote-psk", poolStart: "10.99.0.10", poolEnd: "10.99.0.50", routes: [{ dest: "10.50.10.0", prefix: 24 }] },
+  };
+  const sw = add("switch", 568, 136, "사내 스위치");
+  const srv = add("server", 480, 296, "사내 서버");
+  srv.host = { ipMode: "static", ip: "10.50.10.20", prefix: 24, gateway: "10.50.10.1", services: [22, 80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const pc = add("pc", 656, 296, "사내 PC");
+  pc.host = { ipMode: "static", ip: "10.50.10.30", prefix: 24, gateway: "10.50.10.1", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const cables: Cable[] = [
+    cable(isp, 3, inet, 0),
+    cable(isp, 1, home, 0),
+    cable(isp, 6, fw, 0),
+    cable(home, 1, laptop, 0),
+    cable(fw, 1, sw, 3),
+    cable(sw, 1, srv, 0),
+    cable(sw, 6, pc, 0),
+  ];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "집", tint: "green", ...zoneAround(t, [home.id, laptop.id], 24)! },
+    { id: newId("zone"), label: "회사 10.50.10.0/24 (VPN 가상 주소 10.99.0.x)", tint: "blue", ...zoneAround(t, [fw.id, sw.id, srv.id, pc.id], 24)! },
+  ];
+  return t;
+}
+
+/**
  * 망분리 사무실 + NCP(네이버 클라우드) IPsec VPN.
  * - 사무실: 내부망(업무망)·외부망(인터넷망)이 회선·방화벽·게이트웨이·스위치까지 따로. 실물은 망마다 방화벽 한 대가
  *   NAT·방화벽·라우팅을 다 하지만, 여기서는 역할별로 나누고 사이를 /30 연결 구간(10.255.0.0/30, 10.255.0.4/30)으로 잇는다.
@@ -1076,7 +1127,7 @@ export function exampleNcpVpnTopology(): Topology {
   return t;
 }
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "lb" | "roaming" | "docker";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "lb" | "roaming" | "docker";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -1222,6 +1273,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "망분리 사무실 + NCP (IPsec VPN)",
     blurb: "내부망 PC 1 에서 dev-2(192.168.112.11)로 TCP 22 연결하면, 첫 패킷에 IKE 로 IPsec 터널을 맺은 뒤 ESP 로 NCP 서버에 닿습니다. 외부망 PC 에서는 닿지 않습니다. prod 는 172.21.4.11 입니다.",
     build: exampleNcpVpnTopology,
+  },
+  remote: {
+    id: "remote",
+    group: "인터넷",
+    label: "재택근무 원격 접속 VPN",
+    blurb: "재택 노트북이 켜지면서 회사 VPN 방화벽에 IPsec 으로 붙어 가상 주소 10.99.0.x 를 받습니다(표 탭). 노트북에서 사내 서버 10.50.10.20 으로 SSH(22) 접속해 보세요 — 사내 대역만 터널로 가고, 8.8.8.8 은 평소처럼 집 공유기로 나갑니다.",
+    build: exampleRemoteVpnTopology,
   },
   roaming: {
     id: "roaming",

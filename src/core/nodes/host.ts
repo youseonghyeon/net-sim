@@ -6,6 +6,7 @@ import { NetInterface } from "./iface";
 import { LB_ALGORITHM_LABEL, LoadBalancer, type LbConfig } from "./lb";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { TCP_TIMER_TAG, TcpStack } from "./tcp";
+import { RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
 
 export type IpMode = "dhcp" | "static";
 
@@ -26,6 +27,8 @@ export interface HostConfig {
   dnsServer?: DnsServerConfig;
   /** 이 호스트가 로드밸런서(리버스 프록시) 역할을 할 때 */
   lb?: LbConfig;
+  /** 원격 접속 VPN 클라이언트 */
+  ra?: RaClientConfig;
 }
 
 export interface PingRecord {
@@ -92,6 +95,8 @@ export class Host implements SimNode {
   readonly tcp: TcpStack;
   /** 로드밸런서 서비스 (꺼져 있으면 아무것도 안 함) */
   readonly lb: LoadBalancer;
+  /** 원격 접속 VPN 클라이언트 */
+  readonly ra: RaClient;
   /** 웹 등 직접 응답하는 TCP 포트. 실제로 듣는 포트는 여기에 LB 포트를 더한 것 */
   private services: number[];
   /** 마지막으로 본 시뮬레이션 시각 (표시용: LB 가 빼 둔 백엔드가 언제 돌아오는지) */
@@ -132,6 +137,21 @@ export class Host implements SimNode {
     this.resolver = new DnsResolver(this.iface, hashCode(cfg.id));
     this.resolver.local = this.dnsServer;
     this.iface.loopback = (pkt, ctx) => this.loopback(pkt, ctx);
+    this.ra = new RaClient(
+      {
+        source: () => this.iface.ip,
+        send: (outer, ctx) => this.iface.sendIp(outer, ctx, this.emit(ctx)),
+        myIp: () => (this.iface.usable && !this.iface.probing ? this.iface.ip : undefined),
+      },
+      cfg.mac,
+    );
+    if (cfg.ra) this.ra.config = { ...cfg.ra };
+    // 사내 대역으로 가는 패킷은 원격 접속 터널로 (연결돼 있을 때만)
+    this.iface.outbound = (pkt, ctx) => this.ra.intercept(pkt, ctx);
+  }
+
+  setRemoteVpn(cfg: RaClientConfig, ctx: NodeContext): void {
+    this.ra.setConfig(cfg, ctx);
   }
 
   /** 내 주소로 보내는 패킷은 네트워크로 나가지 않고 바로 받는다 (루프백) */
@@ -221,6 +241,7 @@ export class Host implements SimNode {
         this.iface.clearPending();
         this.tcp.abortAll("주소 변경", ctx);
         this.cancelTraceroute("주소 변경", ctx);
+        this.ra.lost(ctx, "주소 변경");
         if (this.linkUp && this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
       }
       ctx.trace(
@@ -255,6 +276,7 @@ export class Host implements SimNode {
       return;
     }
     ctx.trace("link.down", "L1", `링크 다운`);
+    this.ra.lost(ctx, "링크 다운");
     this.iface.clearPending();
     this.tcp.abortAll("링크 다운", ctx);
     this.cancelTraceroute("링크 다운", ctx);
@@ -572,11 +594,24 @@ export class Host implements SimNode {
   }
 
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    // 원격 접속 VPN: 서버의 IKE 응답, 터널로 온 ESP (NAT-T 면 UDP 4500 안)
+    if (this.ra.config.enabled && pkt.dst === this.iface.ip) {
+      const p = pkt.payload;
+      if (p.kind === "udp" && p.payload.kind === "ike" && this.ra.handleIke(pkt, p.srcPort, p.payload, ctx, frameId)) return;
+      const esp = p.kind === "esp" ? p : p.kind === "udp" && p.payload.kind === "esp" ? p.payload : undefined;
+      if (esp) {
+        const inner = this.ra.unwrap(pkt, esp.inner, ctx, frameId);
+        if (inner) this.handleIp(inner, frameId, ctx);
+        else ctx.trace("vpn.drop", "L3", `ESP 수신 (from ${pkt.src}) → 내 원격 접속 터널 것이 아님 → 드롭`, {}, frameId);
+        return;
+      }
+    }
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
       const m = udp.payload;
       if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) {
         this.dhcp.handle(m, frameId, ctx, this.emit(ctx));
+        this.ra.connect(ctx); // 주소를 받았으면 원격 접속 VPN 접속
         return;
       }
       if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) {
@@ -668,6 +703,10 @@ export class Host implements SimNode {
     switch (tag) {
       case "arp-probe":
         if ((data as { mac: string }).mac === this.iface.mac) this.iface.finishProbe(ctx, this.emit(ctx));
+        this.ra.connect(ctx); // 고정 주소를 쓰기 시작 → 원격 접속 VPN 접속
+        return;
+      case RA_TIMER_TAG:
+        this.ra.onTimer(data, ctx);
         return;
       case "arp-timeout": {
         const { ip: nextHop } = data as { ip: Ip };
@@ -737,6 +776,7 @@ export class Host implements SimNode {
         ["링크", this.linkUp ? "연결됨" : "끊김"],
         ["IP 설정", this.ipMode === "dhcp" ? `자동 (DHCP: ${DHCP_STATE_LABEL[this.dhcp.state]})` : "수동"],
         ["TCP 서비스", this.tcp.listening.size ? [...this.tcp.listening].map((p) => `포트 ${p}`).join(", ") : "없음"],
+        ...(this.ra.config.enabled ? [["원격 접속 VPN", this.ra.summary()!] as [string, string]] : []),
         ...(this.dhcpServer.config.enabled
           ? [["DHCP 서버", `켜짐 · ${this.dhcpServer.config.start} ~ ${this.dhcpServer.config.end}`] as [string, string]]
           : []),

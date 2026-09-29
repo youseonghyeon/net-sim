@@ -217,7 +217,8 @@ export interface EspPacket {
  */
 export interface IkeMessage {
   kind: "ike";
-  exchange: "IKE_SA_INIT" | "IKE_AUTH";
+  /** INFORMATIONAL: 원격 접속 클라이언트가 연결을 끊을 때 (Delete) */
+  exchange: "IKE_SA_INIT" | "IKE_AUTH" | "INFORMATIONAL";
   response: boolean;
   /** 이 협상의 번호 (시작한 쪽이 정함) */
   spi: number;
@@ -229,7 +230,15 @@ export interface IkeMessage {
   /** IKE_AUTH 요청: 사전 공유 키로 만든 인증 값 (시뮬레이터는 키 문자열을 그대로 비교) */
   auth?: string;
   /** IKE_AUTH 응답의 실패 알림 */
-  error?: "AUTHENTICATION_FAILED";
+  error?: "AUTHENTICATION_FAILED" | "INTERNAL_ADDRESS_FAILURE";
+  /** 원격 접속(클라이언트 ↔ 서버) 협상 — 사이트 간 VPN 과 구분 */
+  ra?: boolean;
+  /** 원격 접속: 클라이언트 식별 (다시 붙으면 같은 가상 주소를 준다) */
+  cid?: string;
+  /** 원격 접속 IKE_AUTH 응답: 서버가 준 가상 주소 (Configuration Payload INTERNAL_IP4_ADDRESS) */
+  assigned?: Ip;
+  /** 원격 접속 IKE_AUTH 응답: 터널로 보낼 사내 대역 (split tunnel, INTERNAL_IP4_SUBNET) */
+  routes?: { dest: Ip; prefix: number }[];
 }
 
 /**

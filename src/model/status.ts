@@ -80,6 +80,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.tcp.listening.has(80) && !(node.lb.config.enabled && node.lb.config.port === 80)) out.push("웹");
     if (node.tcp.listening.has(22) && !(node.lb.config.enabled && node.lb.config.port === 22)) out.push("SSH");
     if (node.lb.config.enabled) out.push(`LB ${node.lb.config.backends.length}대`);
+    if (node.ra.config.enabled) out.push(node.ra.state === "up" ? "VPN 연결됨" : "VPN");
   } else if (node instanceof Router) {
     if (node.dhcp.enabled) out.push("DHCP");
     if (node.dnsForwarder.config.enabled) out.push("DNS");
@@ -90,6 +91,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.relays.some(Boolean)) out.push("DHCP 릴레이");
     if (node.rip.config.enabled) out.push("RIP");
     if (node.vpn.config.enabled) out.push("VPN");
+    if (node.ra.config.enabled) out.push(`원격 VPN ${node.ra.clients.size}`);
     if (node.ha.config.enabled) out.push(node.ha.state === "master" ? "HA master" : "HA backup");
     if (node.nat) out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
     if (node.firewall.config.enabled) out.push("방화벽");
