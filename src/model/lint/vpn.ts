@@ -152,11 +152,25 @@ export function remoteAccessRules({ t, m, add }: LintContext): void {
     if (!c?.enabled) continue;
     const server = validIp(c.server);
     if (!server) continue;
-    // 이중화 쌍이면 가상 주소를 가진 장비가 둘 — 모두 봐야 넘어가도 접속된다
-    const srvs = t.devices.filter((x) => x !== d && ownsIp(x, server));
+    // 이중화 쌍이면 가상 주소를 가진 장비가 둘 — 모두 봐야 넘어가도 접속된다.
+    // 서버가 NAT 뒤면: 공인 주소의 장비(엣지 NAT)가 원격 접속을 켜지 않고 UDP 500 을 안쪽으로 포워딩할 때 그 안쪽 장비가 진짜 서버
+    // (사이트 간 규칙과 같게). 포워딩 대상이 이 토폴로지에 없으면 판단하지 않는다 (오탐 금지)
+    /** 포워딩으로 찾은 서버 → 포워딩한 엣지 NAT */
+    const via = new Map<Device, Device>();
+    const srvs = t.devices
+      .filter((x) => x !== d && ownsIp(x, server))
+      .flatMap((x) => {
+        const fwd = x.kind !== "nat" || x.l3?.ra?.enabled ? undefined : x.l3?.forwards?.find((f) => f.proto === "udp" && f.publicPort === IKE_PORT);
+        const lan = fwd ? validIp(fwd.lanIp) : undefined;
+        if (!fwd) return [x];
+        const inner = lan ? t.devices.filter((y) => y !== x && y !== d && ownsIp(y, lan)) : [];
+        for (const y of inner) via.set(y, x);
+        return inner;
+      });
     for (const srv of srvs) {
       if (!srv.l3?.ra?.enabled) {
-        add({ deviceId: d.id, severity: "warn", code: "ra.server-off", message: `${srv.name} (${server}) 에 원격 접속 VPN 서버가 꺼져 있음 → IKE 에 답이 없어 접속 실패${srvs.length > 1 ? " (이중화 쌍이면 넘어갈 때)" : ""}`, fix: `${srv.name} → 원격 접속 VPN 서버 켜기`, related: [srv.id] });
+        const where = via.has(srv) ? `${via.get(srv)!.name} 가 ${server} 의 UDP ${IKE_PORT} 을 포워딩하는 대상` : server;
+        add({ deviceId: d.id, severity: "warn", code: "ra.server-off", message: `${srv.name} (${where}) 에 원격 접속 VPN 서버가 꺼져 있음 → IKE 에 답이 없어 접속 실패${srvs.length > 1 ? " (이중화 쌍이면 넘어갈 때)" : ""}`, fix: `${srv.name} → 원격 접속 VPN 서버 켜기`, related: [srv.id] });
       } else if (srv.l3.ra.psk !== c.psk) {
         add({ deviceId: d.id, severity: "error", code: "ra.psk-mismatch", message: `원격 접속 VPN 사전 공유 키(PSK)가 서버 ${srv.name} 와 다름 → 인증 실패 (AUTHENTICATION_FAILED)`, fix: `${d.name} 의 원격 접속 VPN → 사전 공유 키를 서버와 같게`, related: [srv.id] });
       } else {

@@ -645,12 +645,12 @@ export class Host implements SimNode {
     // 원격 접속 VPN: 서버의 IKE 응답, 터널로 온 ESP (NAT-T 면 UDP 4500 안)
     if (this.ra.config.enabled && pkt.dst === this.iface.ip) {
       const p = pkt.payload;
-      if (p.kind === "udp" && p.payload.kind === "ike" && this.ra.handleIke(pkt, p.srcPort, p.payload, ctx, frameId)) return;
+      if (p.kind === "udp" && p.payload.kind === "ike" && this.ra.handleIke(pkt, p.srcPort, p.dstPort, p.payload, ctx, frameId)) return;
       const esp = p.kind === "esp" ? p : p.kind === "udp" && p.payload.kind === "esp" ? p.payload : undefined;
       if (esp) {
-        const inner = this.ra.unwrap(pkt, esp.inner, ctx, frameId);
+        const inner = this.ra.unwrap(pkt, esp, ctx, frameId);
         if (inner) this.handleIp(inner, frameId, ctx);
-        else ctx.trace("vpn.drop", "L3", `ESP 수신 (from ${pkt.src}) → 내 원격 접속 터널 것이 아님 → 드롭`, {}, frameId);
+        else if (inner === undefined) ctx.trace("vpn.drop", "L3", `ESP 수신 (from ${pkt.src}) → 내 원격 접속 터널 것이 아님 → 드롭`, {}, frameId);
         return;
       }
     }

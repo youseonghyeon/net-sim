@@ -325,6 +325,8 @@ function normalizeHostExtras(h: HostSettings): HostSettings {
 
 function normalizeRaServer(r: Partial<RaServerSettings>): RaServerSettings {
   const str = (v: unknown, d: string) => (typeof v === "string" ? v : d);
+  // 계정: 손으로 고친 JSON 의 숫자 이름·비밀번호(1234)는 문자열로 살리고, 객체 하나면 배열로 감싼다. 그 밖(문자열·null 등)은 [] — 계정이 없으면 PSK 만으로 접속
+  const users = r.users === undefined ? undefined : Array.isArray(r.users) ? (r.users as unknown[]) : r.users !== null && typeof r.users === "object" ? [r.users as unknown] : [];
   return {
     enabled: r.enabled === true,
     psk: str(r.psk, ""),
@@ -334,20 +336,30 @@ function normalizeRaServer(r: Partial<RaServerSettings>): RaServerSettings {
       .filter((x): x is { dest: string; prefix: number } => !!x && typeof x === "object" && typeof x.dest === "string")
       .map((x) => ({ dest: x.dest, prefix: Number.isInteger(x.prefix) && x.prefix >= 0 && x.prefix <= 32 ? x.prefix : 24 })),
     // 예전 저장본에는 없다 (없으면 PSK 만)
-    ...(Array.isArray(r.users)
-      ? { users: r.users.filter((u): u is { name: string; password: string } => !!u && typeof u === "object" && typeof u.name === "string").map((u) => ({ name: u.name, password: str(u.password, "") })) }
+    ...(users
+      ? {
+          users: users
+            .filter((u): u is { name: unknown; password?: unknown } => !!u && typeof u === "object" && accountText((u as { name?: unknown }).name) !== undefined)
+            .map((u) => ({ name: accountText(u.name)!, password: accountText(u.password) ?? "" })),
+        }
       : {}),
   };
+}
+
+/** 계정 칸(사용자 이름·비밀번호): 문자열은 그대로, 손으로 고친 JSON 의 숫자(1234)는 문자열로. 그 밖은 undefined */
+function accountText(v: unknown): string | undefined {
+  return typeof v === "string" ? v : typeof v === "number" && Number.isFinite(v) ? String(v) : undefined;
 }
 
 /** 불러온 JSON 의 원격 접속 VPN 클라이언트 설정 정리 (계정은 예전 저장본에 없다) */
 function normalizeRaClient(r: Partial<RaClientSettings>): RaClientSettings {
   const str = (v: unknown, d: string) => (typeof v === "string" ? v : d);
+  const user = accountText(r.user);
   return {
     enabled: r.enabled === true,
     server: str(r.server, ""),
     psk: str(r.psk, ""),
-    ...(typeof r.user === "string" ? { user: r.user, password: str(r.password, "") } : {}),
+    ...(user !== undefined ? { user, password: accountText(r.password) ?? "" } : {}),
   };
 }
 

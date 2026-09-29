@@ -28,6 +28,8 @@ const IKE_QUEUE = 32;
 /** IPsec 을 위해 VPN 이 장치에 부탁하는 것: 바깥(인터넷 쪽) 출발지 주소와 바깥 패킷 송신 (NAT 하지 않음) */
 export interface VpnIo {
   source(dst: Ip): Ip | undefined;
+  /** 이 장비만의 실제 주소 (이중화 쌍은 같은 가상 주소로 협상하므로 SPI 씨앗에 섞어 두 장비의 SPI 가 겹치지 않게) */
+  realSource?(dst: Ip): Ip | undefined;
   send(outer: Ipv4Packet, ctx: NodeContext, frameId?: number): void;
 }
 
@@ -93,6 +95,19 @@ export class Vpn {
     this.pending = undefined;
     this.queue = [];
     this.dpdPending = false;
+  }
+
+  /**
+   * 이중화 master 에서 물러남: 가상 주소로 맺은 IPsec 터널(SA)·협상·기다리던 패킷을 비운다.
+   * 세션 동기화는 SA 를 복사하지 않으므로 새 master 가 다시 협상한다 (옛 SA 를 들고 있으면 DPD 에 상대가 "살아 있음" 으로 답한다)
+   */
+  dropSa(ctx: NodeContext, why: string): void {
+    if (this.mode !== "ipsec" || (this.sa.state === "idle" && !this.pending && this.queue.length === 0)) return;
+    const s = this.sa;
+    const n = this.queue.length;
+    const what = s.state === "up" ? `터널(SA, 상대 ${s.peer?.ip ?? "?"}, SPI 0x${hex(s.spi)})` : s.state === "idle" ? "진행 중인 IKE 협상" : `진행 중인 IKE 협상(${s.state === "init" ? "IKE_SA_INIT" : "IKE_AUTH"})`;
+    this.resetSa();
+    ctx.trace("vpn.drop", "L4", `IPsec: ${why} → ${what}을 지움${n ? `, 기다리던 패킷 ${n}개 드롭` : ""} — SA 는 새 master 에 복사되지 않으므로 새 master 가 다시 협상`, { why, dropped: n });
   }
 
   /** 표시용: IPsec 터널 상태 한 줄 */
@@ -166,7 +181,9 @@ export class Vpn {
       return;
     }
     this.attempts++;
-    this.sa = { state: "init", spi: spiOf(`${src}>${peer}#${this.attempts}`), natT: false, seq: 0 };
+    // 이중화 쌍은 같은 가상 주소(src)로 협상한다 — 실제 주소를 섞어 두 장비의 SPI 가 겹치지 않게 (가상 주소가 아니면 씨앗은 그대로)
+    const real = this.io?.realSource?.(peer);
+    this.sa = { state: "init", spi: spiOf(`${src}>${peer}#${this.attempts}${real && real !== src ? `/${real}` : ""}`), natT: false, seq: 0 };
     ctx.trace(
       "vpn.ike",
       "L4",

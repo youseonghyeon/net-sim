@@ -344,4 +344,36 @@ describe("IPsec DPD", () => {
     const dpd = new Set(x.wire("통신사 구간").flatMap((p) => (p.payload.kind === "udp" && p.payload.payload.kind === "ike" && p.payload.payload.dpd ? [`${p.src}:${p.payload.srcPort}>${p.dst}:${p.payload.dstPort} ${p.payload.payload.response ? "R" : "I"}`] : [])));
     expect([...dpd].sort()).toEqual(["203.0.113.11:4500>203.0.113.22:4500 I", "203.0.113.11:4500>203.0.113.22:4500 R", "203.0.113.22:4500>203.0.113.11:4500 I", "203.0.113.22:4500>203.0.113.11:4500 R"]);
   });
+
+  it("리뷰: 이중화 쌍에서 물러난 옛 master 는 SA 를 비워 DPD 가 '연결된 터널 없음', 새 master 는 다른 SPI 로 다시 협상", () => {
+    const A2 = "사무실 A NAT 2";
+    const base = ipsec();
+    const iface = (ip: string) => ({ ipMode: "static" as const, ip, prefix: 24, gateway: "" });
+    const devices: Device[] = base.devices.map((d) => (d.name === A ? { ...d, l3: { ...d.l3!, interfaces: [iface("203.0.113.13"), iface("192.168.1.2")], ha: { enabled: true, vrid: 1, priority: 200, vips: ["203.0.113.11", "192.168.1.1"] } } } : d));
+    const a1 = devices.find((d) => d.name === A)!;
+    const a2: Device = { ...createDevice("nat", 60, 48, devices), name: A2 };
+    a2.l3 = { ...a1.l3!, interfaces: [iface("203.0.113.14"), iface("192.168.1.3")], ha: { ...a1.l3!.ha!, priority: 100 } };
+    devices.push(a2);
+    const isp = devices.find((d) => d.name === "통신사 구간")!;
+    const swA = devices.find((d) => d.name === "sw-a")!;
+    const t: Topology = { devices, cables: [...base.cables, { id: "a20", a: { device: isp.id, port: 2 }, b: { device: a2.id, port: 0 } }, { id: "a21", a: { device: a2.id, port: 1 }, b: { device: swA.id, port: 5 } }] };
+    const x = up(t);
+    const spi = (name: string) => x.l3(name).vpn.saSummary()!.match(/SPI (0x[0-9a-f]+)/)?.[1];
+    const old = spi(A);
+    // A 의 안쪽 케이블을 뽑음 → A 는 물러나며 SA 를 비우고, A2 가 master
+    const down = x.apply({ ...t, cables: t.cables.filter((c) => c.id !== cableOf(t, A, "sw-a").id) });
+    expect(x.l3(A2).ha.state).toBe("master");
+    expect(x.l3(A).vpn.ipsecUp).toBe(false);
+    expect(down.some((e) => e.nodeId === x.id(A) && e.kind === "vpn.drop" && e.summary.includes("SA"))).toBe(true);
+    const tr = x.act({ kind: "vpn-dpd", nodeId: x.id(A) });
+    expect(seqOf(x.t, tr)).toEqual([`${A}:action`, `${A}:vpn.dpd`]);
+    expect(tr[1]!.summary).toContain("연결된 터널(SA) 없음");
+    // 새 master 는 같은 가상 주소로 다시 협상하지만 SPI 는 겹치지 않는다
+    x.act({ kind: "ping", nodeId: x.id("pc-a"), dst: "192.168.2.10" });
+    x.act({ kind: "ping", nodeId: x.id("pc-a"), dst: "192.168.2.10" });
+    expect(x.host("pc-a").pings.at(-1)!.status).toBe("ok");
+    expect(x.l3(A2).vpn.ipsecUp).toBe(true);
+    expect(spi(A2)).not.toBe(old);
+    expect(spi(B)).toBe(spi(A2));
+  });
 });

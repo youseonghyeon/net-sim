@@ -1,9 +1,12 @@
 // 패킷 상세 보기: tcpdump 표기·계층별 헤더·실무 명령 출력이 실제 도구의 모양과 같은지
 import { describe, expect, it } from "vitest";
 import type { EthernetFrame } from "../src/core/packet";
+import type { TraceEvent } from "../src/core/trace";
 import { NetworkSync } from "../src/model/netSync";
-import { EXAMPLES } from "../src/model/examples";
+import { EXAMPLES, exampleRemoteVpnTopology } from "../src/model/examples";
+import type { Topology } from "../src/model/topology";
 import { headerLayers, practitionerLines, tcpdumpLine } from "../src/model/packetView";
+import { loadTopology } from "./helpers";
 
 const A = "02:00:00:00:00:01";
 const B = "02:00:00:00:00:02";
@@ -83,6 +86,64 @@ describe("IPsec", () => {
     const titles = headerLayers(ip({ kind: "esp", spi: 1, seq: 1, inner }, "203.0.113.11", "203.0.113.22"));
     expect(titles.map((l) => l.title)).toEqual(["이더넷 (L2)", "IPv4 (L3)", "ESP (IPsec)", "터널 안 · IPv4 (L3)", "터널 안 · ICMP"]);
     expect(titles[1]!.rows.find((r) => r[0] === "프로토콜")![1]).toContain("50 (ESP");
+  });
+});
+
+describe("strongSwan (원격 접속 계정 인증·DPD)", () => {
+  const LAPTOP = "재택 노트북";
+  const FW = "회사 VPN 방화벽";
+  type Loaded = ReturnType<typeof loadTopology>;
+  /** 그 장치가 받은/보낸 프레임과 함께 strongSwan 줄만 */
+  const swan = (x: Loaded, e: TraceEvent) => practitionerLines(e, e.packetId !== undefined ? x.s.net.framesAt(e.packetId, e.nodeId, e.time) : {}).filter((l) => l.tool.startsWith("strongSwan")).map((l) => l.line);
+  const patch = (laptop: object = {}, server: object = {}): Topology => {
+    const t = exampleRemoteVpnTopology();
+    return { ...t, devices: t.devices.map((d) => (d.name === LAPTOP ? { ...d, host: { ...d.host!, ra: { ...d.host!.ra!, ...laptop } } } : d.l3?.ra ? { ...d, l3: { ...d.l3, ra: { ...d.l3.ra, ...server } } } : d)) };
+  };
+  const serverFail = (x: Loaded) => x.s.net.trace.find((e) => e.kind === "vpn.drop" && e.nodeId === x.id(FW) && e.details?.eap === "failure")!;
+
+  it("비밀번호가 틀림: EAP-MS-CHAPv2 verification failed, retry (n) 뒤 failed for peer <IKE ID = 사용자 이름>", () => {
+    const x = loadTopology(patch({ password: "wrong" }));
+    expect(swan(x, serverFail(x))).toEqual(["12[IKE] EAP-MS-CHAPv2 verification failed, retry (1)", "12[IKE] EAP method EAP_MSCHAPV2 failed for peer kim"]);
+  });
+
+  it("목록에 없는 사용자: no EAP key found for hosts '<서버 ID>' - '<사용자>'", () => {
+    const x = loadTopology(patch({ user: "park", password: "park-pass" }));
+    expect(swan(x, serverFail(x))).toEqual(["12[IKE] no EAP key found for hosts '203.0.113.11' - 'park'", "12[IKE] EAP method EAP_MSCHAPV2 failed for peer park"]);
+  });
+
+  it("DPD 의 Message ID: EAP 로 붙으면 IKE_AUTH 가 두 번(1·2)이라 3, PSK 만이면 2", () => {
+    for (const [t, mid] of [[patch(), 3], [patch({}, { users: [] }), 2]] as const) {
+      const x = loadTopology(t);
+      const tr = x.act({ kind: "vpn-dpd", nodeId: x.id(LAPTOP) }).filter((e) => e.kind === "vpn.dpd");
+      expect(tr.map((e) => swan(x, e))).toEqual([
+        ["15[IKE] sending DPD request", `15[ENC] generating INFORMATIONAL request ${mid} [ ]`],
+        [`16[ENC] parsed INFORMATIONAL request ${mid} [ ]`, `16[ENC] generating INFORMATIONAL response ${mid} [ ]`],
+        [`16[ENC] parsed INFORMATIONAL response ${mid} [ ]`],
+      ]);
+    }
+  });
+
+  it("재전송: EAP 응답(두 번째 IKE_AUTH)은 message ID 2, 서버가 지난 응답을 다시 보낼 때는 그 요청의 ID", () => {
+    const run = (t: Topology, dropAt: (x: Loaded, e: TraceEvent) => boolean) => {
+      const x = loadTopology(t);
+      const home = x.t.devices.find((d) => d.name === "집 공유기")!.id;
+      const isp = x.t.devices.find((d) => d.name === "통신사 구간")!.id;
+      const wan = x.t.cables.find((c) => [c.a.device, c.b.device].includes(home) && [c.a.device, c.b.device].includes(isp))!;
+      const from = x.s.net.trace.length;
+      x.s.net.scheduleAction(x.s.net.now, { kind: "ra-reconnect", nodeId: x.id(LAPTOP) });
+      while (!x.s.net.trace.slice(from).some((e) => dropAt(x, e))) x.s.net.step();
+      x.s.net.dropNextOn(wan.id);
+      x.s.net.runToIdle();
+      return { x, tr: x.s.net.trace.slice(from) };
+    };
+    // 노트북의 EAP 응답이 사라짐 → 노트북 재전송
+    const a = run(patch(), (x, e) => e.kind === "vpn.eap" && e.nodeId === x.id(LAPTOP));
+    expect(swan(a.x, a.tr.find((e) => e.nodeId === a.x.id(LAPTOP) && e.details?.retransmit !== undefined)!)).toEqual(["11[IKE] retransmit 1 of request with message ID 2"]);
+    // 서버의 마지막 응답이 사라짐 → 서버가 같은 응답을 다시
+    for (const [t, id] of [[patch(), 2], [patch({}, { users: [] }), 1]] as const) {
+      const b = run(t, (x, e) => e.kind === "vpn.up" && e.nodeId === x.id(FW));
+      expect(swan(b.x, b.tr.find((e) => e.nodeId === b.x.id(FW) && e.details?.resent === true)!)).toEqual([`13[IKE] received retransmit of request with ID ${id}, retransmitting response`]);
+    }
   });
 });
 

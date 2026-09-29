@@ -363,7 +363,7 @@ describe("원격 접속 VPN — 사용자 계정 인증 (EAP)", () => {
     expect(lines("vpn.up", FW).slice(0, 2)).toEqual(["09[IKE] authentication of 'kim' with EAP successful", "09[IKE] EAP method EAP_MSCHAPV2 succeeded, MSK established"]);
     const bad = load(withLaptop({ password: "wrong" }));
     const fail = bad.s.net.trace.find((e) => e.kind === "vpn.drop" && e.nodeId === bad.id(FW) && e.details?.eap === "failure")!;
-    expect(practitionerLines(fail, {}).map((l) => l.line)).toEqual(["12[IKE] EAP-MS-CHAPv2 verification failed for 'kim'", "12[IKE] EAP method EAP_MSCHAPV2 failed for peer 203.0.113.100"]);
+    expect(practitionerLines(fail, {}).map((l) => l.line)).toEqual(["12[IKE] EAP-MS-CHAPv2 verification failed, retry (1)", "12[IKE] EAP method EAP_MSCHAPV2 failed for peer kim"]);
     const cli = bad.s.net.trace.find((e) => e.kind === "vpn.drop" && e.nodeId === bad.id(LAPTOP))!;
     expect(practitionerLines(cli, {}).map((l) => l.line)).toEqual(["12[IKE] received EAP_FAILURE, EAP authentication failed"]);
   });
@@ -380,9 +380,10 @@ describe("원격 접속 VPN — DPD", () => {
     expect(dpd.payload).toMatchObject({ kind: "udp", dstPort: 4500, payload: { exchange: "INFORMATIONAL", response: false } });
     const lines = (e: TraceEvent) => practitionerLines(e, {}).map((l) => l.line);
     const [, req, reply, alive] = tr.filter((e) => VPN_KINDS.includes(e.kind));
-    expect(lines(req!)).toEqual(["15[IKE] sending DPD request", "15[ENC] generating INFORMATIONAL request 2 [ ]"]);
-    expect(lines(reply!)).toEqual(["16[ENC] parsed INFORMATIONAL request 2 [ ]", "16[ENC] generating INFORMATIONAL response 2 [ ]"]);
-    expect(lines(alive!)).toEqual(["16[ENC] parsed INFORMATIONAL response 2 [ ]"]);
+    // 예제는 계정 인증(EAP)이라 IKE_AUTH 가 두 번(Message ID 1·2) → DPD 는 3
+    expect(lines(req!)).toEqual(["15[IKE] sending DPD request", "15[ENC] generating INFORMATIONAL request 3 [ ]"]);
+    expect(lines(reply!)).toEqual(["16[ENC] parsed INFORMATIONAL request 3 [ ]", "16[ENC] generating INFORMATIONAL response 3 [ ]"]);
+    expect(lines(alive!)).toEqual(["16[ENC] parsed INFORMATIONAL response 3 [ ]"]);
   });
 
   it("경로가 끊기면(회사 쪽 케이블 뽑음) 1초씩 두 번 다시 보낸 뒤 SA 삭제 → 끊김, 케이블을 꽂고 '다시 연결' 로 복구", () => {
@@ -423,5 +424,188 @@ describe("원격 접속 VPN — DPD", () => {
     expect(seqOf(x.t, tr)).toEqual([`${LAPTOP}:action`, `${LAPTOP}:vpn.dpd`]);
     expect(tr[1]!.summary).toContain("연결된 터널 없음");
     expect(x.wire(FW).length).toBe(before);
+  });
+});
+
+// ---------- 리뷰: EAP·DPD 뒤 결함 ----------
+describe("원격 접속 VPN — 리뷰 (이중화·응답 손실·NAT 뒤 서버·늦은 응답·불러오기)", () => {
+  const FW_B = "회사 VPN 방화벽 B";
+  /** 회사 VPN 방화벽을 이중화 쌍으로 (A 우선순위 200, B 100, 가상 주소 = 원래 주소 203.0.113.11 / 10.50.10.1) */
+  const haPair = (): Topology => {
+    const base = exampleRemoteVpnTopology();
+    const fw = base.devices.find((d) => d.name === FW)!;
+    const iface = (ip: string, gateway = "") => ({ ipMode: "static" as const, ip, prefix: 24, gateway });
+    const a: Device = { ...fw, l3: { ...fw.l3!, interfaces: [iface("203.0.113.12", "203.0.113.1"), iface("10.50.10.2")], ha: { enabled: true, vrid: 1, priority: 200, vips: ["203.0.113.11", "10.50.10.1"] } } };
+    const b: Device = { ...createDevice("nat", 760, -24, base.devices), name: FW_B };
+    b.l3 = { ...a.l3!, interfaces: [iface("203.0.113.13", "203.0.113.1"), iface("10.50.10.3")], ha: { ...a.l3!.ha!, priority: 100 } };
+    const isp = base.devices.find((d) => d.name === "통신사 구간")!;
+    const sw = base.devices.find((d) => d.name === "사내 스위치")!;
+    return {
+      devices: [...base.devices.map((d) => (d.id === fw.id ? a : d)), b],
+      cables: [...base.cables, { id: "b-wan", a: { device: isp.id, port: 2 }, b: { device: b.id, port: 0 } }, { id: "b-lan", a: { device: b.id, port: 1 }, b: { device: sw.id, port: 5 } }],
+    };
+  };
+  const cableOf = (t: Topology, a: string, b: string) => {
+    const ia = t.devices.find((d) => d.name === a)!.id;
+    const ib = t.devices.find((d) => d.name === b)!.id;
+    return t.cables.find((c) => [c.a.device, c.b.device].includes(ia) && [c.a.device, c.b.device].includes(ib))!;
+  };
+  const ping = (x: ReturnType<typeof load>, from: string, dst: string) => {
+    x.act({ kind: "ping", nodeId: x.id(from), dst });
+    return x.host(from).pings.at(-1)!.status;
+  };
+
+  it("리뷰: backup 이 된 옛 master 는 원격 접속 세션을 비우고, preempt 로 돌아오면 노트북이 INVALID_SPI → 다시 접속으로 복구", () => {
+    const t = haPair();
+    const x = load(t);
+    expect(x.l3(FW).ha.state).toBe("master");
+    expect(x.l3(FW).ra.clients.size).toBe(1);
+    // A 의 안쪽 케이블을 뽑음 → A 는 물러나고 B 가 master
+    const inside = cableOf(t, FW, "사내 스위치");
+    x.apply({ ...t, cables: t.cables.filter((c) => c.id !== inside.id) });
+    expect(x.l3(FW_B).ha.state).toBe("master");
+    expect(x.l3(FW).ra.clients.size).toBe(0); // 넘겨줄 수 없는 세션은 물러날 때 비운다
+    // 노트북의 첫 패킷은 B 에게 INVALID_SPI → 다시 접속, 다음부터 통함
+    ping(x, LAPTOP, "10.50.10.20");
+    expect(x.host(LAPTOP).ra.state).toBe("up");
+    expect(ping(x, LAPTOP, "10.50.10.20")).toBe("ok");
+    expect(x.l3(FW_B).ra.clients.size).toBe(1);
+    // 케이블을 되돌림 → A 가 preempt, B 는 물러나며 세션을 비운다
+    x.apply(t);
+    expect(x.l3(FW).ha.state).toBe("master");
+    expect(x.l3(FW_B).ra.clients.size).toBe(0);
+    expect(x.l3(FW).ra.clients.size).toBe(0);
+    const tr = x.act({ kind: "ping", nodeId: x.id(LAPTOP), dst: "10.50.10.20" });
+    expect(tr.some((e) => e.nodeId === x.id(FW) && e.summary.includes("INVALID_SPI"))).toBe(true);
+    expect(x.host(LAPTOP).ra.state).toBe("up");
+    expect(ping(x, LAPTOP, "10.50.10.20")).toBe("ok");
+    expect([x.l3(FW).ra.clients.size, x.l3(FW_B).ra.clients.size]).toEqual([1, 0]);
+  });
+
+  it("리뷰: 노트북은 지금 SA 의 SPI 가 아닌 ESP 를 풀지 않고 드롭한다 (옛 SA 를 든 서버가 보낸 것)", () => {
+    const x = load();
+    const c = x.l3(FW).ra.clients.get("10.99.0.10")!;
+    c.spi = 0x1234; // 서버가 지난 SA 를 들고 있다고 친다
+    const tr = x.act({ kind: "ping", nodeId: x.id("사내 PC"), dst: "10.99.0.10" });
+    expect(x.host("사내 PC").pings.at(-1)!.status).toBe("failed");
+    const drop = tr.find((e) => e.nodeId === x.id(LAPTOP) && e.kind === "vpn.drop")!;
+    expect(drop.summary).toContain("SPI 0x00001234");
+    expect(tr.some((e) => e.nodeId === x.id(LAPTOP) && e.kind === "vpn.decap")).toBe(false);
+  });
+
+  /** 다시 연결하고, 서버가 pred 에 맞는 기록을 남긴 순간 서버 → 집 구간의 다음 프레임(= 그 응답)을 잃게 한다 */
+  const loseServerReply = (x: ReturnType<typeof load>, pred: (e: TraceEvent) => boolean) => {
+    const homeWan = cableOf(x.t, "집 공유기", "통신사 구간");
+    const from = x.s.net.trace.length;
+    x.s.net.scheduleAction(x.s.net.now, { kind: "ra-reconnect", nodeId: x.id(LAPTOP) });
+    while (!x.s.net.trace.slice(from).some((e) => e.nodeId === x.id(FW) && pred(e))) x.s.net.step();
+    x.s.net.dropNextOn(homeWan.id);
+    x.s.net.runToIdle();
+    return x.s.net.trace.slice(from);
+  };
+  const resent = (x: ReturnType<typeof load>, tr: TraceEvent[]) => tr.filter((e) => e.nodeId === x.id(FW) && e.details?.resent === true && e.kind === "vpn.ike");
+
+  it("리뷰: EAP 성공 응답이 사라지면 노트북이 다시 보낸 EAP 응답에 서버가 같은 응답을 다시 보낸다 (유령 세션 없음)", () => {
+    const x = load();
+    const tr = loseServerReply(x, (e) => e.kind === "vpn.up");
+    expect(resent(x, tr)).toHaveLength(1);
+    expect(tr.filter((e) => e.nodeId === x.id(FW) && e.kind === "vpn.up")).toHaveLength(1); // 인증·주소 할당은 한 번만
+    expect(x.host(LAPTOP).ra.state).toBe("up");
+    expect(x.l3(FW).ra.clients.size).toBe(1);
+    expect(ping(x, LAPTOP, "10.50.10.20")).toBe("ok");
+  });
+
+  it("리뷰: EAP 실패 응답(비밀번호 틀림)이 사라져도 다시 보낸 요청에 같은 실패를 받아 '계정 또는 비밀번호가 틀림' 으로 끝난다", () => {
+    const x = load(withLaptop({ password: "wrong" }));
+    const tr = loseServerReply(x, (e) => e.kind === "vpn.drop" && e.details?.eap === "failure");
+    expect(resent(x, tr)).toHaveLength(1);
+    expect(x.host(LAPTOP).ra.state).toBe("failed");
+    expect(x.host(LAPTOP).ra.reason).toContain("계정 또는 비밀번호가 틀림");
+    expect(x.l3(FW).ra.clients.size).toBe(0);
+  });
+
+  it("리뷰: PSK 만 쓰는 서버의 IKE_AUTH 응답이 사라져도 재전송에 같은 응답을 다시 보낸다", () => {
+    const x = load(withServer({ users: [] }));
+    const tr = loseServerReply(x, (e) => e.kind === "vpn.up");
+    expect(resent(x, tr)).toHaveLength(1);
+    expect(tr.filter((e) => e.nodeId === x.id(FW) && e.kind === "vpn.up")).toHaveLength(1);
+    expect(x.host(LAPTOP).ra.state).toBe("up");
+    expect(x.l3(FW).ra.clients.size).toBe(1);
+    expect(ping(x, LAPTOP, "10.50.10.20")).toBe("ok");
+  });
+
+  /** 회사 VPN 방화벽을 엣지 NAT 뒤로 (엣지 NAT 가 공인 주소 203.0.113.11 을 갖고 UDP 500·4500 을 포워딩) */
+  const behindNat = (t0: Topology = exampleRemoteVpnTopology()): Topology => {
+    const iface = (ip: string, gateway = "") => ({ ipMode: "static" as const, ip, prefix: 24, gateway });
+    const devices: Device[] = t0.devices.map((d) => (d.name === FW ? { ...d, l3: { ...d.l3!, interfaces: [iface("10.0.0.2", "10.0.0.1"), d.l3!.interfaces[1]!] } } : d));
+    const edge: Device = { ...createDevice("nat", 568, -104, devices), name: "회사 엣지 NAT" };
+    edge.l3 = {
+      interfaces: [iface("203.0.113.11", "203.0.113.1"), iface("10.0.0.1")],
+      routes: [],
+      forwards: [
+        { publicPort: 500, lanIp: "10.0.0.2", lanPort: 500, proto: "udp" },
+        { publicPort: 4500, lanIp: "10.0.0.2", lanPort: 4500, proto: "udp" },
+      ],
+    };
+    devices.push(edge);
+    const fw = devices.find((d) => d.name === FW)!;
+    const isp = devices.find((d) => d.name === "통신사 구간")!;
+    const wan = cableOf(t0, FW, "통신사 구간");
+    return { devices, cables: [...t0.cables.filter((c) => c.id !== wan.id), { id: "e0", a: { device: isp.id, port: 6 }, b: { device: edge.id, port: 0 } }, { id: "e1", a: { device: edge.id, port: 1 }, b: { device: fw.id, port: 0 } }] };
+  };
+
+  it("리뷰: 원격 접속 서버가 NAT 뒤(엣지 NAT 가 UDP 500·4500 포워딩)면 구성 검사가 포워딩 대상을 서버로 본다", () => {
+    const t = behindNat();
+    expect(codes(t).filter((c) => c.startsWith("ra."))).toEqual([]); // ra.server-off 오탐 없음
+    const x = load(t);
+    expect(x.host(LAPTOP).ra.state).toBe("up");
+    expect(ping(x, LAPTOP, "10.50.10.20")).toBe("ok");
+    // 계정이 틀리면 포워딩 너머 서버의 계정 목록으로 판단한다
+    const bad = behindNat(withLaptop({ password: "wrong" }));
+    expect(lintTopology(bad).find((i) => i.code === "ra.account-mismatch")?.message).toContain("kim 의 비밀번호가 서버 회사 VPN 방화벽 와 다름");
+    expect(codes(behindNat(withLaptop({ psk: "other" })))).toContain("ra.psk-mismatch");
+    // 포워딩 대상이 원격 접속 서버를 켜지 않았으면 그 장비를 짚는다
+    const off = behindNat(withServer({ enabled: false }));
+    expect(lintTopology(off).filter((i) => i.code === "ra.server-off").map((i) => i.message)).toEqual([expect.stringContaining("회사 VPN 방화벽 (회사 엣지 NAT 가 203.0.113.11 의 UDP 500 을 포워딩하는 대상)")]);
+  });
+
+  it("리뷰: DPD 응답을 기다리다 '다시 연결' 하면, 늦게 온 DPD 응답은 VPN 클라이언트가 받아 무시한다 (UDP 포트 없음·ICMP 없음)", () => {
+    const x = load();
+    const from = x.s.net.trace.length;
+    x.s.net.scheduleAction(x.s.net.now, { kind: "vpn-dpd", nodeId: x.id(LAPTOP) });
+    while (!x.s.net.trace.slice(from).some((e) => e.nodeId === x.id(LAPTOP) && e.details?.dpd === "request")) x.s.net.step();
+    x.s.net.scheduleAction(x.s.net.now, { kind: "ra-reconnect", nodeId: x.id(LAPTOP) });
+    x.s.net.runToIdle();
+    const tr = x.s.net.trace.slice(from);
+    const mine = tr.filter((e) => e.nodeId === x.id(LAPTOP));
+    expect(mine.some((e) => e.summary.includes("듣는 프로그램 없음"))).toBe(false);
+    expect(mine.some((e) => e.summary.includes("Unreachable"))).toBe(false);
+    expect(mine.some((e) => e.summary.includes("늦게 온 응답") && e.summary.includes("무시"))).toBe(true);
+    expect(x.host(LAPTOP).ra.state).toBe("up");
+    expect(x.host(LAPTOP).ra.dpdWaiting).toBe(false);
+  });
+
+  it("리뷰: 불러오기 정규화 — 숫자 비밀번호·사용자 이름은 문자열로, users 가 객체 하나면 배열로, 그 밖은 []", () => {
+    const t = exampleRemoteVpnTopology();
+    const raw = JSON.parse(serializeTopology(t)) as { devices: Record<string, any>[] };
+    const fw = raw.devices.find((d) => d.name === FW)!;
+    const lap = raw.devices.find((d) => d.name === LAPTOP)!;
+    fw.l3.ra.users = [{ name: 1001, password: 1234 }, { name: "lee", password: "lee-pass" }];
+    lap.host.ra.user = 1001;
+    lap.host.ra.password = 1234;
+    const back = parseTopology(JSON.stringify(raw)).topology!;
+    expect(back.devices.find((d) => d.name === FW)!.l3!.ra!.users).toEqual([
+      { name: "1001", password: "1234" },
+      { name: "lee", password: "lee-pass" },
+    ]);
+    expect(back.devices.find((d) => d.name === LAPTOP)!.host!.ra).toMatchObject({ user: "1001", password: "1234" });
+    expect(loadTopology(back).host(LAPTOP).ra.state).toBe("up");
+    const usersOf = (users: unknown) => {
+      fw.l3.ra.users = users;
+      return parseTopology(JSON.stringify(raw)).topology!.devices.find((d) => d.name === FW)!.l3!.ra!.users;
+    };
+    expect(usersOf({ name: "kim", password: "kim-pass" })).toEqual([{ name: "kim", password: "kim-pass" }]);
+    expect(usersOf("kim")).toEqual([]);
+    expect(usersOf(null)).toEqual([]);
   });
 });

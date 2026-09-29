@@ -59,6 +59,8 @@ export interface HaHost {
   onBackupSeen?(ctx: NodeContext): void;
   /** master 가 되면 VIP·가상 MAC 을 켜고 Gratuitous ARP, 물러나면 끈다 */
   setVip(i: number, vip: { ip: Ip; mac: Mac } | undefined, ctx: NodeContext): void;
+  /** master 에서 물러남: 넘겨줄 수 없는 세션(IPsec SA·원격 접속 터널)을 비운다 — 새 master 가 다시 협상한다 */
+  onResign?(ctx: NodeContext): void;
 }
 
 export class Ha {
@@ -173,6 +175,7 @@ export class Ha {
     for (const i of this.vipIfaces()) this.host.setVip(i, undefined, ctx);
     this.state = "backup";
     ctx.trace("ha.backup", "L3", `이중화: master 에서 물러남 (${why}) → 가상 주소를 놓고 우선순위 0 광고 — backup 이 곧 이어받는다`, { why });
+    this.host.onResign?.(ctx);
     this.advertise(ctx, 0);
   }
 

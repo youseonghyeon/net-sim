@@ -112,6 +112,11 @@ export class L3Node implements SimNode {
       this.rip.kick(ctx); // RIP 넥스트 홉(가상 주소)을 다시 알린다
     },
     onBackupSeen: (ctx) => this.sessionSync.bulk(ctx),
+    // 세션 동기화는 IPsec SA 를 복사하지 않는다: 물러난 장비가 옛 SA 를 들고 있으면 DPD·ESP 에 엉뚱하게 답하므로 비운다
+    onResign: (ctx) => {
+      this.vpn.dropSa(ctx, "이중화 master 에서 물러남");
+      this.ra.dropAll(ctx, "이중화 master 에서 물러남");
+    },
   });
   /** 이중화 세션 동기화 (pfsync 식) */
   private readonly sessionSync: SessionSync = new SessionSync({
@@ -131,6 +136,11 @@ export class L3Node implements SimNode {
     source: (dst: Ip) => {
       const u = this.underlay(dst);
       return u ? this.addrOf(u.out) : undefined;
+    },
+    /** 가상 주소가 아닌 이 장비의 실제 주소 (이중화 쌍의 SPI 가 겹치지 않게) */
+    realSource: (dst: Ip) => {
+      const u = this.underlay(dst);
+      return u ? this.ifaces[u.out]?.ip : undefined;
     },
     send: (outer: Ipv4Packet, ctx: NodeContext, frameId?: number) => {
       const u = this.underlay(outer.dst);
