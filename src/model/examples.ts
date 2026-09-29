@@ -14,14 +14,33 @@ import {
   zoneAround,
 } from "./topology";
 
-/** 기능 단위 구성 예제: 인터넷 → NAT 박스 → 게이트웨이 → 스위치 2대(서브넷 2개) + DHCP 서버 호스트 */
-export function examplePartsTopology(): Topology {
+// ---------- 조립 도우미 (예제마다 반복하던 것) ----------
+
+/** 장치를 차례로 만든다. 이름·MAC 은 앞서 만든 장치 기준으로 정해지므로 만드는 순서가 곧 번호 순서다 */
+function builder() {
   const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
+  const add = (kind: DeviceKind, x: number, y: number, name?: string): Device => {
     const d = createDevice(kind, x, y, devices);
+    if (name) d.name = name;
     devices.push(d);
     return d;
   };
+  return { devices, add };
+}
+
+/** 케이블 하나: a 장치의 ap 번 포트 ↔ b 장치의 bp 번 포트 */
+function cable(a: Device, ap: number, b: Device, bp: number): Cable {
+  return { id: newId("cable"), a: { device: a.id, port: ap }, b: { device: b.id, port: bp } };
+}
+
+/** 게이트웨이·NAT 박스의 수동 주소 인터페이스 (/24) */
+function iface(ip: string, gateway = "") {
+  return { ipMode: "static" as const, ip, prefix: 24, gateway };
+}
+
+/** 기능 단위 구성 예제: 인터넷 → NAT 박스 → 게이트웨이 → 스위치 2대(서브넷 2개) + DHCP 서버 호스트 */
+export function examplePartsTopology(): Topology {
+  const { devices, add } = builder();
   const inet = add("internet", 344, -232);
   const nat = add("nat", 344, -80);
   nat.l3 = {
@@ -70,26 +89,21 @@ export function examplePartsTopology(): Topology {
   const web = add("server", 700, 424);
   web.host = { ipMode: "static", ip: "192.168.2.20", prefix: 24, gateway: "192.168.2.1", dns: "192.168.1.2", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   const cables: Cable[] = [
-    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: nat.id, port: 0 } },
-    { id: newId("cable"), a: { device: nat.id, port: 1 }, b: { device: gw.id, port: 0 } },
-    { id: newId("cable"), a: { device: gw.id, port: 1 }, b: { device: sw1.id, port: 0 } },
-    { id: newId("cable"), a: { device: gw.id, port: 2 }, b: { device: sw2.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw1.id, port: 2 }, b: { device: dhcp.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw1.id, port: 5 }, b: { device: pc1.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw2.id, port: 3 }, b: { device: laptop.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw2.id, port: 6 }, b: { device: web.id, port: 0 } },
+    cable(inet, 0, nat, 0),
+    cable(nat, 1, gw, 0),
+    cable(gw, 1, sw1, 0),
+    cable(gw, 2, sw2, 0),
+    cable(sw1, 2, dhcp, 0),
+    cable(sw1, 5, pc1, 0),
+    cable(sw2, 3, laptop, 0),
+    cable(sw2, 6, web, 0),
   ];
   return { devices, cables };
 }
 
 /** VLAN 예제: 인터넷 → NAT → 게이트웨이(if1 트렁크) → 스위치(VLAN 10: pc 2대, VLAN 20: 웹 서버 + 노트북) */
 export function exampleVlanTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const inet = add("internet", 344, -232);
   const nat = add("nat", 344, -80);
   nat.l3 = {
@@ -127,25 +141,20 @@ export function exampleVlanTopology(): Topology {
   staticHost(laptop, "192.168.20.10", "192.168.20.1");
   staticHost(web, "192.168.20.20", "192.168.20.1", [80]);
   const cables: Cable[] = [
-    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: nat.id, port: 0 } },
-    { id: newId("cable"), a: { device: nat.id, port: 1 }, b: { device: gw.id, port: 0 } },
-    { id: newId("cable"), a: { device: gw.id, port: 1 }, b: { device: sw.id, port: 0 } }, // 트렁크
-    { id: newId("cable"), a: { device: sw.id, port: 1 }, b: { device: pc1.id, port: 0 } }, // VLAN 10
-    { id: newId("cable"), a: { device: sw.id, port: 2 }, b: { device: pc2.id, port: 0 } }, // VLAN 10
-    { id: newId("cable"), a: { device: sw.id, port: 5 }, b: { device: laptop.id, port: 0 } }, // VLAN 20
-    { id: newId("cable"), a: { device: sw.id, port: 6 }, b: { device: web.id, port: 0 } }, // VLAN 20
+    cable(inet, 0, nat, 0),
+    cable(nat, 1, gw, 0),
+    cable(gw, 1, sw, 0), // 트렁크
+    cable(sw, 1, pc1, 0), // VLAN 10
+    cable(sw, 2, pc2, 0), // VLAN 10
+    cable(sw, 5, laptop, 0), // VLAN 20
+    cable(sw, 6, web, 0), // VLAN 20
   ];
   return { devices, cables };
 }
 
 /** 인터넷 + 공유기(라우터) + 스위치 + 호스트 3대 예제 */
 export function exampleTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const inet = add("internet", 344, -40);
   const rt = add("router", 344, 96);
   const sw = add("switch", 344, 272);
@@ -158,43 +167,33 @@ export function exampleTopology(): Topology {
   // 공유기의 Wi-Fi 에 붙는 스마트폰 (링크 다운, 전파 범위 안)
   add("phone", 600, 120);
   const cables: Cable[] = [
-    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: rt.id, port: 0 } }, // isp ↔ wan
-    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 0 } }, // lan1 ↔ eth1
-    { id: newId("cable"), a: { device: sw.id, port: 2 }, b: { device: pc.id, port: 0 } }, // eth2
-    { id: newId("cable"), a: { device: sw.id, port: 4 }, b: { device: laptop.id, port: 0 } }, // eth4
-    { id: newId("cable"), a: { device: sw.id, port: 6 }, b: { device: srv.id, port: 0 } }, // eth6
+    cable(inet, 0, rt, 0), // isp ↔ wan
+    cable(rt, 1, sw, 0), // lan1 ↔ eth1
+    cable(sw, 2, pc, 0), // eth2
+    cable(sw, 4, laptop, 0), // eth4
+    cable(sw, 6, srv, 0), // eth6
   ];
   return { devices, cables };
 }
 
 /** 가장 단순한 예제: PC 2대 + 스위치, 수동 IP. ARP 와 ping 만 본다 */
 export function exampleStarterTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const sw = add("switch", 344, 96);
   const pc1 = add("pc", 232, 280);
   const pc2 = add("pc", 544, 280);
   pc1.host = { ipMode: "static", ip: "192.168.0.10", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   pc2.host = { ipMode: "static", ip: "192.168.0.11", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   const cables: Cable[] = [
-    { id: newId("cable"), a: { device: sw.id, port: 1 }, b: { device: pc1.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw.id, port: 6 }, b: { device: pc2.id, port: 0 } },
+    cable(sw, 1, pc1, 0),
+    cable(sw, 6, pc2, 0),
   ];
   return { devices, cables };
 }
 
 /** 게이트웨이 2단: NAT 아래에 라우터 전용 서브넷(10.0.0.0/24)을 두고 게이트웨이 둘이 각자 서브넷을 맡는다 */
 export function exampleTwoGatewaysTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const inet = add("internet", 344, -232);
   const nat = add("nat", 344, -80);
   nat.l3 = {
@@ -236,28 +235,23 @@ export function exampleTwoGatewaysTopology(): Topology {
   staticHost(pc3, "192.168.5.10", "192.168.5.1");
   staticHost(srv, "192.168.5.20", "192.168.5.1", [80]);
   const cables: Cable[] = [
-    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: nat.id, port: 0 } },
-    { id: newId("cable"), a: { device: nat.id, port: 1 }, b: { device: sw0.id, port: 3 } },
-    { id: newId("cable"), a: { device: sw0.id, port: 0 }, b: { device: gw1.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw0.id, port: 7 }, b: { device: gw2.id, port: 0 } },
-    { id: newId("cable"), a: { device: gw1.id, port: 1 }, b: { device: sw1.id, port: 3 } },
-    { id: newId("cable"), a: { device: gw2.id, port: 1 }, b: { device: sw2.id, port: 3 } },
-    { id: newId("cable"), a: { device: sw1.id, port: 0 }, b: { device: pc1.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw1.id, port: 5 }, b: { device: pc2.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw2.id, port: 1 }, b: { device: pc3.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw2.id, port: 6 }, b: { device: srv.id, port: 0 } },
+    cable(inet, 0, nat, 0),
+    cable(nat, 1, sw0, 3),
+    cable(sw0, 0, gw1, 0),
+    cable(sw0, 7, gw2, 0),
+    cable(gw1, 1, sw1, 3),
+    cable(gw2, 1, sw2, 3),
+    cable(sw1, 0, pc1, 0),
+    cable(sw1, 5, pc2, 0),
+    cable(sw2, 1, pc3, 0),
+    cable(sw2, 6, srv, 0),
   ];
   return { devices, cables };
 }
 
 /** 집 두 곳 잇기: 인터넷 없이 게이트웨이 둘을 if0 끼리 직접 잇고, 서로의 서브넷을 스태틱 라우팅으로 안다 */
 export function exampleTwoHomesTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const gw1 = add("gateway", 96, 200);
   const gw2 = add("gateway", 592, 200);
   const gwCfg = (linkIp: string, lanIp: string, otherDest: string, otherVia: string): L3Settings => ({
@@ -284,13 +278,13 @@ export function exampleTwoHomesTopology(): Topology {
   staticHost(pc3, "192.168.2.10", "192.168.2.1");
   staticHost(pc4, "192.168.2.11", "192.168.2.1");
   const cables: Cable[] = [
-    { id: newId("cable"), a: { device: gw1.id, port: 0 }, b: { device: gw2.id, port: 0 } }, // if0 ↔ if0
-    { id: newId("cable"), a: { device: gw1.id, port: 1 }, b: { device: sw1.id, port: 3 } },
-    { id: newId("cable"), a: { device: gw2.id, port: 1 }, b: { device: sw2.id, port: 3 } },
-    { id: newId("cable"), a: { device: sw1.id, port: 0 }, b: { device: pc1.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw1.id, port: 5 }, b: { device: pc2.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw2.id, port: 1 }, b: { device: pc3.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw2.id, port: 6 }, b: { device: pc4.id, port: 0 } },
+    cable(gw1, 0, gw2, 0), // if0 ↔ if0
+    cable(gw1, 1, sw1, 3),
+    cable(gw2, 1, sw2, 3),
+    cable(sw1, 0, pc1, 0),
+    cable(sw1, 5, pc2, 0),
+    cable(sw2, 1, pc3, 0),
+    cable(sw2, 6, pc4, 0),
   ];
   const t: Topology = { devices, cables };
   t.zones = [
@@ -305,13 +299,7 @@ export function exampleTwoHomesTopology(): Topology {
  * 링크 하나를 끊으면 RIP 가 경로를 철회하고 남은 길(다른 게이트웨이 경유)로 다시 수렴한다
  */
 export function exampleRipTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
-  const iface = (ip: string) => ({ ipMode: "static" as const, ip, prefix: 24, gateway: "" });
+  const { devices, add } = builder();
   const rip = { enabled: true };
   const swA = add("switch", 320, 40);
   const gwA = add("gateway", 320, 208);
@@ -340,7 +328,6 @@ export function exampleRipTopology(): Topology {
   staticHost(pcA, "192.168.1.10", "192.168.1.1");
   staticHost(pcB, "192.168.2.10", "192.168.2.1");
   staticHost(pcC, "192.168.3.10", "192.168.3.1");
-  const cable = (a: Device, ap: number, b: Device, bp: number): Cable => ({ id: newId("cable"), a: { device: a.id, port: ap }, b: { device: b.id, port: bp } });
   const cables: Cable[] = [
     cable(swA, 4, gwA, 0),
     cable(swA, 1, pcA, 0),
@@ -357,12 +344,7 @@ export function exampleRipTopology(): Topology {
 
 /** 백본: 집 세 곳의 게이트웨이 if0 을 스위치 하나(10.0.0.0/24, 라우터만 사는 서브넷)에 모은다. 인터넷 없음 */
 export function exampleBackboneTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const bb = add("switch", 368, 40);
   bb.name = "sw-backbone";
   const homes = [
@@ -390,10 +372,10 @@ export function exampleBackboneTopology(): Topology {
     a.host = { ipMode: "static", ip: `${h.lan}.10`, prefix: 24, gateway: `${h.lan}.1`, services: i === 2 ? [80] : [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
     b.host = { ipMode: "static", ip: `${h.lan}.11`, prefix: 24, gateway: `${h.lan}.1`, services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
     cables.push(
-      { id: newId("cable"), a: { device: gw.id, port: 0 }, b: { device: bb.id, port: h.bbPort } },
-      { id: newId("cable"), a: { device: gw.id, port: 1 }, b: { device: sw.id, port: 3 } },
-      { id: newId("cable"), a: { device: sw.id, port: 0 }, b: { device: a.id, port: 0 } },
-      { id: newId("cable"), a: { device: sw.id, port: 6 }, b: { device: b.id, port: 0 } },
+      cable(gw, 0, bb, h.bbPort),
+      cable(gw, 1, sw, 3),
+      cable(sw, 0, a, 0),
+      cable(sw, 6, b, 0),
     );
     zones.push({ id: newId("zone"), label: `집 ${i + 1} ${h.lan}.0/24`, tint: tints[i]!, ...zoneAround({ devices, cables: [] }, [gw.id, sw.id, a.id, b.id], 20)! });
   });
@@ -406,12 +388,7 @@ export function exampleBackboneTopology(): Topology {
  * NAT 박스 = 호스트의 iptables(MASQUERADE + -p DNAT), 스위치 = 브리지(veth 가 꽂히는 곳), 서버 = 컨테이너, DNS 서버 = embedded DNS(실제로는 127.0.0.11).
  */
 export function exampleDockerTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const inet = add("internet", 344, -232);
   const rt = add("router", 344, -80);
   const sw = add("switch", 344, 96);
@@ -451,14 +428,14 @@ export function exampleDockerTopology(): Topology {
     upstream: "8.8.8.8",
   };
   const cables: Cable[] = [
-    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: rt.id, port: 0 } },
-    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 3 } },
-    { id: newId("cable"), a: { device: sw.id, port: 0 }, b: { device: pc.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw.id, port: 7 }, b: { device: host.id, port: 0 } }, // 호스트 NIC
-    { id: newId("cable"), a: { device: host.id, port: 1 }, b: { device: br.id, port: 3 } }, // 브리지 게이트웨이
-    { id: newId("cable"), a: { device: br.id, port: 0 }, b: { device: web.id, port: 0 } }, // veth
-    { id: newId("cable"), a: { device: br.id, port: 4 }, b: { device: db.id, port: 0 } },
-    { id: newId("cable"), a: { device: br.id, port: 7 }, b: { device: dns.id, port: 0 } },
+    cable(inet, 0, rt, 0),
+    cable(rt, 1, sw, 3),
+    cable(sw, 0, pc, 0),
+    cable(sw, 7, host, 0), // 호스트 NIC
+    cable(host, 1, br, 3), // 브리지 게이트웨이
+    cable(br, 0, web, 0), // veth
+    cable(br, 4, db, 0),
+    cable(br, 7, dns, 0),
   ];
   const t: Topology = { devices, cables };
   // 영역: 점선 네모 안은 전부 "컴퓨터 한 대(docker-host) 안" 이라는 뜻
@@ -471,12 +448,7 @@ export function exampleDockerTopology(): Topology {
 
 /** 허브 vs 스위치: 같은 공유기 아래 한쪽은 허브, 한쪽은 스위치. ping 이 어디까지 퍼지는지 비교 */
 export function exampleHubTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const rt = add("router", 344, 0);
   const hub = add("hub", 112, 200);
   const sw = add("switch", 560, 200);
@@ -485,24 +457,19 @@ export function exampleHubTopology(): Topology {
   const pc3 = add("pc", 504, 376);
   const pc4 = add("pc", 664, 376);
   const cables: Cable[] = [
-    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: hub.id, port: 1 } },
-    { id: newId("cable"), a: { device: rt.id, port: 4 }, b: { device: sw.id, port: 3 } },
-    { id: newId("cable"), a: { device: hub.id, port: 0 }, b: { device: pc1.id, port: 0 } },
-    { id: newId("cable"), a: { device: hub.id, port: 3 }, b: { device: pc2.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw.id, port: 0 }, b: { device: pc3.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw.id, port: 7 }, b: { device: pc4.id, port: 0 } },
+    cable(rt, 1, hub, 1),
+    cable(rt, 4, sw, 3),
+    cable(hub, 0, pc1, 0),
+    cable(hub, 3, pc2, 0),
+    cable(sw, 0, pc3, 0),
+    cable(sw, 7, pc4, 0),
   ];
   return { devices, cables };
 }
 
 /** 방화벽: 공유기가 나가는 TCP 80 만 막는다. ping 은 되고 웹 연결만 차단되는 걸 본다 */
 export function exampleFirewallTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const inet = add("internet", 344, -40);
   const rt = add("router", 344, 96);
   rt.router = {
@@ -521,22 +488,17 @@ export function exampleFirewallTopology(): Topology {
   const pc = add("pc", 232, 440);
   const laptop = add("laptop", 456, 440);
   const cables: Cable[] = [
-    { id: newId("cable"), a: { device: inet.id, port: 0 }, b: { device: rt.id, port: 0 } },
-    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw.id, port: 2 }, b: { device: pc.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw.id, port: 5 }, b: { device: laptop.id, port: 0 } },
+    cable(inet, 0, rt, 0),
+    cable(rt, 1, sw, 0),
+    cable(sw, 2, pc, 0),
+    cable(sw, 5, laptop, 0),
   ];
   return { devices, cables };
 }
 
 /** 방화벽 장비: 스위치와 서버 사이에 투명 방화벽을 끼워 서버로 오는 ping 만 막는다. 주소는 하나도 안 바꾼다 */
 export function exampleFirewallApplianceTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const rt = add("router", 344, -40);
   const sw = add("switch", 344, 136);
   const pc = add("pc", 120, 320);
@@ -552,11 +514,11 @@ export function exampleFirewallApplianceTopology(): Topology {
   const srv = add("server", 564, 488);
   srv.host = { ipMode: "static", ip: "192.168.0.20", prefix: 24, gateway: "192.168.0.1", dns: "192.168.0.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   const cables: Cable[] = [
-    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 3 } },
-    { id: newId("cable"), a: { device: sw.id, port: 0 }, b: { device: pc.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw.id, port: 2 }, b: { device: laptop.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw.id, port: 7 }, b: { device: fw.id, port: 0 } }, // outside ← 스위치
-    { id: newId("cable"), a: { device: fw.id, port: 1 }, b: { device: srv.id, port: 0 } }, // inside → 서버
+    cable(rt, 1, sw, 3),
+    cable(sw, 0, pc, 0),
+    cable(sw, 2, laptop, 0),
+    cable(sw, 7, fw, 0), // outside ← 스위치
+    cable(fw, 1, srv, 0), // inside → 서버
   ];
   const t: Topology = { devices, cables };
   t.zones = [{ id: newId("zone"), label: "방화벽 뒤 (보호 구역)", tint: "amber", ...zoneAround(t, [fw.id, srv.id], 20)! }];
@@ -565,12 +527,7 @@ export function exampleFirewallApplianceTopology(): Topology {
 
 /** 무선 로밍: 같은 SSID 의 AP 두 대. 스마트폰을 끌어 옮기면 가까운 AP 로 갈아탄다 */
 export function exampleRoamingTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const rt = add("router", 344, 0);
   const sw = add("switch", 344, 176);
   const ap1 = add("ap", 16, 352);
@@ -580,9 +537,9 @@ export function exampleRoamingTopology(): Topology {
   const phone = add("phone", 56, 544);
   phone.wifi = { ssid: "office" };
   const cables: Cable[] = [
-    { id: newId("cable"), a: { device: rt.id, port: 1 }, b: { device: sw.id, port: 3 } },
-    { id: newId("cable"), a: { device: sw.id, port: 0 }, b: { device: ap1.id, port: 0 } },
-    { id: newId("cable"), a: { device: sw.id, port: 7 }, b: { device: ap2.id, port: 0 } },
+    cable(rt, 1, sw, 3),
+    cable(sw, 0, ap1, 0),
+    cable(sw, 7, ap2, 0),
   ];
   return { devices, cables };
 }
@@ -593,43 +550,36 @@ export function exampleRoamingTopology(): Topology {
  * 맥북 → nexus.com:80 = 8.8.8.8 에 질의(집 NAT → ISP 라우터) → 회사 공인 주소 → 집 NAT(출발지 변환) → 회사 NAT 포트 포워딩(목적지 변환) → 방화벽(80 만 허용) → 웹 서버
  */
 export function examplePublishTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, name: string, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    d.name = name;
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const staticHost = (d: Device, ip: string, gw: string, services: number[] = []) => {
     d.host = { ipMode: "static", ip, prefix: 24, gateway: gw, services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   };
-  const iface = (ip: string, gateway = "") => ({ ipMode: "static" as const, ip, prefix: 24, gateway });
 
   // 공인 구간: 통신사 장비 두 대 (집 NAT·회사 NAT·ISP 라우터가 같은 203.0.113.0/24)
-  const ispHome = add("switch", "통신사 (집 쪽)", 160, -128);
-  const ispCo = add("switch", "통신사 (회사 쪽)", 928, -128);
+  const ispHome = add("switch", 160, -128, "통신사 (집 쪽)");
+  const ispCo = add("switch", 928, -128, "통신사 (회사 쪽)");
   // ISP 라우터: 공인 구간과 공인 DNS 네트워크(8.8.8.0/24)를 잇는다. 두 NAT 의 디폴트 라우트가 여기
-  const ispRt = add("gateway", "ISP 라우터", 520, -24);
+  const ispRt = add("gateway", 520, -24, "ISP 라우터");
   ispRt.l3 = { interfaces: [iface("203.0.113.1"), iface("8.8.8.1"), iface("")], routes: [] };
-  const pubDns = add("server", "공인 DNS", 488, 168);
+  const pubDns = add("server", 488, 168, "공인 DNS");
   staticHost(pubDns, "8.8.8.8", "8.8.8.1");
   pubDns.host!.dnsServer = { enabled: true, records: [{ name: "nexus.com", ip: "203.0.113.109" }], upstream: "" };
 
   // 집: NAT → 게이트웨이 → 스위치 → 맥북 · DHCP 서버 · 홈 서버. DNS 는 DHCP 가 8.8.8.8 로 안내
-  const homeNat = add("nat", "집 NAT", 160, 32);
+  const homeNat = add("nat", 160, 32, "집 NAT");
   homeNat.l3 = { interfaces: [iface("203.0.113.108", "203.0.113.1"), iface("10.0.0.1")], routes: [{ dest: "192.168.0.0", prefix: 24, via: "10.0.0.2" }] };
-  const homeGw = add("gateway", "집 게이트웨이", 160, 176);
+  const homeGw = add("gateway", 160, 176, "집 게이트웨이");
   homeGw.l3 = { interfaces: [iface("10.0.0.2", "10.0.0.1"), iface("192.168.0.1"), iface("")], routes: [] };
-  const homeSw = add("switch", "집 스위치", 160, 320);
-  const macbook = add("laptop", "맥북", 56, 464); // DHCP
-  const dhcp = add("server", "DHCP 서버", 200, 464);
+  const homeSw = add("switch", 160, 320, "집 스위치");
+  const macbook = add("laptop", 56, 464, "맥북"); // DHCP
+  const dhcp = add("server", 200, 464, "DHCP 서버");
   staticHost(dhcp, "192.168.0.2", "192.168.0.1");
   dhcp.host!.dhcpServer = { enabled: true, start: "192.168.0.100", end: "192.168.0.199", router: "192.168.0.1", dns: "8.8.8.8" };
-  const homeSrv = add("server", "홈 서버", 344, 464);
+  const homeSrv = add("server", 344, 464, "홈 서버");
   staticHost(homeSrv, "192.168.0.20", "192.168.0.1", [80]);
 
   // 회사: NAT(포트 포워딩 80 → 웹 서버) → 투명 방화벽 → 게이트웨이 → 서브넷 두 개
-  const coNat = add("nat", "회사 NAT", 928, 32);
+  const coNat = add("nat", 928, 32, "회사 NAT");
   coNat.l3 = {
     interfaces: [iface("203.0.113.109", "203.0.113.1"), iface("10.10.0.1")],
     routes: [
@@ -638,7 +588,7 @@ export function examplePublishTopology(): Topology {
     ],
     forwards: [{ publicPort: 80, lanIp: "192.168.1.2", lanPort: 80 }],
   };
-  const fw = add("firewall", "회사 방화벽", 928, 144);
+  const fw = add("firewall", 928, 144, "회사 방화벽");
   // NAT 안쪽이라 규칙은 변환된 뒤의 사설 주소로 쓴다. 바깥에서 들어오는 건 웹 서버 80 만, 안에서 시작한 통신의 응답은 Stateful 로 통과
   fw.firewall = {
     enabled: true,
@@ -649,20 +599,19 @@ export function examplePublishTopology(): Topology {
       { action: "deny", proto: "any", direction: "in", src: "", dst: "", dstPort: "" },
     ],
   };
-  const coGw = add("gateway", "회사 게이트웨이", 928, 256);
+  const coGw = add("gateway", 928, 256, "회사 게이트웨이");
   coGw.l3 = { interfaces: [iface("10.10.0.2", "10.10.0.1"), iface("192.168.1.1"), iface("192.168.2.1")], routes: [] };
-  const sw1 = add("switch", "sw-1", 792, 400);
-  const sw2 = add("switch", "sw-2", 1064, 400);
-  const web = add("server", "웹 서버", 760, 544);
+  const sw1 = add("switch", 792, 400, "sw-1");
+  const sw2 = add("switch", 1064, 400, "sw-2");
+  const web = add("server", 760, 544, "웹 서버");
   staticHost(web, "192.168.1.2", "192.168.1.1", [80]);
-  const srv1 = add("server", "srv-1", 888, 544);
+  const srv1 = add("server", 888, 544, "srv-1");
   staticHost(srv1, "192.168.1.3", "192.168.1.1", [80]);
-  const srv2 = add("server", "srv-2", 1040, 544);
+  const srv2 = add("server", 1040, 544, "srv-2");
   staticHost(srv2, "192.168.2.2", "192.168.2.1", [80]);
-  const srv3 = add("server", "srv-3", 1168, 544);
+  const srv3 = add("server", 1168, 544, "srv-3");
   staticHost(srv3, "192.168.2.3", "192.168.2.1", [80]);
 
-  const cable = (a: Device, ap: number, b: Device, bp: number): Cable => ({ id: newId("cable"), a: { device: a.id, port: ap }, b: { device: b.id, port: bp } });
   const cables: Cable[] = [
     cable(ispHome, 7, ispCo, 0),
     cable(ispHome, 1, homeNat, 0),
@@ -699,50 +648,42 @@ export function examplePublishTopology(): Topology {
  * - 공인 DNS 8.8.8.8 은 구글 망 안에 있고, 집 공유기의 DNS 포워더가 여기로 묻는다. 인터넷 노드 없이 직접 조립한다.
  */
 export function exampleInternetTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, name: string, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    d.name = name;
-    devices.push(d);
-    return d;
-  };
-  const iface = (ip: string, gateway = "") => ({ ipMode: "static" as const, ip, prefix: 24, gateway });
+  const { devices, add } = builder();
   const rip = { enabled: true };
   const staticHost = (d: Device, ip: string, gw: string, services: number[] = []) => {
     d.host = { ipMode: "static", ip, prefix: 24, gateway: gw, services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   };
 
   // 중심: 구글 망 (공인 DNS 8.8.8.8 이 사는 곳)
-  const gSw = add("switch", "구글 망 스위치", 520, -216);
-  const dns = add("server", "공인 DNS", 400, -72);
+  const gSw = add("switch", 520, -216, "구글 망 스위치");
+  const dns = add("server", 400, -72, "공인 DNS");
   staticHost(dns, "8.8.8.8", "8.8.8.1");
   dns.host!.dnsServer = { enabled: true, records: [{ name: "nexus.com", ip: "198.51.100.2" }], upstream: "" };
-  const google = add("gateway", "구글 라우터", 592, 24);
+  const google = add("gateway", 592, 24, "구글 라우터");
   google.l3 = { interfaces: [iface("8.8.8.1"), iface("198.18.11.1"), iface("198.18.12.1")], routes: [], rip };
   // 중심: 통신사 백본 둘. 셋이 삼각형(그물)이라 한 줄이 끊겨도 돌아갈 길이 있다. 백본에는 디폴트 라우트가 없다 — 위가 없으므로
-  const kt = add("gateway", "KT 백본", 240, 200);
+  const kt = add("gateway", 240, 200, "KT 백본");
   kt.l3 = { interfaces: [iface("198.18.11.2"), iface("198.18.1.1"), iface("198.18.10.1")], routes: [], rip };
-  const sk = add("gateway", "SK 백본", 944, 200);
+  const sk = add("gateway", 944, 200, "SK 백본");
   sk.l3 = { interfaces: [iface("198.18.12.2"), iface("198.18.10.2"), iface("198.18.2.1")], routes: [], rip };
 
   // 가장자리: 동네 국사 → 고객. 국사는 백본으로 디폴트 라우트 + 자기 고객 대역을 RIP 로 알린다
-  const ktLocal = add("gateway", "KT 국사", 240, 376);
+  const ktLocal = add("gateway", 240, 376, "KT 국사");
   ktLocal.l3 = { interfaces: [iface("198.18.1.2", "198.18.1.1"), iface("203.0.113.1"), iface("")], routes: [], rip };
-  const skLocal = add("gateway", "SK 국사", 944, 376);
+  const skLocal = add("gateway", 944, 376, "SK 국사");
   skLocal.l3 = { interfaces: [iface("198.18.2.2", "198.18.2.1"), iface("198.51.100.1"), iface("")], routes: [], rip };
 
   // 집(KT 가입): 공유기 WAN 은 고정 공인 주소 + 디폴트 라우트 = KT 국사. DNS 포워더는 8.8.8.8 로
-  const home = add("router", "집 공유기", 240, 536);
+  const home = add("router", 240, 536, "집 공유기");
   home.router = { ...home.router!, wan: { ipMode: "static", ip: "203.0.113.2", prefix: 24, gateway: "203.0.113.1" }, dns: { enabled: true, upstream: "8.8.8.8" } };
-  const pc = add("pc", "pc-1", 184, 712);
-  const laptop = add("laptop", "laptop-1", 344, 712);
+  const pc = add("pc", 184, 712, "pc-1");
+  const laptop = add("laptop", 344, 712, "laptop-1");
   // 회사(SK 가입): NAT 박스 outside = 고정 공인 주소, 웹 서버는 포트 포워딩 80 으로 공개 (nexus.com)
-  const coNat = add("nat", "회사 NAT", 944, 536);
+  const coNat = add("nat", 944, 536, "회사 NAT");
   coNat.l3 = { interfaces: [iface("198.51.100.2", "198.51.100.1"), iface("10.0.0.1")], routes: [], forwards: [{ publicPort: 80, lanIp: "10.0.0.10", lanPort: 80 }] };
-  const web = add("server", "회사 웹 서버", 988, 712);
+  const web = add("server", 988, 712, "회사 웹 서버");
   staticHost(web, "10.0.0.10", "10.0.0.1", [80]);
 
-  const cable = (a: Device, ap: number, b: Device, bp: number): Cable => ({ id: newId("cable"), a: { device: a.id, port: ap }, b: { device: b.id, port: bp } });
   const cables: Cable[] = [
     cable(gSw, 1, dns, 0),
     cable(gSw, 6, google, 0),
@@ -771,38 +712,31 @@ export function exampleInternetTopology(): Topology {
  * 공유기의 포트 포워딩(공인 :80 → 로드밸런서 장비)으로 바깥 요청도 NAT → 로드밸런서 → 웹 서버로 간다.
  */
 export function exampleLoadBalancerTopology(): Topology {
-  const devices: Device[] = [];
-  const add = (kind: DeviceKind, name: string, x: number, y: number) => {
-    const d = createDevice(kind, x, y, devices);
-    d.name = name;
-    devices.push(d);
-    return d;
-  };
+  const { devices, add } = builder();
   const staticHost = (d: Device, ip: string, services: number[] = []) => {
     d.host = { ...d.host!, ipMode: "static", ip, prefix: 24, gateway: "192.168.0.1", dns: "192.168.0.1", services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   };
-  const inet = add("internet", "internet-1", 344, -40);
-  const rt = add("router", "공유기", 344, 96);
+  const inet = add("internet", 344, -40, "internet-1");
+  const rt = add("router", 344, 96, "공유기");
   rt.router = { ...rt.router!, forwards: [{ publicPort: 80, lanIp: "192.168.0.20", lanPort: 80 }] };
-  const sw = add("switch", "sw-1", 344, 272);
-  const pc1 = add("pc", "pc-1", -96, 448);
-  const pc2 = add("laptop", "laptop-1", 32, 448);
+  const sw = add("switch", 344, 272, "sw-1");
+  const pc1 = add("pc", -96, 448, "pc-1");
+  const pc2 = add("laptop", 32, 448, "laptop-1");
   // 형태 1: 서버에 로드밸런서 서비스(nginx 같은 소프트웨어)를 켠다
-  const nginx = add("server", "nginx 서버", 200, 448);
+  const nginx = add("server", 200, 448, "nginx 서버");
   staticHost(nginx, "192.168.0.10");
   nginx.host!.lb = { enabled: true, port: 80, algorithm: "round-robin", backends: [{ ip: "192.168.0.11", port: 80 }, { ip: "192.168.0.12", port: 80 }] };
   // 형태 2: 로드밸런서 전용 장비 (같은 모듈, 최소 연결)
-  const lbDev = add("lb", "lb-1", 328, 448);
+  const lbDev = add("lb", 328, 448, "lb-1");
   staticHost(lbDev, "192.168.0.20");
   lbDev.host!.lb = { enabled: true, port: 80, algorithm: "least-conn", backends: [{ ip: "192.168.0.11", port: 80 }, { ip: "192.168.0.12", port: 80 }, { ip: "192.168.0.13", port: 80 }] };
   const webs = [
-    add("server", "web-1", 496, 448),
-    add("server", "web-2", 624, 448),
-    add("server", "web-3", 752, 448),
+    add("server", 496, 448, "web-1"),
+    add("server", 624, 448, "web-2"),
+    add("server", 752, 448, "web-3"),
   ];
   webs.forEach((w, i) => staticHost(w, `192.168.0.1${i + 1}`, [80]));
 
-  const cable = (a: Device, ap: number, b: Device, bp: number): Cable => ({ id: newId("cable"), a: { device: a.id, port: ap }, b: { device: b.id, port: bp } });
   const cables: Cable[] = [
     cable(inet, 0, rt, 0),
     cable(rt, 1, sw, 3),
