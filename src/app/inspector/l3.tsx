@@ -1,5 +1,7 @@
 // 게이트웨이·NAT 박스 설정: 인터페이스, 스태틱 라우팅, 동적 라우팅(RIP), VPN, 이중화(HA), VLAN 서브 인터페이스. 스위치 포트 VLAN 도 여기.
 import { sameSubnet } from "../../core/addr";
+import { L3Node } from "../../core/nodes/l3";
+import { sim, simVersion } from "../../model/sim";
 import { updateDevice } from "../../model/store";
 import {
   DEFAULT_FIREWALL_SETTINGS,
@@ -182,9 +184,32 @@ export function VpnSection({ d, l3 }: { d: Device; l3: L3Settings }) {
               : "이 대역으로 가는 패킷은 터널로 가고(NAT 하지 않음), 터널로 온 패킷은 이 대역에서 온 것만 받습니다(WireGuard 의 AllowedIPs). 상대가 NAT 뒤에 있으면 상대가 먼저 보낸 뒤 그 출발지로 답합니다."}{" "}
             양쪽 사설 대역이 겹치면 안 됩니다.
           </p>
+          {ipsec && <DpdControl d={d} />}
         </>
       )}
     </Section>
+  );
+}
+
+/** IPsec 터널 상태 + "상대 확인 (DPD)" 버튼 (터널이 맺어져 있을 때만 누를 수 있다) */
+function DpdControl({ d }: { d: Device }) {
+  void simVersion.value;
+  const node = sim.node(d.id);
+  if (!(node instanceof L3Node) || node.vpn.mode !== "ipsec") return null;
+  const up = node.vpn.ipsecUp;
+  return (
+    <>
+      <p class="note">{node.vpn.saSummary()}</p>
+      <button class="btn wide" disabled={!up || node.vpn.dpdWaiting} onClick={() => sim.act({ kind: "vpn-dpd", nodeId: d.id })} title="빈 INFORMATIONAL 을 보내 상대가 살아 있고 이 터널을 아는지 확인합니다">
+        <Icon name="send" size={14} />
+        상대 확인 (DPD)
+      </button>
+      <p class="note">
+        {up
+          ? "조용한 터널은 상대가 꺼지거나 경로가 끊겨도 모릅니다. 누르면 빈 INFORMATIONAL 을 보내고, 1초씩 두 번 다시 보내도 응답이 없으면 터널(SA)을 지웁니다(다음 패킷에 다시 협상)."
+          : "터널(SA)이 맺어진 뒤에 누를 수 있습니다. 상대 대역으로 ping 을 한 번 보내면 IKE 로 터널을 맺습니다."}
+      </p>
+    </>
   );
 }
 
@@ -198,6 +223,14 @@ export function RaServerSection({ d, l3 }: { d: Device; l3: L3Settings }) {
       return { ...x, l3: { ...cur, ra: { ...(cur.ra ?? empty), ...patch } } };
     });
   const setRoute = (i: number, patch: Partial<{ dest: string; prefix: number }>) => set({ routes: ra.routes.map((r, k) => (k === i ? { ...r, ...patch } : r)) });
+  const users = ra.users ?? [];
+  const setUser = (i: number, patch: Partial<{ name: string; password: string }>) => set({ users: users.map((u, k) => (k === i ? { ...u, ...patch } : u)) });
+  const userError = (i: number): string | undefined => {
+    const name = users[i]!.name.trim();
+    if (name === "") return "사용자 이름이 필요합니다. 비워 두면 이 줄은 쓰지 않습니다.";
+    if (users.findIndex((u) => u.name.trim() === name) !== i) return `${name} 가 이미 위에 있습니다. 같은 이름은 첫 줄만 씁니다.`;
+    return undefined;
+  };
   return (
     <Section title="원격 접속 VPN 서버">
       <label class="toggle-row">
@@ -235,6 +268,24 @@ export function RaServerSection({ d, l3 }: { d: Device; l3: L3Settings }) {
             <Icon name="plus" size={14} />
             대역 추가
           </button>
+          <h3 class="sub">사용자 계정 (EAP)</h3>
+          {users.length === 0 && <p class="note">비어 있으면 PSK 만 맞으면 접속합니다. 계정을 넣으면 PSK 확인 뒤 사용자 이름·비밀번호까지 확인하고(EAP-MSCHAPv2) 가상 주소를 줍니다.</p>}
+          {users.map((u, i) => (
+            <div key={i} class="record-row">
+              <input class="input mono" value={u.name} placeholder="사용자 이름" onInput={(e) => setUser(i, { name: e.currentTarget.value })} />
+              <span class="muted">:</span>
+              <input class="input mono" value={u.password} placeholder="비밀번호" onInput={(e) => setUser(i, { password: e.currentTarget.value })} />
+              <button class="icon-btn" title="계정 삭제" onClick={() => set({ users: users.filter((_, k) => k !== i) })}>
+                <Icon name="trash" size={15} />
+              </button>
+              {userError(i) && <div class="error record-error">{userError(i)}</div>}
+            </div>
+          ))}
+          <button class="btn wide" onClick={() => set({ users: [...users, { name: "", password: "" }] })}>
+            <Icon name="plus" size={14} />
+            계정 추가
+          </button>
+          {users.length > 0 && <p class="note">PSK 는 모두가 같이 쓰는 키라 한 명을 막으려면 모두의 키를 바꿔야 하지만, 계정은 그 사람 것만 지우면 됩니다. 이미 접속한 세션은 끊기지 않고 다시 접속할 때 막힙니다.</p>}
           <p class="note">방화벽이 인바운드를 막고 있으면 가상 주소 풀에서 사내 대역으로 들어오는 것을 허용하세요. 안쪽 라우터가 따로 있으면 그 라우터에 풀 대역을 이 장비로 보내는 경로가 필요합니다. 접속한 클라이언트는 "표" 탭에 보입니다.</p>
         </>
       )}

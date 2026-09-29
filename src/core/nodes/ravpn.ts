@@ -4,7 +4,12 @@
 //  - 서버가 클라이언트에게 가상 주소(풀에서 하나)와 터널로 보낼 사내 대역(split tunnel)을 알려 준다 (IKE_AUTH 의 Configuration Payload)
 //  - 클라이언트가 보내는 안쪽 패킷의 출발지는 그 가상 주소 — 사내 서버는 가상 주소로 답하고, 회사 VPN 장비가 그 주소를 가진 터널로 돌려보낸다
 // 협상은 사이트 간과 같은 IKE_SA_INIT(NAT 감지) → IKE_AUTH(PSK). 집 공유기 NAT 뒤라 보통 UDP 4500 (NAT-T) 로 간다.
-// 연결 해제는 INFORMATIONAL(Delete) 로 알려 가상 주소를 돌려준다. 재협상·DPD·사용자 계정 인증(EAP)은 생략.
+// 서버에 사용자 계정이 있으면 PSK 확인 뒤 계정 인증(EAP-MSCHAPv2 축소판)을 한 번 더 한다:
+//   IKE_AUTH(PSK + IDi = 사용자 이름) → 서버: EAP 요청(challenge) → IKE_AUTH(EAP 응답) → 서버: EAP 성공 + 가상 주소, 또는 AUTHENTICATION_FAILED
+//   PSK 는 모두가 같이 쓰는 비밀이라 한 명을 막으려면 모두의 키를 바꿔야 하지만, 계정은 사람마다라 그 사람만 지우면 된다
+//   (목록에서 지워도 이미 붙은 세션은 다시 붙을 때까지 유지 — 실제 장비도 인증은 접속할 때 한 번)
+// 연결 해제는 INFORMATIONAL(Delete) 로 알려 가상 주소를 돌려준다. DPD 는 클라이언트가 사용자 동작으로 보내는 빈 INFORMATIONAL.
+// 재협상(rekey)은 생략.
 import { ipToInt, intToIp, sameSubnet, type Ip } from "../addr";
 import { IKE_PORT, NAT_T_PORT, type EspPacket, type IkeMessage, type Ipv4Packet } from "../packet";
 import { IKE_RETRANSMITS, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
@@ -18,6 +23,8 @@ export interface RaServerConfig {
   poolEnd: Ip;
   /** 클라이언트에게 알려 줄 사내 대역 (이 대역으로 가는 것만 터널로) */
   routes: { dest: Ip; prefix: number }[];
+  /** 사용자 계정 (EAP). 비어 있으면 PSK 만으로 접속 */
+  users?: { name: string; password: string }[];
 }
 
 export const DEFAULT_RA_SERVER: RaServerConfig = { enabled: false, psk: "", poolStart: "10.99.0.10", poolEnd: "10.99.0.50", routes: [] };
@@ -27,6 +34,9 @@ export interface RaClientConfig {
   /** 회사 VPN 장비의 공인 주소 */
   server?: Ip;
   psk: string;
+  /** 사용자 계정 (서버가 계정 인증을 요구할 때) */
+  user?: string;
+  password?: string;
 }
 
 export const DEFAULT_RA_CLIENT: RaClientConfig = { enabled: false, psk: "" };
@@ -50,6 +60,8 @@ export interface RaIo {
 interface RaClientSa {
   vip: Ip;
   cid: string;
+  /** 계정 인증(EAP)으로 붙었으면 사용자 이름 */
+  user?: string;
   peer: { ip: Ip; port: number };
   natT: boolean;
   spi: number;
@@ -66,22 +78,44 @@ export class RaServer {
   private readonly pending = new Map<string, boolean>();
   /** 클라이언트 식별 → 지난번 준 가상 주소 (다시 붙으면 같은 주소) */
   private readonly leases = new Map<string, Ip>();
+  /** PSK 를 확인하고 EAP 요청을 보내 EAP 응답을 기다리는 협상 ("바깥 주소:포트:spi" → NAT 감지 결과·클라이언트 식별) */
+  private readonly eapPending = new Map<string, { nat: boolean; cid: string }>();
 
   constructor(private readonly io: RaIo) {}
 
+  private get users(): { name: string; password: string }[] {
+    return this.config.users ?? [];
+  }
+
   setConfig(cfg: RaServerConfig, ctx: NodeContext): void {
     if (JSON.stringify(cfg) === JSON.stringify(this.config)) return;
-    this.config = { ...cfg, routes: cfg.routes.map((r) => ({ ...r })) };
+    // 사용자 계정만 바뀜: 붙어 있는 세션은 그대로 둔다 (인증은 접속할 때 한 번 — 지운 사용자도 다시 붙을 때 막힌다)
+    const { users: nextUsers, ...nextRest } = cfg;
+    const { users: prevUsers, ...prevRest } = this.config;
+    if (JSON.stringify(nextRest) === JSON.stringify(prevRest)) {
+      this.config = { ...this.config, users: (nextUsers ?? []).map((u) => ({ ...u })) };
+      if (!this.config.enabled) return;
+      const kept = [...this.clients.values()].filter((c) => c.user && !this.users.some((u) => u.name === c.user)).map((c) => c.user!);
+      ctx.trace(
+        "vpn.config",
+        "sys",
+        `원격 접속 VPN 서버 사용자 계정 변경: ${this.users.length ? `${this.users.map((u) => u.name).join(", ")} (PSK 확인 뒤 EAP 로 계정 확인)` : "없음 (PSK 만으로 접속)"}${kept.length ? ` — 목록에서 빠진 ${kept.join(", ")} 의 세션은 끊지 않음 (다시 붙을 때 인증 실패)` : ""}`,
+        { users: this.users.map((u) => u.name), before: (prevUsers ?? []).map((u) => u.name) },
+      );
+      return;
+    }
+    this.config = { ...cfg, routes: cfg.routes.map((r) => ({ ...r })), ...(cfg.users ? { users: cfg.users.map((u) => ({ ...u })) } : {}) };
     this.clients.clear();
     this.pending.clear();
+    this.eapPending.clear();
     this.leases.clear();
     ctx.trace(
       "vpn.config",
       "sys",
       cfg.enabled
-        ? `원격 접속 VPN 서버 켜짐: 접속한 클라이언트에게 ${cfg.poolStart} ~ ${cfg.poolEnd} 에서 가상 주소를 주고, ${routesLabel(cfg.routes)} 로 가는 것만 터널로 보내게 알림 (IKE UDP ${IKE_PORT})`
+        ? `원격 접속 VPN 서버 켜짐: ${this.users.length ? `PSK 와 사용자 계정(${this.users.map((u) => u.name).join(", ")}, EAP)을 확인한 뒤 ` : ""}접속한 클라이언트에게 ${cfg.poolStart} ~ ${cfg.poolEnd} 에서 가상 주소를 주고, ${routesLabel(cfg.routes)} 로 가는 것만 터널로 보내게 알림 (IKE UDP ${IKE_PORT})`
         : "원격 접속 VPN 서버 꺼짐",
-      { ...cfg },
+      { ...cfg, ...(cfg.users ? { users: cfg.users.map((u) => u.name) } : {}) },
     );
   }
 
@@ -130,6 +164,18 @@ export class RaServer {
       this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "IKE_SA_INIT", response: true, spi: m.spi, nat, natSrc: me, natDst: outer.src, ra: true }, ctx, frameId);
       return true;
     }
+    if (m.exchange === "INFORMATIONAL" && m.dpd) {
+      // DPD: 빈 INFORMATIONAL — 이 SPI 의 터널을 알면 빈 응답, 모르면 INVALID_SPI (클라이언트가 옛 SA 를 버리고 다시 접속)
+      const c = [...this.clients.values()].find((x) => x.spi === m.spi && x.cid === m.cid);
+      if (!c) {
+        ctx.trace("vpn.drop", "L4", `원격 접속: ${outer.src} 의 DPD 가 이쪽에 없는 터널(SPI 0x${hex(m.spi)})을 확인함 (서버 설정 변경·재시작으로 SA 가 사라짐) → INVALID_SPI 로 알림 (클라이언트가 다시 접속하도록)`, { from: outer.src, dpd: "unknown" }, frameId);
+        this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "INFORMATIONAL", response: true, spi: m.spi, error: "INVALID_SPI", ra: true, dpd: true }, ctx, frameId);
+        return true;
+      }
+      ctx.trace("vpn.dpd", "L4", `원격 접속: ${c.user ? `${c.user} (${c.vip})` : c.vip} 의 DPD 요청 (빈 INFORMATIONAL) → 이 터널을 앎 → 빈 응답으로 살아 있다고 알림`, { from: outer.src, dpd: "reply", vip: c.vip }, frameId);
+      this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "INFORMATIONAL", response: true, spi: m.spi, ra: true, dpd: true }, ctx, frameId);
+      return true;
+    }
     if (m.exchange === "INFORMATIONAL") {
       const c = [...this.clients.values()].find((x) => x.cid === m.cid);
       if (m.cid) this.leases.delete(m.cid); // 끊었으니 가상 주소를 풀로 돌려준다
@@ -139,10 +185,40 @@ export class RaServer {
       }
       return true;
     }
+    // IKE_AUTH 의 EAP 응답: 계정 확인
+    if (m.eap === "response") {
+      const key = `${outer.src}:${srcPort}:${m.spi}`;
+      const e = this.eapPending.get(key);
+      if (!e) {
+        ctx.trace("vpn.drop", "L4", `원격 접속: EAP 요청 없이 온 EAP 응답 (from ${outer.src}) → 무시`, { from: outer.src }, frameId);
+        return true;
+      }
+      this.eapPending.delete(key);
+      if (!this.users.length) {
+        // 그사이 계정 목록이 비었다: 이제 PSK 만 보는 서버 — PSK 는 이미 확인했다
+        this.grant(outer, srcPort, dstPort, m.spi, e.nat, e.cid, undefined, ctx, frameId);
+        return true;
+      }
+      const u = this.users.find((x) => x.name === m.user);
+      if (!u || u.password !== (m.eapSecret ?? "")) {
+        const why = !m.user ? "사용자 이름이 비어 있음" : !u ? `사용자 ${m.user} 가 계정 목록에 없음` : `${m.user} 의 비밀번호가 다름`;
+        ctx.trace("vpn.drop", "L4", `원격 접속: ${outer.src} 의 계정 인증 실패 (EAP-MSCHAPv2) — ${why} → EAP 실패 + AUTHENTICATION_FAILED 로 거절`, { from: outer.src, user: m.user, eap: "failure" }, frameId);
+        this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "IKE_AUTH", response: true, spi: m.spi, error: "AUTHENTICATION_FAILED", eap: "failure", ra: true }, ctx, frameId);
+        return true;
+      }
+      this.grant(outer, srcPort, dstPort, m.spi, e.nat, e.cid, u.name, ctx, frameId);
+      return true;
+    }
     // IKE_AUTH
     // IKE_AUTH 는 NAT-T 면 4500 으로 오므로 포트가 바뀐다 → 같은 바깥 주소·spi 의 협상을 찾는다
     const key = [...this.pending.keys()].find((k) => k.startsWith(`${outer.src}:`) && k.endsWith(`:${m.spi}`));
     const nat = key !== undefined ? this.pending.get(key) : undefined;
+    if ((nat === undefined || key === undefined) && this.eapPending.has(`${outer.src}:${srcPort}:${m.spi}`)) {
+      // 이미 EAP 요청을 보낸 협상의 IKE_AUTH 가 다시 옴: EAP 요청이 사라진 것 → 같은 응답을 다시 보낸다 (응답자는 마지막 응답을 다시 보낼 뿐)
+      ctx.trace("vpn.eap", "L4", `원격 접속: ${outer.src} 가 IKE_AUTH 를 다시 보냄 (EAP 요청이 사라진 것) → EAP-MSCHAPv2 요청을 다시 보냄`, { from: outer.src, user: m.user, eap: "request", resent: true }, frameId);
+      this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "IKE_AUTH", response: true, spi: m.spi, eap: "request", ra: true }, ctx, frameId);
+      return true;
+    }
     if (nat === undefined || key === undefined) {
       ctx.trace("vpn.drop", "L4", `원격 접속: IKE_SA_INIT 없이 온 IKE_AUTH (from ${outer.src}) → 무시`, { from: outer.src }, frameId);
       return true;
@@ -154,24 +230,43 @@ export class RaServer {
       return true;
     }
     const cid = m.cid ?? outer.src;
+    if (this.users.length) {
+      // 계정 인증: PSK 는 맞음 → EAP 요청(MSCHAPv2 challenge)을 보내고 응답을 기다린다
+      this.eapPending.set(`${outer.src}:${srcPort}:${m.spi}`, { nat, cid });
+      ctx.trace(
+        "vpn.eap",
+        "L4",
+        `원격 접속: ${outer.src} 의 사전 공유 키(PSK) 확인 → 이 서버는 사용자 계정 인증을 요구 → EAP-MSCHAPv2 요청(challenge)을 보냄${m.user ? ` (IDi: ${m.user})` : ""}`,
+        { from: outer.src, user: m.user, eap: "request" },
+        frameId,
+      );
+      this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "IKE_AUTH", response: true, spi: m.spi, eap: "request", ra: true }, ctx, frameId);
+      return true;
+    }
+    this.grant(outer, srcPort, dstPort, m.spi, nat, cid, undefined, ctx, frameId);
+    return true;
+  }
+
+  /** 인증을 마침: 가상 주소를 주고 그 클라이언트의 터널(SA)을 연다. 계정 인증(EAP)이면 user */
+  private grant(outer: Ipv4Packet, srcPort: number, dstPort: number, spi: number, nat: boolean, cid: string, user: string | undefined, ctx: NodeContext, frameId?: number): void {
+    const me = outer.dst;
     const vip = this.allocate(cid);
     if (!vip) {
       ctx.trace("vpn.drop", "L4", `원격 접속: 가상 주소 풀 ${this.config.poolStart} ~ ${this.config.poolEnd} 이 다 찼거나 잘못됨 → INTERNAL_ADDRESS_FAILURE`, { from: outer.src }, frameId);
-      this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "IKE_AUTH", response: true, spi: m.spi, error: "INTERNAL_ADDRESS_FAILURE", ra: true }, ctx, frameId);
-      return true;
+      this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "IKE_AUTH", response: true, spi, error: "INTERNAL_ADDRESS_FAILURE", ra: true }, ctx, frameId);
+      return;
     }
     for (const [k, c] of this.clients) if (c.cid === cid) this.clients.delete(k); // 같은 클라이언트의 옛 터널
     this.leases.set(cid, vip);
-    this.clients.set(vip, { vip, cid, peer: { ip: outer.src, port: srcPort }, natT: nat, spi: m.spi, seq: 0 });
+    this.clients.set(vip, { vip, cid, ...(user !== undefined ? { user } : {}), peer: { ip: outer.src, port: srcPort }, natT: nat, spi, seq: 0 });
     ctx.trace(
       "vpn.up",
       "L4",
-      `원격 접속 수립: ${outer.src} 인증 성공 → 가상 주소 ${vip} 를 주고, ${routesLabel(this.config.routes)} 로 가는 것만 터널로 보내라고 알림 (${nat ? "UDP 4500 (NAT-T) 안의 ESP" : "ESP"})`,
-      { peer: outer.src, vip, natT: nat },
+      `원격 접속 수립: ${outer.src} ${user !== undefined ? `사용자 ${user} 계정 인증 성공 (EAP-MSCHAPv2)` : "인증 성공"} → 가상 주소 ${vip} 를 주고, ${routesLabel(this.config.routes)} 로 가는 것만 터널로 보내라고 알림 (${nat ? "UDP 4500 (NAT-T) 안의 ESP" : "ESP"})`,
+      { peer: outer.src, vip, natT: nat, ...(user !== undefined ? { user } : {}) },
       frameId,
     );
-    this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "IKE_AUTH", response: true, spi: m.spi, ra: true, assigned: vip, routes: this.config.routes.map((r) => ({ ...r })) }, ctx, frameId);
-    return true;
+    this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "IKE_AUTH", response: true, spi, ra: true, ...(user !== undefined ? { eap: "success" as const } : {}), assigned: vip, routes: this.config.routes.map((r) => ({ ...r })) }, ctx, frameId);
   }
 
   /** 받은 ESP 가 원격 접속 클라이언트 것이면 그 클라이언트 (안쪽 출발지 = 가상 주소이고 SPI 가 그 터널의 것) */
@@ -223,7 +318,13 @@ export class RaServer {
   }
 
   rows(): string[][] {
-    return [...this.clients.values()].map((c) => [c.vip, `${c.peer.ip}${c.natT ? `:${c.peer.port}` : ""}`, c.natT ? "NAT-T" : "ESP"]);
+    return [...this.clients.values()].map((c) => [c.user ?? "-", c.vip, `${c.peer.ip}${c.natT ? `:${c.peer.port}` : ""}`, c.natT ? "NAT-T" : "ESP"]);
+  }
+
+  /** 요약: 접속 수와, 계정으로 붙은 클라이언트는 "kim 10.99.0.10" 처럼 */
+  clientsLabel(): string {
+    const named = [...this.clients.values()].filter((c) => c.user);
+    return `접속 ${this.clients.size}명${named.length ? ` (${named.map((c) => `${c.user} ${c.vip}`).join(", ")})` : ""}`;
   }
 }
 
@@ -239,6 +340,8 @@ export class RaClient {
   reason: string | undefined;
   private sa: { spi: number; natT: boolean; peer?: { ip: Ip; port: number }; seq: number } = { spi: 0, natT: false, seq: 0 };
   private attempts = 0;
+  /** DPD 요청을 보내고 응답을 기다리는 중 */
+  private dpdPending = false;
   private readonly ike: IkeRetransmit;
 
   constructor(
@@ -270,6 +373,7 @@ export class RaClient {
     this.sa = { spi: spiOf(`ra:${this.cid}@${me}>${server}#${this.attempts}`), natT: false, seq: 0 };
     this.state = "init";
     this.reason = undefined;
+    this.dpdPending = false;
     ctx.trace("vpn.ike", "L4", `원격 접속: 서버 ${server} 에 IKE_SA_INIT 요청 (NAT 감지용으로 내 주소 ${me} 를 적어 보냄)`, { peer: server, spi: this.sa.spi });
     this.request({ kind: "ike", exchange: "IKE_SA_INIT", response: false, spi: this.sa.spi, natSrc: me, natDst: server, ra: true }, IKE_PORT, ctx);
   }
@@ -282,12 +386,25 @@ export class RaClient {
   }
 
   onTimer(data: unknown, ctx: NodeContext): void {
-    const cur = this.state === "init" ? "IKE_SA_INIT" : this.state === "auth" ? "IKE_AUTH" : undefined;
+    const cur = this.state === "init" ? "IKE_SA_INIT" : this.state === "auth" ? "IKE_AUTH" : this.state === "up" && this.dpdPending ? "INFORMATIONAL" : undefined;
     const { verdict, step, tries } = this.ike.check(data, this.sa.spi, cur);
     if (verdict === "ignore") return;
+    const dpd = step === "INFORMATIONAL";
     if (verdict === "retransmit") {
-      ctx.trace("vpn.ike", "L4", `원격 접속: ${step} 응답 없음 → 다시 보냄 (재전송 ${tries + 1}/${IKE_RETRANSMITS})`, { retransmit: tries + 1, step });
+      ctx.trace(dpd ? "vpn.dpd" : "vpn.ike", "L4", `원격 접속: ${dpd ? "DPD (INFORMATIONAL)" : step} 응답 없음 → 다시 보냄 (재전송 ${tries + 1}/${IKE_RETRANSMITS})`, { retransmit: tries + 1, step });
       this.ike.resend(ctx);
+      return;
+    }
+    if (dpd) {
+      // 서버가 죽었거나 경로가 끊김: SA 를 지우고 끊김 상태로 ("다시 연결" 을 기다림)
+      const server = this.config.server;
+      this.dpdPending = false;
+      this.ike.clear();
+      this.state = "failed";
+      this.reason = `DPD 에 서버 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 서버가 꺼졌거나 경로가 끊김. 경로를 확인한 뒤 "다시 연결"`;
+      this.vip = undefined;
+      this.routes = [];
+      ctx.trace("vpn.drop", "L4", `원격 접속 끊김: DPD 에 서버 ${server} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) → 서버가 죽었거나 경로가 끊긴 것으로 보고 SA 삭제. 경로를 확인한 뒤 "다시 연결"`, { dpd: "dead", peer: server });
       return;
     }
     this.fail(`${step} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 서버 주소, 서버의 원격 접속 VPN, UDP 500·4500 이 막히지 않았는지 확인`, ctx);
@@ -305,27 +422,55 @@ export class RaClient {
     if (!m.ra || !m.response || outer.src !== this.config.server || m.spi !== this.sa.spi) return false;
     if (m.exchange === "INFORMATIONAL" && m.error === "INVALID_SPI") {
       if (this.state !== "up") return true;
-      ctx.trace("vpn.ike", "L4", `원격 접속: 서버가 이 터널을 모른다고 알림 (INVALID_SPI — 서버 설정 변경·이중화 전환 등) → 다시 접속`, { from: outer.src }, frameId);
+      const byDpd = this.dpdPending;
+      this.dpdPending = false;
+      ctx.trace("vpn.ike", "L4", `원격 접속: ${byDpd ? "DPD 에 " : ""}서버가 이 터널을 모른다고 알림 (INVALID_SPI — 서버 설정 변경·이중화 전환 등) → ${byDpd ? "옛 SA 를 버리고 " : ""}다시 접속`, { from: outer.src }, frameId);
       this.state = "off";
       this.vip = undefined;
       this.routes = [];
       this.connect(ctx);
       return true;
     }
+    if (m.exchange === "INFORMATIONAL" && m.dpd) {
+      if (this.state !== "up" || !this.dpdPending) return true; // 이미 끝난 확인
+      this.dpdPending = false;
+      this.ike.clear();
+      ctx.trace("vpn.dpd", "L4", `원격 접속: 서버 ${outer.src} 가 DPD 에 빈 응답 → 서버가 살아 있고 이 터널을 앎 → 터널 유지`, { from: outer.src, dpd: "alive" }, frameId);
+      return true;
+    }
     const me = outer.dst;
+    const user = this.config.user?.trim() || undefined;
     if (m.exchange === "IKE_SA_INIT" && this.state === "init") {
       const { localNat, remoteNat, natT } = natAtInitiator(m, outer.src, me);
       this.sa = { ...this.sa, natT };
       this.state = "auth";
       const port = natT ? NAT_T_PORT : IKE_PORT;
-      ctx.trace("vpn.ike", "L4", `원격 접속: IKE_SA_INIT 응답 (NAT ${natT ? `${localNat ? "내 앞(집 공유기)" : "상대 앞"}에 있음 → 여기부터 UDP 4500` : "없음"}) → IKE_AUTH 요청: PSK 인증 + 가상 주소 요청`, { from: outer.src, natT, localNat, remoteNat }, frameId);
-      this.request({ kind: "ike", exchange: "IKE_AUTH", response: false, spi: this.sa.spi, auth: this.config.psk, ra: true, cid: this.cid }, port, ctx);
+      ctx.trace("vpn.ike", "L4", `원격 접속: IKE_SA_INIT 응답 (NAT ${natT ? `${localNat ? "내 앞(집 공유기)" : "상대 앞"}에 있음 → 여기부터 UDP 4500` : "없음"}) → IKE_AUTH 요청: PSK 인증 + 가상 주소 요청${user ? ` (IDi: 사용자 ${user})` : ""}`, { from: outer.src, natT, localNat, remoteNat }, frameId);
+      this.request({ kind: "ike", exchange: "IKE_AUTH", response: false, spi: this.sa.spi, auth: this.config.psk, ra: true, cid: this.cid, ...(user ? { user } : {}) }, port, ctx);
+      return true;
+    }
+    if (m.exchange === "IKE_AUTH" && this.state === "auth" && m.eap === "request") {
+      // 서버가 계정 인증(EAP)을 요구: 계정이 있으면 비밀번호로 만든 응답을 한 번 더 IKE_AUTH 로
+      if (!user) {
+        this.fail("서버가 사용자 계정 인증(EAP)을 요구하는데 이 노트북에 계정이 없음 — 원격 접속 VPN 설정에 사용자 이름·비밀번호를 넣으세요", ctx, frameId);
+        return true;
+      }
+      ctx.trace("vpn.eap", "L4", `원격 접속: 서버가 계정 인증(EAP-MSCHAPv2)을 요청 → 사용자 ${user} 의 비밀번호로 만든 응답을 IKE_AUTH 로 보냄`, { from: outer.src, user, eap: "response" }, frameId);
+      this.request({ kind: "ike", exchange: "IKE_AUTH", response: false, spi: this.sa.spi, ra: true, cid: this.cid, user, eap: "response", eapSecret: this.config.password ?? "" }, this.sa.natT ? NAT_T_PORT : IKE_PORT, ctx);
       return true;
     }
     if (m.exchange === "IKE_AUTH" && this.state === "auth") {
       this.ike.clear();
       if (m.error || !m.assigned) {
-        this.fail(m.error === "AUTHENTICATION_FAILED" ? "서버가 인증을 거절 (AUTHENTICATION_FAILED) — 사전 공유 키(PSK)가 다름" : "서버에 줄 가상 주소가 없음 (INTERNAL_ADDRESS_FAILURE) — 서버의 가상 주소 풀을 확인", ctx, frameId);
+        this.fail(
+          m.eap === "failure"
+            ? "서버가 계정 인증을 거절 (EAP 실패, AUTHENTICATION_FAILED) — 계정 또는 비밀번호가 틀림. 사용자 이름·비밀번호를 확인하세요"
+            : m.error === "AUTHENTICATION_FAILED"
+              ? "서버가 인증을 거절 (AUTHENTICATION_FAILED) — 사전 공유 키(PSK)가 다름"
+              : "서버에 줄 가상 주소가 없음 (INTERNAL_ADDRESS_FAILURE) — 서버의 가상 주소 풀을 확인",
+          ctx,
+          frameId,
+        );
         return true;
       }
       this.state = "up";
@@ -335,8 +480,8 @@ export class RaClient {
       ctx.trace(
         "vpn.up",
         "L4",
-        `원격 접속 연결됨: 가상 주소 ${m.assigned} 를 받음 → ${routesLabel(this.routes)} 로 가는 패킷은 출발지를 ${m.assigned} 로 바꿔 ${this.sa.natT ? "UDP 4500 (NAT-T) 안의 ESP" : "ESP"} 로 회사에 보냄. 나머지는 평소처럼 인터넷으로 (split tunnel)`,
-        { peer: outer.src, vip: m.assigned, natT: this.sa.natT },
+        `원격 접속 연결됨: ${m.eap === "success" ? `계정 인증 성공 (EAP) → ` : ""}가상 주소 ${m.assigned} 를 받음 → ${routesLabel(this.routes)} 로 가는 패킷은 출발지를 ${m.assigned} 로 바꿔 ${this.sa.natT ? "UDP 4500 (NAT-T) 안의 ESP" : "ESP"} 로 회사에 보냄. 나머지는 평소처럼 인터넷으로 (split tunnel)`,
+        { peer: outer.src, vip: m.assigned, natT: this.sa.natT, ...(m.eap === "success" ? { eap: "success" } : {}) },
         frameId,
       );
       return true;
@@ -358,6 +503,7 @@ export class RaClient {
     this.state = "off";
     this.vip = undefined;
     this.routes = [];
+    this.dpdPending = false;
   }
 
   /** 주소를 잃음·링크 다운: 터널이 끊긴 것으로 (서버에는 알릴 수 없다) */
@@ -367,6 +513,33 @@ export class RaClient {
     this.state = "off";
     this.vip = undefined;
     this.routes = [];
+    this.dpdPending = false;
+  }
+
+  /** DPD 응답을 기다리는 중인지 (UI 표시용) */
+  get dpdWaiting(): boolean {
+    return this.dpdPending;
+  }
+
+  /**
+   * 사용자의 "상대 확인 (DPD)": 지금 SA 의 경로로(NAT-T 면 UDP 4500) 빈 INFORMATIONAL 을 보내 서버가 살아 있고 이 터널을 아는지 확인.
+   * 응답이 오면 터널 유지, 재전송 뒤에도 없으면 SA 를 지우고 끊김, 서버가 모르면(INVALID_SPI) 다시 접속
+   */
+  dpd(ctx: NodeContext): void {
+    const me = this.io.myIp();
+    const peer = this.sa.peer;
+    if (!this.config.enabled || this.state !== "up" || !peer || !me) {
+      ctx.trace("vpn.dpd", "L4", `원격 접속: 연결된 터널 없음 → DPD 를 보내지 않음 (먼저 접속하세요)`, { dpd: "none" });
+      return;
+    }
+    if (this.dpdPending) {
+      ctx.trace("vpn.dpd", "L4", `원격 접속: 이미 DPD 응답을 기다리는 중 → 다시 보내지 않음`, { dpd: "busy" });
+      return;
+    }
+    this.dpdPending = true;
+    const port = this.sa.natT ? NAT_T_PORT : IKE_PORT;
+    ctx.trace("vpn.dpd", "L4", `원격 접속 DPD: 서버 ${peer.ip} 에 빈 INFORMATIONAL 요청 (SPI 0x${hex(this.sa.spi)}, UDP ${port}${this.sa.natT ? " NAT-T" : ""}) → 서버가 살아 있고 이 터널을 아는지 확인`, { peer: peer.ip, spi: this.sa.spi, dpd: "request" });
+    this.ike.request(me, peer.ip, port, { kind: "ike", exchange: "INFORMATIONAL", response: false, spi: this.sa.spi, ra: true, cid: this.cid, dpd: true }, ctx, undefined, peer.port);
   }
 
   /**
@@ -414,9 +587,9 @@ export class RaClient {
 
   summary(): string | undefined {
     if (!this.config.enabled) return undefined;
-    if (this.state === "up") return `연결됨 · 가상 주소 ${this.vip} · ${routesLabel(this.routes)} 는 터널로`;
+    if (this.state === "up") return `연결됨 · 가상 주소 ${this.vip} · ${routesLabel(this.routes)} 는 터널로${this.dpdPending ? " · DPD 확인 중" : ""}`;
     if (this.state === "init" || this.state === "auth") return "연결 중 (IKE 협상)";
-    if (this.state === "failed") return `실패 · ${this.reason ?? ""}`;
+    if (this.state === "failed") return `${this.reason?.startsWith("DPD") ? "끊김" : "실패"} · ${this.reason ?? ""}`;
     return "대기 (주소를 받으면 접속)";
   }
 }

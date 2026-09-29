@@ -4,6 +4,7 @@ import { Scheduler } from "./scheduler";
 import type { TraceEvent, TraceKind } from "./trace";
 import { Host } from "./nodes/host";
 import { Internet } from "./nodes/internet";
+import { L3Node } from "./nodes/l3";
 import type { NodeContext, SimNode, TimerHandle } from "./nodes/node";
 
 export interface Endpoint {
@@ -48,6 +49,8 @@ export type ActionSpec =
   | { kind: "tcp-connect"; nodeId: string; dst: Ip; port: number }
   /** 원격 접속 VPN 다시 연결 (실패했거나 서버가 다시 켜졌을 때) */
   | { kind: "ra-reconnect"; nodeId: string }
+  /** IPsec 상대 확인 (DPD, 빈 INFORMATIONAL): 게이트웨이·NAT 박스면 사이트 간 VPN 의 상대, 호스트면 원격 접속 서버 */
+  | { kind: "vpn-dpd"; nodeId: string }
   /** 열린 TCP 연결을 사용자가 닫는다 (SSH "연결 해제"). conn 은 TcpConn.id */
   | { kind: "tcp-close"; nodeId: string; conn: string }
   /** 인터넷 노드의 "저편 클라이언트" 가 공인 주소 dst:port 로 TCP 연결 (포트 포워딩 시연) */
@@ -330,6 +333,11 @@ export class Network {
       case "ra-reconnect":
         ctx.trace("action", "sys", `[사용자] 원격 접속 VPN 다시 연결`, { ...action });
         this.getHost(action.nodeId).ra.reconnect(ctx);
+        break;
+      case "vpn-dpd":
+        ctx.trace("action", "sys", `[사용자] VPN 상대 확인 (DPD)`, { ...action });
+        if (node instanceof L3Node) node.vpn.dpd(ctx);
+        else this.getHost(action.nodeId).ra.dpd(ctx);
         break;
       case "tcp-close":
         ctx.trace("action", "sys", `[사용자] 연결 해제 ${action.conn.split("-")[1] ?? action.conn}`, { ...action });

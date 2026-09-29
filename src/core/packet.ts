@@ -247,11 +247,11 @@ export interface EspPacket {
 /**
  * IKEv2 (UDP 500, NAT 가 있으면 4500): IPsec 터널을 맺는 협상. 요청·응답 두 번이면 끝난다.
  * IKE_SA_INIT: 암호 방식 합의 + NAT 감지 (보낸 쪽이 적은 자기 주소·상대 주소가 받은 헤더와 다르면 중간에 NAT)
- * IKE_AUTH: 사전 공유 키(PSK)로 서로 인증하고 터널(SA)을 만든다
+ * IKE_AUTH: 사전 공유 키(PSK)로 서로 인증하고 터널(SA)을 만든다. 원격 접속 서버가 계정을 요구하면 IKE_AUTH 가 한 번 더 오간다 (EAP)
  */
 export interface IkeMessage {
   kind: "ike";
-  /** INFORMATIONAL: 원격 접속 클라이언트가 연결을 끊을 때 (Delete) */
+  /** INFORMATIONAL: 원격 접속 클라이언트가 연결을 끊을 때 (Delete), DPD (빈 INFORMATIONAL), INVALID_SPI 알림 */
   exchange: "IKE_SA_INIT" | "IKE_AUTH" | "INFORMATIONAL";
   response: boolean;
   /** 이 협상의 번호 (시작한 쪽이 정함) */
@@ -273,6 +273,14 @@ export interface IkeMessage {
   assigned?: Ip;
   /** 원격 접속 IKE_AUTH 응답: 터널로 보낼 사내 대역 (split tunnel, INTERNAL_IP4_SUBNET) */
   routes?: { dest: Ip; prefix: number }[];
+  /** 원격 접속 IKE_AUTH 요청의 IDi: 사용자 이름 (계정 인증을 쓸 때) */
+  user?: string;
+  /** 원격 접속 계정 인증 (EAP-MSCHAPv2 축소판): 서버의 요청(challenge) → 클라이언트의 응답 → 성공/실패 */
+  eap?: "request" | "response" | "success" | "failure";
+  /** EAP 응답: 비밀번호로 만든 응답 값 (시뮬레이터는 비밀번호 문자열을 그대로 비교) */
+  eapSecret?: string;
+  /** 빈 INFORMATIONAL (DPD, Dead Peer Detection): 상대가 살아 있고 이 SA 를 아는지 확인. Delete 가 아니다 */
+  dpd?: boolean;
 }
 
 /**
@@ -387,7 +395,8 @@ export function bridgeIdLabel(b: BridgeId): string {
 }
 
 const ESP_LABEL = (e: EspPacket) => `ESP SPI 0x${e.spi.toString(16).padStart(8, "0")} seq=${e.seq} (암호화됨 · 안: ${e.inner.src} → ${e.inner.dst})`;
-const IKE_LABEL = (m: IkeMessage) => `IKE ${m.exchange} ${m.response ? (m.error ? `응답 (${m.error})` : "응답") : "요청"}${m.ra ? " · 원격 접속" : ""}`;
+const IKE_LABEL = (m: IkeMessage) =>
+  `IKE ${m.exchange} ${m.response ? (m.error ? `응답 (${m.error})` : "응답") : "요청"}${m.ra ? " · 원격 접속" : ""}${m.eap ? ` · EAP ${m.eap === "request" ? "요청" : m.eap === "response" ? "응답" : m.eap === "success" ? "성공" : "실패"}` : ""}${m.dpd ? " · DPD" : ""}`;
 
 const DHCP_LABEL: Record<DhcpOp, string> = { discover: "Discover", offer: "Offer", request: "Request", ack: "Ack", nak: "Nak", release: "Release" };
 
@@ -436,7 +445,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.kind === "pfsync") return "세션 동기화";
   if (inner.kind === "vrrp") return inner.priority === 0 ? "VRRP 물러남" : `VRRP ${inner.priority}`;
   if (inner.kind === "esp" || inner.payload.kind === "esp") return "ESP 터널";
-  if (inner.payload.kind === "ike") return inner.payload.exchange === "IKE_SA_INIT" ? "IKE 협상" : inner.payload.exchange === "IKE_AUTH" ? "IKE 인증" : "IKE 알림";
+  if (inner.payload.kind === "ike") return inner.payload.dpd ? "DPD" : inner.payload.eap ? "EAP 인증" : inner.payload.exchange === "IKE_SA_INIT" ? "IKE 협상" : inner.payload.exchange === "IKE_AUTH" ? "IKE 인증" : "IKE 알림";
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";

@@ -831,7 +831,7 @@ export class L3Node implements SimNode {
     if (def) routes.push(["0.0.0.0/0", this.names[def.out]!, def.nextHop, "디폴트 라우트"]);
     const tables: NodeSnapshot["tables"] = [{ title: "라우팅 테이블", columns: ["목적지", "인터페이스", "넥스트 홉", "출처"], rows: routes }];
     if (this.firewall.config.enabled) tables.push({ title: "방화벽 규칙", columns: ["#", "규칙"], rows: this.firewall.rows() });
-    if (this.ra.config.enabled) tables.push({ title: "원격 접속 클라이언트", columns: ["가상 주소", "바깥 주소", "방식"], rows: this.ra.rows() });
+    if (this.ra.config.enabled) tables.push({ title: "원격 접속 클라이언트", columns: ["사용자", "가상 주소", "바깥 주소", "방식"], rows: this.ra.rows() });
     if (this.nat) {
       const publicIp = this.ifaces[this.outside!]!.ip;
       tables.push({ title: "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(publicIp) });
@@ -855,7 +855,7 @@ export class L3Node implements SimNode {
             ]
           : []),
         ...(this.ha.config.enabled ? [["이중화", this.ha.summary()!] as [string, string]] : []),
-        ...(this.ra.config.enabled ? [["원격 접속 VPN 서버", `켜짐 · 풀 ${this.ra.config.poolStart} ~ ${this.ra.config.poolEnd} · 접속 ${this.ra.clients.size}명`] as [string, string]] : []),
+        ...(this.ra.config.enabled ? [["원격 접속 VPN 서버", `켜짐 · 풀 ${this.ra.config.poolStart} ~ ${this.ra.config.poolEnd}${this.ra.config.users?.length ? ` · 계정 ${this.ra.config.users.length}개 (EAP)` : ""} · ${this.ra.clientsLabel()}`] as [string, string]] : []),
         ...(this.rip.config.enabled ? [["RIP", `켜짐 · 배운 경로 ${this.rip.rows().length}개${this.rip.config.defaultRoute ? " · 디폴트 라우트 광고" : ""}`] as [string, string]] : []),
         ...(this.firewall.config.enabled
           ? [["방화벽", `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}`] as [string, string]]

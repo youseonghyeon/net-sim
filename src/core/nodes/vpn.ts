@@ -9,7 +9,10 @@
 //   IKE_SA_INIT (UDP 500) — 암호 방식 합의 + NAT 감지: 보낸 쪽이 적은 자기 주소가 받은 헤더와 다르면 중간에 NAT
 //   IKE_AUTH — 사전 공유 키(PSK)로 서로 인증 → 터널 수립. 그동안 온 패킷은 기다렸다가 보낸다
 //   데이터는 ESP (IP 프로토콜 50). ESP 는 포트가 없어 NAT 를 못 지나므로, NAT 를 감지했으면 UDP 4500 에 싣는다 (NAT-T)
-// 재협상(rekey)·DPD·암호 방식 목록은 생략한다.
+// DPD (Dead Peer Detection): 조용한 터널은 상대가 죽거나 경로가 끊겨도 모른다. 빈 INFORMATIONAL 요청으로 상대가 살아 있고 이 SA 를
+//   아는지 확인한다 — 응답이 없으면 SA 를 지우고(다음 패킷에 재협상), 상대가 모르면 INVALID_SPI 로 알려 SA 를 버리게 한다.
+//   주기 타이머가 없는 시계 구조라 사용자 동작(vpn-dpd)으로만 보낸다. WireGuard 식은 대상이 아니다 (핸드셰이크·SA 가 없다)
+// 재협상(rekey)·암호 방식 목록은 생략한다.
 import { sameSubnet, type Ip } from "../addr";
 import { IKE_PORT, NAT_T_PORT, VPN_PORT, type IkeMessage, type Ipv4Packet } from "../packet";
 import { IKE_RETRANSMITS, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
@@ -58,6 +61,8 @@ export class Vpn {
   /** 시작한 쪽의 IKE 요청 재전송 */
   private readonly ike: IkeRetransmit;
   private attempts = 0;
+  /** DPD 요청을 보내고 응답을 기다리는 중 */
+  private dpdPending = false;
 
   constructor(private readonly io?: VpnIo) {
     this.ike = new IkeRetransmit(IKE_TIMER_TAG, (pkt, ctx, frameId) => this.io?.send(pkt, ctx, frameId));
@@ -87,19 +92,54 @@ export class Vpn {
     this.ike.clear();
     this.pending = undefined;
     this.queue = [];
+    this.dpdPending = false;
   }
 
   /** 표시용: IPsec 터널 상태 한 줄 */
   saSummary(): string | undefined {
     if (this.mode !== "ipsec") return undefined;
     const s = this.sa;
-    if (s.state === "up") return `터널 수립됨 · ${s.natT ? "NAT-T (UDP 4500)" : "ESP"} · 상대 ${s.peer?.ip ?? "?"} · SPI 0x${hex(s.spi)}`;
+    if (s.state === "up") return `터널 수립됨 · ${s.natT ? "NAT-T (UDP 4500)" : "ESP"} · 상대 ${s.peer?.ip ?? "?"} · SPI 0x${hex(s.spi)}${this.dpdPending ? " · DPD 확인 중" : ""}`;
     if (s.state === "init" || s.state === "auth") return `IKE 협상 중 (${s.state === "init" ? "IKE_SA_INIT" : "IKE_AUTH"})`;
     return "터널 없음 (첫 패킷이 오면 IKE 로 맺음)";
   }
 
   get ipsecUp(): boolean {
     return this.sa.state === "up";
+  }
+
+  /** DPD 응답을 기다리는 중인지 (UI 표시용) */
+  get dpdWaiting(): boolean {
+    return this.dpdPending;
+  }
+
+  /**
+   * 사용자의 "상대 확인 (DPD)": 지금 SA 의 경로로(NAT-T 면 UDP 4500) 빈 INFORMATIONAL 을 보내 상대가 살아 있고 이 SA 를 아는지 확인.
+   * 응답이 오면 터널 유지, 재전송 뒤에도 없으면 SA 삭제(다음 패킷에 재협상), 상대가 모르면(INVALID_SPI) SA 를 버린다
+   */
+  dpd(ctx: NodeContext): void {
+    if (!this.config.enabled || this.mode !== "ipsec") {
+      ctx.trace("vpn.dpd", "L4", `DPD 는 IPsec VPN 에서만 → 보내지 않음 (WireGuard 식은 SA 가 없음)`, { dpd: "none" });
+      return;
+    }
+    const peer = this.sa.peer;
+    if (this.sa.state !== "up" || !peer) {
+      ctx.trace("vpn.dpd", "L4", `IPsec: 연결된 터널(SA) 없음 → DPD 를 보내지 않음 (터널로 갈 첫 패킷이 오면 IKE 로 맺음)`, { dpd: "none" });
+      return;
+    }
+    if (this.dpdPending) {
+      ctx.trace("vpn.dpd", "L4", `IPsec: 이미 DPD 응답을 기다리는 중 → 다시 보내지 않음`, { dpd: "busy" });
+      return;
+    }
+    const src = this.io?.source(peer.ip);
+    if (!src) {
+      ctx.trace("vpn.drop", "L3", `IPsec DPD: 상대 ${peer.ip} 로 가는 바깥 경로가 없어 보낼 수 없음 (디폴트 라우트를 확인)`, { dst: peer.ip });
+      return;
+    }
+    this.dpdPending = true;
+    const port = this.sa.natT ? NAT_T_PORT : IKE_PORT;
+    ctx.trace("vpn.dpd", "L4", `IPsec DPD: 상대 ${peer.ip} 에 빈 INFORMATIONAL 요청 (SPI 0x${hex(this.sa.spi)}, UDP ${port}${this.sa.natT ? " NAT-T" : ""}) → 상대가 살아 있고 이 터널을 아는지 확인`, { peer: peer.ip, spi: this.sa.spi, dpd: "request" });
+    this.ike.request(src, peer.ip, port, { kind: "ike", exchange: "INFORMATIONAL", response: false, spi: this.sa.spi, dpd: true }, ctx, undefined, peer.port);
   }
 
   // ---------- IPsec ----------
@@ -138,12 +178,22 @@ export class Vpn {
   }
 
   onTimer(data: unknown, ctx: NodeContext): void {
-    const current = this.sa.state === "init" ? "IKE_SA_INIT" : this.sa.state === "auth" ? "IKE_AUTH" : undefined;
+    const current = this.sa.state === "init" ? "IKE_SA_INIT" : this.sa.state === "auth" ? "IKE_AUTH" : this.sa.state === "up" && this.dpdPending ? "INFORMATIONAL" : undefined;
     const { verdict, step, tries } = this.ike.check(data, this.sa.spi, current);
     if (verdict === "ignore") return;
+    const dpd = step === "INFORMATIONAL";
     if (verdict === "retransmit") {
-      ctx.trace("vpn.ike", "L4", `IPsec: ${step} 응답 없음 → 같은 요청을 다시 보냄 (재전송 ${tries + 1}/${IKE_RETRANSMITS})`, { retransmit: tries + 1, step });
+      ctx.trace(dpd ? "vpn.dpd" : "vpn.ike", "L4", `IPsec${dpd ? " DPD" : ""}: ${dpd ? "INFORMATIONAL" : step} 응답 없음 → 같은 요청을 다시 보냄 (재전송 ${tries + 1}/${IKE_RETRANSMITS})`, { retransmit: tries + 1, step });
       this.ike.resend(ctx);
+      return;
+    }
+    if (dpd) {
+      // 상대가 죽었거나 경로가 끊김: SA 를 지운다 (터널로 갈 다음 패킷이 오면 다시 협상)
+      const peer = this.sa.peer?.ip;
+      this.sa = { state: "idle", spi: 0, natT: false, seq: 0 };
+      this.ike.clear();
+      this.dpdPending = false;
+      ctx.trace("vpn.drop", "L4", `IPsec DPD: 상대 ${peer} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) → 상대가 죽었거나 경로가 끊긴 것으로 보고 SA 삭제. 터널로 갈 다음 패킷이 오면 다시 협상`, { dpd: "dead", peer });
       return;
     }
     this.sa = { state: "idle", spi: 0, natT: false, seq: 0 };
@@ -185,6 +235,32 @@ export class Vpn {
   handleIke(outer: Ipv4Packet, srcPort: number, dstPort: number, m: IkeMessage, ctx: NodeContext, frameId?: number): boolean {
     if (!this.config.enabled || this.mode !== "ipsec" || m.ra) return false; // 원격 접속 협상은 원격 접속 서버가
     const me = outer.dst;
+    if (m.exchange === "INFORMATIONAL" && m.dpd && !m.response) {
+      // DPD 요청: 이 SA 를 알면 빈 응답, 모르면(설정 변경·재시작으로 사라짐) INVALID_SPI 로 알려 상대가 옛 SA 를 버리게.
+      // 양쪽이 동시에 협상을 시작하면 두 끝의 SPI 가 엇갈린 채 둘 다 up 이 된다(사이트 간 ESP 는 상대당 SA 하나라 SPI 를 보지 않는다) —
+      // 그래서 SA 의 상대 주소에서 온 것도 이 터널로 본다
+      if (this.sa.state === "up" && (m.spi === this.sa.spi || outer.src === this.sa.peer?.ip)) {
+        ctx.trace("vpn.dpd", "L4", `IPsec DPD: ${outer.src} 의 빈 INFORMATIONAL 요청 → 이 상대와 맺은 터널이 있음 → 빈 응답으로 살아 있다고 알림`, { from: outer.src, dpd: "reply" }, frameId);
+        this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "INFORMATIONAL", response: true, spi: m.spi, dpd: true }, ctx, frameId);
+      } else {
+        ctx.trace("vpn.drop", "L4", `IPsec DPD: ${outer.src} 가 이쪽에 없는 터널(SPI 0x${hex(m.spi)})을 확인함 (설정 변경·재시작으로 SA 가 사라짐) → INVALID_SPI 로 알려 상대가 옛 SA 를 버리게 함`, { from: outer.src, dpd: "unknown" }, frameId);
+        this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "INFORMATIONAL", response: true, spi: m.spi, error: "INVALID_SPI", dpd: true }, ctx, frameId);
+      }
+      return true;
+    }
+    if (m.exchange === "INFORMATIONAL" && m.response) {
+      if (!this.dpdPending || this.sa.state !== "up" || m.spi !== this.sa.spi) return true; // 이미 끝난 확인
+      this.dpdPending = false;
+      this.ike.clear();
+      if (m.error === "INVALID_SPI") {
+        this.sa = { state: "idle", spi: 0, natT: false, seq: 0 };
+        ctx.trace("vpn.drop", "L4", `IPsec DPD: 상대 ${outer.src} 가 이 터널을 모른다고 알림 (INVALID_SPI — 상대의 설정 변경·재시작) → SA 삭제. 터널로 갈 다음 패킷이 오면 다시 협상`, { from: outer.src, dpd: "invalid" }, frameId);
+        return true;
+      }
+      ctx.trace("vpn.dpd", "L4", `IPsec DPD: 상대 ${outer.src} 가 빈 응답 → 살아 있고 이 터널을 앎 → 터널 유지`, { from: outer.src, dpd: "alive" }, frameId);
+      return true;
+    }
+    if (m.exchange === "INFORMATIONAL") return true; // 그 밖의 알림은 쓰지 않는다
     if (m.exchange === "IKE_SA_INIT" && !m.response) {
       // 응답자: 적혀 온 주소와 실제 헤더가 다르면 중간 어딘가에 NAT 가 있다 (보낸 쪽 앞 또는 내 앞)
       // 상대가 적은 자기 주소가 실제 출발지와 다르면 상대 앞에 NAT, 상대가 적은 내 주소가 실제 목적지와 다르면 내 앞에 NAT
@@ -251,6 +327,7 @@ export class Vpn {
 
   private establish(spi: number, natT: boolean, peer: { ip: Ip; port: number }, role: string, ctx: NodeContext, frameId?: number): void {
     this.sa = { state: "up", spi, natT, peer, seq: 0 };
+    this.dpdPending = false; // 옛 SA 에 걸어 둔 DPD 는 끝난 것으로
     ctx.trace(
       "vpn.up",
       "L4",

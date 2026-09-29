@@ -204,7 +204,8 @@ export function effectiveRaClient(d: Device): RaClientConfig | undefined {
   const r = d.host?.ra;
   if (!r) return undefined;
   const server = validIp(r.server);
-  return { enabled: r.enabled === true, ...(server ? { server } : {}), psk: r.psk };
+  const user = r.user?.trim();
+  return { enabled: r.enabled === true, ...(server ? { server } : {}), psk: r.psk, ...(user ? { user, password: r.password ?? "" } : {}) };
 }
 
 /** 로드밸런서 설정: 주소·포트가 올바른 백엔드만 */
@@ -360,6 +361,10 @@ export function effectiveL3(d: Device) {
       poolStart: validIp(l3.ra?.poolStart) ?? "",
       poolEnd: validIp(l3.ra?.poolEnd) ?? "",
       routes: (l3.ra?.routes ?? []).filter((r) => validIp(r.dest) && Number.isInteger(r.prefix) && r.prefix >= 1 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix })),
+      // 이름이 빈 계정은 뺀다 (편집 중인 줄). 같은 이름이 여럿이면 앞의 것만
+      users: (l3.ra?.users ?? [])
+        .map((u) => ({ name: u.name.trim(), password: u.password }))
+        .filter((u, i, all) => u.name !== "" && all.findIndex((x) => x.name === u.name) === i),
     },
     ha: {
       enabled: l3.ha?.enabled === true,

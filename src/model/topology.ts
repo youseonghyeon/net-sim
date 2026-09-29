@@ -270,6 +270,8 @@ export interface RaServerSettings {
   poolEnd: string;
   /** 클라이언트에게 알려 줄 사내 대역 */
   routes: { dest: string; prefix: number }[];
+  /** 사용자 계정 (EAP). 없거나 비면 PSK 만으로 접속 */
+  users?: { name: string; password: string }[];
 }
 
 export interface RaClientSettings {
@@ -277,6 +279,9 @@ export interface RaClientSettings {
   /** 회사 VPN 장비의 공인 주소 */
   server: string;
   psk: string;
+  /** 사용자 계정 (서버가 계정 인증을 요구할 때) */
+  user?: string;
+  password?: string;
 }
 
 export interface HaSettings {
@@ -328,6 +333,21 @@ function normalizeRaServer(r: Partial<RaServerSettings>): RaServerSettings {
     routes: (Array.isArray(r.routes) ? r.routes : [])
       .filter((x): x is { dest: string; prefix: number } => !!x && typeof x === "object" && typeof x.dest === "string")
       .map((x) => ({ dest: x.dest, prefix: Number.isInteger(x.prefix) && x.prefix >= 0 && x.prefix <= 32 ? x.prefix : 24 })),
+    // 예전 저장본에는 없다 (없으면 PSK 만)
+    ...(Array.isArray(r.users)
+      ? { users: r.users.filter((u): u is { name: string; password: string } => !!u && typeof u === "object" && typeof u.name === "string").map((u) => ({ name: u.name, password: str(u.password, "") })) }
+      : {}),
+  };
+}
+
+/** 불러온 JSON 의 원격 접속 VPN 클라이언트 설정 정리 (계정은 예전 저장본에 없다) */
+function normalizeRaClient(r: Partial<RaClientSettings>): RaClientSettings {
+  const str = (v: unknown, d: string) => (typeof v === "string" ? v : d);
+  return {
+    enabled: r.enabled === true,
+    server: str(r.server, ""),
+    psk: str(r.psk, ""),
+    ...(typeof r.user === "string" ? { user: r.user, password: str(r.password, "") } : {}),
   };
 }
 
@@ -905,7 +925,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...fixed.host,
           services: fixed.host.services ?? (fixed.kind === "server" ? [80] : []),
           dhcpServer: fixed.host.dhcpServer ?? { ...DEFAULT_DHCP_SERVER },
-          ...(fixed.host.ra ? { ra: { enabled: fixed.host.ra.enabled === true, server: typeof fixed.host.ra.server === "string" ? fixed.host.ra.server : "", psk: typeof fixed.host.ra.psk === "string" ? fixed.host.ra.psk : "" } } : {}),
+          ...(fixed.host.ra ? { ra: normalizeRaClient(fixed.host.ra) } : {}),
         };
       }
     }

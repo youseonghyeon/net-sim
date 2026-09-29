@@ -256,11 +256,18 @@ function ikeLayer(m: IkeMessage): HeaderLayer {
   if (m.natSrc) rows.push(["NAT_DETECTION_SOURCE_IP", `${m.natSrc} (실제로는 해시)`]);
   if (m.natDst) rows.push(["NAT_DETECTION_DESTINATION_IP", `${m.natDst} (실제로는 해시)`]);
   if (m.nat !== undefined) rows.push(["NAT 감지 결과", m.nat ? "NAT 있음 → 이후 UDP 4500" : "NAT 없음"]);
+  if (m.user !== undefined) rows.push(["IDi (사용자 이름)", m.user]);
   if (m.auth !== undefined) rows.push(["AUTH", "사전 공유 키로 만든 인증 값 (키 자체는 보내지 않음)"]);
+  // EAP 는 IKE_AUTH 의 암호화된 SK 페이로드 안에 있다 — tcpdump 는 ikev2_auth 로만 보고, 두 끝만 풀어 본다
+  if (m.eap === "request") rows.push(["EAP (SK 페이로드 안)", "코드 1 (Request) · 타입 26 (MSCHAPv2) — 서버의 challenge"]);
+  if (m.eap === "response") rows.push(["EAP (SK 페이로드 안)", "코드 2 (Response) · 타입 26 (MSCHAPv2) — 비밀번호로 만든 응답 값 (비밀번호 자체는 보내지 않음)"]);
+  if (m.eap === "success") rows.push(["EAP (SK 페이로드 안)", "코드 3 (Success) — 계정 인증 성공"]);
+  if (m.eap === "failure") rows.push(["EAP (SK 페이로드 안)", "코드 4 (Failure) — 계정 또는 비밀번호가 틀림"]);
   if (m.error) rows.push(["알림 (Notify)", `${m.error === "AUTHENTICATION_FAILED" ? 24 : m.error === "INTERNAL_ADDRESS_FAILURE" ? 36 : 11} (${m.error})`]);
   if (m.assigned) rows.push(["가상 주소 (CP INTERNAL_IP4_ADDRESS)", m.assigned]);
   if (m.routes?.length) rows.push(["사내 대역 (CP INTERNAL_IP4_SUBNET)", m.routes.map((r) => `${r.dest}/${r.prefix}`).join(", ")]);
-  if (m.exchange === "INFORMATIONAL" && !m.error) rows.push(["Delete", "터널을 내린다 (연결 해제)"]);
+  if (m.dpd && !m.error) rows.push(["DPD", "페이로드 없는 빈 INFORMATIONAL — 상대가 살아 있고 이 SA 를 아는지 확인 (응답도 빈 INFORMATIONAL)"]);
+  if (m.exchange === "INFORMATIONAL" && !m.error && !m.dpd) rows.push(["Delete", "터널을 내린다 (연결 해제)"]);
   return { title: "IKEv2 (앱)", rows };
 }
 
@@ -373,6 +380,9 @@ const detail = (ev: TraceEvent, key: string): string | undefined => {
   return v === undefined || v === null ? undefined : String(v);
 };
 
+/** strongSwan 로그의 IKE Message ID (교환 순서: IKE_SA_INIT 0, IKE_AUTH 1, 그다음 INFORMATIONAL 2 — 축소판이라 EAP 의 두 번째 IKE_AUTH 도 1 로 본다) */
+const ikeMessageId = (step: string | undefined) => (step === "IKE_AUTH" ? 1 : step === "INFORMATIONAL" ? 2 : 0);
+
 /**
  * 로그 한 줄을 실무에서 보는 출력으로. frames 는 그 장치가 받은/내보낸 프레임.
  * 대응하는 실무 출력이 없는 종류는 tcpdump 한 줄만 (프레임이 있을 때)
@@ -464,17 +474,43 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       break;
     }
     case "vpn.ike":
-      if (detail(ev, "retransmit") !== undefined) out.push({ tool: "strongSwan (charon)", line: `11[IKE] retransmit ${detail(ev, "retransmit")} of request with message ID ${detail(ev, "step") === "IKE_AUTH" ? 1 : 0}` });
+      if (detail(ev, "retransmit") !== undefined) out.push({ tool: "strongSwan (charon)", line: `11[IKE] retransmit ${detail(ev, "retransmit")} of request with message ID ${ikeMessageId(detail(ev, "step"))}` });
       else if (detail(ev, "spi") !== undefined) out.push({ tool: "strongSwan (charon)", line: `07[IKE] initiating IKE_SA vpn[1] to ${detail(ev, "peer") ?? "?"}` });
       if (detail(ev, "localNat") === "true") out.push({ tool: "strongSwan (charon)", line: `08[IKE] local host is behind NAT, sending keep alives` });
       if (detail(ev, "remoteNat") === "true") out.push({ tool: "strongSwan (charon)", line: `08[IKE] remote host is behind NAT` });
       break;
+    case "vpn.eap":
+      if (detail(ev, "resent") === "true") out.push({ tool: "strongSwan (charon)", line: `13[IKE] received retransmit of request with ID 1, retransmitting response` });
+      else if (detail(ev, "eap") === "request") out.push({ tool: "strongSwan (charon)", line: `13[IKE] initiating EAP_MSCHAPV2 method (id 0x01)` });
+      if (detail(ev, "eap") === "response") out.push({ tool: "strongSwan (charon)", line: `13[IKE] server requested EAP_MSCHAPV2 authentication (id 0x01)` });
+      break;
+    case "vpn.dpd": {
+      const d = detail(ev, "dpd");
+      if (detail(ev, "retransmit") !== undefined) out.push({ tool: "strongSwan (charon)", line: `11[IKE] retransmit ${detail(ev, "retransmit")} of request with message ID ${ikeMessageId(detail(ev, "step"))}` });
+      else if (d === "request") {
+        out.push({ tool: "strongSwan (charon)", line: `15[IKE] sending DPD request` });
+        out.push({ tool: "strongSwan (charon)", line: `15[ENC] generating INFORMATIONAL request 2 [ ]` });
+      } else if (d === "reply") {
+        out.push({ tool: "strongSwan (charon)", line: `16[ENC] parsed INFORMATIONAL request 2 [ ]` });
+        out.push({ tool: "strongSwan (charon)", line: `16[ENC] generating INFORMATIONAL response 2 [ ]` });
+      } else if (d === "alive") out.push({ tool: "strongSwan (charon)", line: `16[ENC] parsed INFORMATIONAL response 2 [ ]` });
+      break;
+    }
     case "vpn.up":
+      if (detail(ev, "user") !== undefined) out.push({ tool: "strongSwan (charon)", line: `09[IKE] authentication of '${detail(ev, "user")}' with EAP successful` });
+      if (detail(ev, "user") !== undefined || detail(ev, "eap") === "success") out.push({ tool: "strongSwan (charon)", line: `09[IKE] EAP method EAP_MSCHAPV2 succeeded, MSK established` });
       out.push({ tool: "strongSwan (charon)", line: `09[IKE] IKE_SA vpn[1] established between ${ip?.dst ?? "?"}...${detail(ev, "peer") ?? "?"}` });
       out.push({ tool: "strongSwan (charon)", line: `09[IKE] CHILD_SA vpn{1} established${detail(ev, "natT") === "true" ? " (UDP-encapsulated, NAT-T)" : ""}` });
       break;
     case "vpn.drop":
-      if (ev.summary.includes("AUTHENTICATION_FAILED 로 거절 —")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] received AUTHENTICATION_FAILED notify error` });
+      // 계정 인증(EAP)·DPD 실패를 먼저 (문구가 PSK·재전송 실패와 겹치지 않게)
+      if (detail(ev, "eap") === "failure") {
+        out.push({ tool: "strongSwan (charon)", line: `12[IKE] EAP-MS-CHAPv2 verification failed for '${detail(ev, "user") ?? ""}'` });
+        out.push({ tool: "strongSwan (charon)", line: `12[IKE] EAP method EAP_MSCHAPV2 failed for peer ${detail(ev, "from") ?? "?"}` });
+      } else if (ev.summary.includes("EAP 실패, AUTHENTICATION_FAILED")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] received EAP_FAILURE, EAP authentication failed` });
+      else if (ev.summary.includes("계정 인증(EAP)을 요구하는데")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] no EAP key found for hosts '${ip?.src ?? "?"}' - '%any'` });
+      else if (detail(ev, "dpd") === "invalid") out.push({ tool: "strongSwan (charon)", line: `12[IKE] received INVALID_SPI notify error` });
+      else if (ev.summary.includes("AUTHENTICATION_FAILED 로 거절 —")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] received AUTHENTICATION_FAILED notify error` });
       else if (ev.summary.includes("PSK)가 다름 → AUTHENTICATION_FAILED")) out.push({ tool: "strongSwan (charon)", line: `05[IKE] tried 1 shared key for '${ip?.dst ?? "?"}' - '${ip?.src ?? "?"}', but MAC mismatched` });
       else if (ev.summary.includes("재전송") && ev.summary.includes("timeout")) out.push({ tool: "strongSwan (charon)", line: `11[IKE] giving up after 2 retransmits` });
       break;

@@ -397,6 +397,7 @@ export function exampleNcpVpnTopology(): Topology {
 /**
  * 재택근무 원격 접속 VPN: 집 공유기 뒤의 노트북이 인터넷 너머 회사 VPN 방화벽에 붙어 가상 주소(10.99.0.x)를 받고,
  * 사내 대역(10.50.10.0/24)으로 가는 것만 터널로 보낸다(split tunnel). 공유기 NAT 뒤라 UDP 4500 (NAT-T) 로 간다.
+ * 서버는 PSK 확인 뒤 사용자 계정(kim·lee)을 EAP 로 확인한다 — 노트북은 kim 으로 접속.
  * 회사 방화벽은 인바운드 기본 차단이지만 VPN 가상 주소 대역에서 들어오는 것은 허용한다.
  */
 export function exampleRemoteVpnTopology(): Topology {
@@ -406,7 +407,7 @@ export function exampleRemoteVpnTopology(): Topology {
   // 집: 공유기(WAN 은 통신사 DHCP, LAN 은 DHCP 로 노트북에 주소) + 재택 노트북
   const home = add("router", 120, -24, "집 공유기");
   const laptop = add("laptop", 120, 152, "재택 노트북");
-  laptop.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER }, ra: { enabled: true, server: "203.0.113.11", psk: "remote-psk" } };
+  laptop.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER }, ra: { enabled: true, server: "203.0.113.11", psk: "remote-psk", user: "kim", password: "kim-pass" } };
   // 회사: VPN 방화벽(NAT 박스, 원격 접속 VPN 서버) → 사내 스위치 → 사내 서버·PC
   const fw = add("nat", 568, -24, "회사 VPN 방화벽");
   fw.l3 = {
@@ -421,7 +422,18 @@ export function exampleRemoteVpnTopology(): Topology {
         { action: "allow", proto: "any", direction: "in", src: "10.99.0.0/24", dst: "10.50.10.0/24", dstPort: "" },
       ],
     },
-    ra: { enabled: true, psk: "remote-psk", poolStart: "10.99.0.10", poolEnd: "10.99.0.50", routes: [{ dest: "10.50.10.0", prefix: 24 }] },
+    // PSK 는 회사 공통, 계정은 사람마다 (퇴사자는 그 계정만 지우면 된다)
+    ra: {
+      enabled: true,
+      psk: "remote-psk",
+      poolStart: "10.99.0.10",
+      poolEnd: "10.99.0.50",
+      routes: [{ dest: "10.50.10.0", prefix: 24 }],
+      users: [
+        { name: "kim", password: "kim-pass" },
+        { name: "lee", password: "lee-pass" },
+      ],
+    },
   };
   const sw = add("switch", 568, 136, "사내 스위치");
   const srv = add("server", 480, 296, "사내 서버");

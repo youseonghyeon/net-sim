@@ -151,6 +151,10 @@ export type TraceKind =
   | "vpn.drop"
   | "vpn.ike"
   | "vpn.up"
+  /** 원격 접속 계정 인증 (EAP) 단계: 서버의 요청(challenge), 클라이언트의 응답 */
+  | "vpn.eap"
+  /** DPD (Dead Peer Detection): 빈 INFORMATIONAL 요청·응답, 상대가 살아 있음 */
+  | "vpn.dpd"
   | "ha.config"
   | "ha.state"
   | "ha.advert"

@@ -800,7 +800,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await clickDevice("NCP VPN Gateway");
   await goTab("설정");
   const vpnSec = page.locator(".inspector section", { has: page.locator("h3", { hasText: "VPN" }) }).first();
-  console.log("ncp vpn mode:", await vpnSec.locator(".segmented button.on").textContent(), "| psk field:", await vpnSec.locator(".field", { hasText: "사전 공유 키" }).count());
+  console.log("ncp vpn mode:", await vpnSec.locator(".segmented button.on").textContent(), "| psk field:", await vpnSec.locator(".field", { hasText: "사전 공유 키" }).count(), "| dpd button enabled:", await vpnSec.locator("button:has-text('상대 확인 (DPD)')").isEnabled());
   await vpnSec.screenshot({ path: `${OUT}/49-ncp-vpn-section.png` });
   await clickDevice("dev-2");
   await goTab("설정");
@@ -867,7 +867,29 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForFunction(() => /세션 열림|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 60000 });
   console.log("remote ssh:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
   await goTab("설정");
-  console.log("remote status:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "원격 접속 VPN" }) }).locator(".note").first().innerText()).slice(0, 60));
+  const raSec = page.locator(".inspector section", { has: page.locator("h3", { hasText: "원격 접속 VPN" }) });
+  console.log("remote status:", (await raSec.locator(".note").first().innerText()).slice(0, 60));
+  // 계정 인증(EAP): 노트북 계정 kim, 서버 표에 사용자 이름
+  console.log("remote account:", await raSec.locator(".field", { hasText: "사용자 이름" }).locator("input").inputValue());
+  // DPD: 버튼을 눌러 빈 INFORMATIONAL → 서버 응답 → 터널 유지
+  const dpdBtn = raSec.locator("button:has-text('상대 확인 (DPD)')");
+  console.log("remote dpd button enabled:", await dpdBtn.isEnabled());
+  await dpdBtn.click();
+  const logWasOpen = (await page.locator(".log.open").count()) > 0;
+  if (!logWasOpen) await page.click(".log-toggle");
+  await page.waitForFunction(() => [...document.querySelectorAll(".log-list .row")].some((r) => /DPD 에 빈 응답/.test(r.textContent ?? "")), null, { timeout: 30000 });
+  console.log("remote dpd:", ((await page.locator(".log-list .row", { hasText: "DPD 에 빈 응답" }).last().textContent()) ?? "").replace(/\s+/g, " ").slice(0, 90));
+  await page.screenshot({ path: `${OUT}/55-remote-dpd.png` });
+  if (!logWasOpen) await page.click(".log-toggle");
+  console.log("remote status after dpd:", (await raSec.locator(".note").first().innerText()).slice(0, 30), "| button enabled:", await dpdBtn.isEnabled());
+  await raSec.screenshot({ path: `${OUT}/56-remote-vpn-section.png` });
+  await clickDevice("회사 VPN 방화벽");
+  await goTab("설정");
+  const srvSec = page.locator(".inspector section", { has: page.locator("h3", { hasText: "원격 접속 VPN 서버" }) });
+  console.log("remote server accounts:", await srvSec.locator(".record-row").count());
+  await srvSec.screenshot({ path: `${OUT}/57-remote-server-section.png` });
+  await goTab("표");
+  console.log("remote server table has kim:", (await page.locator(".inspector").innerText()).includes("kim") ? "yes" : "NO");
   await page.screenshot({ path: `${OUT}/54-remote-vpn.png` });
 }
 // 로드밸런서 L4 모드: lb-1 을 L4 로 바꾸고 pc-1 → 192.168.0.20:80 연결

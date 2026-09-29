@@ -456,13 +456,26 @@ export function RemoteVpnSection({ d, h }: { d: Device; h: HostSettings }) {
           <Field label="사전 공유 키 (PSK)" error={ra.psk ? undefined : "비어 있습니다. 서버와 같은 키를 넣으세요."}>
             <input class="input mono" value={ra.psk} placeholder="서버와 같은 문자열" onInput={(e) => set({ psk: e.currentTarget.value })} />
           </Field>
-          {status && <p class={`note${status.startsWith("실패") ? " error-note" : ""}`}>{status}</p>}
+          <Field label="사용자 이름 (EAP)">
+            <input class="input mono" value={ra.user ?? ""} placeholder="서버가 계정을 요구할 때 (예: kim)" onInput={(e) => set({ user: e.currentTarget.value })} />
+          </Field>
+          <Field label="비밀번호">
+            <input class="input mono" value={ra.password ?? ""} placeholder="서버 계정과 같은 문자열" onInput={(e) => set({ password: e.currentTarget.value })} />
+          </Field>
+          {status && <p class={`note${status.startsWith("실패") || status.startsWith("끊김") ? " error-note" : ""}`}>{status}</p>}
           {node instanceof Host && (node.ra.state === "failed" || node.ra.state === "up") && (
             <button class="btn wide" onClick={() => sim.act({ kind: "ra-reconnect", nodeId: d.id })}>
               <Icon name="refresh" size={14} />
               다시 연결
             </button>
           )}
+          {node instanceof Host && (
+            <button class="btn wide" disabled={node.ra.state !== "up" || node.ra.dpdWaiting} onClick={() => sim.act({ kind: "vpn-dpd", nodeId: d.id })} title="빈 INFORMATIONAL 을 보내 서버가 살아 있고 이 터널을 아는지 확인합니다">
+              <Icon name="send" size={14} />
+              상대 확인 (DPD)
+            </button>
+          )}
+          <p class="note">계정이 없는 서버면 사용자 이름은 비워 두세요. "상대 확인 (DPD)" 은 연결된 동안 누를 수 있고, 서버가 응답하지 않으면 1초씩 두 번 다시 보낸 뒤 터널을 지우고 끊김으로 바뀝니다.</p>
         </>
       )}
     </Section>

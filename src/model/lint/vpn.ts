@@ -123,7 +123,7 @@ export function siteVpnRules({ t, m, add }: LintContext): void {
   }
 }
 
-// 규칙 20: 원격 접속 VPN — 서버 대역·풀, 클라이언트가 가리키는 서버의 PSK·켜짐
+// 규칙 20: 원격 접속 VPN — 서버 대역·풀, 클라이언트가 가리키는 서버의 PSK·켜짐·사용자 계정(EAP)
 export function remoteAccessRules({ t, m, add }: LintContext): void {
   const ownsIp = (x: Device, ip: string) => !!x.l3 && (x.l3.interfaces.some((c) => c.ipMode === "static" && validIp(c.ip) === ip) || (x.l3.ha?.enabled === true && x.l3.ha.vips.includes(ip)));
   for (const d of t.devices) {
@@ -159,6 +159,24 @@ export function remoteAccessRules({ t, m, add }: LintContext): void {
         add({ deviceId: d.id, severity: "warn", code: "ra.server-off", message: `${srv.name} (${server}) 에 원격 접속 VPN 서버가 꺼져 있음 → IKE 에 답이 없어 접속 실패${srvs.length > 1 ? " (이중화 쌍이면 넘어갈 때)" : ""}`, fix: `${srv.name} → 원격 접속 VPN 서버 켜기`, related: [srv.id] });
       } else if (srv.l3.ra.psk !== c.psk) {
         add({ deviceId: d.id, severity: "error", code: "ra.psk-mismatch", message: `원격 접속 VPN 사전 공유 키(PSK)가 서버 ${srv.name} 와 다름 → 인증 실패 (AUTHENTICATION_FAILED)`, fix: `${d.name} 의 원격 접속 VPN → 사전 공유 키를 서버와 같게`, related: [srv.id] });
+      } else {
+        // 계정 인증 (EAP): 서버에 계정이 있으면 클라이언트 계정이 그 목록에 같은 비밀번호로 있어야 한다 (코어처럼 이름은 앞뒤 공백을 떼고 본다)
+        const users = (srv.l3.ra.users ?? []).filter((u) => u.name.trim() !== "");
+        if (users.length === 0) continue;
+        const name = c.user?.trim();
+        const account = name ? users.find((u) => u.name.trim() === name) : undefined;
+        if (!name) {
+          add({ deviceId: d.id, severity: "error", code: "ra.no-account", message: `서버 ${srv.name} 가 사용자 계정 인증(EAP)을 요구하는데 이 클라이언트에 계정이 없음 → 접속 실패`, fix: `${d.name} 의 원격 접속 VPN → 사용자 이름·비밀번호 (서버 계정 목록에 있는 것)`, related: [srv.id] });
+        } else if (!account || account.password !== (c.password ?? "")) {
+          add({
+            deviceId: d.id,
+            severity: "error",
+            code: "ra.account-mismatch",
+            message: `${!account ? `사용자 ${name} 가 서버 ${srv.name} 의 계정 목록에 없음` : `사용자 ${name} 의 비밀번호가 서버 ${srv.name} 와 다름`} → 계정 인증 실패 (EAP 실패, AUTHENTICATION_FAILED)`,
+            fix: !account ? `${srv.name} → 원격 접속 VPN 서버 → 사용자 계정에 ${name} 추가, 또는 ${d.name} 의 사용자 이름을 목록에 있는 것으로` : `${d.name} 의 원격 접속 VPN → 비밀번호를 서버 계정과 같게`,
+            related: [srv.id],
+          });
+        }
       }
     }
   }

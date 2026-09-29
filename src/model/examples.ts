@@ -178,7 +178,7 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     id: "remote",
     group: "인터넷",
     label: "재택근무 원격 접속 VPN",
-    blurb: "재택 노트북이 켜지면서 회사 VPN 방화벽에 IPsec 으로 붙어 가상 주소 10.99.0.x 를 받습니다(표 탭). 노트북에서 사내 서버 10.50.10.20 으로 SSH(22) 접속해 보세요 — 사내 대역만 터널로 가고, 8.8.8.8 은 평소처럼 집 공유기로 나갑니다.",
+    blurb: "재택 노트북이 켜지면서 회사 VPN 방화벽에 IPsec 으로 붙어 PSK 와 사용자 계정(kim, EAP)을 확인받고 가상 주소 10.99.0.x 를 받습니다(표 탭). 노트북에서 사내 서버 10.50.10.20 으로 SSH(22) 접속해 보세요 — 사내 대역만 터널로 가고, 8.8.8.8 은 평소처럼 집 공유기로 나갑니다.",
     build: exampleRemoteVpnTopology,
   },
   roaming: {
