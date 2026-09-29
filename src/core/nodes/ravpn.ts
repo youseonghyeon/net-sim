@@ -7,6 +7,7 @@
 // 연결 해제는 INFORMATIONAL(Delete) 로 알려 가상 주소를 돌려준다. 재협상·DPD·사용자 계정 인증(EAP)은 생략.
 import { ipToInt, intToIp, sameSubnet, type Ip } from "../addr";
 import { IKE_PORT, NAT_T_PORT, type EspPacket, type IkeMessage, type Ipv4Packet } from "../packet";
+import { IKE_RETRANSMITS, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
 import type { NodeContext } from "./node";
 
 export interface RaServerConfig {
@@ -30,15 +31,6 @@ export interface RaClientConfig {
 
 export const DEFAULT_RA_CLIENT: RaClientConfig = { enabled: false, psk: "" };
 export const RA_TIMER_TAG = "ra-ike";
-const RA_TIMEOUT = 1000;
-const RA_RETRANSMITS = 2;
-
-const hex = (n: number) => n.toString(16).padStart(8, "0");
-function spiOf(a: string, b: string, n: number): number {
-  let h = 0x811c9dc5;
-  for (const ch of `ra:${a}>${b}#${n}`) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0;
-  return h >>> 0 || 1;
-}
 const inRoutes = (ip: Ip, routes: { dest: Ip; prefix: number }[]) =>
   routes.some((r) => {
     try {
@@ -124,7 +116,7 @@ export class RaServer {
   }
 
   private sendIke(src: Ip, dst: Ip, srcPort: number, dstPort: number, m: IkeMessage, ctx: NodeContext, frameId?: number): void {
-    this.io.send({ kind: "ipv4", src, dst, ttl: 64, payload: { kind: "udp", srcPort, dstPort, payload: m } }, ctx, frameId);
+    this.io.send(ikePacket(src, dst, srcPort, dstPort, m), ctx, frameId);
   }
 
   /** 원격 접속 IKE 메시지. 처리했으면 true */
@@ -132,9 +124,9 @@ export class RaServer {
     if (!this.config.enabled || !m.ra || m.response) return false;
     const me = outer.dst;
     if (m.exchange === "IKE_SA_INIT") {
-      const nat = m.natSrc !== outer.src || m.natDst !== me;
+      const { nat, remoteNat, localNat } = natAtResponder(m, outer.src, me);
       this.pending.set(`${outer.src}:${srcPort}:${m.spi}`, nat);
-      ctx.trace("vpn.ike", "L4", `원격 접속: ${outer.src} 의 IKE_SA_INIT → 응답. NAT 감지: ${nat ? "있음 (클라이언트가 공유기 뒤) → 이후 UDP 4500 (NAT-T)" : "없음"}`, { from: outer.src, nat, remoteNat: m.natSrc !== outer.src, localNat: m.natDst !== me }, frameId);
+      ctx.trace("vpn.ike", "L4", `원격 접속: ${outer.src} 의 IKE_SA_INIT → 응답. NAT 감지: ${nat ? "있음 (클라이언트가 공유기 뒤) → 이후 UDP 4500 (NAT-T)" : "없음"}`, { from: outer.src, nat, remoteNat, localNat }, frameId);
       this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "IKE_SA_INIT", response: true, spi: m.spi, nat, natSrc: me, natDst: outer.src, ra: true }, ctx, frameId);
       return true;
     }
@@ -224,9 +216,7 @@ export class RaServer {
       return true;
     }
     const esp: EspPacket = { kind: "esp", spi: c.spi, seq: ++c.seq, inner };
-    const outer: Ipv4Packet = c.natT
-      ? { kind: "ipv4", src, dst: c.peer.ip, ttl: 64, payload: { kind: "udp", srcPort: NAT_T_PORT, dstPort: c.peer.port, payload: esp } }
-      : { kind: "ipv4", src, dst: c.peer.ip, ttl: 64, payload: esp };
+    const outer = espPacket(src, c.peer, c.natT, esp);
     ctx.trace("vpn.encap", "L3", `원격 접속 캡슐화: ${inner.src} → ${inner.dst}(가상 주소) 패킷을 클라이언트 ${c.peer.ip}${c.natT ? `:${c.peer.port} (NAT-T)` : ""} 로 가는 ESP 에 담음 — SPI 0x${hex(c.spi)}`, { inner: `${inner.src}>${inner.dst}`, peer: c.peer.ip }, frameId);
     this.io.send(outer, ctx, frameId);
     return true;
@@ -249,13 +239,15 @@ export class RaClient {
   reason: string | undefined;
   private sa: { spi: number; natT: boolean; peer?: { ip: Ip; port: number }; seq: number } = { spi: 0, natT: false, seq: 0 };
   private attempts = 0;
-  private last: { msg: IkeMessage; port: number; tries: number } | undefined;
+  private readonly ike: IkeRetransmit;
 
   constructor(
     private readonly io: RaIo & { myIp(): Ip | undefined; local?(dst: Ip): boolean },
     /** 클라이언트 식별 (MAC) */
     private readonly cid: string,
-  ) {}
+  ) {
+    this.ike = new IkeRetransmit(RA_TIMER_TAG, (pkt, ctx) => this.io.send(pkt, ctx));
+  }
 
   setConfig(cfg: RaClientConfig, ctx: NodeContext): void {
     if (JSON.stringify(cfg) === JSON.stringify(this.config)) return;
@@ -275,39 +267,36 @@ export class RaClient {
     const server = this.config.server;
     if (!me || !server) return;
     this.attempts++;
-    this.sa = { spi: spiOf(`${this.cid}@${me}`, server, this.attempts), natT: false, seq: 0 };
+    this.sa = { spi: spiOf(`ra:${this.cid}@${me}>${server}#${this.attempts}`), natT: false, seq: 0 };
     this.state = "init";
     this.reason = undefined;
     ctx.trace("vpn.ike", "L4", `원격 접속: 서버 ${server} 에 IKE_SA_INIT 요청 (NAT 감지용으로 내 주소 ${me} 를 적어 보냄)`, { peer: server, spi: this.sa.spi });
     this.request({ kind: "ike", exchange: "IKE_SA_INIT", response: false, spi: this.sa.spi, natSrc: me, natDst: server, ra: true }, IKE_PORT, ctx);
   }
 
-  private request(msg: IkeMessage, port: number, ctx: NodeContext, tries = 0): void {
+  private request(msg: IkeMessage, port: number, ctx: NodeContext): void {
     const me = this.io.myIp();
     const server = this.config.server;
     if (!me || !server) return;
-    this.last = { msg, port, tries };
-    this.io.send({ kind: "ipv4", src: me, dst: server, ttl: 64, payload: { kind: "udp", srcPort: port, dstPort: port, payload: msg } }, ctx);
-    ctx.timer(RA_TIMEOUT, RA_TIMER_TAG, { spi: msg.spi, step: msg.exchange, tries });
+    this.ike.request(me, server, port, msg, ctx);
   }
 
   onTimer(data: unknown, ctx: NodeContext): void {
-    const { spi, step, tries } = data as { spi: number; step: string; tries: number };
     const cur = this.state === "init" ? "IKE_SA_INIT" : this.state === "auth" ? "IKE_AUTH" : undefined;
-    const last = this.last;
-    if (spi !== this.sa.spi || step !== cur || !last || last.tries !== tries) return;
-    if (tries < RA_RETRANSMITS) {
-      ctx.trace("vpn.ike", "L4", `원격 접속: ${step} 응답 없음 → 다시 보냄 (재전송 ${tries + 1}/${RA_RETRANSMITS})`, { retransmit: tries + 1, step });
-      this.request(last.msg, last.port, ctx, tries + 1);
+    const { verdict, step, tries } = this.ike.check(data, this.sa.spi, cur);
+    if (verdict === "ignore") return;
+    if (verdict === "retransmit") {
+      ctx.trace("vpn.ike", "L4", `원격 접속: ${step} 응답 없음 → 다시 보냄 (재전송 ${tries + 1}/${IKE_RETRANSMITS})`, { retransmit: tries + 1, step });
+      this.ike.resend(ctx);
       return;
     }
-    this.fail(`${step} 응답 없음 (재전송 ${RA_RETRANSMITS}번 뒤 timeout) — 서버 주소, 서버의 원격 접속 VPN, UDP 500·4500 이 막히지 않았는지 확인`, ctx);
+    this.fail(`${step} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 서버 주소, 서버의 원격 접속 VPN, UDP 500·4500 이 막히지 않았는지 확인`, ctx);
   }
 
   private fail(why: string, ctx: NodeContext, frameId?: number): void {
     this.state = "failed";
     this.reason = why;
-    this.last = undefined;
+    this.ike.clear();
     ctx.trace("vpn.drop", "L4", `원격 접속 실패: ${why}`, {}, frameId);
   }
 
@@ -325,9 +314,7 @@ export class RaClient {
     }
     const me = outer.dst;
     if (m.exchange === "IKE_SA_INIT" && this.state === "init") {
-      const localNat = m.natDst !== undefined && m.natDst !== me;
-      const remoteNat = m.natSrc !== undefined && m.natSrc !== outer.src;
-      const natT = m.nat === true || localNat || remoteNat;
+      const { localNat, remoteNat, natT } = natAtInitiator(m, outer.src, me);
       this.sa = { ...this.sa, natT };
       this.state = "auth";
       const port = natT ? NAT_T_PORT : IKE_PORT;
@@ -336,7 +323,7 @@ export class RaClient {
       return true;
     }
     if (m.exchange === "IKE_AUTH" && this.state === "auth") {
-      this.last = undefined;
+      this.ike.clear();
       if (m.error || !m.assigned) {
         this.fail(m.error === "AUTHENTICATION_FAILED" ? "서버가 인증을 거절 (AUTHENTICATION_FAILED) — 사전 공유 키(PSK)가 다름" : "서버에 줄 가상 주소가 없음 (INTERNAL_ADDRESS_FAILURE) — 서버의 가상 주소 풀을 확인", ctx, frameId);
         return true;
@@ -399,9 +386,7 @@ export class RaClient {
     const inner: Ipv4Packet = { ...pkt, src: this.vip };
     const esp: EspPacket = { kind: "esp", spi: this.sa.spi, seq: ++this.sa.seq, inner };
     const peer = this.sa.peer;
-    const outer: Ipv4Packet = this.sa.natT
-      ? { kind: "ipv4", src: me, dst: peer.ip, ttl: 64, payload: { kind: "udp", srcPort: NAT_T_PORT, dstPort: peer.port, payload: esp } }
-      : { kind: "ipv4", src: me, dst: peer.ip, ttl: 64, payload: esp };
+    const outer = espPacket(me, peer, this.sa.natT, esp);
     ctx.trace("vpn.encap", "L3", `원격 접속 캡슐화: ${pkt.dst} 는 사내 대역 → 출발지를 가상 주소 ${this.vip} 로 바꿔 ${this.sa.natT ? "UDP 4500 (NAT-T) 안의 " : ""}ESP 로 서버 ${peer.ip} 에 보냄 — SPI 0x${hex(this.sa.spi)}`, { inner: `${this.vip}>${pkt.dst}`, peer: peer.ip });
     this.io.send(outer, ctx);
     return true;

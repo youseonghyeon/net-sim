@@ -12,13 +12,12 @@
 // 재협상(rekey)·DPD·암호 방식 목록은 생략한다.
 import { sameSubnet, type Ip } from "../addr";
 import { IKE_PORT, NAT_T_PORT, VPN_PORT, type IkeMessage, type Ipv4Packet } from "../packet";
+import { IKE_RETRANSMITS, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
 import type { NodeContext } from "./node";
 
 export type VpnMode = "wireguard" | "ipsec";
 export const VPN_MODE_LABEL: Record<VpnMode, string> = { wireguard: "WireGuard", ipsec: "IPsec" };
-/** IKE 요청마다 응답을 기다리는 시간. 지나면 같은 요청을 다시 보내고(재전송), IKE_RETRANSMITS 번 뒤에도 없으면 포기 */
-export const IKE_TIMEOUT = 1000;
-export const IKE_RETRANSMITS = 2;
+export { IKE_RETRANSMITS, IKE_TIMEOUT } from "./ike";
 export const IKE_TIMER_TAG = "ike-timeout";
 /** 터널이 맺어지기를 기다리며 쌓아 두는 패킷 수 */
 const IKE_QUEUE = 32;
@@ -56,11 +55,13 @@ export class Vpn {
   /** IKE 응답자로서 IKE_SA_INIT 을 받아 IKE_AUTH 를 기다리는 협상 */
   private pending: { spi: number; nat: boolean } | undefined;
   private queue: { inner: Ipv4Packet; frameId?: number }[] = [];
-  /** 마지막으로 보낸 IKE 요청 (재전송용) */
-  private lastRequest: { src: Ip; dst: Ip; port: number; msg: IkeMessage; tries: number } | undefined;
+  /** 시작한 쪽의 IKE 요청 재전송 */
+  private readonly ike: IkeRetransmit;
   private attempts = 0;
 
-  constructor(private readonly io?: VpnIo) {}
+  constructor(private readonly io?: VpnIo) {
+    this.ike = new IkeRetransmit(IKE_TIMER_TAG, (pkt, ctx, frameId) => this.io?.send(pkt, ctx, frameId));
+  }
 
   get mode(): VpnMode {
     return this.config.mode ?? "wireguard";
@@ -83,7 +84,7 @@ export class Vpn {
 
   private resetSa(): void {
     this.sa = { state: "idle", spi: 0, natT: false, seq: 0 };
-    this.lastRequest = undefined;
+    this.ike.clear();
     this.pending = undefined;
     this.queue = [];
   }
@@ -125,7 +126,7 @@ export class Vpn {
       return;
     }
     this.attempts++;
-    this.sa = { state: "init", spi: spiOf(src, peer, this.attempts), natT: false, seq: 0 };
+    this.sa = { state: "init", spi: spiOf(`${src}>${peer}#${this.attempts}`), natT: false, seq: 0 };
     ctx.trace(
       "vpn.ike",
       "L4",
@@ -133,28 +134,20 @@ export class Vpn {
       { peer, spi: this.sa.spi },
       frameId,
     );
-    this.request(src, peer, IKE_PORT, { kind: "ike", exchange: "IKE_SA_INIT", response: false, spi: this.sa.spi, natSrc: src, natDst: peer }, ctx, frameId);
-  }
-
-  /** IKE 요청을 보내고 응답 timer 를 건다 (단계·시도 횟수를 함께 실어 지난 timer 를 구분한다) */
-  private request(src: Ip, dst: Ip, port: number, msg: IkeMessage, ctx: NodeContext, frameId?: number, tries = 0): void {
-    this.lastRequest = { src, dst, port, msg, tries };
-    this.sendIke(src, dst, port, port, msg, ctx, frameId);
-    ctx.timer(IKE_TIMEOUT, IKE_TIMER_TAG, { spi: msg.spi, step: msg.exchange, tries });
+    this.ike.request(src, peer, IKE_PORT, { kind: "ike", exchange: "IKE_SA_INIT", response: false, spi: this.sa.spi, natSrc: src, natDst: peer }, ctx, frameId);
   }
 
   onTimer(data: unknown, ctx: NodeContext): void {
-    const { spi, step, tries } = data as { spi: number; step: IkeMessage["exchange"]; tries: number };
     const current = this.sa.state === "init" ? "IKE_SA_INIT" : this.sa.state === "auth" ? "IKE_AUTH" : undefined;
-    const last = this.lastRequest;
-    if (spi !== this.sa.spi || step !== current || !last || last.msg.exchange !== step || last.tries !== tries) return;
-    if (tries < IKE_RETRANSMITS) {
+    const { verdict, step, tries } = this.ike.check(data, this.sa.spi, current);
+    if (verdict === "ignore") return;
+    if (verdict === "retransmit") {
       ctx.trace("vpn.ike", "L4", `IPsec: ${step} 응답 없음 → 같은 요청을 다시 보냄 (재전송 ${tries + 1}/${IKE_RETRANSMITS})`, { retransmit: tries + 1, step });
-      this.request(last.src, last.dst, last.port, last.msg, ctx, undefined, tries + 1);
+      this.ike.resend(ctx);
       return;
     }
     this.sa = { state: "idle", spi: 0, natT: false, seq: 0 };
-    this.lastRequest = undefined;
+    this.ike.clear();
     this.failQueue(ctx, `${step} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 상대가 IPsec VPN 을 켰는지, UDP ${IKE_PORT}/${NAT_T_PORT} 가 막히지 않았는지 확인. 다음 패킷이 오면 다시 협상`);
   }
 
@@ -165,7 +158,7 @@ export class Vpn {
   }
 
   private sendIke(src: Ip, dst: Ip, srcPort: number, dstPort: number, m: IkeMessage, ctx: NodeContext, frameId?: number): void {
-    this.io?.send({ kind: "ipv4", src, dst, ttl: 64, payload: { kind: "udp", srcPort, dstPort, payload: m } }, ctx, frameId);
+    this.io?.send(ikePacket(src, dst, srcPort, dstPort, m), ctx, frameId);
   }
 
   private sendEsp(inner: Ipv4Packet, ctx: NodeContext, frameId?: number): void {
@@ -177,9 +170,7 @@ export class Vpn {
     }
     this.sent++;
     const esp = { kind: "esp" as const, spi: this.sa.spi, seq: ++this.sa.seq, inner };
-    const outer: Ipv4Packet = this.sa.natT
-      ? { kind: "ipv4", src, dst: peer.ip, ttl: 64, payload: { kind: "udp", srcPort: NAT_T_PORT, dstPort: peer.port, payload: esp } }
-      : { kind: "ipv4", src, dst: peer.ip, ttl: 64, payload: esp };
+    const outer = espPacket(src, peer, this.sa.natT, esp);
     ctx.trace(
       "vpn.encap",
       "L3",
@@ -197,9 +188,7 @@ export class Vpn {
     if (m.exchange === "IKE_SA_INIT" && !m.response) {
       // 응답자: 적혀 온 주소와 실제 헤더가 다르면 중간 어딘가에 NAT 가 있다 (보낸 쪽 앞 또는 내 앞)
       // 상대가 적은 자기 주소가 실제 출발지와 다르면 상대 앞에 NAT, 상대가 적은 내 주소가 실제 목적지와 다르면 내 앞에 NAT
-      const remoteNat = m.natSrc !== outer.src;
-      const localNat = m.natDst !== me;
-      const nat = remoteNat || localNat;
+      const { remoteNat, localNat, nat } = natAtResponder(m, outer.src, me);
       this.pending = { spi: m.spi, nat };
       const where = [remoteNat ? "상대 앞" : "", localNat ? "내 앞" : ""].filter(Boolean).join("·");
       ctx.trace(
@@ -216,9 +205,7 @@ export class Vpn {
     if (m.exchange === "IKE_SA_INIT" && m.response) {
       if (this.sa.state !== "init" || m.spi !== this.sa.spi) return true; // 이미 끝났거나 지난 협상
       // 상대가 본 내 주소가 내 주소와 다르면 내 앞에 NAT, 상대가 적은 자기 주소가 실제 출발지와 다르면 상대 앞에 NAT
-      const localNat = m.natDst !== undefined && m.natDst !== me;
-      const remoteNat = m.natSrc !== undefined && m.natSrc !== outer.src;
-      const natT = m.nat === true || localNat || remoteNat;
+      const { localNat, remoteNat, natT } = natAtInitiator(m, outer.src, me);
       this.sa = { ...this.sa, state: "auth", natT };
       const port = natT ? NAT_T_PORT : IKE_PORT;
       ctx.trace(
@@ -228,7 +215,7 @@ export class Vpn {
         { from: outer.src, natT, localNat, remoteNat },
         frameId,
       );
-      this.request(me, this.config.peer ?? outer.src, port, { kind: "ike", exchange: "IKE_AUTH", response: false, spi: m.spi, auth: this.config.psk ?? "" }, ctx, frameId);
+      this.ike.request(me, this.config.peer ?? outer.src, port, { kind: "ike", exchange: "IKE_AUTH", response: false, spi: m.spi, auth: this.config.psk ?? "" }, ctx, frameId);
       return true;
     }
     if (m.exchange === "IKE_AUTH" && !m.response) {
@@ -252,11 +239,11 @@ export class Vpn {
     if (this.sa.state !== "auth" || m.spi !== this.sa.spi) return true;
     if (m.error) {
       this.sa = { state: "idle", spi: 0, natT: false, seq: 0 };
-      this.lastRequest = undefined;
+      this.ike.clear();
       this.failQueue(ctx, `상대 ${outer.src} 가 ${m.error} 로 거절 — 사전 공유 키(PSK)가 다름. 양쪽 PSK 를 똑같이 맞추세요`, frameId);
       return true;
     }
-    this.lastRequest = undefined;
+    this.ike.clear();
     this.establish(m.spi, this.sa.natT, { ip: outer.src, port: srcPort }, "시작한 쪽", ctx, frameId);
     this.flush(ctx);
     return true;
@@ -363,15 +350,4 @@ export class Vpn {
     this.endpoint = { ip: outer.src, port: srcPort };
     return changed;
   }
-}
-
-function hex(n: number): string {
-  return n.toString(16).padStart(8, "0");
-}
-
-/** 결정론적 SPI: 두 주소와 시도 횟수로 만든다 (실제로는 난수) */
-function spiOf(a: Ip, b: Ip, n: number): number {
-  let h = 0x811c9dc5;
-  for (const ch of `${a}>${b}#${n}`) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0;
-  return h >>> 0 || 1;
 }
