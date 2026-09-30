@@ -1,5 +1,22 @@
 import { BROADCAST_MAC, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, isControl, type DhcpMessage, type EthernetFrame, type IcmpPacket, type Ipv4Packet } from "../packet";
+import { ALL_NODES, formatIp6, isLinkLocal6, isMulticast6, parseIp6, UNSPECIFIED6 } from "../addr6";
+import {
+  DHCP_CLIENT_PORT,
+  DHCP_SERVER_PORT,
+  DHCP6_CLIENT_PORT,
+  DNS_PORT,
+  describeFrame,
+  icmpLabel,
+  isControl,
+  isNdp,
+  type DhcpMessage,
+  type EthernetFrame,
+  type IcmpPacket,
+  type Ipv4Packet,
+  type Ipv6Packet,
+} from "../packet";
+import { DHCP6_STATE_LABEL, DHCP6_TIMER_TAG, Dhcp6PdClient } from "./dhcp6";
+import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RS_TIMER_TAG } from "./ipv6";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_UPSTREAM_TIMER_TAG, DnsServer, type DnsServerConfig } from "./dns";
 import { Firewall, type FirewallConfig } from "./firewall";
@@ -33,6 +50,14 @@ export interface RouterConfig {
   wifi?: { enabled: boolean; ssid: string };
   /** 포트 포워딩 규칙 (TCP): 공인 포트로 들어온 연결을 LAN 호스트로 */
   forwards?: PortForward[];
+  /** IPv6 (없으면 꺼짐): WAN 은 ISP 의 RA·DHCPv6-PD 로, LAN 에는 위임받은 /64 를 RA 로 */
+  ipv6?: RouterIpv6Config;
+}
+
+export interface RouterIpv6Config {
+  enabled: boolean;
+  /** IPv6 인바운드 기본 차단 (Stateful): 안에서 시작한 통신의 응답만 들어온다. NAT 가 없으니 이것이 IPv4 의 NAT 가 하던 보호를 대신한다 */
+  inboundBlock: boolean;
 }
 
 interface MacEntry {
@@ -68,6 +93,15 @@ export class Router implements SimNode {
   readonly macTable = new Map<Mac, MacEntry>();
   readonly nat = new NatTable();
   private readonly seen = new Map<number, number>();
+  /** IPv6: LAN(라우터 — RA 로 위임받은 /64 를 알림)과 WAN(호스트처럼 ISP 의 RA 로 주소·기본 게이트웨이) */
+  readonly lan6: Ipv6Interface;
+  readonly wan6: Ipv6Interface;
+  readonly pd: Dhcp6PdClient;
+  ipv6Enabled = false;
+  /** IPv6 인바운드 기본 차단 (나가는 것만 허용 + Stateful) */
+  readonly inbound6: Firewall;
+  /** LAN 쪽 IPv6 를 시작했는지 (LAN 은 내부 브리지라 첫 포트가 붙을 때 링크 로컬 DAD) */
+  private lan6Started = false;
 
   constructor(cfg: RouterConfig) {
     this.id = cfg.id;
@@ -79,12 +113,73 @@ export class Router implements SimNode {
     this.wanClient = new DhcpClient(this.wan, hashCode(cfg.id) + 7, "wan");
     this.firewall = new Firewall(cfg.firewall);
     this.wifi = cfg.wifi ?? { enabled: false, ssid: "home" };
-    this.dnsForwarder = new DnsServer(cfg.dns ?? { enabled: true, records: [], upstream: "8.8.8.8" }, this.lan, "DNS 포워더", {
-      // 업스트림 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
-      srcIp: () => (this.upstreamInLan() ? this.lan.ip : this.wan.ip),
-      send: (pkt, ctx) => (this.upstreamInLan() ? this.lan.sendIp(pkt, ctx, this.emitLan(ctx)) : this.wan.sendIp(pkt, ctx, this.emitWan(ctx))),
-    });
+    this.lan6 = new Ipv6Interface(cfg.mac, true, "lan");
+    this.lan6.raOffReason = "ISP 에게 아직 프리픽스를 위임받지 못해(DHCPv6-PD) 알릴 프리픽스가 없음 → RA 안 함";
+    this.wan6 = new Ipv6Interface(cfg.wanMac, false, "wan");
+    this.pd = new Dhcp6PdClient(cfg.wanMac, this.wan6, hashCode(cfg.id) + 11, (d, ctx) => this.onDelegation(d, ctx));
+    this.wan6.onLinkLocalReady = (ctx, emit) => {
+      if (this.ipv6Enabled) this.pd.start(ctx, emit);
+    };
+    // 규칙 없이 기본 차단: 들어오는 것만 검사하고(check "in"), 나가는 것은 흐름만 기억한다(remember)
+    this.inbound6 = new Firewall({ enabled: cfg.ipv6?.inboundBlock !== false, defaultPolicy: "deny", stateful: true, rules: [] }, "IPv6 기본 방화벽");
+    if (cfg.ipv6?.enabled) {
+      this.ipv6Enabled = true;
+      this.lan6.init({ enabled: true, addrs: [] });
+      this.wan6.init({ enabled: true, addrs: [], slaac: true });
+    }
+    this.dnsForwarder = new DnsServer(
+      cfg.dns ?? { enabled: true, records: [], upstream: "8.8.8.8" },
+      this.lan,
+      "DNS 포워더",
+      {
+        // 업스트림 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
+        srcIp: () => (this.upstreamInLan() ? this.lan.ip : this.wan.ip),
+        send: (pkt, ctx) => (this.upstreamInLan() ? this.lan.sendIp(pkt, ctx, this.emitLan(ctx)) : this.wan.sendIp(pkt, ctx, this.emitWan(ctx))),
+      },
+      this.lan6, // LAN 호스트가 IPv6(RA 의 RDNSS = 공유기 LAN 주소)로 물어도 답한다
+    );
     if (cfg.forwards) this.nat.setForwards(cfg.forwards);
+  }
+
+  /** 위임받은 프리픽스가 생기거나 사라짐: LAN 에 그 첫 /64 를 주소로 두고 RA 로 알린다 (사라지면 거둠 RA) */
+  private onDelegation(d: { prefix: Ip; length: number } | undefined, ctx: NodeContext): void {
+    if (!this.ipv6Enabled) return;
+    if (!d) {
+      this.lan6.configure({ enabled: true, addrs: [], ra: false }, true, ctx, this.emitLan(ctx));
+      return;
+    }
+    const lanIp = formatIp6(parseIp6(d.prefix)! | 1n);
+    ctx.trace("ip.config", "sys", `[lan] 위임받은 ${d.prefix}/${d.length} 의 첫 /64 를 LAN 에: 공유기 LAN 주소 ${lanIp}/64 → RA 로 알려 집 안 장치가 SLAAC 로 공인 IPv6 주소를 만든다`, { prefix: d.prefix, lan: lanIp });
+    this.lan6.configure({ enabled: true, addrs: [{ ip: lanIp, prefix: 64 }], ra: true, raDns: lanIp }, true, ctx, this.emitLan(ctx));
+  }
+
+  /** LAN 은 내부 브리지라 따로 링크가 없다: 첫 포트가 붙을 때 LAN IPv6 를 시작 (링크 로컬 DAD) */
+  private startLan6(ctx: NodeContext): void {
+    if (!this.ipv6Enabled || this.lan6Started) return;
+    this.lan6Started = true;
+    this.lan6.linkUp(ctx, this.emitLan(ctx));
+  }
+
+  /** IPv6 켜기·끄기, 인바운드 기본 차단 */
+  private setIpv6(cfg: RouterIpv6Config, ctx: NodeContext): void {
+    if (cfg.inboundBlock !== this.inbound6.config.enabled) {
+      this.inbound6.config = { ...this.inbound6.config, enabled: cfg.inboundBlock };
+      ctx.trace("ip.config", "sys", cfg.inboundBlock ? `IPv6 인바운드 기본 차단 켜짐: 바깥에서 먼저 시작한 IPv6 연결은 막고, 안에서 시작한 통신의 응답만 들인다 (Stateful)` : `IPv6 인바운드 기본 차단 꺼짐: NAT 가 없으니 바깥에서 집 안 장치의 IPv6 주소로 바로 들어온다 (방화벽 규칙이 없다면)`, { inboundBlock: cfg.inboundBlock });
+    }
+    if (cfg.enabled === this.ipv6Enabled) return;
+    if (!cfg.enabled) {
+      this.pd.release(ctx, this.emitWan(ctx));
+      this.lan6.configure({ enabled: false, addrs: [] }, true, ctx, this.emitLan(ctx));
+      this.wan6.configure({ enabled: false, addrs: [] }, this.wanLinkUp, ctx, this.emitWan(ctx));
+      this.ipv6Enabled = false;
+      this.lan6Started = false;
+      return;
+    }
+    this.ipv6Enabled = true;
+    ctx.trace("ip.config", "sys", `IPv6 켜짐: WAN 은 ISP 의 RA 로 주소·기본 게이트웨이를, DHCPv6-PD 로 LAN 에 나눠 줄 프리픽스를 받는다`, {});
+    this.lan6.configure({ enabled: true, addrs: [] }, true, ctx, this.emitLan(ctx));
+    this.lan6Started = true;
+    this.wan6.configure({ enabled: true, addrs: [], slaac: true }, this.wanLinkUp, ctx, this.emitWan(ctx));
   }
 
   private upstreamInLan(): boolean {
@@ -129,10 +224,11 @@ export class Router implements SimNode {
   // ---------- 설정 변경 ----------
 
   configure(
-    cfg: { lanIp: Ip; lanPrefix: number; dhcp: DhcpServerConfig; wan: WanConfig; dns?: DnsServerConfig; forwards?: PortForward[]; firewall?: FirewallConfig; wifi?: { enabled: boolean; ssid: string } },
+    cfg: { lanIp: Ip; lanPrefix: number; dhcp: DhcpServerConfig; wan: WanConfig; dns?: DnsServerConfig; forwards?: PortForward[]; firewall?: FirewallConfig; wifi?: { enabled: boolean; ssid: string }; ipv6?: RouterIpv6Config },
     ctx: NodeContext,
   ): void {
     if (cfg.firewall) this.firewall.setConfig(cfg.firewall, ctx, "");
+    if (cfg.ipv6) this.setIpv6(cfg.ipv6, ctx);
     if (cfg.wifi && (cfg.wifi.enabled !== this.wifi.enabled || cfg.wifi.ssid !== this.wifi.ssid)) {
       this.wifi = { ...cfg.wifi };
       ctx.trace("ip.config", "sys", cfg.wifi.enabled ? `무선 켜짐: SSID "${cfg.wifi.ssid}" 송출` : `무선 꺼짐`, { ...cfg.wifi });
@@ -197,18 +293,27 @@ export class Router implements SimNode {
   }
 
   onRemove(ctx: NodeContext): void {
+    if (this.ipv6Enabled) {
+      if (this.wanLinkUp) this.pd.release(ctx, this.emitWan(ctx));
+      this.lan6.shutdown(ctx, this.emitLan(ctx));
+    }
     if (this.wanLinkUp) this.wanClient.release(ctx, this.emitWan(ctx));
   }
 
   onLink(port: number, up: boolean, ctx: NodeContext): void {
+    if (up && port !== Router.WAN_PORT) this.startLan6(ctx);
     if (port === Router.WAN_PORT) {
       this.wanLinkUp = up;
       if (up) {
         ctx.trace("link.up", "L1", `wan 포트 링크 연결됨`, { port });
         if (this.wanMode === "dhcp") this.wanClient.start(ctx, this.emitWan(ctx));
+        this.wan6.linkUp(ctx, this.emitWan(ctx));
         return;
       }
       ctx.trace("link.down", "L1", `wan 포트 링크 다운`, { port });
+      this.wan6.linkDown();
+      // ISP 와 끊기면 위임도 끝: LAN 에서 그 프리픽스를 거둔다 (다시 이어지면 새로 요청)
+      this.pd.stop(ctx, this.emitWan(ctx));
       this.wan.clearPending();
       if (this.wanMode === "dhcp") {
         const had = this.wan.ip;
@@ -234,15 +339,17 @@ export class Router implements SimNode {
 
   receive(port: number, frame: EthernetFrame, ctx: NodeContext): void {
     if (port === Router.WAN_PORT) {
-      // 가입하지 않은 멀티캐스트(예: 라우터끼리 주고받는 RIP)는 NIC 가 하드웨어에서 조용히 거른다
-      if (isMulticastMac(frame.dst)) return;
-      if (!this.wan.accepts(frame)) {
+      // 가입하지 않은 멀티캐스트(예: 라우터끼리 주고받는 RIP)는 NIC 가 하드웨어에서 조용히 거른다. IPv6 는 WAN 이 가입한 그룹만
+      const v6Group = this.wan6.accepts(frame.dst);
+      if (isMulticastMac(frame.dst) && !v6Group) return;
+      if (!this.wan.accepts(frame) && !v6Group) {
         ctx.trace("frame.drop", "L2", `wan 수신: 목적지 MAC ${frame.dst} 가 내 WAN MAC 아님 → 드롭`, { dst: frame.dst }, frame.id);
         return;
       }
       ctx.trace("frame.receive", "L2", `wan 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === BROADCAST_MAC ? "브로드캐스트" : "내 WAN MAC"}]`, { src: frame.src, dst: frame.dst }, frame.id);
       if (frame.payload.kind === "arp") this.wan.handleArp(frame.payload, frame.id, ctx, this.emitWan(ctx));
       else if (frame.payload.kind === "ipv4") this.handleWanIp(frame.payload, frame.id, ctx);
+      else if (frame.payload.kind === "ipv6") this.handleWan6(frame.payload, frame, ctx);
       return;
     }
 
@@ -262,6 +369,12 @@ export class Router implements SimNode {
     if (frame.dst === BROADCAST_MAC) {
       this.floodLan(port, frame, ctx, "브로드캐스트");
       this.deliverLan(frame, ctx);
+      return;
+    }
+    // 멀티캐스트는 내부 스위치가 모든 LAN 포트로 뿌리고, 공유기 LAN IPv6 가 가입한 그룹(모든 노드·모든 라우터·solicited-node)이면 공유기도 받는다
+    if (isMulticastMac(frame.dst)) {
+      this.floodLan(port, frame, ctx, `멀티캐스트 ${frame.dst}`);
+      if (this.lan6.accepts(frame.dst) && frame.payload.kind === "ipv6") this.handleLan6(frame.payload, frame, ctx);
       return;
     }
     if (frame.dst === this.lan.mac) {
@@ -311,6 +424,10 @@ export class Router implements SimNode {
       this.lan.handleArp(frame.payload, frame.id, ctx, emit);
       return;
     }
+    if (frame.payload.kind === "ipv6") {
+      this.handleLan6(frame.payload, frame, ctx);
+      return;
+    }
     const pkt = frame.payload;
     if (pkt.kind !== "ipv4") return;
     if (pkt.payload.kind === "udp") {
@@ -345,6 +462,109 @@ export class Router implements SimNode {
       return;
     }
     this.forwardToWan(pkt, frame.id, ctx);
+  }
+
+  // ---------- IPv6 (NAT 없음) ----------
+
+  /** 공유기 자신에게 온 IPv6: ping 에 답하고, DNS 질의는 포워더로 */
+  private local6(pkt: Ipv6Packet, via: Ipv6Interface, emit: (f: EthernetFrame) => void, frameId: number, ctx: NodeContext): void {
+    const p = pkt.payload;
+    if (p.kind === "icmp6" && p.type === "echo-request") {
+      ctx.trace("icmp.echo.received", "app", `ICMPv6 Echo 요청 수신 (from ${pkt.src}, seq=${p.seq})`, { from: pkt.src, seq: p.seq }, frameId);
+      const src = pkt.dst === ALL_NODES ? via.sourceFor(pkt.src) : pkt.dst;
+      if (!src) return;
+      ctx.trace("icmp.reply.sent", "app", `ICMPv6 Echo 응답 생성 → ${pkt.src} (seq=${p.seq})`, { to: pkt.src, seq: p.seq });
+      via.send({ kind: "ipv6", src, dst: pkt.src, hopLimit: 64, payload: { kind: "icmp6", type: "echo-reply", id: p.id, seq: p.seq } }, ctx, emit);
+      return;
+    }
+    if (p.kind === "udp" && p.payload.kind === "dns" && p.dstPort === DNS_PORT && via === this.lan6) {
+      if (this.dnsForwarder.config.enabled || p.payload.op === "response") this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frameId, ctx, emit);
+      else ctx.trace("dns.nxdomain", "app", `DNS 포워더가 꺼져 있음 → IPv6 로 온 질의에 응답하지 않음`, {}, frameId);
+      return;
+    }
+    if (pkt.dst === ALL_NODES) return;
+    ctx.trace("ip.drop", "L4", `공유기 자신에게 온 IPv6 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : "패킷"} → 듣는 서비스 없음, 드롭`, {}, frameId);
+  }
+
+  /** LAN 에서 온 IPv6: NDP·공유기 자신·바깥으로 (NAT 없이 주소 그대로) */
+  private handleLan6(pkt: Ipv6Packet, frame: EthernetFrame, ctx: NodeContext): void {
+    const emit = this.emitLan(ctx);
+    if (!this.ipv6Enabled || !this.lan6.enabled) {
+      if (frame.dst === this.lan.mac) ctx.trace("frame.drop", "L3", `IPv6 패킷 수신 → 공유기 IPv6 가 꺼져 있어 드롭 (공유기 설정에서 IPv6 를 켜세요)`, {}, frame.id);
+      return;
+    }
+    const p = pkt.payload;
+    if (isNdp(p)) {
+      this.lan6.handleNdp(pkt, p, frame, ctx, emit);
+      return;
+    }
+    if (this.lan6.owns(pkt.dst) || this.wan6.owns(pkt.dst) || pkt.dst === ALL_NODES) {
+      this.local6(pkt, this.lan6, emit, frame.id, ctx);
+      return;
+    }
+    if (isMulticast6(pkt.dst)) return;
+    if (isLinkLocal6(pkt.src) || isLinkLocal6(pkt.dst) || pkt.src === UNSPECIFIED6) {
+      ctx.trace("ip.drop", "L3", `[lan] 링크 로컬 주소(fe80::/10)가 낀 패킷은 인터넷으로 넘기지 않음 → 드롭. 공인 IPv6 주소(SLAAC)가 필요하다`, { src: pkt.src, dst: pkt.dst }, frame.id);
+      return;
+    }
+    if (this.lan6.onLink(pkt.dst)) {
+      ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 는 LAN 안의 주소 → 공유기를 거칠 필요가 없음 (호스트끼리 직접 통신) → 드롭`, { dst: pkt.dst }, frame.id);
+      return;
+    }
+    if (pkt.hopLimit <= 1) {
+      const notice = this.lan6.timeExceeded(pkt, ctx, frame.id);
+      if (notice) this.lan6.send(notice, ctx, emit);
+      return;
+    }
+    if (!this.wan6.defaultRouter) {
+      ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 로 가는 IPv6 경로가 없음 — WAN 이 ISP 의 RA 를 받지 못해 IPv6 기본 게이트웨이가 없음 (WAN 케이블·ISP 확인)`, { dst: pkt.dst }, frame.id);
+      const notice = this.lan6.unreachable(pkt, "net", ctx, frame.id);
+      if (notice) this.lan6.send(notice, ctx, emit);
+      return;
+    }
+    if (!this.firewall.check(pkt, "out", ctx, frame.id)) return;
+    this.inbound6.remember(pkt, ctx); // 나가는 흐름을 기억해 돌아오는 응답을 들인다
+    const out: Ipv6Packet = { ...pkt, hopLimit: pkt.hopLimit - 1 };
+    ctx.trace("ip.forward", "L3", `라우팅(IPv6): ${pkt.dst} → wan (IPv6 기본 게이트웨이 ${this.wan6.defaultRouter}) — NAT 없이 출발지 ${pkt.src} 가 그대로 인터넷에 보인다, Hop Limit ${pkt.hopLimit} → ${out.hopLimit}`, { dst: pkt.dst, out: "wan" }, frame.id);
+    this.wan6.send(out, ctx, this.emitWan(ctx));
+  }
+
+  /** WAN 에서 온 IPv6: ISP 의 RA·DHCPv6 Reply, 공유기 자신, 위임받은 프리픽스(LAN)로 */
+  private handleWan6(pkt: Ipv6Packet, frame: EthernetFrame, ctx: NodeContext): void {
+    const emit = this.emitWan(ctx);
+    if (!this.ipv6Enabled || !this.wan6.enabled) {
+      if (frame.dst === this.wan.mac) ctx.trace("frame.drop", "L3", `[wan] IPv6 패킷 수신 → 공유기 IPv6 가 꺼져 있어 드롭`, {}, frame.id);
+      return;
+    }
+    const p = pkt.payload;
+    if (isNdp(p)) {
+      this.wan6.handleNdp(pkt, p, frame, ctx, emit);
+      return;
+    }
+    if (p.kind === "udp" && p.payload.kind === "dhcp6" && p.dstPort === DHCP6_CLIENT_PORT) {
+      this.pd.handle(pkt.src, p.payload, frame.id, ctx, emit);
+      return;
+    }
+    if (this.wan6.owns(pkt.dst) || this.lan6.owns(pkt.dst) || pkt.dst === ALL_NODES) {
+      this.local6(pkt, this.wan6, emit, frame.id, ctx);
+      return;
+    }
+    if (isMulticast6(pkt.dst)) return;
+    const lanPrefix = this.lan6.addrs.find((a) => a.origin === "manual");
+    if (!lanPrefix || !this.lan6.onLink(pkt.dst) || isLinkLocal6(pkt.dst)) {
+      ctx.trace("ip.drop", "L3", `[wan] 목적지 ${pkt.dst} 는 위임받은 LAN 프리픽스가 아님 → 드롭`, { dst: pkt.dst }, frame.id);
+      return;
+    }
+    if (pkt.hopLimit <= 1) {
+      const notice = this.wan6.timeExceeded(pkt, ctx, frame.id);
+      if (notice) this.wan6.send(notice, ctx, emit);
+      return;
+    }
+    if (!this.firewall.check(pkt, "in", ctx, frame.id)) return;
+    if (!this.inbound6.check(pkt, "in", ctx, frame.id)) return;
+    const out: Ipv6Packet = { ...pkt, hopLimit: pkt.hopLimit - 1 };
+    ctx.trace("ip.forward", "L3", `라우팅(IPv6): ${pkt.dst} 는 위임받은 LAN 프리픽스 → LAN 으로 (NAT 역변환 없이 주소 그대로), Hop Limit ${pkt.hopLimit} → ${out.hopLimit}`, { dst: pkt.dst, out: "lan" }, frame.id);
+    this.lan6.send(out, ctx, this.emitLan(ctx));
   }
 
   private handleWanIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
@@ -424,6 +644,28 @@ export class Router implements SimNode {
   // ---------- 타이머 ----------
 
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
+    if (tag === DAD_TIMER_TAG) {
+      if (!this.lan6.finishDad(data, ctx, this.emitLan(ctx))) this.wan6.finishDad(data, ctx, this.emitWan(ctx));
+      return;
+    }
+    if (tag === RS_TIMER_TAG) {
+      this.wan6.onRsTimer(data, ctx, this.emitWan(ctx));
+      return;
+    }
+    if (tag === DHCP6_TIMER_TAG) {
+      this.pd.onTimer(data, ctx, this.emitWan(ctx));
+      return;
+    }
+    if (tag === NDP_TIMEOUT_TAG) {
+      // 바깥에서 LAN 호스트로 가려던 패킷의 주인이 없음 → 보낸 이에게 Address Unreachable (WAN 으로)
+      for (const pkt of this.lan6.onNsTimeout(data, ctx)) {
+        if (this.lan6.onLink(pkt.src)) continue;
+        const notice = this.wan6.unreachable(pkt, "host", ctx);
+        if (notice) this.wan6.send(notice, ctx, this.emitWan(ctx));
+      }
+      this.wan6.onNsTimeout(data, ctx);
+      return;
+    }
     if (tag === "arp-timeout") {
       // 바깥에서 들어와(포트 포워딩·NAT 역변환) LAN 호스트로 가려던 패킷의 주인이 없음 → 바깥의 보낸 이에게 Host Unreachable
       for (const pkt of this.lan.onArpTimeout(data, ctx)) {
@@ -468,6 +710,15 @@ export class Router implements SimNode {
         ["DNS 포워더", this.dnsForwarder.config.enabled ? `켜짐 · 업스트림 ${this.dnsForwarder.config.upstream ?? "없음"}` : "꺼짐"],
         ["무선", this.wifi.enabled ? `켜짐 · SSID ${this.wifi.ssid}` : "꺼짐"],
         ["방화벽", this.firewall.config.enabled ? `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}` : "꺼짐"],
+        ...(this.ipv6Enabled
+          ? ([
+              ["WAN IPv6", this.wan6.summary() || "없음"],
+              ["IPv6 기본 게이트웨이", this.wan6.defaultRouter ? `${this.wan6.defaultRouter} (ISP 의 RA)` : "없음"],
+              ["프리픽스 위임", this.pd.delegated ? `${this.pd.delegated.prefix}/${this.pd.delegated.length} (DHCPv6-PD)` : DHCP6_STATE_LABEL[this.pd.state]],
+              ["LAN IPv6", this.lan6.addrs.some((a) => a.origin === "manual") ? `${this.lan6.summary()} · RA 로 알림` : "없음 (위임 대기)"],
+              ["IPv6 인바운드 기본 차단", this.inbound6.config.enabled ? "켜짐 (Stateful — 안에서 시작한 통신의 응답만)" : "꺼짐 (바깥에서 바로 들어옴)"],
+            ] as [string, string][])
+          : []),
       ],
       tables: [
         { title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
@@ -482,6 +733,13 @@ export class Router implements SimNode {
         },
         { title: "ARP 캐시 (LAN)", columns: ["IP", "MAC", "학습 시각"], rows: this.lan.arpRows() },
         { title: "ARP 캐시 (WAN)", columns: ["IP", "MAC", "학습 시각"], rows: this.wan.arpRows() },
+        ...(this.ipv6Enabled
+          ? [
+              { title: "IPv6 주소", columns: ["인터페이스", "주소", "상태"], rows: [...this.lan6.addrRows().map((r) => ["lan", r[0]!, `${r[1]} · ${r[2]}`]), ...this.wan6.addrRows().map((r) => ["wan", r[0]!, `${r[1]} · ${r[2]}`])] },
+              { title: "이웃 캐시 (LAN)", columns: ["IPv6", "MAC", "학습 시각"], rows: this.lan6.neighborRows() },
+              { title: "이웃 캐시 (WAN)", columns: ["IPv6", "MAC", "학습 시각"], rows: this.wan6.neighborRows() },
+            ]
+          : []),
       ],
     };
   }

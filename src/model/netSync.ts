@@ -202,7 +202,7 @@ function validIp(s: string | undefined): string | undefined {
 
 /** IPv6 주소 칸: 표준 표기로, 틀리면 없음 */
 function validIp6(s: string | undefined): string | undefined {
-  return canonIp6(s?.trim());
+  return typeof s === "string" ? canonIp6(s.trim()) : undefined; // 손으로 고친 JSON 의 숫자 값은 없음으로
 }
 
 /** 호스트의 IPv6 설정 (꺼져 있으면 enabled: false) */
@@ -295,8 +295,11 @@ export function effectiveHttpProxy(d: Device) {
 export function effectiveDnsServer(d: Device) {
   if (!d.host) return undefined;
   const c = d.host.dnsServer ?? DEFAULT_DNS_SERVER;
-  // IPv4 주소면 A, IPv6 주소면 AAAA 레코드
-  const addr = (s: string | undefined) => validIp(s) ?? validIp6(s);
+  // IPv4 주소면 A, IPv6 주소면 AAAA 레코드 (앞뒤 공백은 칸 검증처럼 무시)
+  const addr = (s: string | undefined) => {
+    const t = typeof s === "string" ? s.trim() : undefined;
+    return validIp(t) ?? validIp6(t);
+  };
   return {
     enabled: c.enabled,
     records: c.records.filter((r) => r.name.trim() && addr(r.ip)).map((r) => ({ name: r.name.trim().toLowerCase(), ip: addr(r.ip)! })),
@@ -342,6 +345,7 @@ export function effectiveRouter(d: Device, current?: Router) {
     forwards: effectiveForwards(r.forwards),
     firewall: effectiveFirewall(r.firewall),
     wifi: { ...(r.wifi ?? DEFAULT_ROUTER_WIFI), ssid: (r.wifi ?? DEFAULT_ROUTER_WIFI).ssid.trim() || "home" },
+    ipv6: { enabled: r.ipv6?.enabled === true, inboundBlock: r.ipv6?.inboundBlock !== false },
   };
 }
 

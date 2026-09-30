@@ -1056,6 +1056,38 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await rec.first().scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${OUT}/67-dualstack-dns-records.png` });
 }
+// 듀얼 스택 집: 공유기가 DHCPv6-PD 로 /56 을 받아 LAN 에 RA, google.com 은 IPv6 로 NAT 없이, 바깥 IPv6 접속은 인바운드 기본 차단
+{
+  await loadEx("home6");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitAddr("pc-1", /^192\.168\.0\./);
+  await clickDevice("rt-1");
+  await goTab("개요");
+  for (let i = 0; i < 100; i++) {
+    const lines = await page.locator(".device-summary .summary-line").allTextContents();
+    if (lines.some((l) => l.includes("IPv6 LAN"))) break;
+    await page.waitForTimeout(100);
+  }
+  console.log("home6 router overview:", (await page.locator(".device-summary .summary-line").allTextContents()).join(" | "));
+  await goTab("설정");
+  await page.locator(".inspector h3", { hasText: "IPv6" }).first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/68-home6-router-ipv6.png` });
+  await clickDevice("pc-1");
+  await page.locator(".ping-row .picker .input").first().fill("google.com");
+  await page.keyboard.press("Escape");
+  await page.click(".ping-row .btn:has-text('ping')");
+  await page.locator(".inspector .ping-log li.ok").first().waitFor({ timeout: 30000 });
+  console.log("home6 ping google.com:", (await page.locator(".inspector .ping-log li").first().textContent())?.replace(/\s+/g, " "));
+  await clickDevice("internet-1");
+  const opts = await page.locator(`.inspector datalist option`).evaluateAll((els) => els.map((e) => `${e.getAttribute("value")} ${e.textContent}`));
+  console.log("home6 inet targets:", opts.join(" | "));
+  const v6 = opts.find((o) => o.includes("srv-1 (IPv6"))?.split(" ")[0] ?? "";
+  await page.locator(".tcp-row input").first().fill(v6);
+  await page.click(".inspector .btn:has-text('접속')");
+  await page.locator(".inspector .tcp-log li.failed").first().waitFor({ timeout: 30000 });
+  console.log("home6 inbound blocked:", (await page.locator(".inspector .tcp-log li").first().textContent())?.replace(/\s+/g, " "));
+  await page.screenshot({ path: `${OUT}/69-home6-inbound-blocked.png` });
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

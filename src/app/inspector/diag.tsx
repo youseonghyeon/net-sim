@@ -2,7 +2,7 @@
 import { useState } from "preact/hooks";
 import { Host } from "../../core/nodes/host";
 import { endpoint, TCP_STATE_LABEL } from "../../core/nodes/tcp";
-import { isIpv6 } from "../../core/addr6";
+import { isIpv6, sameSubnet6 } from "../../core/addr6";
 import { Internet } from "../../core/nodes/internet";
 import { L3Node } from "../../core/nodes/l3";
 import type { SnapshotTable as SnapshotTableData } from "../../core/nodes/node";
@@ -27,15 +27,24 @@ export function InternetDiagSection({ d }: { d: Device }) {
     if (n instanceof Router && n.wan.ip) publics.push({ ip: n.wan.ip, name: `${other.name} WAN` });
     if (n instanceof L3Node && n.nat && n.ifaces[0]?.ip) publics.push({ ip: n.ifaces[0].ip, name: `${other.name} outside` });
   }
+  // IPv6: NAT 가 없어 공유기 뒤 장치의 주소가 곧 공인 주소 (위임받은 프리픽스 안)
+  const inet = sim.node(d.id);
+  if (inet instanceof Internet) {
+    for (const other of topology.value.devices) {
+      const n = sim.node(other.id);
+      if (!(n instanceof Host)) continue;
+      for (const a of n.v6.globals) if ([...inet.delegations.keys()].some((p) => sameSubnet6(a.ip, p, Internet.PD_LENGTH))) publics.push({ ip: a.ip, name: `${other.name} (IPv6, NAT 없음)` });
+    }
+  }
   const go = () => {
     const dst = (inetDst || publics[0]?.ip || "").trim();
     const p = Math.min(65535, Math.max(1, Number(inetPort) || 80));
-    if (!dst || !validIp(dst)) return;
+    if (!dst || !(validIp(dst) || isIpv6(dst))) return;
     sim.act({ kind: "inet-connect", nodeId: d.id, dst, port: p });
   };
   return (
     <Section title="외부에서 접속">
-      <p class="note">인터넷 저편의 클라이언트(198.51.100.7)가 우리 공인 주소로 TCP 연결을 시도합니다. 포트 포워딩 규칙이 없으면 NAT 에서 드롭됩니다.</p>
+      <p class="note">인터넷 저편의 클라이언트(198.51.100.7, IPv6 는 2001:db8:beef::7)가 우리 공인 주소로 TCP 연결을 시도합니다. IPv4 는 포트 포워딩 규칙이 없으면 NAT 에서 드롭되고, IPv6 는 NAT 가 없어 집 안 장치의 주소로 바로 가므로 공유기의 IPv6 인바운드 기본 차단이 막습니다.</p>
       <div class="ping-row tcp-row">
         <input class="input mono" list={`publics-${d.id}`} placeholder="공인 주소" value={inetDst || publics[0]?.ip || ""} onInput={(e) => setInetDst(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && go()} />
         <datalist id={`publics-${d.id}`}>
@@ -54,15 +63,13 @@ export function InternetDiagSection({ d }: { d: Device }) {
       {(() => {
         const node = sim.node(d.id);
         if (!(node instanceof Internet)) return null;
-        const conns = [...node.tcp.conns.values()].filter((c) => c.localIp === Internet.REMOTE_CLIENT).slice(-3).reverse();
+        const conns = [...node.tcp.conns.values()].filter((c) => c.localIp === Internet.REMOTE_CLIENT || c.localIp === Internet.REMOTE_CLIENT6).slice(-3).reverse();
         if (conns.length === 0) return null;
         return (
           <ul class="ping-log tcp-log">
             {conns.map((c) => (
               <li key={c.id} class={c.state === "FAILED" ? "failed" : (c.state === "CLOSED" && c.bytesReceived > 0) || (c.ssh?.open && c.state === "ESTABLISHED") ? "ok" : ""}>
-                <span class="mono">
-                  → {c.remoteIp}:{c.remotePort}
-                </span>
+                <span class="mono">→ {endpoint(c.remoteIp, c.remotePort)}</span>
                 <span>
                   {c.state === "FAILED"
                     ? `실패 · ${c.reason ?? ""}`

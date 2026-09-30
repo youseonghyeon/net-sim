@@ -6,6 +6,7 @@ import { Internet } from "../core/nodes/internet";
 import { L3Node } from "../core/nodes/l3";
 import type { NetInterface } from "../core/nodes/iface";
 import type { Ipv6Interface } from "../core/nodes/ipv6";
+import { DHCP6_STATE_LABEL } from "../core/nodes/dhcp6";
 import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { Switch } from "../core/nodes/switch";
@@ -44,6 +45,11 @@ export function ipv6StatusOf(node: SimNode | undefined): StatusLine | null {
   if (node instanceof Host) {
     const l = v6Line(node.v6);
     return l && { ...l, text: `IPv6 ${l.text}` };
+  }
+  if (node instanceof Router && node.ipv6Enabled) {
+    const lan = node.lan6.addrs.find((a) => a.origin === "manual");
+    if (lan) return { text: `IPv6 LAN ${lan.ip}/64 · 위임 ${node.pd.delegated?.prefix}/${node.pd.delegated?.length}`, tone: "ok", mono: true };
+    return { text: `IPv6 프리픽스 위임 ${DHCP6_STATE_LABEL[node.pd.state]}`, tone: node.pd.state === "failed" ? "warn" : "muted", mono: false };
   }
   if (node instanceof L3Node && node.ipv6Enabled) {
     const parts = node.v6.map((v, i) => ({ v, i })).filter(({ v, i }) => node.linkUp[i] || v.addrs.some((a) => a.origin !== "link-local"));
@@ -126,6 +132,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
     if (node.firewall.config.enabled) out.push("방화벽");
     if (node.wifi.enabled) out.push(`Wi-Fi ${node.wifi.ssid}`);
+    if (node.ipv6Enabled) out.push("IPv6");
   } else if (node instanceof L3Node) {
     if (node.relays.some(Boolean)) out.push("DHCP 릴레이");
     if (node.rip.config.enabled) out.push("RIP");

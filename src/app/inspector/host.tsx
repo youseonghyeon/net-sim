@@ -118,7 +118,7 @@ export function Ipv6Section({ d, h }: { d: Device; h: HostSettings }) {
           <Field label="기본 게이트웨이" error={ip6Error(v.gateway, false, true)}>
             <input class="input mono" value={v.gateway} placeholder="라우터 주소 (fe80:: 도 됨)" onInput={(e) => set({ gateway: e.currentTarget.value })} />
           </Field>
-          <Field label="IPv6 DNS 서버" error={ip6Error(v.dns ?? "", false)}>
+          <Field label="IPv6 DNS 서버" error={ip6Error(v.dns ?? "", false, true)}>
             <input class="input mono" value={v.dns ?? ""} placeholder="IPv4 DNS 가 있으면 그쪽을 먼저 씀" onInput={(e) => set({ dns: e.currentTarget.value })} />
           </Field>
           <p class="note">

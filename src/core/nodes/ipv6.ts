@@ -105,10 +105,14 @@ export class Ipv6Interface {
   private readonly prefixRouters = new Map<string, Set<Ip>>();
   /** 실행 중에 주소가 사라질 때 (RA 거둠 등): 호스트가 그 주소의 연결을 정리한다 */
   onAddrRemoved: ((ip: Ip, ctx: NodeContext) => void) | undefined;
+  /** 링크 로컬이 DAD 를 통과해 쓸 수 있게 됐을 때 (공유기 WAN 이 DHCPv6-PD 를 시작한다) */
+  onLinkLocalReady: ((ctx: NodeContext, emit: Emit) => void) | undefined;
   private rsTries = 0;
   private rsTimer: TimerHandle | undefined;
   /** 링크가 살아 있는지 (실패 문구용) */
   private up = false;
+  /** 라우터: RA 가 꺼져 있을 때 RS 에 답하지 않는 이유 (없으면 "RA 광고가 꺼져 있음") */
+  raOffReason: string | undefined;
   /** 라우터: 이 인터페이스로 RA 를 보내는지, RDNSS 로 알릴 DNS */
   raOn = false;
   raDns: Ip | undefined;
@@ -154,6 +158,16 @@ export class Ipv6Interface {
   /** SLAAC 호스트가 아직 RA 를 기다리는 중 (RS 를 보내고 답을 기다림) */
   get raWaiting(): boolean {
     return this.rsTimer !== undefined;
+  }
+
+  /**
+   * 이미 동작 중인 장비(ISP)로 시작: 주소를 DAD 없이 곧바로 쓰고, 링크 업에도 아무것도 보내지 않는다 (RS·NS 에만 답한다).
+   * 인터넷 노드가 IPv6 를 쓰지 않는 구성의 로그를 바꾸지 않으려고
+   */
+  startQuiet(cfg: Ipv6Settings): void {
+    this.init(cfg);
+    for (const a of this.addrs) a.state = "preferred";
+    this.up = true;
   }
 
   /** 기본 게이트웨이: 수동 설정, 없으면 RA 로 배운 첫 라우터 */
@@ -499,6 +513,7 @@ export class Ipv6Interface {
     if (a.origin === "link-local") {
       if (this.slaac && this.routers.size === 0) this.sendRs(ctx, emit);
       if (this.raOn) this.sendRa(ctx, emit);
+      this.onLinkLocalReady?.(ctx, emit);
     }
     // 수동 주소는 MAC 과 무관해 장비를 바꿔 끼워도 같은 주소일 수 있다: 요청하지 않은 NA 로 알려 이웃 캐시의 옛 MAC 을 고치게 한다
     // (IPv4 의 Gratuitous ARP. 링크 로컬·SLAAC 주소는 MAC 에서 나오므로 장비가 바뀌면 주소도 바뀐다)
@@ -683,7 +698,7 @@ export class Ipv6Interface {
   private handleRs(pkt: Ipv6Packet, sll: Mac | undefined, frame: EthernetFrame, ctx: NodeContext, emit: Emit): void {
     if (!this.router) return; // 호스트는 모든 라우터 그룹에 가입하지 않아 오지 않는다
     if (!this.raOn) {
-      ctx.trace("ndp.rs.received", "L3", `${this.tag}RS 수신 (from ${pkt.src}) — 이 인터페이스는 RA 광고가 꺼져 있어 응답 안 함 (IPv6 설정에서 RA 광고를 켜면 SLAAC 호스트가 주소를 만든다)`, { from: pkt.src }, frame.id);
+      ctx.trace("ndp.rs.received", "L3", `${this.tag}RS 수신 (from ${pkt.src}) — ${this.raOffReason ?? "이 인터페이스는 RA 광고가 꺼져 있어 응답 안 함 (IPv6 설정에서 RA 광고를 켜면 SLAAC 호스트가 주소를 만든다)"}`, { from: pkt.src }, frame.id);
       return;
     }
     ctx.trace("ndp.rs.received", "L3", `${this.tag}RS 수신 (from ${pkt.src}): 라우터를 찾는 호스트 → 곧바로 RA`, { from: pkt.src }, frame.id);

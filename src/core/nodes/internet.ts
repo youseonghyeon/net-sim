@@ -1,7 +1,28 @@
 import { isMulticastMac, isPrivateIp, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, icmpLabel, isControl, UNREACHABLE_LABEL, type DnsMessage, type EthernetFrame, type Ipv4Packet } from "../packet";
+import { ALL_NODES, formatIp6, isGlobal6, isIpv6, isMulticast6, parseIp6, sameSubnet6 } from "../addr6";
+import {
+  DHCP_CLIENT_PORT,
+  DHCP_SERVER_PORT,
+  DHCP6_MULTICAST_MAC,
+  DHCP6_CLIENT_PORT,
+  DHCP6_SERVER_PORT,
+  DNS_PORT,
+  describeFrame,
+  icmpLabel,
+  isControl,
+  isNdp,
+  UNREACHABLE_LABEL,
+  UNREACHABLE6_LABEL,
+  type Dhcp6Message,
+  type DnsMessage,
+  type EthernetFrame,
+  type IpPacket,
+  type Ipv4Packet,
+  type Ipv6Packet,
+} from "../packet";
 import { DhcpServer } from "./dhcp";
-import { normalizeName, PUBLIC_ZONE } from "./dns";
+import { normalizeName, PUBLIC_ZONE, PUBLIC_ZONE6 } from "./dns";
+import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG } from "./ipv6";
 import { NetInterface, type Emit } from "./iface";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { TCP_TIMER_TAG, TcpStack } from "./tcp";
@@ -21,8 +42,16 @@ export const KNOWN_SERVERS: Record<Ip, string> = {
   ...Object.fromEntries(PUBLIC_ZONE.map((r) => [r.ip, r.name])),
 };
 
+/** 이름이 알려진 공인 IPv6 서버 */
+export const KNOWN_SERVERS6: Record<Ip, string> = {
+  "2001:4860:4860::8888": "Google DNS",
+  "2606:4700:4700::1111": "Cloudflare DNS",
+  ...Object.fromEntries(PUBLIC_ZONE6.map((r) => [r.ip, r.name])),
+};
+
 /** 공인 DNS 서버 주소 (이 주소들로 온 질의에 PUBLIC_ZONE 으로 답한다) */
 export const PUBLIC_DNS: Ip[] = ["8.8.8.8", "1.1.1.1"];
+export const PUBLIC_DNS6: Ip[] = ["2001:4860:4860::8888", "2606:4700:4700::1111"];
 
 /**
  * 인터넷(ISP) 노드. 포트 하나로 라우터 WAN 과 연결된다.
@@ -33,6 +62,13 @@ export class Internet implements SimNode {
   static readonly LATENCY = 30;
   /** "인터넷 저편의 클라이언트" 주소 (RFC 5737 TEST-NET-2). 바깥에서 시작하는 연결의 출발지 */
   static readonly REMOTE_CLIENT: Ip = "198.51.100.7";
+  /** 인터넷 저편 클라이언트의 IPv6 주소 */
+  static readonly REMOTE_CLIENT6: Ip = "2001:db8:beef::7";
+  /** ISP 링크의 IPv6 (고객 라우터 WAN 이 여기서 RA 로 주소를 만든다) */
+  static readonly ISP_V6: Ip = "2001:db8:ffff::1";
+  /** DHCPv6-PD 로 나눠 줄 풀 (/40 에서 고객마다 /56) */
+  static readonly PD_POOL: Ip = "2001:db8:1000::";
+  static readonly PD_LENGTH = 56;
 
   readonly type = "internet" as const;
   readonly portCount = 1;
@@ -41,12 +77,20 @@ export class Internet implements SimNode {
   readonly dhcpServer: DhcpServer;
   /** 인터넷 저편의 웹 서버들을 대신하는 TCP 스택 (응답은 왕복 지연 뒤에 나간다) */
   readonly tcp: TcpStack;
+  /** ISP 의 IPv6: RS 에 RA 로, NS 에 NA 로만 답한다 (먼저 보내지 않아 IPv6 를 안 쓰는 구성의 로그는 그대로) */
+  readonly v6: Ipv6Interface;
+  /** 고객(클라이언트 MAC)마다 한 번 정한 /56 (다시 요청하면 같은 것) */
+  private readonly pdAlloc = new Map<Mac, Ip>();
+  /** 지금 위임 중인 프리픽스 → 그 고객 라우터 (WAN 링크 로컬 = 넥스트 홉) */
+  readonly delegations = new Map<Ip, { client: Mac; via: Ip; at: number }>();
 
   constructor(cfg: InternetConfig) {
     this.id = cfg.id;
     this.iface = new NetInterface(cfg.mac, { ip: cfg.ip ?? "203.0.113.1", prefix: cfg.prefix ?? 24 });
     this.dhcpServer = new DhcpServer({ enabled: true, ...(cfg.pool ?? { start: "203.0.113.100", end: "203.0.113.199" }) }, this.iface);
     this.tcp = new TcpStack({ send: (pkt, ctx) => ctx.timer(Internet.LATENCY * 2, "inet-send", { pkt }) });
+    this.v6 = new Ipv6Interface(cfg.mac, true, "isp");
+    this.v6.startQuiet({ enabled: true, addrs: [{ ip: Internet.ISP_V6, prefix: 64 }], ra: true, raDns: PUBLIC_DNS6[0] });
     this.tcp.listening.add(80);
     this.tcp.listening.add(22); // 인터넷 저편 서버들은 SSH 도 받는다 (오래 열린 세션 실험용)
   }
@@ -57,6 +101,17 @@ export class Internet implements SimNode {
 
   /** 인터넷 저편의 클라이언트가 dst:port 로 TCP 연결을 시작한다 (포트 포워딩 시연용) */
   connectFrom(dst: Ip, port: number, ctx: NodeContext): void {
+    if (isIpv6(dst)) {
+      const src6 = Internet.REMOTE_CLIENT6;
+      if (!this.route6(dst)) {
+        ctx.trace("ip.drop", "L3", `인터넷 저편의 클라이언트 ${src6} 가 [${dst}]:${port} 로 연결 시도 — ISP 가 모르는 IPv6 주소 (공유기가 DHCPv6-PD 로 위임받은 프리픽스 안이어야 인터넷에서 닿는다)`, { src: src6, dst, port });
+        this.tcp.recordFailure(src6, dst, port, "ISP 가 모르는 IPv6 주소", ctx);
+        return;
+      }
+      ctx.trace("inet.forward", "app", `인터넷 저편의 클라이언트 ${src6} 가 [${dst}]:${port} 로 연결 시도 (바깥에서 시작한 통신, IPv6 — NAT 가 없어 집 안 장치의 주소로 바로 간다)`, { src: src6, dst, port });
+      this.tcp.connect(src6, dst, port, ctx);
+      return;
+    }
     const src = Internet.REMOTE_CLIENT;
     if (isPrivateIp(dst)) {
       ctx.trace("ip.drop", "L3", `인터넷 저편의 클라이언트 ${src} 가 ${dst}:${port} 로 연결 시도 — 사설 주소는 인터넷에서 라우팅되지 않아 보낼 수 없음 (공인 주소 + 포트 포워딩이 필요함)`, { src, dst, port });
@@ -69,13 +124,20 @@ export class Internet implements SimNode {
 
   onLink(_port: number, up: boolean, ctx: NodeContext): void {
     ctx.trace(up ? "link.up" : "link.down", "L1", up ? `ISP 회선 연결됨` : `ISP 회선 끊김`);
-    if (!up) this.iface.clearPending();
+    if (!up) {
+      this.iface.clearPending();
+      this.v6.clearPending();
+      this.v6.neighbors.clear();
+      // 고객이 모두 이 선 너머라 회선이 끊기면 위임 경로도 쓸 수 없다 (다시 이어지면 공유기가 다시 요청)
+      this.delegations.clear();
+    }
   }
 
   receive(_port: number, frame: EthernetFrame, ctx: NodeContext): void {
-    // 가입하지 않은 멀티캐스트(예: 라우터끼리 주고받는 RIP)는 NIC 가 하드웨어에서 조용히 거른다
-    if (isMulticastMac(frame.dst)) return;
-    if (!this.iface.accepts(frame)) {
+    // 가입하지 않은 멀티캐스트(예: 라우터끼리 주고받는 RIP)는 NIC 가 하드웨어에서 조용히 거른다. IPv6 는 모든 노드·solicited-node·모든 라우터·DHCPv6 서버 그룹
+    const v6Group = this.v6.accepts(frame.dst) || frame.dst === DHCP6_MULTICAST_MAC;
+    if (isMulticastMac(frame.dst) && !v6Group) return;
+    if (!this.iface.accepts(frame) && !v6Group) {
       ctx.trace("frame.drop", "L2", `목적지 MAC ${frame.dst} 가 ISP 게이트웨이 MAC 아님 → 드롭`, { dst: frame.dst }, frame.id);
       return;
     }
@@ -85,6 +147,152 @@ export class Internet implements SimNode {
       return;
     }
     if (frame.payload.kind === "ipv4") this.handleIp(frame.payload, frame.id, ctx);
+    else if (frame.payload.kind === "ipv6") this.handleIp6(frame.payload, frame, ctx);
+  }
+
+  // ---------- IPv6 ----------
+
+  /** 위임한 프리픽스 중 이 주소가 속한 것 */
+  private delegationFor(ip: Ip): { prefix: Ip; via: Ip; client: Mac } | undefined {
+    for (const [prefix, d] of this.delegations) if (sameSubnet6(ip, prefix, Internet.PD_LENGTH)) return { prefix, via: d.via, client: d.client };
+    return undefined;
+  }
+
+  /** ISP 가 이 주소로 보낼 수 있는지: ISP 링크, 위임한 프리픽스 (넥스트 홉 = 고객 라우터) */
+  private route6(dst: Ip): { nextHop?: Ip } | undefined {
+    if (sameSubnet6(dst, Internet.ISP_V6, 64)) return {};
+    const d = this.delegationFor(dst);
+    return d ? { nextHop: d.via } : undefined;
+  }
+
+  /** 인터넷 저편에서 만든 IPv6 패킷을 고객에게 */
+  private send6(pkt: Ipv6Packet, ctx: NodeContext): void {
+    const r = this.route6(pkt.dst);
+    if (!r) {
+      ctx.trace("ip.no-route", "L3", `ISP: ${pkt.dst} 로 가는 IPv6 경로가 없음 (위임한 프리픽스·ISP 링크가 아님) → 드롭`, { dst: pkt.dst });
+      return;
+    }
+    this.v6.send(pkt, ctx, this.emit(ctx), r.nextHop);
+  }
+
+  /** 공인 IPv6 인터넷 저편으로 보는 주소: 글로벌인데 문서용(2001:db8::/32)은 아님 */
+  private static isPublic6(ip: Ip): boolean {
+    return isGlobal6(ip) && !sameSubnet6(ip, "2001:db8::", 32);
+  }
+
+  private handleIp6(pkt: Ipv6Packet, frame: EthernetFrame, ctx: NodeContext): void {
+    const emit = this.emit(ctx);
+    const p = pkt.payload;
+    if (isNdp(p)) {
+      this.v6.handleNdp(pkt, p, frame, ctx, emit);
+      return;
+    }
+    if (p.kind === "udp" && p.payload.kind === "dhcp6" && p.dstPort === DHCP6_SERVER_PORT) {
+      this.handleDhcp6(pkt, p.payload, frame.id, ctx);
+      return;
+    }
+    if (this.v6.owns(pkt.dst) || pkt.dst === ALL_NODES) {
+      if (p.kind === "icmp6" && p.type === "echo-request") {
+        ctx.trace("icmp.echo.received", "app", `ISP 라우터가 ICMPv6 Echo 요청 수신 (from ${pkt.src})`, { from: pkt.src }, frame.id);
+        const src = pkt.dst === ALL_NODES ? Internet.ISP_V6 : pkt.dst;
+        this.send6({ kind: "ipv6", src, dst: pkt.src, hopLimit: 64, payload: { kind: "icmp6", type: "echo-reply", id: p.id, seq: p.seq } }, ctx);
+      } else ctx.trace("ip.drop", "L3", `ISP 라우터는 이 IPv6 패킷에 대한 서비스가 없음 → 드롭`, {}, frame.id);
+      return;
+    }
+    if (isMulticast6(pkt.dst)) return;
+    // 응답을 돌려줄 수 있는 출발지인가: ISP 가 경로를 아는 주소여야 한다 (IPv4 의 "사설 출발지" 드롭과 같은 자리)
+    if (!this.route6(pkt.src) && pkt.src !== Internet.REMOTE_CLIENT6) {
+      ctx.trace(
+        "ip.drop",
+        "L3",
+        `ISP: 출발지 ${pkt.src} 는 ISP 가 위임한 프리픽스·ISP 링크의 주소가 아님 → 응답을 돌려줄 경로가 없어 드롭. 인터넷 IPv6 는 공유기가 DHCPv6-PD 로 받은 프리픽스로 나가야 한다 (게이트웨이·NAT 박스에 손으로 넣은 IPv6 는 ISP 가 모른다)`,
+        { src: pkt.src },
+        frame.id,
+      );
+      return;
+    }
+    if (pkt.hopLimit <= 1) {
+      const notice = this.v6.timeExceeded(pkt, ctx, frame.id);
+      if (notice) this.send6(notice, ctx);
+      return;
+    }
+    // 다른 고객에게 가는 것은 그쪽 위임 경로로 (ISP 안에서 한 홉)
+    const r = this.route6(pkt.dst);
+    if (r) {
+      const d = this.delegationFor(pkt.dst);
+      ctx.trace("ip.forward", "L3", `ISP: ${pkt.dst} 는 ${d ? `고객에게 위임한 프리픽스 ${d.prefix}/${Internet.PD_LENGTH} → 그 공유기(${d.via})로` : "ISP 링크 안"}, Hop Limit ${pkt.hopLimit} → ${pkt.hopLimit - 1}`, { dst: pkt.dst }, frame.id);
+      this.v6.send({ ...pkt, hopLimit: pkt.hopLimit - 1 }, ctx, emit, r.nextHop);
+      return;
+    }
+    if (pkt.dst === Internet.REMOTE_CLIENT6 && p.kind === "tcp") {
+      this.tcp.handle(pkt, p, ctx);
+      return;
+    }
+    if (p.kind === "icmp6" && p.type === "unreachable" && pkt.dst === Internet.REMOTE_CLIENT6) {
+      const reason = `${UNREACHABLE6_LABEL[p.code]} (${pkt.src})`;
+      if (this.tcp.onUnreachable(p.original, reason, ctx)) ctx.trace("icmp.unreachable.received", "app", `외부 클라이언트가 ${pkt.src} 로부터 ICMPv6 ${UNREACHABLE6_LABEL[p.code]} 수신 → 연결 실패`, { from: pkt.src }, frame.id);
+      return;
+    }
+    if (!Internet.isPublic6(pkt.dst)) {
+      ctx.trace("ip.no-route", "L3", `ISP: ${pkt.dst} 는 인터넷에 없는 주소 (위임하지 않은 프리픽스·문서용 2001:db8::/32) → 드롭하고 Destination Unreachable (no route)`, { dst: pkt.dst }, frame.id);
+      const notice = this.v6.unreachable(pkt, "net", ctx, frame.id);
+      if (notice) this.send6(notice, ctx);
+      return;
+    }
+    const name = KNOWN_SERVERS6[pkt.dst];
+    if (p.kind === "udp" && p.payload.kind === "dns" && p.dstPort === DNS_PORT && p.payload.op === "query") {
+      if (!PUBLIC_DNS6.includes(pkt.dst)) {
+        ctx.trace("ip.drop", "L4", `${pkt.dst} 에는 DNS 서비스가 없음 → 드롭 (공인 IPv6 DNS 는 ${PUBLIC_DNS6.join(", ")})`, { dst: pkt.dst }, frame.id);
+        return;
+      }
+      const m = p.payload;
+      ctx.trace("dns.query.received", "app", `공인 DNS ${pkt.dst}: 질의 수신 "${normalizeName(m.name)}${m.qtype === "AAAA" ? " AAAA" : ""}?" (from ${pkt.src}, IPv6) — 답은 ${Internet.LATENCY * 2}ms 뒤`, { name: m.name, from: pkt.src }, frame.id);
+      ctx.timer(Internet.LATENCY * 2, "inet-dns", { server: pkt.dst, to: pkt.src, toPort: p.srcPort, id: m.id, name: m.name, qtype: m.qtype });
+      return;
+    }
+    if (p.kind === "tcp") {
+      ctx.trace("inet.forward", "app", `인터넷 경로로 [${pkt.dst}]${name ? ` (${name})` : ""}:${p.dstPort} 에 전달 (IPv6) — 중간 라우터 생략, 서버 응답은 ${Internet.LATENCY * 2}ms 뒤 도착`, { dst: pkt.dst, src: pkt.src }, frame.id);
+      this.tcp.handle(pkt, p, ctx);
+      return;
+    }
+    if (p.kind === "icmp6" && p.type === "echo-request") {
+      ctx.trace("inet.forward", "app", `인터넷 경로로 ${pkt.dst}${name ? ` (${name})` : ""} 에 전달 (IPv6) — 중간 라우터들은 생략, 왕복 ${Internet.LATENCY * 2}ms`, { dst: pkt.dst, src: pkt.src }, frame.id);
+      ctx.timer(Internet.LATENCY * 2, "inet-reply6", { src: pkt.src, dst: pkt.dst, id: p.id, seq: p.seq });
+      return;
+    }
+    ctx.trace("ip.drop", "L3", `공인 IPv6 주소 ${pkt.dst} 로 가는 패킷 → 시뮬레이션 밖이므로 드롭`, {}, frame.id);
+  }
+
+  /** DHCPv6-PD 서버: 고객 라우터마다 /56 을 위임하고 그 프리픽스로 가는 경로를 만든다 */
+  private handleDhcp6(pkt: Ipv6Packet, m: Dhcp6Message, frameId: number, ctx: NodeContext): void {
+    if (m.type === "release") {
+      for (const [prefix, d] of this.delegations) {
+        if (d.client !== m.clientId) continue;
+        this.delegations.delete(prefix);
+        ctx.trace("dhcp6.delegate", "app", `ISP: ${m.clientId} 가 ${prefix}/${Internet.PD_LENGTH} 를 돌려줌 → 그 프리픽스로 가는 경로 삭제`, { prefix, client: m.clientId }, frameId);
+      }
+      return;
+    }
+    if (m.type !== "solicit" && m.type !== "request") return;
+    let prefix = this.pdAlloc.get(m.clientId);
+    if (!prefix) {
+      const base = parseIp6(Internet.PD_POOL)!;
+      prefix = formatIp6(base | (BigInt(this.pdAlloc.size + 1) << BigInt(128 - Internet.PD_LENGTH)));
+      this.pdAlloc.set(m.clientId, prefix);
+    }
+    const type = m.type === "solicit" ? "advertise" : "reply";
+    if (m.type === "request") {
+      this.delegations.set(prefix, { client: m.clientId, via: pkt.src, at: ctx.now });
+      ctx.trace(
+        "dhcp6.delegate",
+        "app",
+        `ISP: ${prefix}/${Internet.PD_LENGTH} 를 ${m.clientId} 에게 위임 확정 → 이 프리픽스로 오는 패킷은 그 공유기(${pkt.src})로 보내는 경로 추가 (위임 = 경로)`,
+        { prefix, client: m.clientId, via: pkt.src },
+        frameId,
+      );
+    } else ctx.trace("dhcp6.received", "app", `ISP DHCPv6 서버: ${m.clientId} 의 Solicit (IA_PD) → ${prefix}/${Internet.PD_LENGTH} 를 제안 (Advertise)`, { prefix, client: m.clientId }, frameId);
+    const reply: Dhcp6Message = { kind: "dhcp6", type, xid: m.xid, clientId: m.clientId, serverId: this.iface.mac, prefix: { prefix, length: Internet.PD_LENGTH } };
+    this.v6.send({ kind: "ipv6", src: this.v6.linkLocal, dst: pkt.src, hopLimit: 64, payload: { kind: "udp", srcPort: DHCP6_SERVER_PORT, dstPort: DHCP6_CLIENT_PORT, payload: reply } }, ctx, this.emit(ctx));
   }
 
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
@@ -176,7 +384,7 @@ export class Internet implements SimNode {
       return;
     }
     const name = normalizeName(msg.name);
-    ctx.trace("dns.query.received", "app", `공인 DNS ${pkt.dst}: 질의 수신 "${name}?" (from ${pkt.src}) — 답은 ${Internet.LATENCY * 2}ms 뒤`, { name, from: pkt.src }, frameId);
+    ctx.trace("dns.query.received", "app", `공인 DNS ${pkt.dst}: 질의 수신 "${name}${msg.qtype === "AAAA" ? " AAAA" : ""}?" (from ${pkt.src}) — 답은 ${Internet.LATENCY * 2}ms 뒤`, { name, from: pkt.src }, frameId);
     ctx.timer(Internet.LATENCY * 2, "inet-dns", { server: pkt.dst, to: pkt.src, toPort: srcPort, id: msg.id, name: msg.name, qtype: msg.qtype });
   }
 
@@ -185,21 +393,41 @@ export class Internet implements SimNode {
       this.iface.onArpTimeout(data, ctx);
       return;
     }
+    if (tag === DAD_TIMER_TAG) {
+      this.v6.finishDad(data, ctx, this.emit(ctx));
+      return;
+    }
+    if (tag === NDP_TIMEOUT_TAG) {
+      this.v6.onNsTimeout(data, ctx);
+      return;
+    }
+    if (tag === "inet-reply6") {
+      const { src, dst, id, seq } = data as { src: Ip; dst: Ip; id: number; seq: number };
+      const name = KNOWN_SERVERS6[dst];
+      ctx.trace("inet.reply", "app", `${dst}${name ? ` (${name})` : ""} 가 응답 → ${src} 로 회신 (Hop Limit 54: 중간 라우터 10개를 지났다고 가정)`, { from: dst, to: src, seq });
+      this.send6({ kind: "ipv6", src: dst, dst: src, hopLimit: 54, payload: { kind: "icmp6", type: "echo-reply", id, seq } }, ctx);
+      return;
+    }
     if (tag === "inet-dns") {
       const { server, to, toPort, id, name, qtype } = data as { server: Ip; to: Ip; toPort: number; id: number; name: string; qtype?: "A" | "AAAA" };
+      const reply = (msg: DnsMessage) => {
+        if (isIpv6(to)) this.send6({ kind: "ipv6", src: server, dst: to, hopLimit: 54, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } }, ctx);
+        else this.iface.sendIp({ kind: "ipv4", src: server, dst: to, ttl: 54, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } }, ctx, this.emit(ctx));
+      };
       const rec = PUBLIC_ZONE.find((r) => r.name === normalizeName(name));
       if (qtype === "AAAA") {
-        // 공개 이름의 IPv6 주소(AAAA)는 아직 없다: 이름은 있으면 NODATA, 없으면 NXDOMAIN
-        const msg: DnsMessage = { kind: "dns", id, op: "response", name, qtype, rcode: rec ? "NODATA" : "NXDOMAIN" };
-        ctx.trace(rec ? "dns.response.sent" : "dns.nxdomain", "app", rec ? `공인 DNS ${server}: ${normalizeName(name)} 의 AAAA(IPv6 주소) 레코드 없음 → NODATA (이름은 있음 — A 로 다시 물으면 된다)` : `공인 DNS ${server}: ${normalizeName(name)} 은(는) 등록되지 않은 이름 → NXDOMAIN`, { name, qtype });
-        this.iface.sendIp({ kind: "ipv4", src: server, dst: to, ttl: 54, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } }, ctx, this.emit(ctx));
+        // 공개 이름의 IPv6 주소: 있으면 AAAA, 이름만 있으면 NODATA (github.com·naver.com 은 실제로도 아직 IPv6 가 없다)
+        const rec6 = PUBLIC_ZONE6.find((r) => r.name === normalizeName(name));
+        const msg: DnsMessage = rec6 ? { kind: "dns", id, op: "response", name, qtype, answer: rec6.ip } : { kind: "dns", id, op: "response", name, qtype, rcode: rec ? "NODATA" : "NXDOMAIN" };
+        if (rec6) ctx.trace("dns.response.sent", "app", `공인 DNS ${server}: ${normalizeName(name)} AAAA = ${rec6.ip} 응답 → ${to}`, { name, ip: rec6.ip, qtype });
+        else ctx.trace(rec ? "dns.response.sent" : "dns.nxdomain", "app", rec ? `공인 DNS ${server}: ${normalizeName(name)} 은(는) IPv6 주소(AAAA)가 없는 사이트 → NODATA (이름은 있음 — A 로 다시 물으면 IPv4 로 간다)` : `공인 DNS ${server}: ${normalizeName(name)} 은(는) 등록되지 않은 이름 → NXDOMAIN`, { name, qtype });
+        reply(msg);
         return;
       }
       const msg: DnsMessage = rec ? { kind: "dns", id, op: "response", name, answer: rec.ip } : { kind: "dns", id, op: "response", name, rcode: "NXDOMAIN" };
       if (rec) ctx.trace("dns.response.sent", "app", `공인 DNS ${server}: ${normalizeName(name)} = ${rec.ip} 응답 → ${to}`, { name, ip: rec.ip });
       else ctx.trace("dns.nxdomain", "app", `공인 DNS ${server}: ${normalizeName(name)} 은(는) 등록되지 않은 이름 → NXDOMAIN (아는 이름: ${PUBLIC_ZONE.map((r) => r.name).join(", ")})`, { name });
-      const reply: Ipv4Packet = { kind: "ipv4", src: server, dst: to, ttl: 54, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } };
-      this.iface.sendIp(reply, ctx, this.emit(ctx));
+      reply(msg);
       return;
     }
     if (tag === TCP_TIMER_TAG) {
@@ -207,8 +435,9 @@ export class Internet implements SimNode {
       return;
     }
     if (tag === "inet-send") {
-      const { pkt } = data as { pkt: Ipv4Packet };
-      this.iface.sendIp({ ...pkt, ttl: 54 }, ctx, this.emit(ctx));
+      const { pkt } = data as { pkt: IpPacket };
+      if (pkt.kind === "ipv6") this.send6({ ...pkt, hopLimit: 54 }, ctx);
+      else this.iface.sendIp({ ...pkt, ttl: 54 }, ctx, this.emit(ctx));
       return;
     }
     if (tag !== "inet-reply") return;
@@ -229,10 +458,13 @@ export class Internet implements SimNode {
         ["ISP 게이트웨이", `${this.iface.ip}/${this.iface.prefix}`],
         ["공인 주소 임대", `${pool.start} ~ ${pool.end}`],
         ["외부 클라이언트", Internet.REMOTE_CLIENT],
+        ["ISP IPv6", `${Internet.ISP_V6}/64 · RA 로 알림 · 위임 풀 ${Internet.PD_POOL}/40 (고객마다 /${Internet.PD_LENGTH})`],
+        ["외부 클라이언트 (IPv6)", Internet.REMOTE_CLIENT6],
       ],
       tables: [
         { title: "웹 서버 연결 (포트 80)", columns: ["상대", "상태", "보냄 / 받음"], rows: this.tcp.rows() },
         { title: "공인 주소 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
+        { title: "IPv6 프리픽스 위임 (DHCPv6-PD)", columns: ["프리픽스", "고객", "넥스트 홉"], rows: [...this.delegations.entries()].map(([p, d]) => [`${p}/${Internet.PD_LENGTH}`, d.client, d.via]) },
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: this.iface.arpRows() },
         { title: "알려진 서버", columns: ["IP", "이름"], rows: Object.entries(KNOWN_SERVERS) },
       ],

@@ -131,3 +131,23 @@ export function exampleDualStackTopology(): Topology {
     cables: [cable(pc1, 0, sw1, 0), cable(laptop, 0, sw1, 5), cable(sw1, 3, gw, 1), cable(gw, 2, sw2, 3), cable(sw2, 0, dns, 0), cable(sw2, 4, web, 0), cable(sw2, 7, old, 0)],
   };
 }
+
+/** 듀얼 스택 집: 공유기가 ISP 에게 /56 을 위임받아(DHCPv6-PD) LAN 에 /64 를 RA 로 알리고, IPv6 는 NAT 없이 나간다. 들어오는 것은 인바운드 기본 차단이 막는다 */
+export function exampleDualStackHomeTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -40);
+  const rt = add("router", 344, 96);
+  const sw = add("switch", 344, 272);
+  const pc = add("pc", 136, 440);
+  const laptop = add("laptop", 360, 440);
+  const srv = add("server", 584, 440);
+  rt.router = { ...rt.router!, ipv6: { enabled: true, inboundBlock: true } };
+  // 세 장치 모두 IPv4 는 공유기 DHCP, IPv6 는 공유기 RA 로 SLAAC
+  const slaac = { enabled: true, mode: "slaac" as const, ip: "", prefix: 64, gateway: "" };
+  for (const d of [pc, laptop, srv]) d.host = { ...d.host!, ipv6: { ...slaac } };
+  srv.host = { ...srv.host!, services: [80] };
+  return {
+    devices,
+    cables: [cable(inet, 0, rt, 0), cable(rt, 1, sw, 0), cable(sw, 2, pc, 0), cable(sw, 4, laptop, 0), cable(sw, 6, srv, 0)],
+  };
+}

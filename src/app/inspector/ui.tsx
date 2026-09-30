@@ -66,14 +66,14 @@ export function ipError(s: string, required: boolean): string | undefined {
 
 /** IPv4 또는 IPv6 주소 칸 (DNS 레코드·업스트림처럼 둘 다 되는 곳) */
 export function anyIpError(s: string, required: boolean): string | undefined {
-  const v = s.trim();
+  const v = typeof s === "string" ? s.trim() : "";
   if (!v) return required ? "필요한 값입니다" : undefined;
   return validIp(v) || isIpv6(v) ? undefined : "예: 192.168.0.20 또는 2001:db8::20";
 }
 
 /** IPv6 주소 칸 검증. linkLocalOk 가 아니면 fe80:: 는 "자동으로 생긴다" 고 안내 (주소 칸) */
 export function ip6Error(s: string, required: boolean, linkLocalOk = false): string | undefined {
-  const v = s.trim();
+  const v = typeof s === "string" ? s.trim() : "";
   if (!v) return required ? "필요한 값입니다" : undefined;
   if (!isIpv6(v)) return "예: 2001:db8:1::10";
   if (!linkLocalOk && isLinkLocal6(v)) return "링크 로컬(fe80::)은 MAC 에서 자동으로 생깁니다. 글로벌 주소(예: 2001:db8:1::10)를 넣으세요";

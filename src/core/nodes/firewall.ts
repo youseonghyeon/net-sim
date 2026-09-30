@@ -124,7 +124,11 @@ export class Firewall {
     if (this.flows.size > 512) this.flows.delete(this.flows.values().next().value!);
   }
 
-  constructor(public config: FirewallConfig = { ...DEFAULT_FIREWALL, rules: [] }) {}
+  constructor(
+    public config: FirewallConfig = { ...DEFAULT_FIREWALL, rules: [] },
+    /** 로그 앞 이름 (공유기의 "IPv6 인바운드 기본 차단" 처럼 사용자 규칙과 구분할 때) */
+    private readonly label = "방화벽",
+  ) {}
 
   setConfig(cfg: FirewallConfig, ctx: NodeContext, label: string): void {
     const prev = this.config;
@@ -159,6 +163,16 @@ export class Firewall {
     return true;
   }
 
+  /** 검사 없이 흐름만 기억한다 (나가는 것은 모두 통과시키는 기본 방화벽: 돌아오는 응답을 Stateful 로 들이려고) */
+  remember(pkt: IpPacket, ctx: NodeContext): void {
+    if (!this.config.enabled || !this.config.stateful || !isInitiator(pkt)) return;
+    const key = flowKey(pkt, false);
+    if (this.flows.has(key)) return;
+    this.flows.add(key);
+    if (this.flows.size > 512) this.flows.delete(this.flows.values().next().value!);
+    this.onFlow?.(key, ctx);
+  }
+
   /** 지나가는 패킷 검사. true 면 통과. 차단이면 이유를 트레이스로 남긴다 */
   check(pkt: IpPacket, dir: FlowDirection, ctx: NodeContext, frameId?: number): boolean {
     if (!this.config.enabled) return true;
@@ -173,7 +187,7 @@ export class Firewall {
       ctx.trace(
         "fw.established",
         "L3",
-        `방화벽: ${dirLabel} ${what} 은(는) ${rule ? `규칙 ${idx + 1}(${describeRule(rule)})` : "기본 정책"} 상 차단이지만, 안에서 시작한 통신의 ${isIcmpErrorAny(pkt.payload) ? "오류 통지라" : "응답이라"} Stateful 검사로 허용`,
+        `${this.label}: ${dirLabel} ${what} 은(는) ${rule ? `규칙 ${idx + 1}(${describeRule(rule)})` : "기본 정책"} 상 차단이지만, 안에서 시작한 통신의 ${isIcmpErrorAny(pkt.payload) ? "오류 통지라" : "응답이라"} Stateful 검사로 허용`,
         { rule: idx, dir },
         frameId,
       );
@@ -183,14 +197,14 @@ export class Firewall {
       ctx.trace(
         "fw.deny",
         "L3",
-        `방화벽 차단: ${dirLabel} ${what} — ${rule ? `규칙 ${idx + 1} (${describeRule(rule)})` : "일치하는 규칙 없음, 기본 정책 차단"} → 드롭`,
+        `${this.label} 차단: ${dirLabel} ${what} — ${rule ? `규칙 ${idx + 1} (${describeRule(rule)})` : "일치하는 규칙 없음, 기본 정책 차단"} → 드롭`,
         { rule: idx, dir, src: pkt.src, dst: pkt.dst },
         frameId,
       );
       return false;
     }
     if (rule) {
-      ctx.trace("fw.allow", "L3", `방화벽 허용: ${dirLabel} ${what} — 규칙 ${idx + 1} (${describeRule(rule)})`, { rule: idx, dir }, frameId);
+      ctx.trace("fw.allow", "L3", `${this.label} 허용: ${dirLabel} ${what} — 규칙 ${idx + 1} (${describeRule(rule)})`, { rule: idx, dir }, frameId);
     }
     if (this.config.stateful && !established && isInitiator(pkt)) {
       const key = flowKey(pkt, false);

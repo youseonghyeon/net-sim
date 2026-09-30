@@ -59,7 +59,7 @@
 
 기본 축(서브넷·DHCP·ARP·NAT·TCP·라우팅)을 다 익힌 뒤 "추가 학습" 용으로 넣기로 했다. 범위가 크니 착수 전에 따로 계획을 세운다.
 
-- **IPv6** (2026-09-30 착수, 계획은 아래 "IPv6 계획"): 주소 체계, SLAAC, NDP(ARP 대신), 듀얼 스택
+- ✅ **IPv6** (2026-09-30, 계획·결정은 아래 "IPv6 계획"): 주소 체계, NDP·DAD, SLAAC(RA·RDNSS), 듀얼 스택(AAAA·Happy Eyeballs 축소판), 공유기 DHCPv6-PD·NAT 없는 라우팅·인바운드 기본 차단, 예제 4종. 남은 것: DHCPv6 주소 할당(stateful), NAT64/DNS64, RIPng, IPv6 위의 VPN·이중화·로드밸런서·프록시, 게이트웨이·NAT 박스의 PD 클라이언트, NUD·주기 RA(시계 구조상 보류)
 - ✅ **VPN** (2026-09-29): 사이트 간, WireGuard 식(UDP 51820 캡슐화, AllowedIPs, 엔드포인트 로밍) + IPsec(IKEv2·ESP·NAT-T·PSK), 예제 "망분리 사무실 + NCP". 원격 접속 VPN(노트북 → 회사, 가상 주소·split tunnel) 2026-09-29 추가, 예제 "재택근무 원격 접속 VPN". 원격 접속 사용자 계정 인증(EAP)·DPD(사용자가 누르는 상대 확인) 2026-09-29 추가. 남은 것: 인증서 인증, 주기 DPD(시계 구조상 보류)
 - ✅ **로드밸런서** (2026-09-29): 공용 모듈 `nodes/lb.ts` + 서버 토글 + 전용 장비. 리버스 프록시(L7)·라운드 로빈/최소 연결·패시브 헬스 체크. L4 모드(주소 변환, LVS FULLNAT 식)·세션 고정(출발지 IP·쿠키) 2026-09-29 추가. 남은 것: 액티브 헬스 체크(주기 없음 구조라 보류)
 - ✅ **포워드 프록시** (2026-09-29): Squid 식 서비스 토글 + 클라이언트 http_proxy 설정, 대신 이름 해석·차단 목록(403)·실패 503, 예제 "포워드 프록시 (프록시로만 나가는 사무실)". 남은 것: HTTPS CONNECT, PAC·예외 목록
@@ -78,7 +78,7 @@
 1. ✅ (2026-09-30) 기반: 주소·NDP·ping/traceroute/TCP over IPv6·게이트웨이 IPv6 라우팅(연결·스태틱·디폴트 ::/0, Hop Limit, Time Exceeded·Unreachable), 방화벽 규칙의 IPv6 주소, 스위치·허브·AP·공유기 브리지의 멀티캐스트. UI·패킷 상세·예제 "IPv6 기초".
 2. ✅ (2026-09-30) SLAAC: 게이트웨이 인터페이스별 RA 광고(프리픽스·RDNSS), 호스트 "자동(SLAAC)/수동", RS/RA, EUI-64 + DAD, 기본 게이트웨이 = 라우터 링크 로컬, 거둠 RA(수명 0). 구성 검사. 예제 "IPv6 자동 주소 (SLAAC·RA)". 1단계 리뷰 결함 10건 수정.
 3. ✅ (2026-09-30) 듀얼 스택: DNS AAAA(서버 레코드 A/AAAA·NODATA·IPv6 위의 DNS·RDNSS), 이름 대상은 AAAA 우선(ping·traceroute 는 폴백 없음, TCP 는 IPv6 실패 시 IPv4 — Happy Eyeballs 축소판). 예제 "듀얼 스택 사무실". (TCP over IPv6·진단 자동완성의 IPv6 묶음은 1단계에 넣었다. 인터넷 노드 IPv6 는 "ISP 가 고객 프리픽스를 어떻게 아느냐" 가 DHCPv6-PD 라 4단계로 옮김 — 가짜 경로 학습을 넣지 않으려고)
-4. 공유기·인터넷 IPv6(NAT 없음): 인터넷 노드 IPv6(ISP 링크·공인 IPv6 서버·공인 DNS 2001:4860:4860::8888·공개 이름 AAAA), ISP 가 DHCPv6-PD 로 /56 위임 → 공유기가 LAN 에 /64 RA, IPv6 인바운드 기본 차단(Stateful), 인터넷 저편 클라이언트의 IPv6 접속으로 "NAT 가 아니라 방화벽이 막는다". 예제 "듀얼 스택 집".
+4. ✅ (2026-09-30) 공유기·인터넷 IPv6(NAT 없음): 인터넷 노드 IPv6(ISP 링크·공인 IPv6 서버·공인 DNS 2001:4860:4860::8888·공개 이름 AAAA), ISP 가 DHCPv6-PD 로 /56 위임 → 공유기가 LAN 에 /64 RA, IPv6 인바운드 기본 차단(Stateful), 인터넷 저편 클라이언트의 IPv6 접속으로 "NAT 가 아니라 방화벽이 막는다". 예제 "듀얼 스택 집".
 
 넣지 않는 것: DHCPv6 주소 할당(stateful), NAT64/DNS64, RIPng, IPv6 위의 VPN·이중화·로드밸런서·프록시·DHCP 릴레이·VLAN 서브 인터페이스, 확장 헤더·단편화·PMTUD(MTU 모델 없음), 임시 주소(privacy extension), MLD. 주기 RA 없음(시계 구조) — 링크 업·설정 변경·RS 때만.
 

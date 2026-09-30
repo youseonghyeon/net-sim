@@ -98,6 +98,12 @@ export type TraceKind =
   | "dhcp.relay.return"
   | "dhcp.relay.miss"
   | "dhcp.lease"
+  /** DHCPv6 프리픽스 위임 (IA_PD): 공유기(클라이언트) ↔ ISP(서버) */
+  | "dhcp6.sent"
+  | "dhcp6.received"
+  | "dhcp6.bound"
+  | "dhcp6.delegate"
+  | "dhcp6.timeout"
   | "tcp.connect"
   | "tcp.received"
   | "tcp.syn.sent"
@@ -229,6 +235,7 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "switch.loop",
   "dhcp.timeout",
   "dhcp.failed",
+  "dhcp6.timeout",
   "icmp.timeout",
   "icmp.failed",
   "icmp.ttl-received",

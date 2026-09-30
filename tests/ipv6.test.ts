@@ -19,7 +19,9 @@ import { L3Node } from "../src/core/nodes/l3";
 import { Switch } from "../src/core/nodes/switch";
 import type { EthernetFrame } from "../src/core/packet";
 import type { TraceEvent } from "../src/core/trace";
-import { exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "../src/model/examples";
+import { exampleDualStackHomeTopology, exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "../src/model/examples";
+import { Internet } from "../src/core/nodes/internet";
+import { Router } from "../src/core/nodes/router";
 import { l3MacOf } from "../src/model/netSync";
 import { lintTopology } from "../src/model/lint";
 import { headerLayers, practitionerLines, tcpdumpLine } from "../src/model/packetView";
@@ -665,5 +667,86 @@ describe("듀얼 스택 (A·AAAA·Happy Eyeballs)", () => {
     expect(tcpdumpLine(f({ kind: "dns", id: 7, op: "response", name: "old.corp", qtype: "AAAA", rcode: "NODATA" }))).toContain("7 0/0/0");
     const rows = Object.fromEntries(headerLayers(f({ kind: "dns", id: 7, op: "response", name: "old.corp", qtype: "AAAA", rcode: "NODATA" }))[3]!.rows);
     expect(rows["응답"]).toContain("NOERROR, 답 0개");
+  });
+});
+
+describe("공유기·인터넷 IPv6 (DHCPv6-PD·NAT 없음)", () => {
+  it("설명대로: /56 위임 → LAN /64 RA → SLAAC, google.com 은 IPv6 로 NAT 없이, github.com 은 IPv4, 바깥 접속은 기본 차단이 막고 끄면 들어온다", () => {
+    const t = exampleDualStackHomeTopology();
+    expect(lintTopology(t)).toEqual([]);
+    const L = loadTopology(t);
+    const rt = L.node<Router>("rt-1");
+    expect(rt.pd.delegated).toEqual({ prefix: "2001:db8:1000:100::", length: 56 });
+    const pc = L.host("pc-1");
+    expect(pc.v6.globals.map((a) => a.ip)).toEqual(["2001:db8:1000:100:0:ff:fe00:4"]);
+    expect(pc.ip).toMatch(/^192\.168\.0\./);
+    // google.com: AAAA → IPv6, 공유기는 주소를 바꾸지 않는다
+    let tr = L.act({ kind: "ping", nodeId: pc.id, dst: "google.com" });
+    expect(pc.pings.at(-1)).toMatchObject({ status: "ok", resolved: "2404:6800:4004:827::200e" });
+    expect(tr.some((e) => e.nodeId === rt.id && e.kind === "nat.translate")).toBe(false);
+    expect(tr.find((e) => e.nodeId === rt.id && e.kind === "ip.forward")?.summary).toContain("NAT 없이 출발지 2001:db8:1000:100:0:ff:fe00:4 가 그대로");
+    // github.com: AAAA 없음 → A → IPv4 (NAT)
+    tr = L.act({ kind: "ping", nodeId: pc.id, dst: "github.com" });
+    expect(pc.pings.at(-1)).toMatchObject({ status: "ok", resolved: "140.82.112.3" });
+    expect(tr.some((e) => e.nodeId === rt.id && e.kind === "nat.translate")).toBe(true);
+    // 바깥에서 srv-1 의 IPv6 주소:80 → 인바운드 기본 차단
+    const inet = L.node<Internet>("internet-1");
+    const srvIp = L.host("srv-1").v6.globals[0]!.ip;
+    tr = L.act({ kind: "inet-connect", nodeId: inet.id, dst: srvIp, port: 80 });
+    expect(tr.some((e) => e.nodeId === rt.id && e.kind === "fw.deny" && e.summary.startsWith("IPv6 기본 방화벽 차단"))).toBe(true);
+    expect([...inet.tcp.conns.values()].at(-1)).toMatchObject({ state: "FAILED" });
+    // 끄면 포트 포워딩 없이 바로 들어온다
+    const next = structuredClone(t);
+    next.devices.find((d) => d.name === "rt-1")!.router!.ipv6!.inboundBlock = false;
+    L.apply(next);
+    L.act({ kind: "inet-connect", nodeId: inet.id, dst: srvIp, port: 80 });
+    expect([...inet.tcp.conns.values()].at(-1)).toMatchObject({ state: "CLOSED", bytesReceived: 3000 });
+  });
+
+  it("공유기를 지우면 위임을 돌려주고(ISP 경로 삭제), IPv6 를 끄면 LAN 에서 거둔다", () => {
+    const t = exampleDualStackHomeTopology();
+    const L = loadTopology(t);
+    const inet = L.node<Internet>("internet-1");
+    expect(inet.delegations.size).toBe(1);
+    const next = structuredClone(t);
+    next.devices.find((d) => d.name === "rt-1")!.router!.ipv6!.enabled = false;
+    L.apply(next);
+    expect(inet.delegations.size).toBe(0);
+    expect(L.host("pc-1").v6.globals).toEqual([]);
+    expect(L.host("pc-1").v6.defaultRouter).toBeUndefined();
+  });
+
+  it("ISP 는 위임하지 않은 프리픽스의 출발지를 버린다 (게이트웨이에 손으로 넣은 IPv6 는 인터넷에 못 나감)", () => {
+    const net = new Network();
+    net.addNode(new Internet({ id: "inet", mac: "02:00:00:ff:00:01" }));
+    net.addNode(
+      new L3Node({
+        id: "gw",
+        kind: "gateway",
+        interfaces: [
+          { name: "if0", mac: "02:00:00:10:00:01", mode: "static" },
+          { name: "if1", mac: "02:00:00:11:00:01", mode: "static" },
+        ],
+        ipv6: { enabled: true, interfaces: [{ ip: "2001:db8:ffff::2", prefix: 64 }, { ip: "2001:db8:1::1", prefix: 64 }], routes: [{ dest: "::", prefix: 0, via: "2001:db8:ffff::1" }] },
+      }),
+    );
+    net.addNode(host("pc", PC, "2001:db8:1::10", "2001:db8:1::1"));
+    net.connect("gw", 0, "inet", 0);
+    net.connect("pc", 0, "gw", 1);
+    net.runToIdle();
+    // 게이트웨이 자신(ISP 링크 주소)은 된다
+    act(net, { kind: "ping", nodeId: "pc", dst: "2001:db8:ffff::2" });
+    expect(net.getHost("pc").pings.at(-1)!.status).toBe("ok");
+    const tr = act(net, { kind: "ping", nodeId: "pc", dst: "2001:4860:4860::8888" });
+    expect(tr.find((e) => e.nodeId === "inet" && e.kind === "ip.drop")?.summary).toContain("ISP 가 위임한 프리픽스·ISP 링크의 주소가 아님");
+    expect(net.getHost("pc").pings.at(-1)!.status).toBe("failed");
+  });
+
+  it("tcpdump·헤더: DHCPv6 Solicit·Reply (IA_PD)", () => {
+    const f = (payload: any, src: string, dst: string): EthernetFrame => ({ kind: "ethernet", id: 1, src: PC, dst: "33:33:00:01:00:02", payload: { kind: "ipv6", src, dst, hopLimit: 1, payload: { kind: "udp", srcPort: 546, dstPort: 547, payload } } });
+    expect(tcpdumpLine(f({ kind: "dhcp6", type: "solicit", xid: 1, clientId: PC }, "fe80::ff:fe01:1", "ff02::1:2"))).toContain("fe80::ff:fe01:1.546 > ff02::1:2.547: dhcp6 solicit");
+    const rows = Object.fromEntries(headerLayers(f({ kind: "dhcp6", type: "reply", xid: 1, clientId: PC, serverId: SRV, prefix: { prefix: "2001:db8:1000:100::", length: 56 } }, "fe80::1", "fe80::ff:fe01:1"))[3]!.rows);
+    expect(rows["msg-type"]).toBe("7 (Reply)");
+    expect(rows["옵션 25 IA_PD"]).toContain("2001:db8:1000:100::/56");
   });
 });

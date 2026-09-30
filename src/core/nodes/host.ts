@@ -494,17 +494,22 @@ export class Host implements SimNode {
       return;
     }
     if (looksLikeName(target)) {
-      this.resolveName(target, ctx, (ip, err) => {
-        if (rec.status !== "running") return; // 기다리는 동안 취소됨
-        if (!ip) {
-          this.failTrace(rec, err ?? "이름 해석 실패", ctx, "이름을 주소로 바꾸지 못함");
-          return;
-        }
-        rec.resolved = ip;
-        ctx.trace("dns.resolved", "app", `${target} = ${ip} → 이제 이 주소로 traceroute`, { name: target, ip });
-        if (isIpv6(ip)) this.startTrace6(rec, ip, ctx);
-        else this.startTrace(rec, ip, ctx);
-      });
+      this.resolveName(
+        target,
+        ctx,
+        (ip, err) => {
+          if (rec.status !== "running") return; // 기다리는 동안 취소됨
+          if (!ip) {
+            this.failTrace(rec, err ?? "이름 해석 실패", ctx, "이름을 주소로 바꾸지 못함");
+            return;
+          }
+          rec.resolved = ip;
+          ctx.trace("dns.resolved", "app", `${target} = ${ip} → 이제 이 주소로 traceroute`, { name: target, ip });
+          if (isIpv6(ip)) this.startTrace6(rec, ip, ctx);
+          else this.startTrace(rec, ip, ctx);
+        },
+        () => rec.status === "running",
+      );
       return;
     }
     this.startTrace(rec, target, ctx);
@@ -727,7 +732,23 @@ export class Host implements SimNode {
         ctx.trace("dns.resolved", "app", `${target} = ${ip} → 이 주소의 ${port} 포트로 연결`, { name: target, ip });
         if (isIpv6(ip)) {
           const src = this.v6.sourceFor(ip);
-          if (!src) return;
+          if (!src) {
+            // 답을 기다리는 동안 IPv6 주소가 사라졌다 (IPv6 끔·RA 거둠): IPv4 가 있으면 A 로, 없으면 실패로 남긴다
+            if (this.iface.ip) {
+              ctx.trace("tcp.fallback", "L4", `${target}: IPv6 출발지 주소가 없어졌음 (${this.v6.whyNoSource(ip)}) → IPv4 주소(A)로 연결`, { dst: target, port });
+              this.resolver.resolve(target, ctx, this.emit(ctx), (ip4, err) => {
+                if (ip4 && this.iface.ip) this.tcp.connect(this.iface.ip, ip4, port, ctx, { site: target });
+                else {
+                  ctx.trace("tcp.failed", "L4", `${target}:${port} 연결 실패: ${err ?? "IPv4 주소 없음"}`, { dst: target, port });
+                  this.tcp.recordFailure(this.iface.ip ?? "0.0.0.0", target, port, err ?? "IPv4 주소 없음", ctx);
+                }
+              });
+            } else {
+              ctx.trace("tcp.failed", "L4", `${target}:${port} 연결 실패: ${this.v6.whyNoSource(ip)}`, { dst: target, port });
+              this.tcp.recordFailure("::", ip, port, this.v6.enabled ? "IPv6 주소 없음" : "IPv6 꺼짐", ctx);
+            }
+            return;
+          }
           // IPv6 로 먼저 시도하고, 연결이 안 되면 같은 이름의 IPv4 주소로 다시 (Happy Eyeballs 축소판)
           const conn = this.tcp.connect(src, ip, port, ctx, { site: target });
           if (this.iface.ip && conn.state === "SYN_SENT") this.fallbacks.set(conn.id, { name: target, port });
@@ -750,7 +771,7 @@ export class Host implements SimNode {
    * 묻지 못하면 IPv4 주소가 있을 때 A 로 다시. 없는 이름(NXDOMAIN)이면 A 도 없으니 다시 묻지 않는다.
    * IPv6 글로벌 주소가 없으면 예전처럼 A 만 (쓸 수 없는 주소 종류는 묻지 않는다 — AI_ADDRCONFIG)
    */
-  private resolveName(name: string, ctx: NodeContext, done: (ip: Ip | undefined, error?: string) => void): void {
+  private resolveName(name: string, ctx: NodeContext, done: (ip: Ip | undefined, error?: string) => void, alive: () => boolean = () => true): void {
     if (!this.hasV6Global()) {
       this.resolver.resolve(name, ctx, this.emit(ctx), (ip, err) => done(ip, err));
       return;
@@ -759,17 +780,30 @@ export class Host implements SimNode {
       name,
       ctx,
       this.emit(ctx),
-      (ip6, err6, nodata) => {
+      (ip6, err6, info) => {
+        if (!alive()) {
+          done(undefined, err6 ?? "취소됨"); // 기다리는 동안 취소됨 (예: 새 traceroute)
+          return;
+        }
+        const a = (why: string) => {
+          ctx.trace("dns.resolved", "app", `${name}: ${why} → IPv4 주소(A)로 다시 묻는다`, { name, fallback: "A" });
+          this.resolver.resolve(name, ctx, this.emit(ctx), (ip, err) => done(ip, err));
+        };
         if (ip6) {
+          // RFC 6724 규칙 1: 갈 수 없는 목적지는 뒤로 — IPv6 기본 게이트웨이가 없고 같은 링크도 아니면 IPv4 로
+          if (this.iface.ip && !this.v6.onLink(ip6) && !this.v6.defaultRouter) {
+            a(`AAAA ${ip6} 는 있지만 IPv6 기본 게이트웨이가 없어 갈 수 없음`);
+            return;
+          }
           done(ip6);
           return;
         }
-        if (!this.iface.ip || err6 === "없는 이름") {
+        // 다시 물어볼 만한 실패(NODATA·timeout·SERVFAIL·닿지 않음)일 때만. 없는 이름·설정 없음·취소는 A 도 같다
+        if (!this.iface.ip || !(info?.nodata || info?.retry)) {
           done(undefined, err6);
           return;
         }
-        ctx.trace("dns.resolved", "app", `${name}: ${nodata ? "AAAA 레코드가 없음" : `AAAA 를 받지 못함 (${err6})`} → IPv4 주소(A)로 다시 묻는다`, { name, fallback: "A" });
-        this.resolver.resolve(name, ctx, this.emit(ctx), (ip, err) => done(ip, err));
+        a(info.nodata ? "AAAA 레코드가 없음" : `AAAA 를 받지 못함 (${err6})`);
       },
       "AAAA",
     );
@@ -782,7 +816,8 @@ export class Host implements SimNode {
     const fb = this.fallbacks.get(conn.id);
     if (!fb) return false;
     this.fallbacks.delete(conn.id);
-    const handshake = conn.state === "FAILED" && (conn.reason?.startsWith("timeout · SYN") || conn.reason?.includes("Unreachable"));
+    // 연결을 맺지 못한 실패만: 무응답(timeout)·닿지 않음(Unreachable)·거부(RST) — curl·브라우저는 다음 주소로 넘어간다
+    const handshake = conn.state === "FAILED" && (conn.reason?.startsWith("timeout · SYN") || conn.reason?.includes("Unreachable") || conn.reason === "연결 거부 (RST)");
     if (!handshake || !this.iface.ip) return true;
     ctx.trace(
       "tcp.fallback",

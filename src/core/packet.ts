@@ -390,7 +390,7 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message;
 }
 
 /**
@@ -556,6 +556,31 @@ export interface DhcpMessage {
   options?: { prefix?: number; router?: Ip; dns?: Ip; leaseTime?: number };
 }
 
+/**
+ * DHCPv6 (UDP 546 클라이언트 / 547 서버). 여기서는 프리픽스 위임(DHCPv6-PD, RFC 8415 IA_PD)만:
+ * 공유기(클라이언트)가 ISP(서버)에게 Solicit → Advertise → Request → Reply 로 /56 을 받아 LAN 에 /64 를 나눠 알린다.
+ * 첫 두 메시지는 모든 DHCP 서버 그룹(ff02::1:2)으로, 클라이언트는 링크 로컬 주소로 보낸다
+ */
+export interface Dhcp6Message {
+  kind: "dhcp6";
+  type: "solicit" | "advertise" | "request" | "reply" | "release";
+  xid: number;
+  /** 옵션 1 Client ID (DUID-LL: 클라이언트 MAC) */
+  clientId: Mac;
+  /** 옵션 2 Server ID (DUID-LL: 서버 MAC) */
+  serverId?: Mac;
+  /** 옵션 25 IA_PD 안의 옵션 26 IAPREFIX: 위임하는(받는) 프리픽스 */
+  prefix?: { prefix: Ip; length: number };
+  /** 옵션 13 Status Code: 위임할 프리픽스가 없음 */
+  status?: "NoPrefixAvail";
+}
+
+export const DHCP6_CLIENT_PORT = 546;
+export const DHCP6_SERVER_PORT = 547;
+/** 모든 DHCPv6 릴레이·서버 (All_DHCP_Relay_Agents_and_Servers) */
+export const DHCP6_MULTICAST: Ip = "ff02::1:2";
+export const DHCP6_MULTICAST_MAC: Mac = "33:33:00:01:00:02";
+
 export const DHCP_SERVER_PORT = 67;
 export const DHCP_CLIENT_PORT = 68;
 export const UNSPECIFIED_IP: Ip = "0.0.0.0";
@@ -599,7 +624,14 @@ export function describeFrame(frame: EthernetFrame): string {
   if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}${d.qtype === "AAAA" ? " AAAA" : ""}?)` : `DNS 응답 (${d.name}${d.qtype === "AAAA" ? " AAAA" : ""} = ${d.answer ?? (d.rcode === "NODATA" ? "레코드 없음" : d.rcode)})`;
   if (d.kind === "rip") return d.command === "request" ? "RIP Request (전체 경로 요청)" : `RIP Response (경로 ${d.entries.length}개)`;
   if (d.kind === "vpn") return `VPN 터널 (암호화됨 · 안: ${d.inner.src} → ${d.inner.dst})`;
+  if (d.kind === "dhcp6") return dhcp6Label(d);
   return `DHCP ${DHCP_LABEL[d.op]}${d.yiaddr ? ` (${d.yiaddr})` : ""}`;
+}
+
+const DHCP6_LABEL: Record<Dhcp6Message["type"], string> = { solicit: "Solicit", advertise: "Advertise", request: "Request", reply: "Reply", release: "Release" };
+
+function dhcp6Label(d: Dhcp6Message): string {
+  return `DHCPv6 ${DHCP6_LABEL[d.type]}${d.prefix ? ` (프리픽스 위임 ${d.prefix.prefix}/${d.prefix.length})` : d.status ? ` (${d.status})` : " (프리픽스 위임 요청)"}`;
 }
 
 /** IPv6 패킷 설명 (로그용) */
@@ -617,6 +649,7 @@ function describeIpv6(p: Ipv6Packet): string {
   if (inner.kind === "tcp") return `TCP ${tcpFlags(inner)} seq=${inner.seq} ack=${inner.ack}${inner.len ? ` len=${inner.len}` : ""} (IPv6)`;
   const d = inner.payload;
   if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}${d.qtype === "AAAA" ? " AAAA" : ""}?) (IPv6)` : `DNS 응답 (${d.name}${d.qtype === "AAAA" ? " AAAA" : ""} = ${d.answer ?? (d.rcode === "NODATA" ? "레코드 없음" : d.rcode)}) (IPv6)`;
+  if (d.kind === "dhcp6") return dhcp6Label(d);
   return `UDP ${inner.srcPort} → ${inner.dstPort} (IPv6)`;
 }
 
@@ -638,6 +671,7 @@ export function shortLabel(frame: EthernetFrame): string {
     const i6 = p.payload;
     if (i6.kind === "icmp6") return i6.type === "ns" ? (p.src === "::" ? "DAD" : "NS") : i6.type === "na" ? "NA" : i6.type === "rs" ? "RS" : i6.type === "ra" ? "RA" : i6.type === "echo-request" ? "ping6 요청" : i6.type === "echo-reply" ? "ping6 응답" : i6.type === "time-exceeded" ? "Hop Limit 초과" : "도달 불가";
     if (i6.kind === "tcp") return i6.len > 0 ? `${i6.data ?? "DATA"} ${i6.len}B` : tcpFlags(i6);
+    if (i6.payload.kind === "dhcp6") return `DHCPv6 ${DHCP6_LABEL[i6.payload.type]}`;
     return i6.payload.kind === "dns" ? (i6.payload.op === "query" ? "DNS 질의" : "DNS 응답") : "UDP";
   }
   const inner = p.payload;
@@ -650,6 +684,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";
+  if (inner.payload.kind === "dhcp6") return `DHCPv6 ${DHCP6_LABEL[inner.payload.type]}`;
   return `DHCP ${DHCP_LABEL[inner.payload.op]}`;
 }
 

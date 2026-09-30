@@ -19,8 +19,17 @@ function cacheKey(name: string, qtype: QType): string {
   return qtype === "A" ? name : `${name} (AAAA)`;
 }
 
-/** 리졸버 결과: 주소, 또는 실패 이유. nodata = 이름은 있지만 그 종류의 레코드가 없음 (AAAA 가 없으면 A 로 다시 묻는다) */
-export type ResolveDone = (ip: Ip | undefined, error?: string, nodata?: boolean) => void;
+/**
+ * 실패의 성격: nodata = 이름은 있지만 그 종류의 레코드가 없음, retry = 서버에 닿지 못함·SERVFAIL·timeout (다른 종류로 다시 물어볼 만함).
+ * 둘 다 없으면 없는 이름(NXDOMAIN)·설정 없음·취소 — 다시 물어도 소용없다
+ */
+export interface ResolveInfo {
+  nodata?: boolean;
+  retry?: boolean;
+}
+
+/** 리졸버 결과: 주소, 또는 실패 이유 */
+export type ResolveDone = (ip: Ip | undefined, error?: string, info?: ResolveInfo) => void;
 
 export interface DnsRecord {
   name: string;
@@ -45,6 +54,15 @@ export const PUBLIC_ZONE: DnsRecord[] = [
   { name: "naver.com", ip: "223.130.200.104" },
   { name: "github.com", ip: "140.82.112.3" },
   { name: "cloudflare.com", ip: "104.16.132.229" },
+];
+
+/**
+ * 공개 이름의 IPv6 주소 (AAAA). github.com·naver.com 은 실제로도 아직 AAAA 가 없어 NODATA — A 로 IPv4 에 간다
+ */
+export const PUBLIC_ZONE6: DnsRecord[] = [
+  { name: "google.com", ip: "2404:6800:4004:827::200e" },
+  { name: "example.com", ip: "2606:2800:21f:cb07:6820:80da:af6b:8b2c" },
+  { name: "cloudflare.com", ip: "2606:4700::6810:84e5" },
 ];
 
 export function normalizeName(name: string): string {
@@ -179,11 +197,12 @@ export class DnsResolver {
     }
     if (msg.rcode === "NODATA") {
       ctx.trace("dns.response.received", "app", `DNS 응답: ${q.name} 은(는) 있는 이름이지만 ${q.qtype} 레코드가 없음 (NOERROR, 답 0개) — ${q.qtype === "AAAA" ? "IPv6 주소가 없는 이름" : "IPv4 주소가 없는 이름"}`, { name: q.name, qtype: q.qtype, nodata: true }, frameId);
-      q.done(undefined, `${q.qtype} 레코드 없음`, true);
+      q.done(undefined, `${q.qtype} 레코드 없음`, { nodata: true });
       return;
     }
     ctx.trace("dns.nxdomain", "app", `DNS 응답: ${q.name} 은(는) 없는 이름 (${msg.rcode ?? "NXDOMAIN"}) — 서버 ${from} 가 모르는 이름`, { name: q.name, rcode: msg.rcode }, frameId);
-    q.done(undefined, msg.rcode === "SERVFAIL" ? "DNS 서버가 업스트림 서버 응답을 받지 못함" : "없는 이름");
+    if (msg.rcode === "SERVFAIL") q.done(undefined, "DNS 서버가 업스트림 서버 응답을 받지 못함", { retry: true });
+    else q.done(undefined, "없는 이름");
   }
 
   onTimeout(data: unknown, ctx: NodeContext, emit: Emit): void {
@@ -199,33 +218,34 @@ export class DnsResolver {
     }
     this.pending.delete(id);
     ctx.trace("dns.timeout", "app", `DNS timeout: 서버 ${q.server} 가 ${DNS_MAX_ATTEMPTS}번 물어도 응답 없음 → ${q.name} 해석 실패 (서버 주소·경로 확인)`, { id, name: q.name });
-    q.done(undefined, "DNS timeout · 응답 없음");
+    q.done(undefined, "DNS timeout · 응답 없음", { retry: true });
   }
 
   /** 내 DNS 서버에 닿지 않는다는 ICMP Destination Unreachable: 기다리는 질의를 바로 실패로 */
   onUnreachable(reason: string, ctx: NodeContext): boolean {
     if (this.pending.size === 0) return false;
-    for (const id of [...this.pending.keys()]) this.fail(id, reason, ctx);
+    for (const id of [...this.pending.keys()]) this.fail(id, reason, ctx, true);
     return true;
   }
 
-  private fail(id: number, reason: string, ctx: NodeContext): void {
+  private fail(id: number, reason: string, ctx: NodeContext, retry = false): void {
     const q = this.pending.get(id);
     if (!q) return;
     this.pending.delete(id);
     q.timer.cancel();
     ctx.trace("dns.timeout", "app", `${q.name} 해석 중단: ${reason}`, { name: q.name });
-    q.done(undefined, reason);
+    q.done(undefined, reason, retry ? { retry: true } : undefined);
   }
 
-  /** 링크 끊김·설정 변경: 대기 중인 질의는 실패로 끝내고 캐시를 비운다 */
+  /** 링크 끊김·설정 변경: 대기 중인 질의는 실패(취소)로 끝내고 캐시를 비운다. 콜백이 새 질의를 걸어도 함께 지워지지 않게 목록을 먼저 떼어 낸다 */
   clear(reason = "취소됨"): void {
-    for (const q of this.pending.values()) {
+    const list = [...this.pending.values()];
+    this.pending.clear();
+    this.cache.clear();
+    for (const q of list) {
       q.timer.cancel();
       q.done(undefined, reason);
     }
-    this.pending.clear();
-    this.cache.clear();
   }
 
   rows(): string[][] {

@@ -4,11 +4,16 @@ import { updateDevice } from "../../model/store";
 import {
   DEFAULT_FIREWALL_SETTINGS,
   DEFAULT_ROUTER_DNS,
+  DEFAULT_ROUTER_IPV6,
   DEFAULT_WAN,
   type Device,
+  type RouterIpv6Settings,
   type RouterSettings,
   type WanSettings,
 } from "../../model/topology";
+import { Router } from "../../core/nodes/router";
+import { DHCP6_STATE_LABEL } from "../../core/nodes/dhcp6";
+import { sim, simVersion } from "../../model/sim";
 import { WifiBaseSection } from "./host";
 import { FirewallSection, ForwardSection } from "./rules";
 import { Field, Section, Toggle, ipError, validIp } from "./ui";
@@ -89,9 +94,54 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
       <WanSection d={d} w={r.wan ?? DEFAULT_WAN} />
       <WifiBaseSection d={d} />
       <RouterDnsSection d={d} r={r} />
+      <RouterIpv6Section d={d} r={r} />
       <ForwardSection rules={r.forwards ?? []} onChange={(forwards) => set({ forwards })} lanHint="예: 공인 :80 → 192.168.0.20:80 (LAN 의 웹 서버)." />
       <FirewallSection value={r.firewall ?? DEFAULT_FIREWALL_SETTINGS} onChange={(firewall) => set({ firewall })} uplinkName="WAN" />
     </>
+  );
+}
+
+/** 공유기 IPv6: 켜면 WAN 이 ISP 의 RA 로 주소를, DHCPv6-PD 로 프리픽스를 받아 LAN 에 RA 로 알린다. NAT 없이 라우팅하고 인바운드 기본 차단으로 지킨다 */
+export function RouterIpv6Section({ d, r }: { d: Device; r: RouterSettings }) {
+  void simVersion.value;
+  const v6 = r.ipv6 ?? { ...DEFAULT_ROUTER_IPV6, enabled: false };
+  const set = (patch: Partial<RouterIpv6Settings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, ipv6: { ...(x.router!.ipv6 ?? DEFAULT_ROUTER_IPV6), ...patch } } }));
+  const node = sim.node(d.id);
+  const rt = node instanceof Router ? node : undefined;
+  return (
+    <Section title="IPv6">
+      <label class="toggle-row">
+        <span>{v6.enabled ? "켜짐" : "꺼짐"}</span>
+        <Toggle on={v6.enabled} onToggle={() => set({ enabled: !v6.enabled })} />
+      </label>
+      {!v6.enabled ? (
+        <p class="note">켜면 WAN 이 ISP 에게 IPv6 프리픽스를 위임받아(DHCPv6-PD) LAN 에 /64 를 RA 로 알립니다. 집 안 장치는 SLAAC 로 공인 IPv6 주소를 만들고, 공유기는 NAT 없이 주소 그대로 넘깁니다.</p>
+      ) : (
+        <>
+          {rt && (
+            <div class="stat-rows">
+              <div class="stat-row">
+                <span>프리픽스 위임</span>
+                <b class="mono">{rt.pd.delegated ? `${rt.pd.delegated.prefix}/${rt.pd.delegated.length}` : DHCP6_STATE_LABEL[rt.pd.state]}</b>
+              </div>
+              <div class="stat-row">
+                <span>LAN 프리픽스</span>
+                <b class="mono">{rt.lan6.addrs.find((a) => a.origin === "manual") ? `${rt.lan6.summary()} · RA` : "위임 대기"}</b>
+              </div>
+            </div>
+          )}
+          <label class="toggle-row">
+            <span>IPv6 인바운드 기본 차단 <span class="muted">Stateful</span></span>
+            <Toggle on={v6.inboundBlock} onToggle={() => set({ inboundBlock: !v6.inboundBlock })} />
+          </label>
+          <p class="note">
+            {v6.inboundBlock
+              ? "바깥에서 먼저 시작한 IPv6 연결은 막고, 안에서 시작한 통신의 응답만 들입니다. IPv4 는 NAT 가 바깥에서의 접속을 가로막지만 IPv6 는 주소가 공인이라 이 방화벽이 그 역할을 합니다."
+              : "꺼져 있으면 NAT 가 없으니 바깥에서 집 안 장치의 IPv6 주소로 바로 들어옵니다 (포트 포워딩 없이). 위의 방화벽 규칙은 IPv6 에도 걸립니다."}
+          </p>
+        </>
+      )}
+    </Section>
   );
 }
 

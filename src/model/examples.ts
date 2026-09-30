@@ -10,7 +10,7 @@ import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTop
 import { exampleLoadBalancerTopology, exampleProxyTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology } from "./examples/internet";
 import { exampleRoamingTopology } from "./examples/wireless";
-import { exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
+import { exampleDualStackHomeTopology, exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
 
 export * from "./examples/basic";
 export * from "./examples/parts";
@@ -22,7 +22,7 @@ export * from "./examples/internet";
 export * from "./examples/wireless";
 export * from "./examples/ipv6";
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -210,6 +210,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "듀얼 스택 사무실 (A·AAAA·Happy Eyeballs)",
     blurb: "pc-1 에서 web.corp 로 TCP 80 연결을 보내 보세요. IPv6 주소가 있어 AAAA 부터 묻고(IPv4 DNS 서버에 — 질의 종류와 운반 버전은 따로) [2001:db8:2::10]:80 으로 붙습니다. old.corp 는 AAAA 가 없어(NODATA) A 로 다시 물어 IPv4 로 갑니다. 노트북은 IPv4 없이 RA 가 알린 DNS(RDNSS)에 IPv6 로 묻습니다. gw-1 의 방화벽을 켜면(IPv6 웹 차단 규칙) web.corp 연결이 IPv6 로 먼저 시도했다가 timeout 뒤 IPv4 로 다시 붙습니다(Happy Eyeballs 축소판).",
     build: exampleDualStackTopology,
+  },
+  home6: {
+    id: "home6",
+    group: "IPv6",
+    label: "듀얼 스택 집 (NAT 없는 IPv6·프리픽스 위임)",
+    blurb: "공유기는 ISP 에게 DHCPv6-PD 로 /56 을 위임받아 LAN 에 첫 /64 를 RA 로 알립니다(공유기 → 표 탭). pc-1 에서 google.com 으로 ping 하면 AAAA 로 IPv6 주소를 받아 NAT 없이 나갑니다 — 공유기를 지나는 패킷을 눌러 출발지가 pc-1 의 주소 그대로인지 보세요(IPv4 는 WAN 주소로 바뀝니다). github.com 은 IPv6 가 없어(NODATA) IPv4·NAT 로 갑니다. 인터넷 노드의 '외부에서 접속' 으로 srv-1 의 IPv6 주소:80 에 접속하면 공유기의 IPv6 인바운드 기본 차단에 막히고, 끄면 포트 포워딩 없이 바로 들어옵니다 — IPv6 에서는 NAT 가 아니라 방화벽이 지킵니다.",
+    build: exampleDualStackHomeTopology,
   },
 };
 

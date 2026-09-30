@@ -17,6 +17,8 @@ interface V6Router {
   seg: number | undefined;
   /** 이 인터페이스로 RA 를 보냄 */
   ra: boolean;
+  /** 공유기 LAN: 프리픽스는 ISP 에게 위임받아(DHCPv6-PD) 미리 알 수 없다 */
+  pd?: boolean;
 }
 
 /** 케이블·무선으로 이어진 장치 묶음 번호 (따로 떨어진 두 실습은 주소가 겹쳐도 서로 닿지 않는다) */
@@ -53,8 +55,15 @@ function safeLinkLocal(mac: string): string {
 export function ipv6Rules({ t, m, add }: LintContext): void {
   // IPv6 를 켠 라우터 인터페이스 (게이트웨이·NAT 박스). IPv6 를 끈 L3 도 모아 "꺼짐" 안내에 쓴다
   const routers: V6Router[] = [];
-  const off: { device: Device; port: number; seg: number | undefined }[] = [];
+  const off: { device: Device; port: number; seg: number | undefined; home?: boolean }[] = [];
   for (const d of t.devices) {
+    // 공유기 LAN: IPv6 를 켜면 위임받은 /64 를 RA 로 알린다 (프리픽스는 실행 중에 정해짐)
+    if (d.router) {
+      const seg = m.ids.get(`${d.id}:1`);
+      if (d.router.ipv6?.enabled) routers.push({ device: d, port: 1, label: `${d.name} LAN`, prefix: 64, linkLocal: safeLinkLocal(d.mac), seg, ra: true, pd: true });
+      else off.push({ device: d, port: 1, seg, home: true });
+      continue;
+    }
     if (DEVICE_SPECS[d.kind].role !== "l3") continue;
     const ports = DEVICE_SPECS[d.kind].ports;
     const v6 = effectiveL3v6(d, ports.length);
@@ -101,7 +110,7 @@ export function ipv6Rules({ t, m, add }: LintContext): void {
   // SLAAC: RA 를 보내는 라우터 인터페이스가 알릴 /64 프리픽스가 없으면 그 링크의 자동 호스트가 주소를 못 만든다
   const slaacHosts = hosts.filter((h) => h.v6.slaac && h.seg !== undefined && m.linked.has(`${h.device.id}:0`));
   for (const r of routers) {
-    if (!r.ra || r.seg === undefined) continue;
+    if (!r.ra || r.pd || r.seg === undefined) continue;
     const waiting = slaacHosts.filter((h) => h.seg === r.seg);
     if (waiting.length === 0) continue;
     if (!r.ip || r.prefix !== 64) {
@@ -142,8 +151,8 @@ export function ipv6Rules({ t, m, add }: LintContext): void {
             deviceId: d.id,
             severity: "error",
             code: "ipv6.router-off",
-            message: `IPv6 가 자동(SLAAC)인데 이 링크의 라우터 ${r.device.name} 는 IPv6 가 꺼져 있어 RA 가 오지 않습니다`,
-            fix: `${r.device.name} → IPv6 를 켜고 ${portName(r.device, r.port)} 에 /64 주소를 넣은 뒤 RA 광고 켜기`,
+            message: `IPv6 가 자동(SLAAC)인데 이 링크의 ${r.home ? "공유기" : "라우터"} ${r.device.name} 는 IPv6 가 꺼져 있어 RA 가 오지 않습니다`,
+            fix: r.home ? `${r.device.name} → IPv6 켜기 (ISP 에게 프리픽스를 위임받아 LAN 에 RA 로 알린다)` : `${r.device.name} → IPv6 를 켜고 ${portName(r.device, r.port)} 에 /64 주소를 넣은 뒤 RA 광고 켜기`,
             related: [r.device.id],
           });
         }
@@ -183,8 +192,8 @@ export function ipv6Rules({ t, m, add }: LintContext): void {
           deviceId: d.id,
           severity: "error",
           code: "ipv6.router-off",
-          message: `이 링크의 라우터 ${r.device.name} 는 IPv6 가 꺼져 있어 IPv6 기본 게이트웨이 ${gw} 로 보낸 패킷을 받지 않습니다`,
-          fix: `${r.device.name} → IPv6 를 켜고 ${portName(r.device, r.port)} 에 이 링크의 주소(예: ${addr ? `${network6(addr.ip, addr.prefix)}1` : "2001:db8:1::1"})를 넣기`,
+          message: `이 링크의 ${r.home ? "공유기" : "라우터"} ${r.device.name} 는 IPv6 가 꺼져 있어 IPv6 기본 게이트웨이 ${gw} 로 보낸 패킷을 받지 않습니다`,
+          fix: r.home ? `${r.device.name} → IPv6 켜기` : `${r.device.name} → IPv6 를 켜고 ${portName(r.device, r.port)} 에 이 링크의 주소(예: ${addr ? `${network6(addr.ip, addr.prefix)}1` : "2001:db8:1::1"})를 넣기`,
           related: [r.device.id],
         });
       }

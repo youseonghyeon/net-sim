@@ -514,7 +514,17 @@ export interface RouterSettings {
   forwards?: PortForwardSettings[];
   firewall?: FirewallSettings;
   wifi?: WifiBaseSettings;
+  /** IPv6. 없으면 꺼짐. 켜면 ISP 에게 DHCPv6-PD 로 프리픽스를 받아 LAN 에 RA 로 알린다 */
+  ipv6?: RouterIpv6Settings;
 }
+
+export interface RouterIpv6Settings {
+  enabled: boolean;
+  /** IPv6 인바운드 기본 차단 (Stateful) */
+  inboundBlock: boolean;
+}
+
+export const DEFAULT_ROUTER_IPV6: RouterIpv6Settings = { enabled: true, inboundBlock: true };
 
 export const DEFAULT_ROUTER_DNS = { enabled: true, upstream: "8.8.8.8" };
 
@@ -1035,6 +1045,7 @@ export function normalizeTopology(t: Topology): Topology {
           dhcp: (r.dhcp as RouterSettings["dhcp"] | undefined) ?? { enabled: true, start: "192.168.0.100", end: "192.168.0.199" },
           wan: r.wan ?? { ...DEFAULT_WAN },
           ...(r.firewall ? { firewall: { ...DEFAULT_FIREWALL_SETTINGS, ...r.firewall, rules: r.firewall.rules ?? [] } } : {}),
+          ...(r.ipv6 ? { ipv6: { enabled: (r.ipv6 as Partial<RouterIpv6Settings>).enabled === true, inboundBlock: (r.ipv6 as Partial<RouterIpv6Settings>).inboundBlock !== false } } : {}),
         };
       }
     }

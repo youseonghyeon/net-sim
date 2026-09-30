@@ -65,6 +65,7 @@ function appLength(u: UdpPacket): number {
   if (m.kind === "vpn") return 32 + 20 + l4Length(m.inner.payload); // WireGuard 머리 32 + 암호화된 원래 IP 패킷
   if (m.kind === "esp") return espLength(m);
   if (m.kind === "ike") return (u.dstPort === 4500 || u.srcPort === 4500 ? 4 : 0) + (m.exchange === "IKE_SA_INIT" ? 336 : 224); // NAT-T 는 앞에 0 4바이트(Non-ESP 표시)
+  if (m.kind === "dhcp6") return 4 + 14 + (m.serverId ? 14 : 0) + 16 + (m.prefix ? 29 : 0); // 머리 + Client ID + Server ID + IA_PD (+ IAPREFIX)
   return 4 + m.entries.length * 20; // RIP
 }
 
@@ -169,6 +170,7 @@ function udpText(u: UdpPacket): string {
     if (m.rcode === "NODATA") return `${m.id} 0/0/0 (${appLength(u)})`;
     return `${m.id} ${m.rcode === "NXDOMAIN" ? "NXDomain" : "ServFail"} 0/0/0 (${appLength(u)})`;
   }
+  if (m.kind === "dhcp6") return `dhcp6 ${m.type}`;
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
 }
 
@@ -473,6 +475,17 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
   }
   if (m.kind === "vpn" || m.kind === "esp") return [udp];
   if (m.kind === "ike") return [udp, ikeLayer(m)];
+  if (m.kind === "dhcp6") {
+    const TYPE: Record<typeof m.type, string> = { solicit: "1 (Solicit)", advertise: "2 (Advertise)", request: "3 (Request)", reply: "7 (Reply)", release: "8 (Release)" };
+    const rows: [string, string][] = [
+      ["msg-type", TYPE[m.type]],
+      ["트랜잭션 id", `0x${m.xid.toString(16)}`],
+      ["옵션 1 Client ID", `DUID-LL ${m.clientId}`],
+    ];
+    if (m.serverId) rows.push(["옵션 2 Server ID", `DUID-LL ${m.serverId}`]);
+    rows.push(["옵션 25 IA_PD", m.prefix ? `옵션 26 IAPREFIX ${m.prefix.prefix}/${m.prefix.length} — 이 프리픽스를 통째로 맡긴다` : m.status ? `옵션 13 Status ${m.status} (위임할 프리픽스 없음)` : "프리픽스를 위임해 달라는 요청 (IAPREFIX 없음)"]);
+    return [udp, { title: "DHCPv6 (앱)", rows }];
+  }
   return [
     udp,
     {

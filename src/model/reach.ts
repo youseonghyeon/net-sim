@@ -128,20 +128,25 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
       addIp(ip, name);
     }
   }
-  // 이름 후보: LAN 의 DNS 서버 레코드 + 인터넷이 있으면 공개 이름
-  const nameList: { name: string; ip: string }[] = [];
+  // 이름 후보: LAN 의 DNS 서버 레코드 + 인터넷이 있으면 공개 이름. 같은 이름의 A·AAAA 는 하나로 모은다
+  const nameList: { name: string; ip: string; ips: string[] }[] = [];
+  const addName = (name: string, ip: string) => {
+    const e = nameList.find((x) => x.name === name);
+    if (e) e.ips.push(ip);
+    else nameList.push({ name, ip, ips: [ip] });
+  };
   for (const d of t.devices) {
     const n = net.nodes.get(d.id);
     // 이 호스트가 물을 수 있는 DNS 가 있을 때만 (IPv4 DNS, 또는 IPv6 만 있으면 IPv6 DNS). 같은 이름의 A·AAAA 는 하나로
     const canAsk = !!src.ip || (hasV6 && !!src.v6.effectiveDns);
-    if (n instanceof Host && n.dnsServer.config.enabled && canAsk) for (const r of n.dnsServer.config.records) if (!nameList.some((x) => x.name === r.name)) nameList.push({ name: r.name, ip: r.ip });
+    if (n instanceof Host && n.dnsServer.config.enabled && canAsk) for (const r of n.dnsServer.config.records) addName(r.name, r.ip);
   }
-  if (hasInternet && src.ip) for (const r of PUBLIC_ZONE) nameList.push({ name: r.name, ip: r.ip });
+  if (hasInternet && src.ip) for (const r of PUBLIC_ZONE) addName(r.name, r.ip);
   for (const r of nameList) {
     if (raw.has(r.name)) continue;
     if (mode === "tcp") {
       // TCP 는 그 포트를 여는 서버를 가리키는 이름만
-      const target = [...raw.values()].find((x) => !x.isName && x.value === r.ip);
+      const target = [...raw.values()].find((x) => !x.isName && r.ips.includes(x.value));
       if (!target) continue;
     }
     raw.set(r.name, { value: r.name, label: r.ip, isName: true });
