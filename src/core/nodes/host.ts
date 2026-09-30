@@ -164,6 +164,11 @@ export class Host implements SimNode {
     this.dhcp = new DhcpClient(this.iface, hashCode(cfg.id));
     this.v6 = new Ipv6Interface(cfg.mac);
     this.v6.loopback = (pkt, ctx) => this.loopback6(pkt, ctx);
+    // RA 로 SLAAC 주소가 사라지면 그 주소로 묶인 연결·traceroute 를 정리한다 (설정 변경 때와 같이)
+    this.v6.onAddrRemoved = (ip, ctx) => {
+      this.tcp.abortAll("IPv6 주소 사라짐", ctx, (c) => c.localIp === ip);
+      for (const rec of this.traceroutes) if (rec.status === "running" && isIpv6(rec.resolved ?? rec.dst)) this.failTrace(rec, "IPv6 주소 사라짐", ctx);
+    };
     if (cfg.ipv6?.enabled) this.v6.init(cfg.ipv6);
     this.tcp = new TcpStack({
       send: (pkt, ctx) => this.sendAny(pkt, ctx),

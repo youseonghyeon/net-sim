@@ -598,7 +598,7 @@ describe("패킷 상세 (RS/RA)", () => {
   });
   it("실무 출력: SLAAC 주소는 ip -6 addr, RA 기본 경로는 ip -6 route", () => {
     const ev = (kind: string, details: Record<string, unknown>) => ({ seq: 0, time: 0, nodeId: "a", kind, layer: "L3", summary: "", details }) as TraceEvent;
-    expect(practitionerLines(ev("slaac.addr", { ip: "2001:db8:1::ff:fe00:a" }), {})[0]!.line).toBe("inet6 2001:db8:1::ff:fe00:a/64 scope global dynamic mngtmpaddr");
+    expect(practitionerLines(ev("slaac.addr", { ip: "2001:db8:1::ff:fe00:a" }), {})[0]!.line).toBe("inet6 2001:db8:1::ff:fe00:a/64 scope global dynamic");
     expect(practitionerLines(ev("slaac.router", { router: "fe80::ff:fe11:1" }), {})[0]!.line).toContain("default via fe80::ff:fe11:1 dev eth0 proto ra");
   });
 });

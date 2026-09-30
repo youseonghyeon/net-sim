@@ -32,7 +32,10 @@ function v6Line(v: Ipv6Interface, tile = false): StatusLine | null {
   if (g) return g.state === "preferred" ? { text: tile && g.prefix === 64 ? g.ip : `${g.ip}/${g.prefix}`, tone: "ok", mono: true } : { text: "IPv6 DAD 중", tone: "muted", mono: false };
   if (!v.owns(v.linkLocal)) return { text: "IPv6 DAD 중", tone: "muted", mono: false };
   // SLAAC 인데 RA 를 못 받음: 기다리는 중이면 흐리게, RS 를 다 보내고도 없으면 경고
-  if (v.slaac) return v.raWaiting ? { text: "RA 기다리는 중", tone: "muted", mono: false } : { text: "RA 없음 · 링크 로컬만", tone: "warn", mono: false };
+  if (v.slaac) {
+    if (v.raWaiting) return { text: "RA 기다리는 중", tone: "muted", mono: false };
+    return v.routers.size > 0 ? { text: "RA 받음 · /64 프리픽스 없음", tone: "warn", mono: false } : { text: "RA 없음 · 링크 로컬만", tone: "warn", mono: false };
+  }
   return { text: v.linkLocal, tone: "ok", mono: true };
 }
 

@@ -537,10 +537,10 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       if (detail(ev, "ip") && detail(ev, "mac")) out.push({ tool: "리눅스 ip -6 neigh", line: `${detail(ev, "ip")} dev eth0 lladdr ${detail(ev, "mac")} REACHABLE` });
       break;
     case "slaac.addr":
-      if (detail(ev, "ip") && !detail(ev, "removed")) out.push({ tool: "리눅스 ip -6 addr", line: `inet6 ${detail(ev, "ip")}/64 scope global dynamic mngtmpaddr` });
+      if (detail(ev, "ip") && !detail(ev, "removed") && !detail(ev, "kept")) out.push({ tool: "리눅스 ip -6 addr", line: `inet6 ${detail(ev, "ip")}/64 scope global dynamic` });
       break;
     case "slaac.router":
-      if (detail(ev, "router")) out.push({ tool: "리눅스 ip -6 route", line: `default via ${detail(ev, "router")} dev eth0 proto ra metric 1024 expires 1799sec hoplimit 64 pref medium` });
+      if (detail(ev, "router") && !detail(ev, "removed")) out.push({ tool: "리눅스 ip -6 route", line: `default via ${detail(ev, "router")} dev eth0 proto ra metric 1024 expires 1799sec hoplimit 64 pref medium` });
       break;
     case "ndp.dad.fail":
       out.push({ tool: "리눅스 커널 로그 (dmesg)", line: `IPv6: eth0: IPv6 duplicate address ${detail(ev, "ip") ?? "?"} used by ${detail(ev, "mac") ?? "?"} detected!` });

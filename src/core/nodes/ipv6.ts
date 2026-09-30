@@ -99,6 +99,12 @@ export class Ipv6Interface {
   readonly routers = new Map<Ip, { learnedAt: number }>();
   /** RA 의 RDNSS 옵션으로 받은 DNS 서버 */
   raDnsLearned: Ip | undefined;
+  /** 그 DNS 를 알려 준 라우터 (그 라우터가 거두거나 DNS 없이 다시 알리면 지운다) */
+  private raDnsFrom: Ip | undefined;
+  /** 프리픽스("주소/길이")마다 그것을 알린 라우터들: 모두 거둬야 그 프리픽스로 만든 주소를 지운다 */
+  private readonly prefixRouters = new Map<string, Set<Ip>>();
+  /** 실행 중에 주소가 사라질 때 (RA 거둠 등): 호스트가 그 주소의 연결을 정리한다 */
+  onAddrRemoved: ((ip: Ip, ctx: NodeContext) => void) | undefined;
   private rsTries = 0;
   private rsTimer: TimerHandle | undefined;
   /** 링크가 살아 있는지 (실패 문구용) */
@@ -176,6 +182,8 @@ export class Ipv6Interface {
       this.dns = undefined;
       this.forgetRa();
       this.raOn = false;
+      this.slaac = false;
+      this.rsTries = 0;
       ctx.trace("ip.config", "sys", `${this.tag}IPv6 꺼짐 → IPv6 주소·이웃 캐시를 모두 지움`, {});
       return true;
     }
@@ -270,7 +278,9 @@ export class Ipv6Interface {
     const had = this.addrs.some((a) => a.origin === "slaac");
     for (const a of this.addrs.filter((x) => x.origin === "slaac")) this.removeAddr(a);
     this.routers.clear();
+    this.prefixRouters.clear();
     this.raDnsLearned = undefined;
+    this.raDnsFrom = undefined;
     this.rsTimer?.cancel();
     this.rsTimer = undefined;
     return had;
@@ -281,6 +291,7 @@ export class Ipv6Interface {
     const hadRouter = this.routers.size > 0;
     const removed = this.forgetRa();
     if (gone.length || hadRouter) ctx.trace("slaac.addr", "L3", `${this.tag}${why} → SLAAC 주소${gone.length ? ` ${gone.join(", ")}` : ""}·RA 로 배운 기본 게이트웨이를 지움`, { removed: gone });
+    for (const ip of gone) this.onAddrRemoved?.(ip, ctx);
     return removed;
   }
 
@@ -361,7 +372,10 @@ export class Ipv6Interface {
     if (!this.up) return "링크 다운 — 케이블을 연결하세요 (다시 연결되면 주소를 DAD 로 확인한 뒤 쓴다)";
     if (this.addrs.some((a) => a.state === "tentative")) return "주소를 DAD 로 확인하는 중 (1초 뒤 다시 시도하세요)";
     if (isLinkLocal6(dst)) return "링크 로컬 주소가 중복이라 쓰지 않는 중";
-    if (this.addrs.some((a) => a.origin !== "link-local" && a.state === "duplicate")) return "IPv6 주소가 다른 장치와 중복이라 쓰지 않는 중 — 다른 주소를 넣으세요";
+    const dup = this.addrs.find((a) => a.origin !== "link-local" && a.state === "duplicate");
+    if (dup?.origin === "slaac") return `SLAAC 주소 ${dup.ip} 가 다른 장치와 중복이라 쓰지 않는 중 — 그 장치의 주소를 바꾸거나 이 장치의 IPv6 를 수동으로 바꾸세요`;
+    if (dup) return "IPv6 주소가 다른 장치와 중복이라 쓰지 않는 중 — 다른 주소를 넣으세요";
+    if (this.slaac && this.routers.size > 0) return "RA 는 받았지만 SLAAC 로 쓸 /64 프리픽스가 없음 — 라우터 인터페이스 주소를 /64 로 하세요 (링크 로컬로는 다른 네트워크로 못 나감)";
     if (this.slaac) return "RA 를 받지 못해 SLAAC 주소가 없음 — 링크 로컬 주소(fe80::)로는 다른 네트워크로 나갈 수 없음. 이 링크 라우터의 IPv6·RA 광고를 확인하세요";
     return "IPv6 글로벌 주소가 없음 — 링크 로컬 주소(fe80::)로는 다른 네트워크로 나갈 수 없음. IPv6 주소를 넣으세요";
   }
@@ -497,7 +511,7 @@ export class Ipv6Interface {
   }
 
   /** @param simultaneous 상대도 같은 주소를 동시에 DAD 로 확인 중 (그 DAD NS 를 받음) — RFC 4862 대로 둘 다 포기한다 */
-  private dadFailed(a: Addr6, byMac: Mac | undefined, frameId: number, ctx: NodeContext, simultaneous = false): void {
+  private dadFailed(a: Addr6, byMac: Mac | undefined, frameId: number, ctx: NodeContext, emit: Emit, simultaneous = false): void {
     this.dadTimers.get(a.ip)?.cancel();
     this.dadTimers.delete(a.ip);
     a.state = "duplicate";
@@ -510,6 +524,8 @@ export class Ipv6Interface {
       { ip: a.ip, mac: byMac },
       frameId,
     );
+    // 라우터가 알리던 프리픽스의 자기 주소가 중복이면 곧바로 그 프리픽스를 거두는 RA (다음 RS 를 기다리지 않게)
+    if (this.raOn && a.origin === "manual" && this.raKey() !== this.advertisedKey) this.sendRa(ctx, emit);
   }
 
   // ---------- 수신 ----------
@@ -532,7 +548,7 @@ export class Ipv6Interface {
         return;
       }
       if (mine.state === "tentative") {
-        if (dad) this.dadFailed(mine, frame.src, frame.id, ctx, true);
+        if (dad) this.dadFailed(mine, frame.src, frame.id, ctx, emit, true);
         // DAD 중인 주소로 온 보통 NS 에는 답하지 않는다 (아직 내 주소가 아니므로)
         return;
       }
@@ -562,7 +578,7 @@ export class Ipv6Interface {
     }
     // NA
     if (mine) {
-      if (mine.state === "tentative") this.dadFailed(mine, msg.tll ?? frame.src, frame.id, ctx);
+      if (mine.state === "tentative") this.dadFailed(mine, msg.tll ?? frame.src, frame.id, ctx, emit);
       else if (mine.state === "preferred" && (msg.tll ?? frame.src) !== this.mac)
         ctx.trace("ip.conflict", "L3", `${this.tag}주소 충돌: ${msg.tll ?? frame.src} 도 내 IPv6 주소 ${mine.ip} 를 주장 (NA) — 둘 중 하나의 주소를 바꾸세요`, { ip: mine.ip, mac: msg.tll ?? frame.src }, frame.id);
       return;
@@ -651,7 +667,7 @@ export class Ipv6Interface {
       "L3",
       final
         ? `${this.tag}RA 거둠 (모든 노드 ff02::1): 라우터 수명 0 — 나(${this.linkLocal})를 기본 게이트웨이에서 빼고${withdrawn.length ? ` 프리픽스 ${withdrawn.map((p) => `${p.prefix}/${p.length}`).join(", ")} 로 만든 주소를 지우라` : ""}`
-        : `${this.tag}RA 멀티캐스트 (모든 노드 ff02::1): "나(${this.linkLocal})는 이 링크의 라우터${prefixText ? `, 프리픽스 ${prefixText} 로 주소를 만드세요(SLAAC)` : " (알릴 프리픽스 없음 — 이 인터페이스에 주소가 없음)"}${this.raDns ? `, DNS 는 ${this.raDns}` : ""}"${withdrawn.length ? ` · 빠진 프리픽스 ${withdrawn.map((p) => `${p.prefix}/${p.length}`).join(", ")} 는 유효 수명 0 으로 거둠` : ""}`,
+        : `${this.tag}RA 멀티캐스트 (모든 노드 ff02::1): "나(${this.linkLocal})는 이 링크의 라우터${prefixText ? `, 프리픽스 ${prefixText} 로 주소를 만드세요(SLAAC)` : this.addrs.some((a) => a.origin === "manual" && a.state === "duplicate") ? " (알릴 프리픽스 없음 — 이 인터페이스 주소가 중복이라 뺌)" : " (알릴 프리픽스 없음 — 이 인터페이스에 주소가 없음)"}${this.raDns ? `, DNS 는 ${this.raDns}` : ""}"${withdrawn.length ? ` · 빠진 프리픽스 ${withdrawn.map((p) => `${p.prefix}/${p.length}`).join(", ")} 는 유효 수명 0 으로 거둠` : ""}`,
       { prefixes: current.map((p) => `${p.prefix}/${p.length}`), final },
       frame.id,
     );
@@ -707,20 +723,31 @@ export class Ipv6Interface {
         ctx.trace("slaac.router", "L3", `${this.tag}기본 게이트웨이${first ? "" : " 후보"}: ${from} — RA 를 보낸 라우터의 링크 로컬 주소 (라우터 수명 ${ra.routerLifetime}초)`, { router: from }, frame.id);
       }
     } else if (this.routers.delete(from)) {
-      ctx.trace("slaac.router", "L3", `${this.tag}${from} 가 라우터 수명 0 을 알림 → 기본 게이트웨이에서 뺌${this.routers.size ? ` (남은 라우터 ${[...this.routers.keys()].join(", ")})` : " (남은 라우터 없음 — 다른 네트워크로 못 나감)"}`, { router: from }, frame.id);
+      ctx.trace("slaac.router", "L3", `${this.tag}${from} 가 라우터 수명 0 을 알림 → 기본 게이트웨이에서 뺌${this.routers.size ? ` (남은 라우터 ${[...this.routers.keys()].join(", ")})` : " (남은 라우터 없음 — 다른 네트워크로 못 나감)"}`, { router: from, removed: true }, frame.id);
     }
     for (const p of ra.prefixes) {
       if (!p.autonomous) continue;
       const existing = this.addrs.find((a) => a.origin === "slaac" && a.prefix === p.length && sameSubnet6(a.ip, p.prefix, p.length));
+      const pkey = `${p.prefix}/${p.length}`;
+      const by = this.prefixRouters.get(pkey) ?? new Set<Ip>();
       if (p.valid === 0) {
+        by.delete(from);
+        if (by.size > 0) {
+          if (existing) ctx.trace("slaac.addr", "L3", `${this.tag}${from} 가 프리픽스 ${pkey} 를 거뒀지만 ${[...by].join(", ")} 가 아직 알리고 있음 → SLAAC 주소 ${existing.ip} 유지`, { ip: existing.ip, kept: true }, frame.id);
+          continue;
+        }
+        this.prefixRouters.delete(pkey);
         if (existing) {
           this.removeAddr(existing);
           this.neighbors.clear();
           this.clearPending();
-          ctx.trace("slaac.addr", "L3", `${this.tag}프리픽스 ${p.prefix}/${p.length} 를 라우터가 거둠 (유효 수명 0) → SLAAC 주소 ${existing.ip} 삭제`, { ip: existing.ip, removed: true }, frame.id);
+          ctx.trace("slaac.addr", "L3", `${this.tag}프리픽스 ${pkey} 를 라우터가 거둠 (유효 수명 0) → SLAAC 주소 ${existing.ip} 삭제`, { ip: existing.ip, removed: true }, frame.id);
+          this.onAddrRemoved?.(existing.ip, ctx);
         }
         continue;
       }
+      by.add(from);
+      this.prefixRouters.set(pkey, by);
       if (p.length !== 64) {
         ctx.trace("slaac.addr", "L3", `${this.tag}프리픽스 ${p.prefix}/${p.length} 는 /64 가 아니라 SLAAC 주소를 만들 수 없음 (인터페이스 ID 가 64비트라 프리픽스는 /64 여야 한다)`, { prefix: p.prefix, length: p.length, bad: true }, frame.id);
         continue;
@@ -739,10 +766,16 @@ export class Ipv6Interface {
       );
       this.startDad(addr, ctx, emit);
     }
-    const dns = ra.rdnss?.[0];
+    const dns = ra.routerLifetime > 0 ? ra.rdnss?.[0] : undefined;
     if (dns && dns !== this.raDnsLearned) {
       this.raDnsLearned = dns;
+      this.raDnsFrom = from;
       ctx.trace("slaac.router", "L3", `${this.tag}DNS 서버 ${dns} — RA 의 RDNSS 옵션 (DHCPv6 없이 DNS 를 알린다)`, { dns }, frame.id);
+    } else if (!dns && this.raDnsLearned && this.raDnsFrom === from) {
+      // 그 DNS 를 알려 준 라우터가 거두거나 DNS 없이 다시 알렸다
+      ctx.trace("slaac.router", "L3", `${this.tag}${from} 의 RA 에 DNS(RDNSS)가 없음 → RA 로 받은 DNS 서버 ${this.raDnsLearned} 를 지움`, { dns: this.raDnsLearned, removed: true }, frame.id);
+      this.raDnsLearned = undefined;
+      this.raDnsFrom = undefined;
     }
   }
 
