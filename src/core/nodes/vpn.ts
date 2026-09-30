@@ -11,17 +11,20 @@
 //   데이터는 ESP (IP 프로토콜 50). ESP 는 포트가 없어 NAT 를 못 지나므로, NAT 를 감지했으면 UDP 4500 에 싣는다 (NAT-T)
 // DPD (Dead Peer Detection): 조용한 터널은 상대가 죽거나 경로가 끊겨도 모른다. 빈 INFORMATIONAL 요청으로 상대가 살아 있고 이 SA 를
 //   아는지 확인한다 — 응답이 없으면 SA 를 지우고(다음 패킷에 재협상), 상대가 모르면 INVALID_SPI 로 알려 SA 를 버리게 한다.
-//   주기 타이머가 없는 시계 구조라 사용자 동작(vpn-dpd)으로만 보낸다. WireGuard 식은 대상이 아니다 (핸드셰이크·SA 가 없다)
+//   사용자 동작(vpn-dpd)으로 보내고, 설정 dpd(기본 꺼짐)를 켜면 10초마다 상대에게서 받은 것이 없을 때도 보낸다(strongSwan dpddelay —
+//   받은 ESP 가 곧 살아 있다는 증거라 트래픽이 오가면 보내지 않음). 주기는 배경 타이머라 시간이 흐를 때만 돈다.
+//   WireGuard 식은 대상이 아니다 (핸드셰이크·SA 가 없다)
 // 재협상(rekey)·암호 방식 목록은 생략한다.
 import { sameSubnet, type Ip } from "../addr";
 import { IKE_PORT, NAT_T_PORT, VPN_PORT, type IkeMessage, type Ipv4Packet } from "../packet";
-import { IKE_RETRANSMITS, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
+import { DPD_INTERVAL, IKE_RETRANSMITS, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
 import type { NodeContext } from "./node";
 
 export type VpnMode = "wireguard" | "ipsec";
 export const VPN_MODE_LABEL: Record<VpnMode, string> = { wireguard: "WireGuard", ipsec: "IPsec" };
 export { IKE_RETRANSMITS, IKE_TIMEOUT } from "./ike";
 export const IKE_TIMER_TAG = "ike-timeout";
+export const VPN_DPD_TAG = "vpn-dpd-tick";
 /** 터널이 맺어지기를 기다리며 쌓아 두는 패킷 수 */
 const IKE_QUEUE = 32;
 
@@ -45,6 +48,8 @@ export interface VpnConfig {
   peer?: Ip;
   /** 상대 쪽 사설 대역 (이 대역으로 가는 패킷을 터널로 보내고, 이 대역에서 온 것만 받는다 — WireGuard 의 AllowedIPs) */
   remote: { dest: Ip; prefix: number }[];
+  /** 주기 DPD (IPsec): 상대에게서 10초 동안 받은 것이 없으면 DPD (배경 타이머) */
+  dpd?: boolean;
 }
 
 export const DEFAULT_VPN: VpnConfig = { enabled: false, remote: [] };
@@ -65,6 +70,11 @@ export class Vpn {
   private attempts = 0;
   /** DPD 요청을 보내고 응답을 기다리는 중 */
   private dpdPending = false;
+  /** 상대에게서 마지막으로 받은 시각 (ESP·DPD 응답) — 주기 DPD 는 이만큼 조용할 때만 */
+  private lastRx = 0;
+  /** 주기 DPD: 지금 유효한 배경 타이머 번호 */
+  private dpdTick: number | undefined;
+  private dpdToken = 0;
 
   constructor(private readonly io?: VpnIo) {
     this.ike = new IkeRetransmit(IKE_TIMER_TAG, (pkt, ctx, frameId) => this.io?.send(pkt, ctx, frameId));
@@ -76,8 +86,17 @@ export class Vpn {
 
   setConfig(cfg: VpnConfig, ctx: NodeContext): void {
     const same = JSON.stringify(cfg) === JSON.stringify(this.config);
+    const rest = (c: VpnConfig) => JSON.stringify({ ...c, dpd: undefined });
+    const onlyDpd = !same && rest(cfg) === rest(this.config);
     this.config = { ...cfg, remote: cfg.remote.map((r) => ({ ...r })) };
     if (same) return;
+    if (onlyDpd) {
+      // 주기 DPD 만 바뀜: 터널은 그대로 두고 주기만 켜고 끈다
+      ctx.trace("vpn.config", "sys", cfg.dpd ? `IPsec 주기 DPD 켜짐: 상대에게서 ${DPD_INTERVAL / 1000}초 동안 받은 것이 없으면 DPD (시간이 흐를 때만 돈다)` : "IPsec 주기 DPD 꺼짐: 사용자가 누를 때만", { dpd: cfg.dpd === true });
+      this.dpdTick = undefined;
+      this.armDpd(ctx);
+      return;
+    }
     if (this.endpoint && this.endpoint.ip !== cfg.peer) this.endpoint = undefined;
     this.resetSa();
     const how = this.mode === "ipsec" ? `IPsec 으로 ${cfg.peer ?? "(상대 주소 없음)"} 와 터널을 맺어 (IKE UDP ${IKE_PORT} → ESP)` : `암호화해 ${cfg.peer ?? "(상대 주소 없음)"}:${VPN_PORT} 로`;
@@ -95,6 +114,33 @@ export class Vpn {
     this.pending = undefined;
     this.queue = [];
     this.dpdPending = false;
+    this.dpdTick = undefined;
+  }
+
+  /** 상대에게서 받음 (인증된 ESP): 주기 DPD 는 이만큼 조용해야 보낸다 */
+  heard(now: number): void {
+    this.lastRx = now;
+  }
+
+  /** 주기 DPD 를 건다 (배경 타이머): 마지막으로 받은 때부터 10초 뒤 (그사이 받으면 그때 다시 잰다) */
+  private armDpd(ctx: NodeContext, delay = DPD_INTERVAL): void {
+    if (!this.config.enabled || !this.config.dpd || this.mode !== "ipsec" || this.sa.state !== "up") return;
+    this.dpdTick = ++this.dpdToken;
+    ctx.timer(delay, VPN_DPD_TAG, { tick: this.dpdTick }, true);
+  }
+
+  /** 주기 DPD 차례: 10초 동안 받은 것이 없으면 DPD, 아니면 마지막으로 받은 때부터 10초가 되는 때로 미룬다 */
+  onDpdTick(data: unknown, ctx: NodeContext): void {
+    if ((data as { tick: number }).tick !== this.dpdTick) return;
+    this.dpdTick = undefined;
+    if (!this.config.enabled || !this.config.dpd || this.mode !== "ipsec" || this.sa.state !== "up") return;
+    const idle = ctx.now - this.lastRx;
+    if (idle < DPD_INTERVAL) return this.armDpd(ctx, DPD_INTERVAL - idle);
+    if (!this.dpdPending) {
+      ctx.trace("vpn.dpd", "L4", `IPsec 주기 DPD: 상대 ${this.sa.peer?.ip ?? "?"} 에게서 ${DPD_INTERVAL / 1000}초 동안 받은 것이 없음 → 살아 있는지 확인 (dpddelay)`, { periodic: true });
+      this.dpd(ctx);
+    }
+    this.armDpd(ctx);
   }
 
   /**
@@ -274,6 +320,7 @@ export class Vpn {
         ctx.trace("vpn.drop", "L4", `IPsec DPD: 상대 ${outer.src} 가 이 터널을 모른다고 알림 (INVALID_SPI — 상대의 설정 변경·재시작) → SA 삭제. 터널로 갈 다음 패킷이 오면 다시 협상`, { from: outer.src, dpd: "invalid" }, frameId);
         return true;
       }
+      this.lastRx = ctx.now;
       ctx.trace("vpn.dpd", "L4", `IPsec DPD: 상대 ${outer.src} 가 빈 응답 → 살아 있고 이 터널을 앎 → 터널 유지`, { from: outer.src, dpd: "alive" }, frameId);
       return true;
     }
@@ -345,6 +392,8 @@ export class Vpn {
   private establish(spi: number, natT: boolean, peer: { ip: Ip; port: number }, role: string, ctx: NodeContext, frameId?: number): void {
     this.sa = { state: "up", spi, natT, peer, seq: 0 };
     this.dpdPending = false; // 옛 SA 에 걸어 둔 DPD 는 끝난 것으로
+    this.lastRx = ctx.now;
+    this.armDpd(ctx);
     ctx.trace(
       "vpn.up",
       "L4",

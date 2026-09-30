@@ -9,6 +9,8 @@ import type { NodeContext } from "./node";
 
 /** IKE 요청마다 응답을 기다리는 시간. 지나면 같은 요청을 다시 보내고(재전송), IKE_RETRANSMITS 번 뒤에도 없으면 포기 */
 export const IKE_TIMEOUT = 1000;
+/** 주기 DPD 간격 (strongSwan dpddelay): 상대에게서 이만큼 받은 것이 없으면 DPD 를 보낸다 */
+export const DPD_INTERVAL = 10_000;
 export const IKE_RETRANSMITS = 2;
 
 export function hex(n: number): string {

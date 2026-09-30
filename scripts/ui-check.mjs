@@ -949,6 +949,32 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("표");
   console.log("remote server table has kim:", (await page.locator(".inspector").innerText()).includes("kim") ? "yes" : "NO");
   await page.screenshot({ path: `${OUT}/54-remote-vpn.png` });
+  // 주기 DPD: 노트북에 켜고 회사 방화벽의 바깥 케이블을 손실 100%(말없이 사라짐) → "+10초" 두 번 → 끊김
+  await clickDevice("재택 노트북");
+  await goTab("설정");
+  await raSec.locator(".toggle-row", { hasText: "주기 DPD" }).locator(".toggle").click();
+  const wan = await page.evaluate(() => {
+    const t = JSON.parse(localStorage.getItem("net-sim.topology.v1"));
+    const fw = t.devices.find((d) => d.name === "회사 VPN 방화벽").id;
+    const isp = t.devices.find((d) => d.name === "통신사 구간").id;
+    return t.cables.find((c) => [c.a.device, c.b.device].includes(fw) && [c.a.device, c.b.device].includes(isp)).id;
+  });
+  const mid = await page.evaluate((cid) => {
+    const p = document.querySelector(`[data-cable="${cid}"] .hit`);
+    const pt = p.getPointAtLength(p.getTotalLength() / 2);
+    const m = p.getScreenCTM();
+    return { x: pt.x * m.a + pt.y * m.c + m.e, y: pt.x * m.b + pt.y * m.d + m.f };
+  }, wan);
+  await page.mouse.click(mid.x, mid.y);
+  await page.locator(".inspector .field", { hasText: "손실률" }).locator("select").selectOption("100");
+  await page.evaluate(() => document.activeElement?.blur());
+  const stillUp = await device("재택 노트북").locator(".badge", { hasText: "VPN 연결됨" }).count();
+  await page.click(".transport .ff");
+  await page.click(".transport .ff");
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "재택 노트북" && !/VPN 연결됨/.test(el.textContent ?? "")), null, { timeout: 20000 });
+  await clickDevice("재택 노트북");
+  await goTab("설정");
+  console.log("remote periodic dpd: up before", stillUp, "| after:", (await raSec.locator(".note.error-note").first().innerText().catch(() => "?")).slice(0, 50));
 }
 // 로드밸런서 L4 모드: lb-1 을 L4 로 바꾸고 pc-1 → 192.168.0.20:80 연결
 {

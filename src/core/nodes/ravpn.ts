@@ -12,7 +12,7 @@
 // 재협상(rekey)은 생략.
 import { ipToInt, intToIp, sameSubnet, type Ip } from "../addr";
 import { IKE_PORT, NAT_T_PORT, type EspPacket, type IkeMessage, type Ipv4Packet } from "../packet";
-import { IKE_RETRANSMITS, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
+import { DPD_INTERVAL, IKE_RETRANSMITS, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
 import type { NodeContext } from "./node";
 
 export interface RaServerConfig {
@@ -37,9 +37,12 @@ export interface RaClientConfig {
   /** 사용자 계정 (서버가 계정 인증을 요구할 때) */
   user?: string;
   password?: string;
+  /** 주기 DPD: 서버에게서 10초 동안 받은 것이 없으면 DPD (배경 타이머) */
+  dpd?: boolean;
 }
 
 export const DEFAULT_RA_CLIENT: RaClientConfig = { enabled: false, psk: "" };
+export const RA_DPD_TAG = "ra-dpd-tick";
 export const RA_TIMER_TAG = "ra-ike";
 const inRoutes = (ip: Ip, routes: { dest: Ip; prefix: number }[]) =>
   routes.some((r) => {
@@ -396,6 +399,11 @@ export class RaClient {
   /** DPD 요청을 보내고 응답을 기다리는 중 */
   private dpdPending = false;
   private readonly ike: IkeRetransmit;
+  /** 서버에게서 마지막으로 받은 시각 (ESP·DPD 응답) */
+  private lastRx = 0;
+  /** 주기 DPD: 지금 유효한 배경 타이머 번호 */
+  private dpdTick: number | undefined;
+  private dpdToken = 0;
 
   constructor(
     private readonly io: RaIo & { myIp(): Ip | undefined; local?(dst: Ip): boolean },
@@ -407,6 +415,15 @@ export class RaClient {
 
   setConfig(cfg: RaClientConfig, ctx: NodeContext): void {
     if (JSON.stringify(cfg) === JSON.stringify(this.config)) return;
+    const rest = (c: RaClientConfig) => JSON.stringify({ ...c, dpd: undefined });
+    if (rest(cfg) === rest(this.config)) {
+      // 주기 DPD 만 바뀜: 연결은 그대로 두고 주기만 켜고 끈다
+      this.config = { ...cfg };
+      ctx.trace("vpn.config", "sys", cfg.dpd ? `원격 접속 주기 DPD 켜짐: 서버에게서 ${DPD_INTERVAL / 1000}초 동안 받은 것이 없으면 DPD (시간이 흐를 때만 돈다)` : "원격 접속 주기 DPD 꺼짐: 사용자가 누를 때만", { dpd: cfg.dpd === true });
+      this.dpdTick = undefined;
+      this.armDpd(ctx);
+      return;
+    }
     const wasUp = this.state === "up";
     if (wasUp) this.disconnect(ctx, "설정이 바뀜");
     this.config = { ...cfg };
@@ -503,6 +520,7 @@ export class RaClient {
       if (this.state !== "up" || !this.dpdPending) return true; // 이미 끝난 확인
       this.dpdPending = false;
       this.ike.clear();
+      this.lastRx = ctx.now;
       ctx.trace("vpn.dpd", "L4", `원격 접속: 서버 ${outer.src} 가 DPD 에 빈 응답 → 서버가 살아 있고 이 터널을 앎 → 터널 유지`, { from: outer.src, dpd: "alive", ...(this.sa.eap ? { mid: 3 } : {}) }, frameId);
       return true;
     }
@@ -546,6 +564,8 @@ export class RaClient {
       this.vip = m.assigned;
       this.routes = (m.routes ?? []).map((r) => ({ ...r }));
       this.sa = { ...this.sa, peer: { ip: outer.src, port: srcPort }, seq: 0 };
+      this.lastRx = ctx.now;
+      this.armDpd(ctx);
       ctx.trace(
         "vpn.up",
         "L4",
@@ -653,7 +673,29 @@ export class RaClient {
       return undefined;
     }
     ctx.trace("vpn.decap", "L3", `원격 접속 복호화: 서버 ${outer.src} 에서 온 ESP 를 풀어 ${inner.src} → ${inner.dst}(내 가상 주소) 패킷을 꺼냄`, { from: outer.src, inner: `${inner.src}>${inner.dst}` }, frameId);
+    this.lastRx = ctx.now;
     return { ...inner, dst: me };
+  }
+
+  /** 주기 DPD 를 건다 (배경 타이머): 마지막으로 받은 때부터 10초 뒤 */
+  private armDpd(ctx: NodeContext, delay = DPD_INTERVAL): void {
+    if (!this.config.enabled || !this.config.dpd || this.state !== "up") return;
+    this.dpdTick = ++this.dpdToken;
+    ctx.timer(delay, RA_DPD_TAG, { tick: this.dpdTick }, true);
+  }
+
+  /** 주기 DPD 차례: 서버에게서 10초 동안 받은 것이 없으면 DPD, 아니면 마지막으로 받은 때부터 10초가 되는 때로 미룬다 */
+  onDpdTick(data: unknown, ctx: NodeContext): void {
+    if ((data as { tick: number }).tick !== this.dpdTick) return;
+    this.dpdTick = undefined;
+    if (!this.config.enabled || !this.config.dpd || this.state !== "up") return;
+    const idle = ctx.now - this.lastRx;
+    if (idle < DPD_INTERVAL) return this.armDpd(ctx, DPD_INTERVAL - idle);
+    if (!this.dpdPending) {
+      ctx.trace("vpn.dpd", "L4", `원격 접속 주기 DPD: 서버 ${this.config.server ?? "?"} 에게서 ${DPD_INTERVAL / 1000}초 동안 받은 것이 없음 → 살아 있는지 확인 (dpddelay)`, { periodic: true });
+      this.dpd(ctx);
+    }
+    this.armDpd(ctx);
   }
 
   /** 사용자의 "다시 연결": DPD 를 기다리던 중이면 그 확인도 끝낸다 (늦게 온 DPD 응답은 handleIke 가 무시) */

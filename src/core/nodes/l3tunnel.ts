@@ -111,6 +111,7 @@ export class TunnelEnds {
     }
     if (ipsec) {
       vpn.followPeer(outer.src, srcPort, ctx, frameId);
+      vpn.heard(ctx.now);
       vpn.received++;
       ctx.trace(
         "vpn.decap",

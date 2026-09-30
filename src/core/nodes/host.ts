@@ -29,7 +29,7 @@ import { LB_ALGORITHM_LABEL, LB_CHECK_TAG, LB_MODE_LABEL, LB_STICKY_LABEL, LoadB
 import { ForwardProxy, type ProxyConfig } from "./proxy";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { endpoint, HTTPS_PORT, TCP_TIMER_TAG, TcpStack, type TcpConn } from "./tcp";
-import { RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
+import { RA_DPD_TAG, RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
 export type IpMode = "dhcp" | "static";
@@ -1134,6 +1134,9 @@ export class Host implements SimNode {
         return;
       case RA_TIMER_TAG:
         this.ra.onTimer(data, ctx);
+        return;
+      case RA_DPD_TAG:
+        this.ra.onDpdTick(data, ctx);
         return;
       case "arp-timeout": {
         const { ip: nextHop } = data as { ip: Ip };

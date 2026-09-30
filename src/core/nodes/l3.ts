@@ -27,7 +27,7 @@ import { NatTable, type PortForward } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { Rip, RIP_TIMER_TAG, type RipConfig } from "./rip";
 import { HA_TIMER_TAG, Ha, type HaConfig } from "./ha";
-import { IKE_TIMER_TAG, VPN_MODE_LABEL, Vpn, type VpnConfig } from "./vpn";
+import { IKE_TIMER_TAG, VPN_DPD_TAG, VPN_MODE_LABEL, Vpn, type VpnConfig } from "./vpn";
 import { RaServer, type RaServerConfig } from "./ravpn";
 import { TunnelEnds } from "./l3tunnel";
 import { HA_SYNC_TAG, SessionSync } from "./hasync";
@@ -1009,6 +1009,10 @@ export class L3Node implements SimNode {
     }
     if (tag === HA_TIMER_TAG) {
       this.ha.onTimer(data, ctx);
+      return;
+    }
+    if (tag === VPN_DPD_TAG) {
+      this.vpn.onDpdTick(data, ctx);
       return;
     }
     if (tag === IKE_TIMER_TAG) {

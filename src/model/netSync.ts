@@ -255,7 +255,7 @@ export function effectiveRaClient(d: Device): RaClientConfig | undefined {
   if (!r) return undefined;
   const server = validIp(r.server);
   const user = r.user?.trim();
-  return { enabled: r.enabled === true, ...(server ? { server } : {}), psk: r.psk, ...(user ? { user, password: r.password ?? "" } : {}) };
+  return { enabled: r.enabled === true, ...(server ? { server } : {}), psk: r.psk, ...(user ? { user, password: r.password ?? "" } : {}), ...(r.dpd === true ? { dpd: true } : {}) };
 }
 
 /** 로드밸런서 설정: 주소·포트가 올바른 백엔드만 */
@@ -437,6 +437,7 @@ export function effectiveL3(d: Device) {
       ...(l3.vpn?.mode === "ipsec" ? { mode: "ipsec" as const, psk: l3.vpn.psk ?? "" } : {}),
       peer: validIp(l3.vpn?.peer),
       remote: (l3.vpn?.remote ?? []).filter((r) => validIp(r.dest) && Number.isInteger(r.prefix) && r.prefix >= 1 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix })),
+      ...(l3.vpn?.mode === "ipsec" && l3.vpn.dpd === true ? { dpd: true } : {}),
     },
   };
 }

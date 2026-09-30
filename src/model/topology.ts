@@ -313,6 +313,8 @@ export interface RaClientSettings {
   /** 사용자 계정 (서버가 계정 인증을 요구할 때) */
   user?: string;
   password?: string;
+  /** 주기 DPD (없으면 꺼짐) */
+  dpd?: boolean;
 }
 
 export interface HaSettings {
@@ -419,6 +421,7 @@ function normalizeRaClient(r: Partial<RaClientSettings>): RaClientSettings {
     server: str(r.server, ""),
     psk: str(r.psk, ""),
     ...(user !== undefined ? { user, password: accountText(r.password) ?? "" } : {}),
+    ...(r.dpd === true ? { dpd: true } : {}),
   };
 }
 
@@ -445,6 +448,7 @@ function normalizeVpn(v: Partial<VpnSettings>): VpnSettings {
     remote: remote
       .filter((r): r is { dest: string; prefix: number } => !!r && typeof r === "object" && typeof r.dest === "string")
       .map((r) => ({ dest: r.dest, prefix: Number.isInteger(r.prefix) && r.prefix >= 0 && r.prefix <= 32 ? r.prefix : 24 })),
+    ...(v.dpd === true ? { dpd: true } : {}),
   };
 }
 
@@ -458,6 +462,8 @@ export interface VpnSettings {
   peer: string;
   /** 상대 쪽 사설 대역 */
   remote: { dest: string; prefix: number }[];
+  /** 주기 DPD (IPsec, 없으면 꺼짐) */
+  dpd?: boolean;
 }
 
 export interface RipSettings {

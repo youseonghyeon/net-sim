@@ -569,7 +569,14 @@ export function RemoteVpnSection({ d, h }: { d: Device; h: HostSettings }) {
               상대 확인 (DPD)
             </button>
           )}
-          <p class="note">계정이 없는 서버면 사용자 이름은 비워 두세요. "상대 확인 (DPD)" 은 연결된 동안 누를 수 있고, 서버가 응답하지 않으면 1초씩 두 번 다시 보낸 뒤 터널을 지우고 끊김으로 바뀝니다.</p>
+          <label class="toggle-row">
+            <span>
+              주기 DPD <span class="mono muted">10초 · 조용할 때</span>
+              <small class="muted">서버가 말없이 사라지면 끊김으로 알림</small>
+            </span>
+            <Toggle on={ra.dpd === true} onToggle={() => set({ dpd: !ra.dpd })} />
+          </label>
+          <p class="note">계정이 없는 서버면 사용자 이름은 비워 두세요. "상대 확인 (DPD)" 은 연결된 동안 누를 수 있고, 서버가 응답하지 않으면 1초씩 두 번 다시 보낸 뒤 터널을 지우고 끊김으로 바뀝니다. 주기 DPD 를 켜면 서버에게서 10초 동안 받은 것이 없을 때 저절로 보냅니다(시간이 흐를 때만).</p>
         </>
       )}
     </Section>

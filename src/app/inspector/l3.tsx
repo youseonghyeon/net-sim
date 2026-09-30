@@ -281,6 +281,15 @@ export function VpnSection({ d, l3 }: { d: Device; l3: L3Settings }) {
               : "이 대역으로 가는 패킷은 터널로 가고(NAT 하지 않음), 터널로 온 패킷은 이 대역에서 온 것만 받습니다(WireGuard 의 AllowedIPs). 상대가 NAT 뒤에 있으면 상대가 먼저 보낸 뒤 그 출발지로 답합니다."}{" "}
             양쪽 사설 대역이 겹치면 안 됩니다.
           </p>
+          {ipsec && (
+            <label class="toggle-row">
+              <span>
+                주기 DPD <span class="mono muted">10초 · 조용할 때</span>
+                <small class="muted">말없이 사라진 상대를 알아채 터널을 지움</small>
+              </span>
+              <Toggle on={vpn.dpd === true} onToggle={() => set({ dpd: !vpn.dpd })} />
+            </label>
+          )}
           {ipsec && <DpdControl d={d} />}
         </>
       )}
@@ -303,7 +312,7 @@ function DpdControl({ d }: { d: Device }) {
       </button>
       <p class="note">
         {up
-          ? "조용한 터널은 상대가 꺼지거나 경로가 끊겨도 모릅니다. 누르면 빈 INFORMATIONAL 을 보내고, 1초씩 두 번 다시 보내도 응답이 없으면 터널(SA)을 지웁니다(다음 패킷에 다시 협상)."
+          ? "조용한 터널은 상대가 꺼지거나 경로가 끊겨도 모릅니다. 누르면 빈 INFORMATIONAL 을 보내고, 1초씩 두 번 다시 보내도 응답이 없으면 터널(SA)을 지웁니다(다음 패킷에 다시 협상). 주기 DPD 를 켜면 상대에게서 10초 동안 받은 것이 없을 때 저절로 보냅니다 — 시간이 흐를 때만(패킷이 오가거나 위의 \"+10초\")."
           : "터널(SA)이 맺어진 뒤에 누를 수 있습니다. 상대 대역으로 ping 을 한 번 보내면 IKE 로 터널을 맺습니다."}
       </p>
     </>
