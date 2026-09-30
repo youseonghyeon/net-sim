@@ -156,6 +156,10 @@
 ## 4n. `git add -A` 가 에이전트 worktree 를 gitlink 로 담는다 (2026-09-30)
 - 리뷰 에이전트를 `isolation: worktree` 로 돌리면 `.claude/worktrees/<id>` 에 저장소가 생기고, 끝난 뒤 변경이 있으면 남는다. 그 상태로 `git add -A` 하면 임베디드 저장소(160000 gitlink)로 커밋·push 된다. `.gitignore` 에 `.claude/worktrees/` 를 넣어 막았고, 필요한 것(재현 테스트)을 옮긴 뒤 `git worktree remove` 로 치운다.
 
+## 4o. 콜백이 들고 있던 ctx 의 "지금" 은 과거다 (IPv6 4단계 리뷰, 2026-09-30)
+- `NodeContext.now` 가 ctx 를 만든 순간의 값이었고 `timer` 도 그 값 + delay 로 걸렸다. DNS 응답을 기다린 콜백이 사용자 동작 때의 ctx 로 TCP SYN 을 보내면 재전송 타이머가 과거에 걸려 "100ms 만에 400ms timeout" 이 찍히고, 시계가 거꾸로 갔다. IPv4 만으로도 DNS 재시도가 끼면 났지만 드물었고, AAAA → A 두 번 조회가 조건을 넓혀 드러났다. `now` 를 getter 로, `timer` 를 부르는 순간 기준으로 고쳤다(기존 테스트 트레이스는 하나도 안 바뀜 — 결함이 있던 경로만 영향).
+- 교훈: 비동기로 이어지는 흐름(DNS → 연결)을 새로 여러 단계로 늘리면, 앞 단계의 문맥 객체를 뒤 단계가 쓰는지 본다.
+
 ## 5. 아직 남은 약점
 
 - ~~`src/model/sim.ts` 는 DOM 의존이라 유닛 테스트가 없다~~ → 2026-09-20 에 `netSync.ts`(diff 동기화)·`simClock.ts`(시계)·`status.ts`(문구)로 분리해 유닛 테스트 26개를 붙였다. 예제 토폴로지 3종을 sync → runToIdle → ping 으로 검증하므로 브라우저 없이도 ui-check 의 핵심 흐름을 대신한다. `sim.ts` 에 남은 건 신호·rAF 접착뿐이라 테스트하지 않는다.

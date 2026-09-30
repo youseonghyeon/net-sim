@@ -352,14 +352,17 @@ export class Network {
   }
 
   private ctx(nodeId: string): NodeContext {
-    const now = this.now;
+    // now 는 읽을 때의 시각: 콜백(DNS 응답을 기다린 뒤 등)이 앞선 이벤트의 ctx 를 들고 있어도 타이머·RTT 가 과거 기준이 되지 않게
+    const net = this;
     return {
-      now,
+      get now() {
+        return net.now;
+      },
       send: (port, frame) => this.send(nodeId, port, frame),
       isPortConnected: (port) => this.portMap.has(epKey({ node: nodeId, port })),
       timer: (delay, tag, data): TimerHandle => {
         const ev: SimEvent = { type: "timer", nodeId, tag, data, cancelled: false };
-        this.sched.push(now + delay, ev);
+        this.sched.push(this.now + delay, ev);
         let set = this.timersOf.get(nodeId);
         if (!set) this.timersOf.set(nodeId, (set = new Set()));
         set.add(ev);

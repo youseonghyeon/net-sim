@@ -1,5 +1,5 @@
 import { isMulticastMac, isPrivateIp, type Ip, type Mac } from "../addr";
-import { ALL_NODES, formatIp6, isGlobal6, isIpv6, isMulticast6, parseIp6, sameSubnet6 } from "../addr6";
+import { ALL_NODES, canonIp6, formatIp6, isGlobal6, isIpv6, isMulticast6, parseIp6, sameSubnet6 } from "../addr6";
 import {
   DHCP_CLIENT_PORT,
   DHCP_SERVER_PORT,
@@ -100,7 +100,8 @@ export class Internet implements SimNode {
   }
 
   /** 인터넷 저편의 클라이언트가 dst:port 로 TCP 연결을 시작한다 (포트 포워딩 시연용) */
-  connectFrom(dst: Ip, port: number, ctx: NodeContext): void {
+  connectFrom(rawDst: Ip, port: number, ctx: NodeContext): void {
+    const dst = canonIp6(rawDst) ?? rawDst;
     if (isIpv6(dst)) {
       const src6 = Internet.REMOTE_CLIENT6;
       if (!this.route6(dst)) {
@@ -128,8 +129,7 @@ export class Internet implements SimNode {
       this.iface.clearPending();
       this.v6.clearPending();
       this.v6.neighbors.clear();
-      // 고객이 모두 이 선 너머라 회선이 끊기면 위임 경로도 쓸 수 없다 (다시 이어지면 공유기가 다시 요청)
-      this.delegations.clear();
+      // 위임은 IPv4 임대처럼 남겨 둔다: 스위치 너머 공유기는 회선이 끊긴 줄 모르므로 다시 이어지면 그 경로를 그대로 쓴다
     }
   }
 
@@ -202,10 +202,13 @@ export class Internet implements SimNode {
     if (isMulticast6(pkt.dst)) return;
     // 응답을 돌려줄 수 있는 출발지인가: ISP 가 경로를 아는 주소여야 한다 (IPv4 의 "사설 출발지" 드롭과 같은 자리)
     if (!this.route6(pkt.src) && pkt.src !== Internet.REMOTE_CLIENT6) {
+      const fromPool = sameSubnet6(pkt.src, Internet.PD_POOL, 40);
       ctx.trace(
         "ip.drop",
         "L3",
-        `ISP: 출발지 ${pkt.src} 는 ISP 가 위임한 프리픽스·ISP 링크의 주소가 아님 → 응답을 돌려줄 경로가 없어 드롭. 인터넷 IPv6 는 공유기가 DHCPv6-PD 로 받은 프리픽스로 나가야 한다 (게이트웨이·NAT 박스에 손으로 넣은 IPv6 는 ISP 가 모른다)`,
+        fromPool
+          ? `ISP: 출발지 ${pkt.src} 는 위임 풀 안이지만 지금 이 ISP 가 위임한 기록이 없음 → 드롭. ISP 를 새로 붙였거나 기록이 사라졌는데 공유기는 옛 위임을 쓰는 중 — 공유기 WAN 케이블을 다시 꽂으면(또는 공유기 IPv6 를 껐다 켜면) 다시 위임받는다`
+          : `ISP: 출발지 ${pkt.src} 는 ISP 가 위임한 프리픽스·ISP 링크의 주소가 아님 → 응답을 돌려줄 경로가 없어 드롭. 인터넷 IPv6 는 공유기가 DHCPv6-PD 로 받은 프리픽스로 나가야 한다 (게이트웨이·NAT 박스에 손으로 넣은 IPv6 는 ISP 가 모른다)`,
         { src: pkt.src },
         frame.id,
       );
@@ -226,6 +229,12 @@ export class Internet implements SimNode {
     }
     if (pkt.dst === Internet.REMOTE_CLIENT6 && p.kind === "tcp") {
       this.tcp.handle(pkt, p, ctx);
+      return;
+    }
+    if (pkt.dst === Internet.REMOTE_CLIENT6 && p.kind === "icmp6" && p.type === "echo-request") {
+      // 바깥 클라이언트도 인터넷 저편의 한 장치: IPv4 짝(198.51.100.7)처럼 ping 에 답한다
+      ctx.trace("inet.forward", "app", `인터넷 경로로 ${pkt.dst} (외부 클라이언트) 에 전달 (IPv6) — 왕복 ${Internet.LATENCY * 2}ms`, { dst: pkt.dst, src: pkt.src }, frame.id);
+      ctx.timer(Internet.LATENCY * 2, "inet-reply6", { src: pkt.src, dst: pkt.dst, id: p.id, seq: p.seq });
       return;
     }
     if (p.kind === "icmp6" && p.type === "unreachable" && pkt.dst === Internet.REMOTE_CLIENT6) {

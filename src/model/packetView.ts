@@ -483,7 +483,9 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
       ["옵션 1 Client ID", `DUID-LL ${m.clientId}`],
     ];
     if (m.serverId) rows.push(["옵션 2 Server ID", `DUID-LL ${m.serverId}`]);
-    rows.push(["옵션 25 IA_PD", m.prefix ? `옵션 26 IAPREFIX ${m.prefix.prefix}/${m.prefix.length} — 이 프리픽스를 통째로 맡긴다` : m.status ? `옵션 13 Status ${m.status} (위임할 프리픽스 없음)` : "프리픽스를 위임해 달라는 요청 (IAPREFIX 없음)"]);
+    const what =
+      m.type === "advertise" ? "이 프리픽스를 위임하겠다는 제안" : m.type === "reply" ? "이 프리픽스를 통째로 맡긴다 (위임 확정)" : m.type === "request" ? "제안받은 이 프리픽스를 쓰겠다는 확정 요청" : m.type === "release" ? "이 프리픽스를 돌려준다" : "이 프리픽스를 원한다";
+    rows.push(["옵션 25 IA_PD", m.prefix ? `옵션 26 IAPREFIX ${m.prefix.prefix}/${m.prefix.length} — ${what}` : m.status ? `옵션 13 Status ${m.status} (위임할 프리픽스 없음)` : "프리픽스를 위임해 달라는 요청 (IAPREFIX 없음)"]);
     return [udp, { title: "DHCPv6 (앱)", rows }];
   }
   return [

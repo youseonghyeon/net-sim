@@ -3,6 +3,7 @@
 // IPv4 규칙과 따로 돈다 — IPv6 를 켠 장치만 본다. 주소 칸은 netSync 의 effective* 와 같은 기준(표준 표기, 링크 로컬 주소 칸은 없음)
 import { isLinkLocal6, linkLocalOf, network6, sameSubnet6 } from "../../core/addr6";
 import { effectiveHost6, effectiveL3v6, l3MacOf } from "../netSync";
+import { Internet } from "../../core/nodes/internet";
 import { DEVICE_SPECS, wirelessLinks, type Device, type Topology } from "../topology";
 import type { LintContext } from "./context";
 import { portName } from "./segments";
@@ -57,6 +58,11 @@ export function ipv6Rules({ t, m, add }: LintContext): void {
   const routers: V6Router[] = [];
   const off: { device: Device; port: number; seg: number | undefined; home?: boolean }[] = [];
   for (const d of t.devices) {
+    // 인터넷 노드: ISP 링크에서 늘 RA 를 보낸다 (2001:db8:ffff::/64)
+    if (d.kind === "internet") {
+      routers.push({ device: d, port: 0, label: `${d.name} (ISP)`, ip: Internet.ISP_V6, prefix: 64, linkLocal: safeLinkLocal(d.mac), seg: m.ids.get(`${d.id}:0`), ra: true });
+      continue;
+    }
     // 공유기 LAN: IPv6 를 켜면 위임받은 /64 를 RA 로 알린다 (프리픽스는 실행 중에 정해짐)
     if (d.router) {
       const seg = m.ids.get(`${d.id}:1`);
@@ -173,7 +179,9 @@ export function ipv6Rules({ t, m, add }: LintContext): void {
       continue;
     }
     if (h.seg === undefined || !m.linked.has(`${d.id}:0`)) continue;
-    if (gw && segRouters.length > 0 && !segRouters.some((r) => r.ip === gw || r.linkLocal === gw)) {
+    // 공유기 LAN 의 글로벌 주소는 위임받아야 정해지므로 모른다: 링크 로컬이 아니면 침묵
+    const unknownGlobal = !!gw && !isLinkLocal6(gw) && segRouters.some((r) => r.pd);
+    if (gw && !unknownGlobal && segRouters.length > 0 && !segRouters.some((r) => r.ip === gw || r.linkLocal === gw)) {
       const hint = segRouters.find((r) => r.ip) ?? segRouters[0]!;
       add({
         deviceId: d.id,

@@ -126,9 +126,18 @@ export class Firewall {
 
   constructor(
     public config: FirewallConfig = { ...DEFAULT_FIREWALL, rules: [] },
-    /** 로그 앞 이름 (공유기의 "IPv6 인바운드 기본 차단" 처럼 사용자 규칙과 구분할 때) */
+    /** 로그 앞 이름 (공유기의 "IPv6 기본 방화벽" 처럼 사용자 규칙과 구분할 때) */
     private readonly label = "방화벽",
+    /** 기본 정책으로 차단할 때 덧붙일 안내 */
+    private readonly denyHint?: string,
   ) {}
+
+  /** 켜져 있고, 이 패킷에 처음 일치하는 규칙이 허용인지 (기본 정책은 보지 않는다) */
+  allowsByRule(pkt: IpPacket, dir: FlowDirection): boolean {
+    if (!this.config.enabled) return false;
+    const rule = this.config.rules.find((r) => this.matches(r, pkt, dir));
+    return rule?.action === "allow";
+  }
 
   setConfig(cfg: FirewallConfig, ctx: NodeContext, label: string): void {
     const prev = this.config;
@@ -197,7 +206,7 @@ export class Firewall {
       ctx.trace(
         "fw.deny",
         "L3",
-        `${this.label} 차단: ${dirLabel} ${what} — ${rule ? `규칙 ${idx + 1} (${describeRule(rule)})` : "일치하는 규칙 없음, 기본 정책 차단"} → 드롭`,
+        `${this.label} 차단: ${dirLabel} ${what} — ${rule ? `규칙 ${idx + 1} (${describeRule(rule)})` : this.denyHint ?? "일치하는 규칙 없음, 기본 정책 차단"} → 드롭`,
         { rule: idx, dir, src: pkt.src, dst: pkt.dst },
         frameId,
       );

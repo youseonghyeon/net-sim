@@ -5,7 +5,7 @@ import { isIpv6 } from "../core/addr6";
 import type { Network } from "../core/network";
 import { PUBLIC_ZONE } from "../core/nodes/dns";
 import { Host } from "../core/nodes/host";
-import { Internet, KNOWN_SERVERS } from "../core/nodes/internet";
+import { Internet, KNOWN_SERVERS, KNOWN_SERVERS6 } from "../core/nodes/internet";
 import { L3Node } from "../core/nodes/l3";
 import { Router } from "../core/nodes/router";
 import { NetworkSync } from "./netSync";
@@ -128,6 +128,7 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
       addIp(ip, name);
     }
   }
+  if (hasInternet && !(mode === "tcp" && port !== 80)) for (const [ip, name] of Object.entries(KNOWN_SERVERS6)) addIp6([ip], name);
   // 이름 후보: LAN 의 DNS 서버 레코드 + 인터넷이 있으면 공개 이름. 같은 이름의 A·AAAA 는 하나로 모은다
   const nameList: { name: string; ip: string; ips: string[] }[] = [];
   const addName = (name: string, ip: string) => {

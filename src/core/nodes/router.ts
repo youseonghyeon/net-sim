@@ -1,5 +1,5 @@
 import { BROADCAST_MAC, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
-import { ALL_NODES, formatIp6, isLinkLocal6, isMulticast6, parseIp6, UNSPECIFIED6 } from "../addr6";
+import { ALL_NODES, formatIp6, isLinkLocal6, isMulticast6, parseIp6, sameSubnet6, UNSPECIFIED6 } from "../addr6";
 import {
   DHCP_CLIENT_PORT,
   DHCP_SERVER_PORT,
@@ -121,7 +121,11 @@ export class Router implements SimNode {
       if (this.ipv6Enabled) this.pd.start(ctx, emit);
     };
     // 규칙 없이 기본 차단: 들어오는 것만 검사하고(check "in"), 나가는 것은 흐름만 기억한다(remember)
-    this.inbound6 = new Firewall({ enabled: cfg.ipv6?.inboundBlock !== false, defaultPolicy: "deny", stateful: true, rules: [] }, "IPv6 기본 방화벽");
+    this.inbound6 = new Firewall(
+      { enabled: cfg.ipv6?.inboundBlock !== false, defaultPolicy: "deny", stateful: true, rules: [] },
+      "IPv6 기본 방화벽",
+      "바깥에서 먼저 시작한 IPv6 연결은 기본 차단 — 열려면 공유기 방화벽에 이 연결을 허용하는 인바운드 규칙(핀홀)을 넣거나 IPv6 인바운드 기본 차단을 끄세요",
+    );
     if (cfg.ipv6?.enabled) {
       this.ipv6Enabled = true;
       this.lan6.init({ enabled: true, addrs: [] });
@@ -373,7 +377,7 @@ export class Router implements SimNode {
     }
     // 멀티캐스트는 내부 스위치가 모든 LAN 포트로 뿌리고, 공유기 LAN IPv6 가 가입한 그룹(모든 노드·모든 라우터·solicited-node)이면 공유기도 받는다
     if (isMulticastMac(frame.dst)) {
-      this.floodLan(port, frame, ctx, `멀티캐스트 ${frame.dst}`);
+      this.floodLan(port, frame, ctx, `${frame.dst} 는 MAC 테이블에 없음`);
       if (this.lan6.accepts(frame.dst) && frame.payload.kind === "ipv6") this.handleLan6(frame.payload, frame, ctx);
       return;
     }
@@ -466,6 +470,12 @@ export class Router implements SimNode {
 
   // ---------- IPv6 (NAT 없음) ----------
 
+  /** 위임받은 프리픽스 안의 주소인지 */
+  private inDelegated(ip: Ip): boolean {
+    const d = this.pd.delegated;
+    return !!d && sameSubnet6(ip, d.prefix, d.length);
+  }
+
   /** 공유기 자신에게 온 IPv6: ping 에 답하고, DNS 질의는 포워더로 */
   private local6(pkt: Ipv6Packet, via: Ipv6Interface, emit: (f: EthernetFrame) => void, frameId: number, ctx: NodeContext): void {
     const p = pkt.payload;
@@ -511,6 +521,13 @@ export class Router implements SimNode {
       ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 는 LAN 안의 주소 → 공유기를 거칠 필요가 없음 (호스트끼리 직접 통신) → 드롭`, { dst: pkt.dst }, frame.id);
       return;
     }
+    if (this.inDelegated(pkt.dst)) {
+      // 위임받은 /56 안인데 LAN /64 가 아님: ISP 로 보내면 다시 나에게 돌아온다 (RFC 7084 WPD-5 — 쓰지 않는 위임 프리픽스는 Unreachable)
+      ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 는 위임받은 ${this.pd.delegated!.prefix}/${this.pd.delegated!.length} 안이지만 LAN(/64)에 쓰지 않는 프리픽스 → 드롭하고 Destination Unreachable (no route)`, { dst: pkt.dst }, frame.id);
+      const notice = this.lan6.unreachable(pkt, "net", ctx, frame.id);
+      if (notice) this.lan6.send(notice, ctx, emit);
+      return;
+    }
     if (pkt.hopLimit <= 1) {
       const notice = this.lan6.timeExceeded(pkt, ctx, frame.id);
       if (notice) this.lan6.send(notice, ctx, emit);
@@ -552,7 +569,11 @@ export class Router implements SimNode {
     if (isMulticast6(pkt.dst)) return;
     const lanPrefix = this.lan6.addrs.find((a) => a.origin === "manual");
     if (!lanPrefix || !this.lan6.onLink(pkt.dst) || isLinkLocal6(pkt.dst)) {
-      ctx.trace("ip.drop", "L3", `[wan] 목적지 ${pkt.dst} 는 위임받은 LAN 프리픽스가 아님 → 드롭`, { dst: pkt.dst }, frame.id);
+      if (this.inDelegated(pkt.dst)) {
+        ctx.trace("ip.no-route", "L3", `[wan] ${pkt.dst} 는 위임받은 ${this.pd.delegated!.prefix}/${this.pd.delegated!.length} 안이지만 LAN(/64)에 쓰지 않는 프리픽스 → 드롭하고 Destination Unreachable (no route)`, { dst: pkt.dst }, frame.id);
+        const notice = this.wan6.unreachable(pkt, "net", ctx, frame.id);
+        if (notice) this.wan6.send(notice, ctx, emit);
+      } else ctx.trace("ip.drop", "L3", `[wan] 목적지 ${pkt.dst} 는 위임받은 LAN 프리픽스가 아님 → 드롭`, { dst: pkt.dst }, frame.id);
       return;
     }
     if (pkt.hopLimit <= 1) {
@@ -561,7 +582,8 @@ export class Router implements SimNode {
       return;
     }
     if (!this.firewall.check(pkt, "in", ctx, frame.id)) return;
-    if (!this.inbound6.check(pkt, "in", ctx, frame.id)) return;
+    // 공유기 방화벽에 이 연결을 허용하는 인바운드 규칙이 있으면 그것이 핀홀: 기본 차단을 건너뛴다
+    if (!this.firewall.allowsByRule(pkt, "in") && !this.inbound6.check(pkt, "in", ctx, frame.id)) return;
     const out: Ipv6Packet = { ...pkt, hopLimit: pkt.hopLimit - 1 };
     ctx.trace("ip.forward", "L3", `라우팅(IPv6): ${pkt.dst} 는 위임받은 LAN 프리픽스 → LAN 으로 (NAT 역변환 없이 주소 그대로), Hop Limit ${pkt.hopLimit} → ${out.hopLimit}`, { dst: pkt.dst, out: "lan" }, frame.id);
     this.lan6.send(out, ctx, this.emitLan(ctx));
