@@ -71,7 +71,7 @@ export function httpProxyRule({ t, add }: LintContext): void {
           deviceId: d.id,
           severity: "warn",
           code: "proxy.l7-connect",
-          message: `HTTP 프록시로 ${server}:${hp.port} (${target.name}) 의 L7 로드밸런서를 가리킴 → HTTP(80) 는 뒤로 넘어가지만 HTTPS(443) 의 CONNECT 는 L7 이 터널을 중계하지 않아 405 로 거절`,
+          message: `HTTP 프록시로 ${server}:${hp.port} (${target.name}) 의 L7 로드밸런서를 가리킴 → HTTP(80) 는 뒤로 넘어가지만 HTTPS(443) 의 CONNECT 는 L7 이 터널을 중계하지 않아 거절됨 (${lb.port === 443 ? "443 은 TLS 로 받아 평문 CONNECT 가 400" : "405"})`,
           fix: `${target.name} → 로드밸런서를 L4 모드로 (연결째 프록시 팜으로 넘김)`,
           related: [target.id],
         });

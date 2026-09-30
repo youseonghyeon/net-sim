@@ -15,7 +15,7 @@
 import { ipToInt, type Ip } from "../addr";
 import type { TcpSegment } from "../packet";
 import type { NodeContext } from "./node";
-import { CONNECT_ESTABLISHED, type TcpConn, type TcpStack } from "./tcp";
+import { CONNECT_ESTABLISHED, responseBytes, type TcpConn, type TcpStack } from "./tcp";
 
 export interface ProxyConfig {
   enabled: boolean;
@@ -211,8 +211,10 @@ export class ForwardProxy {
       return;
     }
     const what = seg.tls === "client-hello" ? `TLS ClientHello${seg.sni ? ` (SNI ${seg.sni})` : ""}` : seg.tls ? "TLS 레코드 (암호화됨)" : "데이터";
-    if (!this.tcp.sendData(other, { len: seg.len, ...(seg.data !== undefined ? { data: seg.data } : {}), ...(seg.tls ? { tls: seg.tls } : {}), ...(seg.sni ? { sni: seg.sni } : {}) }, ctx, `터널 전달 → ${where}: ${what}`, "내용은 보지 않고 그대로")) {
-      ctx.trace("proxy.fail", "app", `프록시: 터널 반대편(${where}) 연결이 이미 닫혀 받은 ${seg.len}B 를 넘기지 못함 → 버림`, { client: t.down.remoteIp, target: t.target });
+    // 바이트를 그대로 넘긴다: 안쪽(TLS 안의 HTTP 헤더 흉내 — Cookie·Set-Cookie·X-Served-By)도 손대지 않는다
+    const { kind: _k, srcPort: _s, dstPort: _d, seq: _q, ack: _a, syn: _y, ackFlag: _f, fin: _n, rst: _r, ...part } = seg;
+    if (!this.tcp.sendData(other, part, ctx, `터널 전달 → ${where}: ${what}`, "내용은 보지 않고 그대로")) {
+      ctx.trace("proxy.fail", "app", `프록시: 터널 반대편(${where}) 연결이 이미 닫혀 받은 ${seg.len}B 를 넘기지 못함 → 드롭`, { client: t.down.remoteIp, target: t.target });
     }
   }
 
@@ -237,20 +239,21 @@ export class ForwardProxy {
       return true;
     }
     // 응답을 끝까지(대상의 FIN 까지) 받았을 때만 전달. FIN 없이 끊긴(RST·timeout) 일부 응답은 503
-    if (up.bytesReceived > 0 && up.finReceived) {
+    const body = responseBytes(up);
+    if (body > 0 && up.finReceived) {
       const status = up.status ?? "HTTP 200";
-      const n = Math.max(1, Math.ceil(up.bytesReceived / RESPONSE_SEGMENT_BYTES));
+      const n = Math.max(1, Math.ceil(body / RESPONSE_SEGMENT_BYTES));
       ctx.trace(
         "proxy.relay",
         "app",
-        `프록시: ${p.target} 의 응답 (${status}, ${up.bytesReceived}B) 을 ${p.down.remoteIp} 에게 전달${up.setCookie ? ` — Set-Cookie 도 그대로` : ""}`,
-        { client: p.down.remoteIp, target: p.target, ip: up.remoteIp, status, bytes: up.bytesReceived, result: `TCP_MISS/${status.split(" ")[1] ?? "200"}` },
+        `프록시: ${p.target} 의 응답 (${status}, ${body}B) 을 ${p.down.remoteIp} 에게 전달${up.setCookie ? ` — Set-Cookie 도 그대로` : ""}`,
+        { client: p.down.remoteIp, target: p.target, ip: up.remoteIp, status, bytes: body, result: `TCP_MISS/${status.split(" ")[1] ?? "200"}` },
       );
       this.finish(
         p.down,
         p.target,
         `TCP_MISS/${status.split(" ")[1] ?? "200"}`,
-        Array.from({ length: n }, (_, k) => ({ len: Math.min(RESPONSE_SEGMENT_BYTES, up.bytesReceived - k * RESPONSE_SEGMENT_BYTES), data: status === "HTTP 200" ? `HTTP 200 (${k + 1}/${n})` : status })),
+        Array.from({ length: n }, (_, k) => ({ len: Math.min(RESPONSE_SEGMENT_BYTES, body - k * RESPONSE_SEGMENT_BYTES), data: status === "HTTP 200" ? `HTTP 200 (${k + 1}/${n})` : status })),
         ctx,
         { origin: up.servedBy ?? up.remoteIp, ...(up.setCookie ? { setCookie: up.setCookie } : {}) },
       );

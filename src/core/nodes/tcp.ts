@@ -10,7 +10,7 @@
 //   프록시의 두 연결(relay)은 앱 흉내 없이 받은 것을 앱(proxy.ts)에게 넘겨 반대편으로 그대로 보낸다
 import type { Ip } from "../addr";
 import { isIpv6 } from "../addr6";
-import { tcpFlags, type IpPacket, type TcpSegment, type TlsRecord } from "../packet";
+import { tcpFlags, type IpPacket, type TcpSegment } from "../packet";
 import { looksLikeName } from "./dns";
 import type { NodeContext, TimerHandle } from "./node";
 
@@ -113,6 +113,13 @@ export interface TcpConn {
   relay?: boolean;
   /** TLS (포트 443): 핸드셰이크가 끝났는지, 핸드셰이크로 보낸 바이트 (서버가 응답을 이미 보냈는지 가를 때 뺀다), SNI */
   tls?: { done: boolean; sent: number; sni?: string };
+  /** 클라이언트: 응답이 아니라 연결 준비로 받은 바이트 (CONNECT 응답·TLS 핸드셰이크) — 응답 크기에서 뺀다 */
+  setupReceived?: number;
+}
+
+/** 받은 응답 본문 크기 (CONNECT 응답·TLS 핸드셰이크 제외) */
+export function responseBytes(conn: TcpConn): number {
+  return conn.bytesReceived - (conn.setupReceived ?? 0);
 }
 
 export interface TcpHost {
@@ -159,6 +166,9 @@ export interface ResponseMeta {
   /** 첫 응답 세그먼트에 싣는 Set-Cookie */
   setCookie?: string;
 }
+
+/** 연결에 실어 보낼 데이터 한 덩어리: 길이·내용과 헤더 흉내 필드 (터널 중계는 받은 세그먼트의 이것들을 그대로 넘긴다) */
+export type RelayPart = { len: number } & Partial<Pick<TcpSegment, "data" | "tls" | "sni" | "origin" | "via" | "cookie" | "setCookie" | "target" | "method">>;
 
 /** 받은 데이터의 요약: TLS 면 레코드 종류 (중계하는 프록시는 안을 모른다, 끝 장치는 풀어 본다) */
 function describeData(seg: TcpSegment, relay: boolean): string {
@@ -272,11 +282,22 @@ export class TcpStack {
     ctx.trace("tcp.received", "L4", `${flags} 수신 (seq=${seg.seq} ack=${seg.ack}${seg.len ? ` len=${seg.len}` : ""}) [${TCP_STATE_LABEL[conn.state]}]`, { conn: conn.id, seq: seg.seq, ack: seg.ack, len: seg.len });
 
     if (seg.rst) {
-      conn.state = conn.state === "SYN_SENT" ? "FAILED" : "CLOSED";
-      conn.reason = conn.state === "FAILED" ? "연결 거부 (RST)" : "상대가 RST 로 끊음";
+      // 응답을 끝까지(FIN) 받기 전에 끊긴 요청은 실패다 (SSH 세션은 열려 있던 것이 끊긴 것이라 종료로 본다)
+      const cut = conn.role === "client" && !conn.ssh && !conn.finReceived && conn.state !== "SYN_SENT";
+      conn.state = conn.state === "SYN_SENT" || cut ? "FAILED" : "CLOSED";
+      conn.reason = conn.state === "FAILED" ? (cut ? "상대가 RST 로 끊음 (응답을 다 받기 전)" : "연결 거부 (RST)") : "상대가 RST 로 끊음";
       conn.closedAt = ctx.now;
       this.cancelAll(conn);
-      ctx.trace(conn.state === "FAILED" ? "tcp.refused" : "tcp.rst.received", "L4", conn.state === "FAILED" ? `RST 수신: ${endpoint(conn.remoteIp, conn.remotePort)} 에 그 포트를 듣는 서비스가 없음 → 연결 거부 (Connection refused)` : `RST 수신 → 연결 끊김`, { conn: conn.id });
+      ctx.trace(
+        conn.state === "FAILED" && !cut ? "tcp.refused" : "tcp.rst.received",
+        "L4",
+        cut
+          ? `RST 수신: 응답을 다 받기 전에 ${endpoint(conn.remoteIp, conn.remotePort)} 가 연결을 끊음 (Connection reset by peer) → 실패`
+          : conn.state === "FAILED"
+            ? `RST 수신: ${endpoint(conn.remoteIp, conn.remotePort)} 에 그 포트를 듣는 서비스가 없음 → 연결 거부 (Connection refused)`
+            : `RST 수신 → 연결 끊김`,
+        { conn: conn.id },
+      );
       this.host.onFinish?.(conn, ctx);
       return;
     }
@@ -316,7 +337,8 @@ export class TcpStack {
             return;
           }
           if (conn.method === "CONNECT") this.sendConnect(conn, ctx);
-          else if (conn.remotePort === HTTPS_PORT) this.tlsHello(conn, ctx);
+          // 프록시에게 하는 평문 요청(target — 프록시가 443 에서 들어도)은 TLS 가 아니다
+          else if (conn.remotePort === HTTPS_PORT && conn.target === undefined) this.tlsHello(conn, ctx);
           else this.sendRequest(conn, ctx);
         } else {
           ctx.trace("tcp.ignore", "L4", `SYN_SENT 상태에서 기대하지 않은 ${flags} → 무시`, { conn: conn.id });
@@ -504,13 +526,20 @@ export class TcpStack {
       this.handshake(conn, seg, ctx);
       return;
     }
+    // TLS 가 아닌 포트로 ClientHello (L4·포트 포워딩이 443 을 평문 80 으로 넘김 등): nginx 처럼 400 — 요청으로 받아 답하지 않는다
+    if (conn.role === "server" && conn.state === "ESTABLISHED" && seg.tls === "client-hello" && conn.bytesSent === 0 && !conn.deferred) {
+      conn.deferred = true;
+      ctx.trace("tls.fail", "app", `TLS ClientHello 가 평문 포트 ${conn.localPort} 로 옴 → HTTP 요청이 아니므로 400 Bad Request (HTTPS 를 받으려면 443 을 TLS 로 받는 서버로 보내야 함)`, { conn: conn.id });
+      this.respond(conn, [{ len: 200, data: "HTTP 400 Bad Request" }], ctx);
+      return;
+    }
     // 응답을 아직 안 보낸 서버 연결 (TLS 면 핸드셰이크로 보낸 것은 빼고 센다)
     if (conn.role === "server" && conn.state === "ESTABLISHED" && conn.bytesSent === (conn.tls?.sent ?? 0) && !conn.deferred) {
       // 앱이 요청을 맡으면(로드밸런서·프록시) 받았다는 ACK 만 보내고 응답은 나중에.
       // 상태를 먼저 세운다: 뒤 서버가 내 주소(루프백)면 onRequest 안에서 응답까지 끝날 수 있고, 그때는 응답이 곧 ACK 다
       conn.deferred = true;
       if (this.host.onRequest?.(conn, ctx)) {
-        if (conn.state === "ESTABLISHED" && conn.bytesSent === 0) this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt}) — 요청을 받았고, 응답은 뒤 서버에서 받아 오는 대로 보냄`, "tcp.ack.sent");
+        if (conn.state === "ESTABLISHED" && conn.bytesSent === (conn.tls?.sent ?? 0)) this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt}) — 요청을 받았고, 응답은 뒤 서버에서 받아 오는 대로 보냄`, "tcp.ack.sent");
         return;
       }
       delete conn.deferred;
@@ -635,6 +664,7 @@ export class TcpStack {
     if (conn.tunnel === "wait") {
       if (seg.data === CONNECT_ESTABLISHED) {
         conn.tunnel = "up";
+        conn.setupReceived = (conn.setupReceived ?? 0) + seg.len;
         ctx.trace("proxy.tunnel", "app", `프록시가 ${conn.target} 까지 터널을 열었음 (${CONNECT_ESTABLISHED}) → 이 연결 그대로 대상 서버와 TLS 핸드셰이크. 프록시는 이제 바이트만 전달한다`, { conn: conn.id, target: conn.target, client: true });
         this.tlsHello(conn, ctx);
         return;
@@ -658,6 +688,7 @@ export class TcpStack {
       }
       // 상태를 먼저 세우고 보낸다 (루프백이면 transmit 안에서 서버가 곧바로 답한다)
       tls.done = true;
+      conn.setupReceived = (conn.setupReceived ?? 0) + seg.len;
       ctx.trace("tls.established", "app", `TLS 핸드셰이크 완료: 서버 인증서${tls.sni ? `(${tls.sni})` : ""}를 확인하고 세션 키를 정함 → Finished 뒤 요청부터 암호화 (중간 장비는 길이만 본다)`, { conn: conn.id, role: "client", ...(tls.sni ? { sni: tls.sni } : {}) });
       this.transmit(conn, { ackFlag: true, len: TLS_CLIENT_FINISHED.len, data: TLS_CLIENT_FINISHED.data, tls: "finished" }, ctx, `TLS Finished ${TLS_CLIENT_FINISHED.len}B 전송 (seq=${conn.sndNxt}, 암호화됨)`, "tcp.data.sent");
       this.sendRequest(conn, ctx);
@@ -689,7 +720,7 @@ export class TcpStack {
   }
 
   /** 연결을 연 채로 데이터 한 덩어리를 보낸다 (프록시의 CONNECT 응답·터널 중계). 보낼 수 없는 상태면 false */
-  sendData(conn: TcpConn, part: { len: number; data?: string; tls?: TlsRecord; sni?: string }, ctx: NodeContext, summary: string, note?: string): boolean {
+  sendData(conn: TcpConn, part: RelayPart, ctx: NodeContext, summary: string, note?: string): boolean {
     if (conn.state !== "ESTABLISHED") return false;
     this.transmit(conn, { ackFlag: true, ...part }, ctx, `${summary} ${part.len}B (seq=${conn.sndNxt})${note ? ` — ${note}` : ""}`, "tcp.data.sent");
     return true;

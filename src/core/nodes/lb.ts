@@ -16,7 +16,7 @@
 import type { Ip } from "../addr";
 import type { Ipv4Packet, TcpSegment } from "../packet";
 import type { NodeContext } from "./node";
-import type { TcpConn, TcpStack } from "./tcp";
+import { responseBytes, type TcpConn, type TcpStack } from "./tcp";
 
 export type LbAlgorithm = "round-robin" | "least-conn";
 export type LbMode = "l7" | "l4";
@@ -241,23 +241,24 @@ export class LoadBalancer {
     const st = this.stats.get(key) ?? { served: 0, fails: 0 };
     this.stats.set(key, st);
     // 응답을 끝까지 받았으면(상대 FIN 까지) 마지막 종료 절차가 timeout 이어도 성공으로 본다. FIN 없이 끊긴(RST·timeout) 일부 응답은 실패
-    if (up.bytesReceived > 0 && up.finReceived) {
+    const body = responseBytes(up); // 백엔드가 443 이면 TLS 핸드셰이크는 응답이 아니다
+    if (body > 0 && up.finReceived) {
       st.served++;
       // 받은 응답을 상태 줄 그대로 전달한다 (뒤에서 502·508 이 오면 그대로). 응답을 만든 서버는 뒤 LB 가 알려 준 것을 우선
       const status = up.status ?? "HTTP 200";
       const origin = up.servedBy ?? p.backend.ip;
-      const n = Math.max(1, Math.ceil(up.bytesReceived / RESPONSE_SEGMENT_BYTES));
+      const n = Math.max(1, Math.ceil(body / RESPONSE_SEGMENT_BYTES));
       // 쿠키 고정: 클라이언트가 이 백엔드를 가리키는 쿠키를 안 가져왔으면(처음·다시 고름) 응답에 심는다
       const setCookie = this.config.sticky === "cookie" && cookieBackend(p.down.cookie) !== key ? `${LB_COOKIE}=${key}` : undefined;
       ctx.trace(
         "lb.relay",
         "app",
-        `로드밸런서: 백엔드 ${key} 의 응답 (${status}, ${up.bytesReceived}B) 을 클라이언트 ${p.down.remoteIp} 에게 전달${origin !== p.backend.ip ? ` — 응답을 만든 서버는 그 뒤의 ${origin}` : ""}${setCookie ? ` — Set-Cookie: ${setCookie} 를 넣어 이 브라우저의 다음 요청을 같은 백엔드로` : ""}`,
-        { backend: key, bytes: up.bytesReceived, status, ...(setCookie ? { setCookie } : {}) },
+        `로드밸런서: 백엔드 ${key} 의 응답 (${status}, ${body}B) 을 클라이언트 ${p.down.remoteIp} 에게 전달${origin !== p.backend.ip ? ` — 응답을 만든 서버는 그 뒤의 ${origin}` : ""}${setCookie ? ` — Set-Cookie: ${setCookie} 를 넣어 이 브라우저의 다음 요청을 같은 백엔드로` : ""}`,
+        { backend: key, bytes: body, status, ...(setCookie ? { setCookie } : {}) },
       );
       this.tcp.respond(
         p.down,
-        Array.from({ length: n }, (_, k) => ({ len: Math.min(RESPONSE_SEGMENT_BYTES, up.bytesReceived - k * RESPONSE_SEGMENT_BYTES), data: status === "HTTP 200" ? `HTTP 200 (${k + 1}/${n})` : status })),
+        Array.from({ length: n }, (_, k) => ({ len: Math.min(RESPONSE_SEGMENT_BYTES, body - k * RESPONSE_SEGMENT_BYTES), data: status === "HTTP 200" ? `HTTP 200 (${k + 1}/${n})` : status })),
         ctx,
         { origin, ...(setCookie ? { setCookie } : {}) },
       );

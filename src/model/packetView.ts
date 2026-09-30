@@ -759,7 +759,8 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
     case "proxy.relay":
     case "proxy.deny":
     case "proxy.fail": {
-      // Squid access.log: 시각 경과ms 클라이언트 결과/상태 바이트 메서드 URL 사용자 계층/상대 형식
+      // Squid access.log: 시각 경과ms 클라이언트 결과/상태 바이트 메서드 URL 사용자 계층/상대 형식. 요청 하나의 결과가 아닌 줄(터널 중계 드롭)은 기록이 없다
+      if (detail(ev, "result") === undefined) break;
       const target = detail(ev, "target");
       // CONNECT 는 URL 자리에 호스트:포트만 남는다 (경로는 암호화된 터널 안이라 프록시가 모른다)
       const connect = detail(ev, "method") === "CONNECT";
