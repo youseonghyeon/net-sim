@@ -279,9 +279,18 @@ export interface TcpSegment {
   cookie?: string;
   /** 응답의 Set-Cookie 헤더 — 로드밸런서의 쿠키 세션 고정 */
   setCookie?: string;
-  /** 프록시에게 보낸 요청의 대상 (절대 URI "GET http://example.com/" 의 호스트:포트) */
+  /** 프록시에게 보낸 요청의 대상 (절대 URI "GET http://example.com/" 의 호스트:포트, CONNECT 면 터널을 열 곳) */
   target?: string;
+  /** 요청 메서드 (없으면 GET). CONNECT = 프록시에게 대상까지 TCP 터널을 열어 달라는 요청 (HTTPS) */
+  method?: "CONNECT";
+  /** TLS 레코드 (포트 443, TLS 1.3 축소판). "app" 이면 data 는 두 끝만 푸는 안쪽 내용 */
+  tls?: TlsRecord;
+  /** TLS ClientHello 의 SNI (접속할 이름 — 암호화 전이라 중간 장비도 본다) */
+  sni?: string;
 }
+
+/** TLS 레코드 종류: 핸드셰이크 세 번(ClientHello → ServerHello·인증서·Finished → Finished) 뒤로는 응용 데이터(암호화) */
+export type TlsRecord = "client-hello" | "server-hello" | "finished" | "app";
 
 export interface IcmpEcho {
   kind: "icmp";

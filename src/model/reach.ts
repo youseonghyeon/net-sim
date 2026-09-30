@@ -124,11 +124,11 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
   }
   if (hasInternet && src.ip) {
     for (const [ip, name] of Object.entries(KNOWN_SERVERS)) {
-      if (mode === "tcp" && port !== 80) continue;
+      if (mode === "tcp" && port !== 80 && port !== 443) continue;
       addIp(ip, name);
     }
   }
-  if (hasInternet && !(mode === "tcp" && port !== 80)) for (const [ip, name] of Object.entries(KNOWN_SERVERS6)) addIp6([ip], name);
+  if (hasInternet && !(mode === "tcp" && port !== 80 && port !== 443)) for (const [ip, name] of Object.entries(KNOWN_SERVERS6)) addIp6([ip], name);
   // 이름 후보: LAN 의 DNS 서버 레코드 + 인터넷이 있으면 공개 이름. 같은 이름의 A·AAAA 는 하나로 모은다
   const nameList: { name: string; ip: string; ips: string[] }[] = [];
   const addName = (name: string, ip: string) => {
@@ -171,7 +171,8 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
       } else {
         net.scheduleAction(net.now, { kind: "tcp-connect", nodeId: fromId, dst: c.value, port });
         net.runToIdle(20_000);
-        const conn = [...src.tcp.conns.values()].at(-1);
+        // 내가 연 연결 (내가 프록시·로드밸런서이기도 하면 중계 연결이 뒤에 생긴다)
+        const conn = [...src.tcp.conns.values()].filter((x) => x.role === "client" && x.via === undefined && !x.relay).at(-1);
         const httpError = /^HTTP [45]/.test(conn?.status ?? "");
         ok = conn?.state === "CLOSED" && conn.bytesReceived > 0 && !httpError;
         reason = httpError ? `${conn!.status} (${conn!.target ? "프록시" : "로드밸런서 뒤 백엔드 문제"})` : conn?.reason;

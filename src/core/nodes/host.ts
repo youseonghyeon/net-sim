@@ -28,7 +28,7 @@ import { NetInterface } from "./iface";
 import { LB_ALGORITHM_LABEL, LB_MODE_LABEL, LB_STICKY_LABEL, LoadBalancer, type LbConfig } from "./lb";
 import { ForwardProxy, type ProxyConfig } from "./proxy";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
-import { endpoint, TCP_TIMER_TAG, TcpStack, type TcpConn } from "./tcp";
+import { endpoint, HTTPS_PORT, TCP_TIMER_TAG, TcpStack, type TcpConn } from "./tcp";
 import { RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
@@ -53,7 +53,7 @@ export interface HostConfig {
   lb?: LbConfig;
   /** 이 호스트가 포워드 프록시(Squid 식) 역할을 할 때 */
   proxy?: ProxyConfig;
-  /** 이 호스트의 HTTP 프록시 설정 (http_proxy): 포트 80 요청을 이 프록시에게 부탁한다 */
+  /** 이 호스트의 HTTP 프록시 설정 (http_proxy·https_proxy): 포트 80 요청은 대신 받아 달라고, 443 은 CONNECT 터널로 이 프록시에게 부탁한다 */
   httpProxy?: HttpProxySetting;
   /** 원격 접속 VPN 클라이언트 */
   ra?: RaClientConfig;
@@ -174,6 +174,8 @@ export class Host implements SimNode {
       send: (pkt, ctx) => this.sendAny(pkt, ctx),
       onRequest: (conn, ctx) => this.lb.onRequest(conn, ctx) || this.proxy.onRequest(conn, ctx),
       onFinish: (conn, ctx) => void (this.lb.onFinish(conn, ctx) || this.proxy.onFinish(conn, ctx) || this.happyEyeballs(conn, ctx)),
+      onEstablished: (conn, ctx) => this.proxy.onEstablished(conn, ctx),
+      onRelay: (conn, seg, ctx) => this.proxy.onRelay(conn, seg, ctx),
     });
     this.lb = new LoadBalancer(this.tcp, () => this.iface.ip);
     if (cfg.lb) this.lb.config = { ...cfg.lb, backends: cfg.lb.backends.map((b) => ({ ...b })) };
@@ -276,7 +278,7 @@ export class Host implements SimNode {
   setHttpProxy(cfg: HttpProxySetting | undefined, ctx: NodeContext): void {
     if (JSON.stringify(cfg) === JSON.stringify(this.httpProxy)) return;
     this.httpProxy = cfg ? { ...cfg } : undefined;
-    ctx.trace("ip.config", "sys", cfg ? `HTTP 프록시 설정: http_proxy=http://${cfg.server}:${cfg.port} — 웹(포트 80) 요청은 이 프록시에게 부탁` : "HTTP 프록시 설정 지움 — 웹 요청을 직접 보냄", { ...cfg });
+    ctx.trace("ip.config", "sys", cfg ? `HTTP 프록시 설정: http_proxy=https_proxy=http://${cfg.server}:${cfg.port} — 웹 요청(포트 80, HTTPS 443 은 CONNECT 터널)은 이 프록시에게 부탁` : "HTTP 프록시 설정 지움 — 웹 요청을 직접 보냄", { ...cfg });
   }
 
   /** 실제로 듣는 포트 = 서비스 포트 + (켜져 있으면) LB 포트 + 프록시 포트 */
@@ -297,6 +299,9 @@ export class Host implements SimNode {
         ctx?.trace("ip.config", "sys", `TCP 포트 ${p} 에서 연결 받기 시작 (listen)${role}`, { port: p });
       }
     }
+    // 443 은 TLS 로 받는다 (HTTPS 서버, 로드밸런서면 TLS 를 풀고 백엔드로). 프록시 포트는 평문 HTTP (CONNECT 를 받는다)
+    this.tcp.tlsPorts.clear();
+    if (next.has(HTTPS_PORT) && !(this.proxy.config.enabled && this.proxy.config.port === HTTPS_PORT)) this.tcp.tlsPorts.add(HTTPS_PORT);
   }
 
   get mac(): Mac {
@@ -716,6 +721,12 @@ export class Host implements SimNode {
       return;
     }
     const proxy = this.proxyFor(target, port);
+    if (proxy && port === HTTPS_PORT) {
+      // HTTPS 는 프록시가 대신 받아 올 수 없다 (암호화) → CONNECT 로 대상까지 통로를 부탁하고 TLS 는 대상과 직접. 이름은 프록시가 찾는다
+      ctx.trace("proxy.use", "app", `HTTPS 프록시 설정(https_proxy=http://${proxy.server}:${proxy.port}) → ${target}:${port} 에 직접 가지 않고 프록시에게 CONNECT 로 터널을 부탁${looksLikeName(target) ? " (이름은 프록시가 찾음)" : ""}`, { dst: target, port, proxy: `${proxy.server}:${proxy.port}`, method: "CONNECT" });
+      this.tcp.connect(this.iface.ip!, proxy.server, proxy.port, ctx, { target: `${target}:${port}`, method: "CONNECT" });
+      return;
+    }
     if (proxy) {
       // 웹 요청은 대상에 직접 가지 않고 프록시에게 부탁한다. 이름도 풀지 않고 그대로 넘긴다 (프록시가 찾는다)
       ctx.trace("proxy.use", "app", `HTTP 프록시 설정(http_proxy=http://${proxy.server}:${proxy.port}) → ${target}:${port} 에 직접 가지 않고 프록시에게 대신 받아 달라고 부탁${looksLikeName(target) ? " (이름은 프록시가 찾음)" : ""}`, { dst: target, port, proxy: `${proxy.server}:${proxy.port}` });
@@ -854,12 +865,12 @@ export class Host implements SimNode {
   }
 
   /**
-   * 이 연결을 프록시에게 부탁하는지: 웹(포트 80) 요청이면 대상이 어디든 (브라우저·curl 의 http_proxy 와 같다 —
+   * 이 연결을 프록시에게 부탁하는지: 웹(포트 80·443) 요청이면 대상이 어디든 (브라우저·curl 의 http_proxy·https_proxy 와 같다 —
    * 같은 사무실 서버도 프록시를 거친다. 실무에서는 예외 목록(no_proxy·PAC)으로 뺀다). 내 주소는 직접
    */
   private proxyFor(target: string, port: number): HttpProxySetting | undefined {
     const p = this.httpProxy;
-    if (!p || port !== 80 || !this.iface.ip || target === this.iface.ip) return undefined;
+    if (!p || (port !== 80 && port !== HTTPS_PORT) || !this.iface.ip || target === this.iface.ip) return undefined;
     return p;
   }
 
@@ -1202,7 +1213,7 @@ export class Host implements SimNode {
         ...(this.dnsServer.config.enabled
           ? [["DNS 서버", `켜짐 · 레코드 ${this.dnsServer.config.records.length}개${this.dnsServer.config.upstream ? ` · 업스트림 DNS ${this.dnsServer.config.upstream}` : ""}`] as [string, string]]
           : []),
-        ...(this.httpProxy ? [["HTTP 프록시", `http://${this.httpProxy.server}:${this.httpProxy.port} (웹 요청)`] as [string, string]] : []),
+        ...(this.httpProxy ? [["HTTP 프록시", `http://${this.httpProxy.server}:${this.httpProxy.port} (웹 요청 80·443)`] as [string, string]] : []),
         ...(this.proxy.config.enabled ? [["프록시", `켜짐 · 포트 ${this.proxy.config.port}${this.proxy.config.deny.length ? ` · 차단 ${this.proxy.config.deny.length}개` : ""}`] as [string, string]] : []),
         ...(this.lb.config.enabled
           ? [["로드밸런서", `켜짐 · ${LB_MODE_LABEL[this.lb.config.mode ?? "l7"]} · 포트 ${this.lb.config.port} · ${LB_ALGORITHM_LABEL[this.lb.config.algorithm]}${this.lb.config.sticky ? ` · ${LB_STICKY_LABEL[this.lb.config.sticky]}` : ""} · 백엔드 ${this.lb.config.backends.length}대`] as [string, string]]

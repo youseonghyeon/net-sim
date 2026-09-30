@@ -61,6 +61,7 @@ const BAD_GATEWAY = { len: 200, data: "HTTP 502 Bad Gateway" };
 /** 요청이 로드밸런서를 이만큼 거쳤으면 순환 구성으로 보고 끊는다 (LB 끼리 서로를 백엔드로 둔 경우) */
 export const LB_MAX_HOPS = 5;
 const LOOP_DETECTED = { len: 200, data: "HTTP 508 Loop Detected" };
+const METHOD_NOT_ALLOWED = { len: 200, data: "HTTP 405 Method Not Allowed" };
 const RESPONSE_SEGMENT_BYTES = 1000;
 
 const keyOf = (b: LbBackend) => `${b.ip}:${b.port}`;
@@ -192,6 +193,12 @@ export class LoadBalancer {
   /** 클라이언트 요청 도착: 맡으면 true (응답은 백엔드에서 받아 온 뒤) */
   onRequest(conn: TcpConn, ctx: NodeContext): boolean {
     if (!this.handles(conn)) return false;
+    if (conn.method === "CONNECT") {
+      // nginx 식 L7 은 CONNECT 를 받지 않는다 (nginx 는 405). 프록시 팜 앞이면 보통 L4 로 연결째 넘긴다
+      ctx.trace("lb.fail", "app", `로드밸런서(L7): ${conn.remoteIp} 의 CONNECT ${conn.target ?? "?"} → 이 L7 로드밸런서(nginx 식)는 CONNECT 터널을 중계하지 않음 → 405 Method Not Allowed (프록시 팜 앞에는 L4 모드를 쓰세요)`, { client: conn.remoteIp });
+      this.tcp.respond(conn, [METHOD_NOT_ALLOWED], ctx);
+      return true;
+    }
     this.forward(conn, new Set(), ctx);
     return true;
   }

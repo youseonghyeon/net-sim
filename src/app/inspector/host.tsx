@@ -240,6 +240,13 @@ export function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
       {has(22) && <p class="note">포트 22 로 연결을 받습니다. 진단에서 TCP 22 로 연결해 보세요(연결 과정만 보여 주고, 암호화된 SSH 대화 내용은 다루지 않습니다).</p>}
       <label class="toggle-row">
         <span>
+          HTTPS 서버 <span class="mono muted">TCP 443</span>
+        </span>
+        <Toggle on={has(443)} onToggle={() => toggle(443)} />
+      </label>
+      {has(443) && <p class="note">포트 443 으로 TLS 핸드셰이크(ClientHello → 인증서) 뒤 암호화된 요청에 응답합니다. 중간 장비는 SNI(접속할 이름)와 길이만 봅니다.</p>}
+      <label class="toggle-row">
+        <span>
           DHCP 서버 <span class="mono muted">UDP 67</span>
         </span>
         <Toggle on={ds.enabled} onToggle={() => setDs({ enabled: !ds.enabled })} />
@@ -348,11 +355,11 @@ export function HttpProxySection({ d, h }: { d: Device; h: HostSettings }) {
     <Section title="HTTP 프록시">
       <label class="toggle-row">
         <span>
-          {hp.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">http_proxy</span>
+          {hp.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">http_proxy · https_proxy</span>
         </span>
         <Toggle on={hp.enabled} onToggle={() => set({ enabled: !hp.enabled })} />
       </label>
-      {!hp.enabled && <p class="note">켜면 웹(포트 80) 요청을 대상에 직접 보내지 않고 프록시 서버에게 대신 받아 달라고 부탁합니다. 사내에서 인터넷을 프록시로만 내보낼 때 PC 에 넣는 설정입니다(브라우저 프록시 설정·http_proxy 환경 변수).</p>}
+      {!hp.enabled && <p class="note">켜면 웹(포트 80·443) 요청을 대상에 직접 보내지 않고 프록시 서버에게 부탁합니다. 사내에서 인터넷을 프록시로만 내보낼 때 PC 에 넣는 설정입니다(브라우저 프록시 설정·http_proxy·https_proxy 환경 변수).</p>}
       {hp.enabled && (
         <>
           <Field label="프록시 서버" error={ipError(hp.server, true)}>
@@ -361,7 +368,7 @@ export function HttpProxySection({ d, h }: { d: Device; h: HostSettings }) {
           <Field label="포트">
             <input class="input mono" type="number" min={1} max={65535} value={hp.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 3128)) }); }} />
           </Field>
-          <p class="note">웹 요청은 대상이 같은 사무실 서버여도 프록시를 거칩니다. 이름은 이 장치가 찾지 않고 프록시가 찾습니다. SSH 등 웹이 아닌 연결과 ping 은 프록시를 거치지 않고 직접 나갑니다.</p>
+          <p class="note">HTTP(80)는 프록시가 대신 받아 오고, HTTPS(443)는 CONNECT 로 대상까지 터널만 열어 달라고 한 뒤 TLS 는 대상과 직접 합니다(프록시는 이름만 알고 내용은 모름). 웹 요청은 대상이 같은 사무실 서버여도 프록시를 거치고, 이름은 프록시가 찾습니다. SSH 등 웹이 아닌 연결과 ping 은 직접 나갑니다.</p>
         </>
       )}
     </Section>
@@ -454,11 +461,12 @@ function LbFields({ d, h }: { d: Device; h: HostSettings }) {
           <p class="note">
             {lb.mode === "l4" ? (
               <>
-                클라이언트의 패킷을 <b>주소·포트만 바꿔</b> 백엔드로 넘기고, 돌아오는 패킷도 바꿔 돌려줍니다(L4, LVS·NLB 식). TCP 연결은 클라이언트와 백엔드 사이 하나뿐이고 로드밸런서는 내용을 보지 않아 SSH 등 무엇이든 나눕니다. 대신 이미 시작한 연결은 다른 백엔드로 옮기지 못해, 백엔드가 거부(RST)하면 10초 빼 두고 클라이언트가 다시 연결해야 합니다.
+                클라이언트의 패킷을 <b>주소·포트만 바꿔</b> 백엔드로 넘기고, 돌아오는 패킷도 바꿔 돌려줍니다(L4, LVS·NLB 식). TCP 연결은 클라이언트와 백엔드 사이 하나뿐이고 로드밸런서는 내용을 보지 않아 SSH·HTTPS(TLS 를 풀지 않고 그대로) 등 무엇이든 나눕니다. 대신 이미 시작한 연결은 다른 백엔드로 옮기지 못해, 백엔드가 거부(RST)하면 10초 빼 두고 클라이언트가 다시 연결해야 합니다.
               </>
             ) : (
               <>
                 클라이언트는 이 장치 주소로 접속하고, 로드밸런서가 백엔드 하나를 골라 <b>자기가 대신</b> 연결해 요청한 뒤 응답을 돌려줍니다(리버스 프록시, L7). 그래서 백엔드에게는 클라이언트가 로드밸런서로 보입니다. 백엔드가 거부하거나 응답이 없으면 10초 동안 빼고 곧바로 다음 백엔드로 다시 보냅니다(패시브 헬스 체크).
+                {lb.port === 443 && " 포트 443 이면 로드밸런서가 TLS 를 풀어(TLS 종료) 요청을 보고, 백엔드에는 백엔드 포트대로 다시 연결합니다 — 80 이면 평문, 443 이면 다시 암호화."}
               </>
             )}
           </p>

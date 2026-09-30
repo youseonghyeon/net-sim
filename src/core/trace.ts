@@ -133,6 +133,14 @@ export type TraceKind =
   | "proxy.use"
   | "proxy.request"
   | "proxy.relay"
+  /** CONNECT 터널이 열림 (프록시가 대상에 연결됨, 끝 클라이언트가 200 Connection established 를 받음) */
+  | "proxy.tunnel"
+  /** TLS: ClientHello (클라이언트가 보냄·서버가 받음) */
+  | "tls.hello"
+  /** TLS 핸드셰이크 완료 — 그 뒤 내용은 암호화 */
+  | "tls.established"
+  /** TLS 핸드셰이크 실패 (TLS 가 아닌 상대, 평문 요청이 HTTPS 포트로) */
+  | "tls.fail"
   | "proxy.deny"
   | "proxy.fail"
   | "link.loss"
@@ -224,6 +232,7 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "tcp.out-of-order",
   "proxy.deny",
   "proxy.fail",
+  "tls.fail",
   "arp.timeout",
   "ndp.timeout",
   "ndp.dad.fail",

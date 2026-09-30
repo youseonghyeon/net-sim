@@ -93,6 +93,8 @@ export class Internet implements SimNode {
     this.v6.startQuiet({ enabled: true, addrs: [{ ip: Internet.ISP_V6, prefix: 64 }], ra: true, raDns: PUBLIC_DNS6[0] });
     this.tcp.listening.add(80);
     this.tcp.listening.add(22); // 인터넷 저편 서버들은 SSH 도 받는다 (오래 열린 세션 실험용)
+    this.tcp.listening.add(443); // HTTPS (TLS)
+    this.tcp.tlsPorts.add(443);
   }
 
   private emit(ctx: NodeContext): Emit {
@@ -471,7 +473,7 @@ export class Internet implements SimNode {
         ["외부 클라이언트 (IPv6)", Internet.REMOTE_CLIENT6],
       ],
       tables: [
-        { title: "웹 서버 연결 (포트 80)", columns: ["상대", "상태", "보냄 / 받음"], rows: this.tcp.rows() },
+        { title: "웹 서버 연결 (포트 80·443)", columns: ["상대", "상태", "보냄 / 받음"], rows: this.tcp.rows() },
         { title: "공인 주소 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
         { title: "IPv6 프리픽스 위임 (DHCPv6-PD)", columns: ["프리픽스", "고객", "넥스트 홉"], rows: [...this.delegations.entries()].map(([p, d]) => [`${p}/${Internet.PD_LENGTH}`, d.client, d.via]) },
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: this.iface.arpRows() },

@@ -62,15 +62,28 @@ export function httpProxyRule({ t, add }: LintContext): void {
     const target = owners[0]!;
     const p = target.host!.proxy;
     if (p?.enabled && p.port === hp.port) continue;
-    // 그 포트의 로드밸런서는 뒤의 프록시 팜으로 넘길 수 있다 (요청 대상을 그대로 넘김) — 뒤를 모르니 침묵
-    if (target.host!.lb?.enabled === true && target.host!.lb.port === hp.port) continue;
+    // 그 포트의 로드밸런서는 뒤의 프록시 팜으로 넘길 수 있다 (요청 대상을 그대로 넘김) — 뒤를 모르니 침묵.
+    // 다만 L7 은 요청을 풀어 새로 보내므로 CONNECT 터널(HTTPS)을 이어 주지 못한다
+    const lb = target.host!.lb;
+    if (lb?.enabled === true && lb.port === hp.port) {
+      if (lb.mode !== "l4")
+        add({
+          deviceId: d.id,
+          severity: "warn",
+          code: "proxy.l7-connect",
+          message: `HTTP 프록시로 ${server}:${hp.port} (${target.name}) 의 L7 로드밸런서를 가리킴 → HTTP(80) 는 뒤로 넘어가지만 HTTPS(443) 의 CONNECT 는 L7 이 터널을 중계하지 않아 405 로 거절`,
+          fix: `${target.name} → 로드밸런서를 L4 모드로 (연결째 프록시 팜으로 넘김)`,
+          related: [target.id],
+        });
+      continue;
+    }
     const other = p?.enabled ? ` (프록시는 포트 ${p.port} 에서 듣는 중)` : "";
     const listens = (target.host!.services ?? []).includes(hp.port);
     add({
       deviceId: d.id,
       severity: "warn",
       code: "proxy.not-running",
-      message: `HTTP 프록시로 ${server}:${hp.port} (${target.name}) 를 쓰는데 그곳에 프록시가 없음${other} → ${listens ? "그곳의 웹 서비스가 요청을 받아, 부탁한 사이트가 아니라 그 서버 자신의 응답이 옴" : "웹 요청이 모두 거부(RST)"}`,
+      message: `HTTP 프록시로 ${server}:${hp.port} (${target.name}) 를 쓰는데 그곳에 프록시가 없음${other} → ${listens ? "그곳의 웹 서비스가 요청을 받아, HTTP(80) 는 부탁한 사이트가 아니라 그 서버 자신의 응답이 오고 HTTPS(443) 의 CONNECT 는 거절됨" : "웹 요청이 모두 거부(RST)"}`,
       fix: p?.enabled ? `${d.name} → HTTP 프록시 포트를 ${p.port} 로 맞추기` : `${target.name} → 서비스에서 프록시를 켜거나, ${d.name} 의 HTTP 프록시 주소를 고치기`,
       related: [target.id],
     });

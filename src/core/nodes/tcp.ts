@@ -4,9 +4,14 @@
 // - SSH 흉내 (포트 22): 버전 교환 → 키 교환 → 인증 뒤 세션을 열어 둔 채 유지. 사용자가 "연결 해제" 하면 FIN.
 //   명령은 주고받지 않는다 (내용은 암호화라 보여 줄 것도 없다). 오래 열린 연결이 NAT·방화벽·이중화 변화에 어떻게 반응하는지 보는 용도
 //   (keepalive 없음 — 조용한 세션은 경로가 끊겨도 모르고, 다음에 보낼 때 알게 된다)
+// - HTTPS 흉내 (포트 443, TLS 1.3 축소판): ClientHello(SNI) → ServerHello·인증서·Finished → Finished 뒤 HTTP 흉내를 암호화해 주고받는다.
+//   중간 장비는 SNI 와 길이만 보고, 요청·응답 내용은 두 끝만 안다
+// - 프록시 CONNECT: 끝 클라이언트가 프록시에게 "CONNECT 호스트:443" → 200 Connection established 뒤 같은 연결로 대상과 TLS.
+//   프록시의 두 연결(relay)은 앱 흉내 없이 받은 것을 앱(proxy.ts)에게 넘겨 반대편으로 그대로 보낸다
 import type { Ip } from "../addr";
 import { isIpv6 } from "../addr6";
-import { tcpFlags, type IpPacket, type TcpSegment } from "../packet";
+import { tcpFlags, type IpPacket, type TcpSegment, type TlsRecord } from "../packet";
+import { looksLikeName } from "./dns";
 import type { NodeContext, TimerHandle } from "./node";
 
 export type TcpState = "SYN_SENT" | "SYN_RCVD" | "ESTABLISHED" | "FIN_WAIT_1" | "FIN_WAIT_2" | "CLOSE_WAIT" | "LAST_ACK" | "CLOSED" | "FAILED";
@@ -34,6 +39,13 @@ const EPHEMERAL_START = 49152;
 const REQUEST_BYTES = 100;
 const RESPONSE_SEGMENT_BYTES = 1000;
 export const SSH_PORT = 22;
+export const HTTPS_PORT = 443;
+/** TLS 1.3 축소판의 핸드셰이크 메시지 (한 레코드 = 한 세그먼트) */
+const TLS_CLIENT_HELLO = { len: 300, data: "ClientHello" };
+const TLS_SERVER_HELLO = { len: 1400, data: "ServerHello·인증서·Finished" };
+const TLS_CLIENT_FINISHED = { len: 80, data: "Finished" };
+/** 프록시가 CONNECT 터널을 열었다는 응답 */
+export const CONNECT_ESTABLISHED = "HTTP 200 Connection established";
 /** SSH 세션을 여는 주고받기 (클라이언트 → 서버 → 클라이언트 → …). 마지막 서버 메시지를 받으면 세션이 열린다 */
 const SSH_STEPS: { from: "client" | "server"; len: number; data: string }[] = [
   { from: "client", len: 40, data: "SSH-2.0 버전 알림" },
@@ -93,6 +105,14 @@ export interface TcpConn {
   readTimer?: TimerHandle;
   /** SSH 흉내 (포트 22): 지금까지 주고받은 메시지 수, 세션이 열렸는지 */
   ssh?: { step: number; open: boolean };
+  /** 요청 메서드 CONNECT (클라이언트: 프록시에게 보냄, 서버: 받음) */
+  method?: "CONNECT";
+  /** 끝 클라이언트의 CONNECT 터널: 프록시의 응답을 기다림 → 열림 (그 뒤 이 연결로 대상과 TLS) */
+  tunnel?: "wait" | "up";
+  /** 중계 연결 (프록시의 CONNECT 터널 양쪽): 앱 흉내 없이 받은 데이터·FIN 을 앱에게 넘긴다 */
+  relay?: boolean;
+  /** TLS (포트 443): 핸드셰이크가 끝났는지, 핸드셰이크로 보낸 바이트 (서버가 응답을 이미 보냈는지 가를 때 뺀다), SNI */
+  tls?: { done: boolean; sent: number; sni?: string };
 }
 
 export interface TcpHost {
@@ -102,6 +122,10 @@ export interface TcpHost {
   onRequest?(conn: TcpConn, ctx: NodeContext): boolean;
   /** 연결이 끝남 (정상 종료·거부·timeout·중단) */
   onFinish?(conn: TcpConn, ctx: NodeContext): void;
+  /** 중계 연결(relay)이 맺어짐 (프록시가 CONNECT 대상에 연결됨) */
+  onEstablished?(conn: TcpConn, ctx: NodeContext): void;
+  /** 중계 연결로 데이터(세그먼트)나 FIN(undefined)이 옴: 앱이 반대편 연결로 넘긴다 */
+  onRelay?(conn: TcpConn, seg: TcpSegment | undefined, ctx: NodeContext): void;
 }
 
 /** 응답 세그먼트 하나 */
@@ -122,6 +146,10 @@ export interface ConnectOptions {
   site?: string;
   /** SYN 을 보내기 전에 부른다. 내 주소로 가는 루프백은 connect 안에서 연결이 끝까지 진행되므로, 추적할 쪽은 여기서 등록한다 */
   onCreated?: (conn: TcpConn) => void;
+  /** CONNECT: 프록시에게 target 까지 터널을 열어 달라고 한다 (HTTPS) */
+  method?: "CONNECT";
+  /** 중계 연결: 맺어지면 요청을 보내지 않고 host.onEstablished, 받은 것은 host.onRelay 로 */
+  relay?: boolean;
 }
 
 /** 응답에 붙이는 것 */
@@ -130,6 +158,22 @@ export interface ResponseMeta {
   origin?: string;
   /** 첫 응답 세그먼트에 싣는 Set-Cookie */
   setCookie?: string;
+}
+
+/** 받은 데이터의 요약: TLS 면 레코드 종류 (중계하는 프록시는 안을 모른다, 끝 장치는 풀어 본다) */
+function describeData(seg: TcpSegment, relay: boolean): string {
+  switch (seg.tls) {
+    case "client-hello":
+      return `TLS ClientHello${seg.sni ? ` (SNI ${seg.sni}${relay ? " — 암호화 전이라 보임" : ""})` : ""}`;
+    case "server-hello":
+      return relay ? "TLS ServerHello (인증서·Finished 는 암호화됨)" : `TLS ${seg.data ?? "ServerHello"}`;
+    case "finished":
+      return relay ? "TLS 핸드셰이크 (암호화됨)" : "TLS Finished";
+    case "app":
+      return relay ? "TLS 응용 데이터 (암호화됨 — 내용은 모름)" : `TLS 응용 데이터 (복호화: ${seg.data ?? "?"})`;
+    default:
+      return seg.data ?? "";
+  }
 }
 
 function connKey(localIp: Ip, localPort: number, remoteIp: Ip, remotePort: number): string {
@@ -149,6 +193,8 @@ function siteOf(remoteIp: Ip, target?: string, name?: string): string {
 export class TcpStack {
   readonly conns = new Map<string, TcpConn>();
   readonly listening = new Set<number>();
+  /** 연결을 TLS 로 받는 포트 (HTTPS 서버·TLS 를 푸는 로드밸런서: 443) */
+  readonly tlsPorts = new Set<number>();
   /** 쿠키 저장소 (브라우저): 사이트(사용자가 적은 호스트 — 이름 또는 주소, 포트는 보지 않음) → 받은 Set-Cookie. 끝 클라이언트만 쓴다 */
   readonly cookies = new Map<string, string>();
   private nextPort = EPHEMERAL_START;
@@ -162,7 +208,7 @@ export class TcpStack {
   // ---------- 클라이언트 ----------
 
   connect(localIp: Ip, remoteIp: Ip, remotePort: number, ctx: NodeContext, opts: ConnectOptions = {}): TcpConn {
-    const { via, target, onCreated } = opts;
+    const { via, target, onCreated, method, relay } = opts;
     const localPort = this.nextPort++;
     // 쿠키는 끝 클라이언트(브라우저)만: 중계 연결(via 가 있는 로드밸런서·프록시)은 저장소를 쓰지 않는다
     const site = via === undefined ? siteOf(remoteIp, target, opts.site) : undefined;
@@ -190,6 +236,8 @@ export class TcpStack {
       ...(target !== undefined ? { target } : {}),
       ...(cookie !== undefined ? { cookie } : {}),
       ...(site !== undefined ? { site } : {}),
+      ...(method ? { method } : {}),
+      ...(relay ? { relay } : {}),
     };
     this.conns.set(conn.id, conn);
     this.prune();
@@ -257,28 +305,19 @@ export class TcpStack {
           ctx.trace("tcp.synack.received", "L4", `SYN·ACK 수신: 서버 초기 seq ${seg.seq}, 내 SYN 확인(ack ${seg.ack})`, { conn: conn.id });
           this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송: 3-way handshake 완료 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
           ctx.trace("tcp.established", "L4", `연결 성립 ${endpoint(conn.localIp, conn.localPort)} ↔ ${endpoint(conn.remoteIp, conn.remotePort)}`, { conn: conn.id });
+          if (conn.relay) {
+            // 중계 연결 (프록시 → CONNECT 대상): 요청은 끝 클라이언트가 터널 너머로 보낸다
+            this.host.onEstablished?.(conn, ctx);
+            return;
+          }
           if (conn.remotePort === SSH_PORT && conn.via === undefined) {
             conn.ssh = { step: 0, open: false };
             this.sshNext(conn, ctx);
             return;
           }
-          // 앱: 요청 전송. 응답이 영원히 안 오면 끝나지 않으므로 응답 대기 timeout 을 건다
-          {
-            const line = conn.target ? `GET http://${conn.target.replace(/:80$/, "")}/` : "GET /";
-            const notes = [
-              conn.target ? `프록시에게 ${conn.target} 를 대신 받아 달라고 부탁 (요청 줄이 절대 URI)` : "",
-              conn.via ? `로드밸런서·프록시 ${conn.via}개 거침 (Via)` : "",
-              conn.cookie ? `Cookie: ${conn.cookie}` : "",
-            ].filter(Boolean);
-            this.transmit(
-              conn,
-              { ackFlag: true, len: REQUEST_BYTES, data: line, ...(conn.via !== undefined ? { via: conn.via } : {}), ...(conn.target ? { target: conn.target } : {}), ...(conn.cookie ? { cookie: conn.cookie } : {}) },
-              ctx,
-              `요청 데이터 전송: "${line}" ${REQUEST_BYTES}B (seq=${conn.sndNxt})${notes.length ? ` — ${notes.join(", ")}` : ""}`,
-              "tcp.data.sent",
-            );
-          }
-          conn.readTimer = ctx.timer(TCP_READ_TIMEOUT, TCP_TIMER_TAG, { conn: conn.id, read: true });
+          if (conn.method === "CONNECT") this.sendConnect(conn, ctx);
+          else if (conn.remotePort === HTTPS_PORT) this.tlsHello(conn, ctx);
+          else this.sendRequest(conn, ctx);
         } else {
           ctx.trace("tcp.ignore", "L4", `SYN_SENT 상태에서 기대하지 않은 ${flags} → 무시`, { conn: conn.id });
         }
@@ -403,6 +442,7 @@ export class TcpStack {
       responseSegments: this.responseSegments,
       finReceived: false,
       createdAt: ctx.now,
+      ...(this.tlsPorts.has(seg.dstPort) ? { tls: { done: false, sent: 0 } } : {}),
     };
     this.conns.set(conn.id, conn);
     this.prune();
@@ -423,10 +463,17 @@ export class TcpStack {
     }
     conn.rcvNxt = seg.seq + seg.len;
     conn.bytesReceived += seg.len;
-    ctx.trace("tcp.data.received", "L4", `데이터 수신: ${seg.data ?? ""} ${seg.len}B (seq ${seg.seq}) → 누적 ${conn.bytesReceived}B, 다음 기대 seq ${conn.rcvNxt}`, { conn: conn.id, seq: seg.seq, len: seg.len });
+    ctx.trace("tcp.data.received", "L4", `데이터 수신: ${describeData(seg, conn.relay === true)} ${seg.len}B (seq ${seg.seq}) → 누적 ${conn.bytesReceived}B, 다음 기대 seq ${conn.rcvNxt}`, { conn: conn.id, seq: seg.seq, len: seg.len });
+    // 중계 연결 (프록시의 CONNECT 터널): 받은 것을 확인하고 앱이 반대편으로 그대로 넘긴다
+    if (conn.relay) {
+      this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
+      this.host.onRelay?.(conn, seg, ctx);
+      return;
+    }
     if (conn.role === "client") {
       if (seg.origin) conn.servedBy = seg.origin;
-      if (conn.status === undefined && seg.data) conn.status = /^HTTP \d{3}( [A-Za-z ]+)?/.exec(seg.data)?.[0].trim();
+      // 터널이 열렸다는 CONNECT 응답은 요청의 결과가 아니다 (결과는 터널 너머 서버의 응답)
+      if (conn.status === undefined && seg.data && !(conn.tunnel === "wait" && seg.data === CONNECT_ESTABLISHED)) conn.status = /^HTTP \d{3}( [A-Za-z ]+)?/.exec(seg.data)?.[0].trim();
       if (seg.setCookie) {
         conn.setCookie = seg.setCookie;
         // 끝 클라이언트(브라우저)만 저장해 다음 요청부터 싣는다. 중계 연결(로드밸런서·프록시)은 받은 것을 앞으로 넘길 뿐
@@ -444,6 +491,7 @@ export class TcpStack {
       if (seg.via !== undefined) conn.via = seg.via;
       if (seg.cookie !== undefined) conn.cookie = seg.cookie;
       if (seg.target !== undefined) conn.target = seg.target;
+      if (seg.method !== undefined) conn.method = seg.method;
     }
     // SSH 흉내: 상대 메시지를 받으면 다음 차례 메시지를 보낸다
     if (conn.ssh && conn.state === "ESTABLISHED") {
@@ -451,7 +499,13 @@ export class TcpStack {
       this.sshNext(conn, ctx);
       return;
     }
-    if (conn.role === "server" && conn.state === "ESTABLISHED" && conn.bytesSent === 0 && !conn.deferred) {
+    // CONNECT 응답·TLS 핸드셰이크 (요청·응답은 그 뒤)
+    if (conn.state === "ESTABLISHED" && (conn.tunnel === "wait" || (conn.tls && !conn.tls.done))) {
+      this.handshake(conn, seg, ctx);
+      return;
+    }
+    // 응답을 아직 안 보낸 서버 연결 (TLS 면 핸드셰이크로 보낸 것은 빼고 센다)
+    if (conn.role === "server" && conn.state === "ESTABLISHED" && conn.bytesSent === (conn.tls?.sent ?? 0) && !conn.deferred) {
       // 앱이 요청을 맡으면(로드밸런서·프록시) 받았다는 ACK 만 보내고 응답은 나중에.
       // 상태를 먼저 세운다: 뒤 서버가 내 주소(루프백)면 onRequest 안에서 응답까지 끝날 수 있고, 그때는 응답이 곧 ACK 다
       conn.deferred = true;
@@ -460,6 +514,12 @@ export class TcpStack {
         return;
       }
       delete conn.deferred;
+      // 프록시가 아닌 서버가 CONNECT 를 받음 (프록시 설정이 웹 서버를 가리킴): 터널을 열 줄 모른다
+      if (conn.method === "CONNECT") {
+        ctx.trace("tcp.data.received", "app", `CONNECT ${conn.target ?? "?"} 요청을 받았지만 이 포트(${conn.localPort})는 프록시가 아님 → 405 Method Not Allowed`, { conn: conn.id });
+        this.respond(conn, [{ len: 200, data: "HTTP 405 Method Not Allowed" }], ctx);
+        return;
+      }
       // 로드밸런서가 맡지 않은 포트 22 = SSH 서버: 클라이언트의 첫 메시지(버전 알림)를 받았으니 내 차례
       if (conn.localPort === SSH_PORT && conn.via === undefined) {
         conn.ssh = { step: 1, open: false };
@@ -511,6 +571,142 @@ export class TcpStack {
     if (opens) ctx.trace("ssh.open", "app", `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 가 인증함 → 연결을 열어 둔 채 유지`, { conn: conn.id });
   }
 
+  /** 앱: 요청 전송 (TLS 가 끝났으면 암호화해서). 응답이 영원히 안 오면 끝나지 않으므로 응답 대기 timeout 을 건다 */
+  private sendRequest(conn: TcpConn, ctx: NodeContext): void {
+    const tls = conn.tls?.done === true;
+    // 프록시에게 대신 받아 달라는 요청만 절대 URI. CONNECT 터널 안의 요청은 대상 서버에게 직접 하는 요청이다
+    const absolute = conn.target !== undefined && conn.method !== "CONNECT";
+    const line = absolute ? `GET http://${conn.target!.replace(/:80$/, "")}/` : "GET /";
+    const notes = [
+      absolute ? `프록시에게 ${conn.target} 를 대신 받아 달라고 부탁 (요청 줄이 절대 URI)` : "",
+      conn.via ? `로드밸런서·프록시 ${conn.via}개 거침 (Via)` : "",
+      conn.cookie ? `Cookie: ${conn.cookie}` : "",
+    ].filter(Boolean);
+    this.transmit(
+      conn,
+      {
+        ackFlag: true,
+        len: REQUEST_BYTES,
+        data: line,
+        ...(conn.via !== undefined ? { via: conn.via } : {}),
+        ...(absolute ? { target: conn.target } : {}),
+        ...(conn.cookie ? { cookie: conn.cookie } : {}),
+        ...(tls ? { tls: "app" as const } : {}),
+      },
+      ctx,
+      tls
+        ? `암호화된 요청 전송: TLS 응용 데이터 ${REQUEST_BYTES}B (안: "${line}") (seq=${conn.sndNxt})${notes.length ? ` — ${notes.join(", ")}` : ""}`
+        : `요청 데이터 전송: "${line}" ${REQUEST_BYTES}B (seq=${conn.sndNxt})${notes.length ? ` — ${notes.join(", ")}` : ""}`,
+      "tcp.data.sent",
+    );
+    this.armRead(conn, ctx);
+  }
+
+  /** 끝 클라이언트: 프록시에게 CONNECT (HTTPS 는 내용이 암호화돼 프록시가 대신 받아 올 수 없어 통로만 빌린다) */
+  private sendConnect(conn: TcpConn, ctx: NodeContext): void {
+    conn.tunnel = "wait";
+    const line = `CONNECT ${conn.target}`;
+    this.transmit(
+      conn,
+      { ackFlag: true, len: REQUEST_BYTES, data: line, method: "CONNECT", target: conn.target },
+      ctx,
+      `CONNECT 요청 전송: "${line}" ${REQUEST_BYTES}B (seq=${conn.sndNxt}) — 프록시에게 ${conn.target} 까지 TCP 터널을 열어 달라고 부탁 (HTTPS 는 암호화돼 프록시가 대신 받아 올 수 없어 통로만 빌린다)`,
+      "tcp.data.sent",
+    );
+    this.armRead(conn, ctx);
+  }
+
+  /** 클라이언트: TLS 핸드셰이크 시작 (ClientHello). SNI 는 사용자가 적은 이름 (주소로 접속하면 없음) */
+  private tlsHello(conn: TcpConn, ctx: NodeContext): void {
+    const sni = conn.site !== undefined && looksLikeName(conn.site) ? conn.site : undefined;
+    conn.tls = { done: false, sent: 0, ...(sni ? { sni } : {}) };
+    ctx.trace(
+      "tls.hello",
+      "app",
+      `TLS 핸드셰이크 시작: ClientHello 전송${sni ? ` (SNI ${sni} — 접속할 이름. 암호화 전이라 중간 장비도 본다)` : " (주소로 접속해 SNI 없음)"}${conn.tunnel ? ` — 프록시 터널을 지나 ${conn.target} 에 직접` : ""}`,
+      { conn: conn.id, role: "client", ...(sni ? { sni } : {}) },
+    );
+    this.transmit(conn, { ackFlag: true, len: TLS_CLIENT_HELLO.len, data: TLS_CLIENT_HELLO.data, tls: "client-hello", ...(sni ? { sni } : {}) }, ctx, `TLS ClientHello ${TLS_CLIENT_HELLO.len}B 전송 (seq=${conn.sndNxt})`, "tcp.data.sent");
+    this.armRead(conn, ctx);
+  }
+
+  /** CONNECT 응답과 TLS 핸드셰이크 메시지를 받았을 때 */
+  private handshake(conn: TcpConn, seg: TcpSegment, ctx: NodeContext): void {
+    if (conn.tunnel === "wait") {
+      if (seg.data === CONNECT_ESTABLISHED) {
+        conn.tunnel = "up";
+        ctx.trace("proxy.tunnel", "app", `프록시가 ${conn.target} 까지 터널을 열었음 (${CONNECT_ESTABLISHED}) → 이 연결 그대로 대상 서버와 TLS 핸드셰이크. 프록시는 이제 바이트만 전달한다`, { conn: conn.id, target: conn.target, client: true });
+        this.tlsHello(conn, ctx);
+        return;
+      }
+      // 거절 (403·503 등): 상태 줄을 남기고(receiveData) 프록시의 FIN 을 기다린다
+      this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt}) — 프록시가 터널을 열지 않음 (${conn.status ?? seg.data ?? "?"})`, "tcp.ack.sent");
+      return;
+    }
+    const tls = conn.tls!;
+    if (conn.role === "client") {
+      if (seg.tls !== "server-hello") {
+        // 443 에서 TLS 가 아닌 답 (프록시·평문 서버): curl 의 "wrong version number"
+        conn.state = "FAILED";
+        conn.reason = "TLS 핸드셰이크 실패 · 상대가 TLS 로 답하지 않음";
+        conn.closedAt = ctx.now;
+        this.cancelAll(conn);
+        ctx.trace("tls.fail", "app", `TLS 핸드셰이크 실패: ServerHello 대신 TLS 가 아닌 데이터(${seg.data ?? "?"})가 옴 → RST 로 끊음. ${endpoint(conn.remoteIp, conn.remotePort)} 가 HTTPS 서버가 맞는지 확인`, { conn: conn.id });
+        this.host.send(this.packet(conn.localIp, conn.remoteIp, { srcPort: conn.localPort, dstPort: conn.remotePort, seq: conn.sndNxt, ack: conn.rcvNxt, rst: true, ackFlag: true, len: 0 }), ctx);
+        this.host.onFinish?.(conn, ctx);
+        return;
+      }
+      // 상태를 먼저 세우고 보낸다 (루프백이면 transmit 안에서 서버가 곧바로 답한다)
+      tls.done = true;
+      ctx.trace("tls.established", "app", `TLS 핸드셰이크 완료: 서버 인증서${tls.sni ? `(${tls.sni})` : ""}를 확인하고 세션 키를 정함 → Finished 뒤 요청부터 암호화 (중간 장비는 길이만 본다)`, { conn: conn.id, role: "client", ...(tls.sni ? { sni: tls.sni } : {}) });
+      this.transmit(conn, { ackFlag: true, len: TLS_CLIENT_FINISHED.len, data: TLS_CLIENT_FINISHED.data, tls: "finished" }, ctx, `TLS Finished ${TLS_CLIENT_FINISHED.len}B 전송 (seq=${conn.sndNxt}, 암호화됨)`, "tcp.data.sent");
+      this.sendRequest(conn, ctx);
+      return;
+    }
+    if (seg.tls === "client-hello") {
+      if (seg.sni) tls.sni = seg.sni;
+      ctx.trace("tls.hello", "app", `TLS ClientHello 수신${seg.sni ? ` (SNI ${seg.sni})` : " (SNI 없음)"} → ServerHello·인증서·Finished 로 답함 (인증서로 내가 누구인지 증명, 이후 내용은 암호화)`, { conn: conn.id, role: "server", ...(seg.sni ? { sni: seg.sni } : {}) });
+      tls.sent = conn.bytesSent + TLS_SERVER_HELLO.len;
+      this.transmit(conn, { ackFlag: true, len: TLS_SERVER_HELLO.len, data: TLS_SERVER_HELLO.data, tls: "server-hello" }, ctx, `TLS ServerHello·인증서·Finished ${TLS_SERVER_HELLO.len}B 전송 (seq=${conn.sndNxt}, 인증서부터 암호화)`, "tcp.data.sent");
+      return;
+    }
+    if (seg.tls === "finished") {
+      tls.done = true;
+      ctx.trace("tls.established", "app", `TLS 핸드셰이크 완료: 클라이언트 Finished 확인 → 암호화된 요청을 기다림`, { conn: conn.id, role: "server" });
+      this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
+      return;
+    }
+    // 평문 요청이 HTTPS 포트로 (프록시 설정이 이 서버의 443 을 가리키는 등): nginx 의 "The plain HTTP request was sent to HTTPS port"
+    ctx.trace("tls.fail", "app", `TLS 가 아닌 평문 요청(${seg.data ?? "?"})이 HTTPS 포트 ${conn.localPort} 로 옴 → 400 Bad Request (평문 HTTP 요청을 HTTPS 포트로 보냄)`, { conn: conn.id });
+    conn.tls = undefined;
+    this.respond(conn, [{ len: 200, data: "HTTP 400 Bad Request" }], ctx);
+  }
+
+  /** 클라이언트의 응답 대기 timeout 을 (다시) 건다 */
+  private armRead(conn: TcpConn, ctx: NodeContext): void {
+    conn.readTimer?.cancel();
+    conn.readTimer = ctx.timer(TCP_READ_TIMEOUT, TCP_TIMER_TAG, { conn: conn.id, read: true });
+  }
+
+  /** 연결을 연 채로 데이터 한 덩어리를 보낸다 (프록시의 CONNECT 응답·터널 중계). 보낼 수 없는 상태면 false */
+  sendData(conn: TcpConn, part: { len: number; data?: string; tls?: TlsRecord; sni?: string }, ctx: NodeContext, summary: string, note?: string): boolean {
+    if (conn.state !== "ESTABLISHED") return false;
+    this.transmit(conn, { ackFlag: true, ...part }, ctx, `${summary} ${part.len}B (seq=${conn.sndNxt})${note ? ` — ${note}` : ""}`, "tcp.data.sent");
+    return true;
+  }
+
+  /** 연결을 RST 로 끊는다 (터널 반대편이 실패했을 때) */
+  reset(conn: TcpConn, reason: string, ctx: NodeContext): void {
+    if (conn.state === "CLOSED" || conn.state === "FAILED") return;
+    conn.state = "FAILED";
+    conn.reason = reason;
+    conn.closedAt = ctx.now;
+    this.cancelAll(conn);
+    ctx.trace("tcp.rst.sent", "L4", `${reason} → ${endpoint(conn.remoteIp, conn.remotePort)} 연결을 RST 로 끊음`, { conn: conn.id });
+    this.host.send(this.packet(conn.localIp, conn.remoteIp, { srcPort: conn.localPort, dstPort: conn.remotePort, seq: conn.sndNxt, ack: conn.rcvNxt, rst: true, ackFlag: true, len: 0 }), ctx);
+    this.host.onFinish?.(conn, ctx);
+  }
+
   /** 사용자가 연결을 닫는다 (SSH "연결 해제"): FIN 을 보내 정상 종료를 시작 */
   disconnect(id: string, ctx: NodeContext): boolean {
     const conn = this.conns.get(id);
@@ -526,13 +722,17 @@ export class TcpStack {
   respond(conn: TcpConn, parts: ResponsePart[], ctx: NodeContext, meta: ResponseMeta = {}): void {
     if (conn.state !== "ESTABLISHED") return; // 기다리는 동안 클라이언트가 끊었으면 보낼 곳이 없다
     const { origin, setCookie } = meta;
+    const tls = conn.tls?.done === true;
     parts.forEach((p, k) => {
       const cookie = k === 0 && setCookie ? setCookie : undefined;
+      const notes = `${origin ? ` — 만든 서버 ${origin}` : ""}${cookie ? `, Set-Cookie: ${cookie}` : ""}`;
       this.transmit(
         conn,
-        { ackFlag: true, len: p.len, data: p.data, ...(origin ? { origin } : {}), ...(cookie ? { setCookie: cookie } : {}) },
+        { ackFlag: true, len: p.len, data: p.data, ...(origin ? { origin } : {}), ...(cookie ? { setCookie: cookie } : {}), ...(tls ? { tls: "app" as const } : {}) },
         ctx,
-        `응답 데이터 전송 ${k + 1}/${parts.length}: ${p.data} ${p.len}B (seq=${conn.sndNxt})${origin ? ` — 만든 서버 ${origin}` : ""}${cookie ? `, Set-Cookie: ${cookie}` : ""}`,
+        tls
+          ? `암호화된 응답 전송 ${k + 1}/${parts.length}: TLS 응용 데이터 ${p.len}B (안: ${p.data}) (seq=${conn.sndNxt})${notes}`
+          : `응답 데이터 전송 ${k + 1}/${parts.length}: ${p.data} ${p.len}B (seq=${conn.sndNxt})${notes}`,
         "tcp.data.sent",
       );
     });
@@ -556,11 +756,13 @@ export class TcpStack {
       this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
       conn.state = "LAST_ACK";
       this.transmit(conn, { fin: true, ackFlag: true }, ctx, `FIN 전송: 나도 종료 (seq=${conn.sndNxt})`, "tcp.fin.sent");
-      return;
+    } else {
+      // FIN_WAIT_1/2: 내 FIN 을 보낸 뒤 상대 FIN 도착. 내 FIN 이 아직 확인 안 됐으면 그 ACK 를 기다린다
+      this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
+      if (conn.unacked.length === 0) this.close(conn, ctx, "정상 종료");
     }
-    // FIN_WAIT_1/2: 내 FIN 을 보낸 뒤 상대 FIN 도착. 내 FIN 이 아직 확인 안 됐으면 그 ACK 를 기다린다
-    this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
-    if (conn.unacked.length === 0) this.close(conn, ctx, "정상 종료");
+    // 중계 연결: 한쪽이 닫았으면 앱이 반대편도 닫는다
+    if (conn.relay) this.host.onRelay?.(conn, undefined, ctx);
   }
 
   private close(conn: TcpConn, ctx: NodeContext, reason: string): void {
@@ -610,18 +812,27 @@ export class TcpStack {
       if (conn.state !== "ESTABLISHED") return;
       // SSH: 기다리던 단계에서 멈춰 있을 때만. HTTP: 마지막으로 받은 뒤 10초 (받을 때마다 다시 건다)
       if (conn.ssh && (conn.ssh.open || conn.ssh.step !== step)) return;
-      const partial = !conn.ssh && conn.bytesReceived > 0;
+      // 핸드셰이크 단계에서 멈춤 (프록시가 CONNECT 에 답하지 않음·서버가 ClientHello 에 답하지 않음)
+      const phase = conn.tunnel === "wait" ? "프록시의 CONNECT 응답" : conn.tls && !conn.tls.done ? "TLS ServerHello" : undefined;
+      // 응답 내용을 일부 받았는지 (TLS 면 핸드셰이크 말고 응답 — 상태 줄을 받았는지로)
+      const partial = !conn.ssh && !phase && (conn.tls ? conn.status !== undefined : conn.bytesReceived > 0);
       // 요청은 상대가 받았는데(ACK) 응답이 오지 않거나 중간에 멈춤: 중간 로드밸런서가 끊겼거나 백엔드에서 멈춤. RST 로 알리고 포기
       conn.state = "FAILED";
-      conn.reason = partial ? `timeout · 응답이 중간에 멈춤 (${conn.bytesReceived}B 받은 뒤 ${TCP_READ_TIMEOUT / 1000}초)` : `timeout · 응답 없음 (요청은 전달됨, ${TCP_READ_TIMEOUT / 1000}초)`;
+      conn.reason = phase
+        ? `timeout · ${phase} 없음 (${TCP_READ_TIMEOUT / 1000}초)`
+        : partial
+          ? `timeout · 응답이 중간에 멈춤 (${conn.bytesReceived}B 받은 뒤 ${TCP_READ_TIMEOUT / 1000}초)`
+          : `timeout · 응답 없음 (요청은 전달됨, ${TCP_READ_TIMEOUT / 1000}초)`;
       conn.closedAt = ctx.now;
       this.cancelAll(conn);
       ctx.trace(
         "tcp.failed",
         "L4",
-        partial
-          ? `응답 timeout: ${endpoint(conn.remoteIp, conn.remotePort)} 의 응답을 ${conn.bytesReceived}B 받은 뒤 ${TCP_READ_TIMEOUT / 1000}초 동안 더 오지 않음 → RST 로 끊음. 상대(또는 그 뒤의 서버)가 중간에 끊겼는지 확인`
-          : `응답 timeout: 요청은 ${endpoint(conn.remoteIp, conn.remotePort)} 가 받았지만(ACK) ${TCP_READ_TIMEOUT / 1000}초 동안 응답이 없음 → RST 로 끊음. 상대 뒤의 서버(로드밸런서의 백엔드 등)를 확인`,
+        phase
+          ? `응답 timeout: ${endpoint(conn.remoteIp, conn.remotePort)} 에서 ${phase} 을(를) ${TCP_READ_TIMEOUT / 1000}초 동안 받지 못함 → RST 로 끊음. ${conn.tunnel === "wait" ? "프록시가 대상에 연결 중인지 확인" : "그 포트가 HTTPS 서버인지, 터널 너머 대상이 답하는지 확인"}`
+          : partial
+            ? `응답 timeout: ${endpoint(conn.remoteIp, conn.remotePort)} 의 응답을 ${conn.bytesReceived}B 받은 뒤 ${TCP_READ_TIMEOUT / 1000}초 동안 더 오지 않음 → RST 로 끊음. 상대(또는 그 뒤의 서버)가 중간에 끊겼는지 확인`
+            : `응답 timeout: 요청은 ${endpoint(conn.remoteIp, conn.remotePort)} 가 받았지만(ACK) ${TCP_READ_TIMEOUT / 1000}초 동안 응답이 없음 → RST 로 끊음. 상대 뒤의 서버(로드밸런서의 백엔드 등)를 확인`,
         { conn: conn.id },
       );
       this.host.send(this.packet(conn.localIp, conn.remoteIp, { srcPort: conn.localPort, dstPort: conn.remotePort, seq: conn.sndNxt, ack: conn.rcvNxt, rst: true, ackFlag: true, len: 0 }), ctx);

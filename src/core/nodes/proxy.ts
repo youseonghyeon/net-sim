@@ -8,10 +8,14 @@
 //   포워드 = 클라이언트들을 대신한다 (클라이언트가 프록시를 알고 설정해 둔다)
 // 실패는 Squid 처럼: 대상 없음(프록시 설정 없이 직접 접속) 400, 차단 403, 이름을 못 찾음·연결 실패 503.
 // 차단 목록의 주소는 이름을 푼 뒤에도 비교한다 (Squid dst ACL) — 주소로 막은 사이트를 이름으로 돌아가지 못하게.
-// HTTP(포트 80 요청)만 다룬다 — HTTPS 의 CONNECT 터널은 없다.
+//
+// HTTPS(포트 443)는 CONNECT 터널: 내용이 암호화돼 프록시가 대신 받아 올 수 없으므로, PC 가 "CONNECT 호스트:443" 으로
+// 대상까지 TCP 통로를 부탁하고 프록시는 연결한 뒤 두 연결 사이로 바이트만 그대로 넘긴다 (TLS 는 PC 와 대상 서버가 직접).
+// 프록시가 아는 것은 CONNECT 의 호스트와 ClientHello 의 SNI 뿐이라 차단도 도메인 단위다 (경로·내용은 모른다).
 import { ipToInt, type Ip } from "../addr";
+import type { TcpSegment } from "../packet";
 import type { NodeContext } from "./node";
-import type { TcpConn, TcpStack } from "./tcp";
+import { CONNECT_ESTABLISHED, type TcpConn, type TcpStack } from "./tcp";
 
 export interface ProxyConfig {
   enabled: boolean;
@@ -55,6 +59,15 @@ export function denied(host: string, deny: readonly string[]): string | undefine
 interface Pending {
   down: TcpConn;
   target: string;
+  /** CONNECT 터널을 열려는 연결 */
+  connect?: boolean;
+}
+
+/** 열린 CONNECT 터널: 클라이언트 쪽(down)과 대상 쪽(up) 연결 */
+interface Tunnel {
+  down: TcpConn;
+  up: TcpConn;
+  target: string;
 }
 
 /** 프록시가 처리한 요청 기록 (Squid access.log 흉내, 최근 것만) */
@@ -64,12 +77,16 @@ export interface ProxyLogEntry {
   target: string;
   /** "TCP_MISS/200", "TCP_DENIED/403" 처럼 */
   result: string;
+  /** CONNECT 요청이면 (없으면 GET) */
+  method?: "CONNECT";
 }
 const LOG_MAX = 20;
 
 export class ForwardProxy {
   config: ProxyConfig = { ...DEFAULT_PROXY, deny: [] };
   private readonly pending = new Map<string, Pending>();
+  /** 연결 id (양쪽 모두) → 터널 */
+  private readonly tunnels = new Map<string, Tunnel>();
   readonly log: ProxyLogEntry[] = [];
 
   constructor(
@@ -106,10 +123,19 @@ export class ForwardProxy {
       return true;
     }
     const { host, port } = splitTarget(target);
+    const connect = down.method === "CONNECT";
+    const method = connect ? { method: "CONNECT" as const } : {};
     const rule = denied(host, this.config.deny);
     const deny = (why: string, r: string) => {
-      ctx.trace("proxy.deny", "app", `프록시: ${down.remoteIp} 가 부탁한 ${target}${why} 는 차단 목록(${r})에 있음 → 대상에 연결하지 않고 403 Forbidden`, { client: down.remoteIp, target, rule: r, result: "TCP_DENIED/403" });
-      this.finish(down, target, "TCP_DENIED/403", [FORBIDDEN], ctx);
+      ctx.trace(
+        "proxy.deny",
+        "app",
+        connect
+          ? `프록시: ${down.remoteIp} 의 CONNECT ${target}${why} 는 차단 목록(${r})에 있음 → 터널을 열지 않고 403 Forbidden (HTTPS 는 경로를 볼 수 없어 도메인 단위로만 막는다)`
+          : `프록시: ${down.remoteIp} 가 부탁한 ${target}${why} 는 차단 목록(${r})에 있음 → 대상에 연결하지 않고 403 Forbidden`,
+        { client: down.remoteIp, target, rule: r, result: "TCP_DENIED/403", ...method },
+      );
+      this.finish(down, target, "TCP_DENIED/403", [FORBIDDEN], ctx, {}, connect);
     };
     if (rule) {
       deny("", rule);
@@ -124,10 +150,13 @@ export class ForwardProxy {
       ctx.trace(
         "proxy.request",
         "app",
-        `프록시: ${down.remoteIp} 의 부탁으로 ${target}${host !== ip ? ` (${ip})` : ""} 에 내 주소 ${me} 로 대신 연결 — 대상 서버에게는 프록시가 클라이언트로 보인다`,
-        { client: down.remoteIp, target, ip },
+        connect
+          ? `프록시: ${down.remoteIp} 의 CONNECT 요청 → ${target}${host !== ip ? ` (${ip})` : ""} 에 내 주소 ${me} 로 TCP 연결 (연결되면 터널을 열고 그 뒤로는 바이트만 전달)`
+          : `프록시: ${down.remoteIp} 의 부탁으로 ${target}${host !== ip ? ` (${ip})` : ""} 에 내 주소 ${me} 로 대신 연결 — 대상 서버에게는 프록시가 클라이언트로 보인다`,
+        { client: down.remoteIp, target, ip, ...method },
       );
-      this.tcp.connect(me, ip, port, ctx, { via: (down.via ?? 0) + 1, ...(down.cookie ? { cookie: down.cookie } : {}), onCreated: (up) => this.pending.set(up.id, { down, target }) });
+      if (connect) this.tcp.connect(me, ip, port, ctx, { relay: true, onCreated: (up) => this.pending.set(up.id, { down, target, connect }) });
+      else this.tcp.connect(me, ip, port, ctx, { via: (down.via ?? 0) + 1, ...(down.cookie ? { cookie: down.cookie } : {}), onCreated: (up) => this.pending.set(up.id, { down, target }) });
     };
     if (isValidIp(host)) {
       go(host);
@@ -136,17 +165,77 @@ export class ForwardProxy {
     // 이름은 프록시가 찾는다 (PC 는 대상의 이름을 풀지 않았다)
     this.resolve(host, ctx, (ip, err) => {
       if (ip) return go(ip);
-      ctx.trace("proxy.fail", "app", `프록시: ${target} 의 이름을 주소로 바꾸지 못함 (${err ?? "이름 해석 실패"}) → 503 Service Unavailable (프록시의 DNS 설정을 확인)`, { client: down.remoteIp, target, result: "TCP_MISS/503" });
-      this.finish(down, target, "TCP_MISS/503", [UNAVAILABLE], ctx);
+      const result = connect ? "NONE/503" : "TCP_MISS/503";
+      ctx.trace("proxy.fail", "app", `프록시: ${target} 의 이름을 주소로 바꾸지 못함 (${err ?? "이름 해석 실패"}) → 503 Service Unavailable (프록시의 DNS 설정을 확인)`, { client: down.remoteIp, target, result, ...method });
+      this.finish(down, target, result, [UNAVAILABLE], ctx, {}, connect);
     });
     return true;
   }
 
+  /** CONNECT 대상에 연결됨: 클라이언트에게 200 Connection established 를 보내고 두 연결을 터널로 잇는다 */
+  onEstablished(up: TcpConn, ctx: NodeContext): void {
+    const p = this.pending.get(up.id);
+    if (!p?.connect) return;
+    this.pending.delete(up.id);
+    const { down, target } = p;
+    if (down.state !== "ESTABLISHED") {
+      // 기다리던 클라이언트가 먼저 떠났다
+      ctx.trace("proxy.fail", "app", `프록시: ${target} 에 연결됐지만 CONNECT 를 부탁한 ${down.remoteIp} 가 이미 끊음 → 대상 연결도 닫음`, { client: down.remoteIp, target, ip: up.remoteIp, result: "NONE/000", method: "CONNECT" });
+      this.record(down, target, "NONE/000", ctx, true);
+      this.tcp.disconnect(up.id, ctx);
+      return;
+    }
+    const t: Tunnel = { down, up, target };
+    this.tunnels.set(up.id, t);
+    this.tunnels.set(down.id, t);
+    // 상태를 먼저 세운다: 클라이언트가 내 주소(루프백)면 200 을 보내는 순간 ClientHello 가 되돌아온다
+    down.relay = true;
+    ctx.trace(
+      "proxy.tunnel",
+      "app",
+      `프록시: ${target} (${up.remoteIp}) 에 연결됨 → ${down.remoteIp} 에게 "${CONNECT_ESTABLISHED}". 이제 두 연결 사이로 바이트만 그대로 넘김 — 안은 TLS 로 암호화돼 프록시는 이름(CONNECT·SNI)만 알고 경로·내용은 모른다`,
+      { client: down.remoteIp, target, ip: up.remoteIp, method: "CONNECT" },
+    );
+    this.tcp.sendData(down, { len: 40, data: CONNECT_ESTABLISHED }, ctx, `CONNECT 응답 전송: "${CONNECT_ESTABLISHED}"`, "터널 열림");
+  }
+
+  /** 터널로 온 데이터(seg)·FIN(undefined) 을 반대편 연결로 그대로 넘긴다 */
+  onRelay(conn: TcpConn, seg: TcpSegment | undefined, ctx: NodeContext): void {
+    const t = this.tunnels.get(conn.id);
+    if (!t) return;
+    const other = conn === t.up ? t.down : t.up;
+    const where = other === t.up ? `대상 ${t.target}` : `클라이언트 ${t.down.remoteIp}`;
+    if (!seg) {
+      // 한쪽이 닫으면 다른 쪽도 닫는다
+      if (other.state === "ESTABLISHED") this.tcp.disconnect(other.id, ctx);
+      return;
+    }
+    const what = seg.tls === "client-hello" ? `TLS ClientHello${seg.sni ? ` (SNI ${seg.sni})` : ""}` : seg.tls ? "TLS 레코드 (암호화됨)" : "데이터";
+    if (!this.tcp.sendData(other, { len: seg.len, ...(seg.data !== undefined ? { data: seg.data } : {}), ...(seg.tls ? { tls: seg.tls } : {}), ...(seg.sni ? { sni: seg.sni } : {}) }, ctx, `터널 전달 → ${where}: ${what}`, "내용은 보지 않고 그대로")) {
+      ctx.trace("proxy.fail", "app", `프록시: 터널 반대편(${where}) 연결이 이미 닫혀 받은 ${seg.len}B 를 넘기지 못함 → 버림`, { client: t.down.remoteIp, target: t.target });
+    }
+  }
+
   /** 대상 연결이 끝남: 응답을 받았으면 전달, 아니면 503. 프록시가 처리한 연결이면 true */
   onFinish(up: TcpConn, ctx: NodeContext): boolean {
+    const t = this.tunnels.get(up.id);
+    if (t) {
+      this.closeTunnel(t, up, ctx);
+      return true;
+    }
     const p = this.pending.get(up.id);
     if (!p) return false;
     this.pending.delete(up.id);
+    if (p.connect) {
+      // CONNECT 대상에 연결하지 못함 (거부·timeout·경로 없음)
+      if (p.down.state !== "ESTABLISHED") {
+        this.record(p.down, p.target, "NONE/000", ctx, true);
+        return true;
+      }
+      ctx.trace("proxy.fail", "app", `프록시: CONNECT ${p.target} 에 연결하지 못함 (${up.reason ?? "?"}) → ${p.down.remoteIp} 에게 503 Service Unavailable`, { client: p.down.remoteIp, target: p.target, ip: up.remoteIp, reason: up.reason, result: "NONE/503", method: "CONNECT" });
+      this.finish(p.down, p.target, "NONE/503", [UNAVAILABLE], ctx, {}, true);
+      return true;
+    }
     // 응답을 끝까지(대상의 FIN 까지) 받았을 때만 전달. FIN 없이 끊긴(RST·timeout) 일부 응답은 503
     if (up.bytesReceived > 0 && up.finReceived) {
       const status = up.status ?? "HTTP 200";
@@ -182,17 +271,37 @@ export class ForwardProxy {
     return true;
   }
 
-  private finish(down: TcpConn, target: string, result: string, parts: { len: number; data: string }[], ctx: NodeContext, meta: { origin?: string; setCookie?: string } = {}): void {
-    this.record(down, target, result, ctx);
+  /** 터널의 한쪽이 끝남: 다른 쪽이 열려 있으면 닫고 (실패면 RST), 둘 다 끝나면 기록 */
+  private closeTunnel(t: Tunnel, conn: TcpConn, ctx: NodeContext): void {
+    const other = conn === t.up ? t.down : t.up;
+    if (other.state === "ESTABLISHED") {
+      if (conn.state === "FAILED") this.tcp.reset(other, `CONNECT ${t.target} 터널 반대편 연결 실패 (${conn.reason ?? "?"})`, ctx);
+      else this.tcp.disconnect(other.id, ctx);
+    }
+    const done = (c: TcpConn) => c.state === "CLOSED" || c.state === "FAILED";
+    if (!this.tunnels.has(conn.id) || !done(t.up) || !done(t.down)) return;
+    this.tunnels.delete(t.up.id);
+    this.tunnels.delete(t.down.id);
+    ctx.trace(
+      "proxy.relay",
+      "app",
+      `프록시: CONNECT ${t.target} 터널 닫힘 — 클라이언트 ${t.down.remoteIp} 에게 ${t.down.bytesSent}B, 대상에게 ${t.up.bytesSent}B 를 넘김 (내용은 암호화돼 모름)`,
+      { client: t.down.remoteIp, target: t.target, ip: t.up.remoteIp, bytes: t.down.bytesSent, result: "TCP_TUNNEL/200", method: "CONNECT" },
+    );
+    this.record(t.down, t.target, "TCP_TUNNEL/200", ctx, true);
+  }
+
+  private finish(down: TcpConn, target: string, result: string, parts: { len: number; data: string }[], ctx: NodeContext, meta: { origin?: string; setCookie?: string } = {}, connect = false): void {
+    this.record(down, target, result, ctx, connect);
     this.tcp.respond(down, parts, ctx, meta);
   }
 
-  private record(down: TcpConn, target: string, result: string, ctx: NodeContext): void {
-    this.log.push({ at: ctx.now, client: down.remoteIp, target, result });
+  private record(down: TcpConn, target: string, result: string, ctx: NodeContext, connect = false): void {
+    this.log.push({ at: ctx.now, client: down.remoteIp, target, result, ...(connect ? { method: "CONNECT" as const } : {}) });
     if (this.log.length > LOG_MAX) this.log.shift();
   }
 
   rows(): string[][] {
-    return [...this.log].reverse().map((e) => [e.client, e.target, e.result]);
+    return [...this.log].reverse().map((e) => [e.client, e.method ? `${e.method} ${e.target}` : e.target, e.result]);
   }
 }

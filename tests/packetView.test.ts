@@ -194,3 +194,43 @@ describe("프록시·쿠키", () => {
     expect(headerLayers(res).at(-1)!.rows.find((r) => r[0] === "Set-Cookie")![1]).toContain("SERVERID=192.168.0.11:80; path=/");
   });
 });
+
+describe("HTTPS·CONNECT", () => {
+  it("tcpdump 는 CONNECT 요청 줄만 풀고 TLS 는 길이만, 헤더는 TLS 층에 SNI·레코드·안쪽(두 끝만)", () => {
+    const connect = ip({ kind: "tcp", srcPort: 49152, dstPort: 3128, seq: 1001, ack: 3001, ackFlag: true, len: 100, data: "CONNECT github.com:443", method: "CONNECT", target: "github.com:443" }, "192.168.0.100", "192.168.0.10", 64);
+    expect(tcpdumpLine(connect)).toContain("HTTP: CONNECT github.com:443 HTTP/1.1");
+    expect(headerLayers(connect).at(-1)!.rows.find((r) => r[0] === "요청 (CONNECT)")![1]).toContain("CONNECT github.com:443 HTTP/1.1");
+    const ok = ip({ kind: "tcp", srcPort: 3128, dstPort: 49152, seq: 3001, ack: 1101, ackFlag: true, len: 40, data: "HTTP 200 Connection established" }, "192.168.0.10", "192.168.0.100", 64);
+    expect(tcpdumpLine(ok)).toContain("HTTP: HTTP/1.1 200 Connection established");
+
+    const hello = ip({ kind: "tcp", srcPort: 49152, dstPort: 3128, seq: 1101, ack: 3041, ackFlag: true, len: 300, data: "ClientHello", tls: "client-hello", sni: "github.com" }, "192.168.0.100", "192.168.0.10", 64);
+    expect(tcpdumpLine(hello)).toMatch(/length 300$/);
+    const hl = headerLayers(hello);
+    expect(hl.at(-1)!.title).toBe("TLS 1.3");
+    expect(hl.at(-1)!.rows).toContainEqual(["레코드", "Handshake (22) · ClientHello (1)"]);
+    expect(hl.at(-1)!.rows.find((r) => r[0] === "SNI (서버 이름)")![1]).toContain("github.com");
+
+    const app = ip({ kind: "tcp", srcPort: 443, dstPort: 49152, seq: 4401, ack: 1481, ackFlag: true, len: 1000, data: "HTTP 200 (1/3)", tls: "app", setCookie: "SERVERID=192.168.0.11:80" }, "192.168.0.20", "192.168.0.100", 64);
+    expect(tcpdumpLine(app)).toMatch(/length 1000$/);
+    const al = headerLayers(app);
+    // HTTP 헤더(Set-Cookie)는 TCP 층이 아니라 TLS 안에 있다
+    expect(al.at(-2)!.rows.some((r) => r[0] === "Set-Cookie")).toBe(false);
+    expect(al.at(-1)!.rows.find((r) => r[0] === "안 (두 끝만 풂)")![1]).toBe("HTTP 200 (1/3) · Set-Cookie: SERVERID=192.168.0.11:80");
+  });
+
+  it("curl -v 의 CONNECT·TLS 줄, Squid 의 CONNECT 기록 (URL 자리에 호스트:포트만)", async () => {
+    const { exampleProxyTopology } = await import("../src/model/examples");
+    const { loadTopology } = await import("./helpers");
+    const { id, act } = loadTopology(exampleProxyTopology());
+    const tr = act({ kind: "tcp-connect", nodeId: id("pc-1"), dst: "github.com", port: 443 });
+    const lines = (kind: string, node = "pc-1") => practitionerLines(tr.find((e) => e.kind === kind && e.nodeId === id(node))!, {}).map((l) => l.line);
+    expect(lines("proxy.use")).toEqual(["* Uses proxy env variable https_proxy == 'http://192.168.0.10:3128'", "* Establish HTTP proxy tunnel to github.com:443", "> CONNECT github.com:443 HTTP/1.1"]);
+    expect(lines("proxy.tunnel")).toEqual(["< HTTP/1.1 200 Connection established", "* CONNECT tunnel established, response 200"]);
+    expect(lines("proxy.tunnel", "proxy-1")).toEqual([]);
+    expect(lines("tls.hello")).toEqual(["* TLSv1.3 (OUT), TLS handshake, Client hello (1):"]);
+    expect(lines("tls.established")).toContain("*  subject: CN=github.com");
+    expect(lines("proxy.relay", "proxy-1")[0]).toMatch(/^\d+\.\d{3} +0 192\.168\.0\.1\d\d TCP_TUNNEL\/200 4440 CONNECT github\.com:443 - HIER_DIRECT\/140\.82\.112\.3 -$/);
+    const deny = act({ kind: "tcp-connect", nodeId: id("pc-1"), dst: "naver.com", port: 443 }).find((e) => e.kind === "proxy.deny")!;
+    expect(practitionerLines(deny, {})[0]!.line).toContain("TCP_DENIED/403 200 CONNECT naver.com:443 - HIER_NONE/- text/html");
+  });
+});

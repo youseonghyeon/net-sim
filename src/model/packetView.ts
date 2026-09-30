@@ -143,8 +143,8 @@ function tcpText(t: TcpSegment): string {
   if (t.ackFlag) parts.push(`ack ${t.ack}`);
   parts.push(`length ${t.len}`);
   let s = parts.join(", ");
-  // SSH(22)는 암호화되어 tcpdump 가 내용을 풀지 않는다
-  if (t.len > 0 && t.data && t.srcPort !== 22 && t.dstPort !== 22) s += `: HTTP: ${t.data.startsWith("GET") ? `${t.data} HTTP/1.1` : t.data.replace(/ \(\d+\/\d+\)$/, "").replace(/^HTTP (\d+)/, "HTTP/1.1 $1")}`;
+  // SSH(22)·TLS(HTTPS)는 암호화되어 tcpdump 가 내용을 풀지 않는다
+  if (t.len > 0 && t.data && !t.tls && t.srcPort !== 22 && t.dstPort !== 22) s += `: HTTP: ${/^(GET|CONNECT) /.test(t.data) ? `${t.data} HTTP/1.1` : t.data.replace(/ \(\d+\/\d+\)$/, "").replace(/^HTTP (\d+)/, "HTTP/1.1 $1")}`;
   return s;
 }
 
@@ -241,7 +241,7 @@ function ip6Layers(p: Ipv6Packet): HeaderLayer[] {
     },
   ];
   if (l4.kind === "icmp6") layers.push(icmp6Layer(l4));
-  else if (l4.kind === "tcp") layers.push(tcpLayer(l4));
+  else if (l4.kind === "tcp") layers.push(...tcpLayers(l4));
   else layers.push(...udpLayers(l4));
   return layers;
 }
@@ -316,7 +316,7 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
     ],
   });
   if (l4.kind === "icmp") layers.push(icmpLayer(l4));
-  else if (l4.kind === "tcp") layers.push(tcpLayer(l4));
+  else if (l4.kind === "tcp") layers.push(...tcpLayers(l4));
   else if (l4.kind === "esp") layers.push(espLayer(l4, false), ...ipLayers(l4.inner, true));
   else if (l4.kind === "pfsync")
     layers.push({
@@ -416,6 +416,26 @@ function icmpLayer(p: IcmpPacket): HeaderLayer {
   };
 }
 
+/** TCP 층과, TLS 레코드면 그 위의 TLS 층 (응용 데이터의 HTTP 헤더는 TLS 안에 있어 TLS 층에 둔다) */
+function tcpLayers(t: TcpSegment): HeaderLayer[] {
+  if (!t.tls) return [tcpLayer(t)];
+  const tcp = tcpLayer({ kind: "tcp", srcPort: t.srcPort, dstPort: t.dstPort, seq: t.seq, ack: t.ack, syn: t.syn, ackFlag: t.ackFlag, fin: t.fin, rst: t.rst, len: t.len });
+  tcp.rows.push(["데이터", "TLS 레코드 (아래)"]);
+  const rows: [string, string][] = [];
+  if (t.tls === "client-hello") {
+    rows.push(["레코드", "Handshake (22) · ClientHello (1)"]);
+    rows.push(["SNI (서버 이름)", t.sni ? `${t.sni} — 암호화 전이라 중간 장비(프록시·방화벽)도 본다` : "없음 (주소로 접속)"]);
+  } else if (t.tls === "server-hello") {
+    rows.push(["레코드", "Handshake (22) · ServerHello (2)"]);
+    rows.push(["그 뒤", "인증서·Finished 는 암호화 (TLS 1.3)"]);
+  } else {
+    rows.push(["레코드", "Application Data (23) · 암호화됨 — 중간 장비는 길이만 본다"]);
+    const inner = [t.tls === "finished" ? "Finished (핸드셰이크 끝)" : t.data, t.via !== undefined ? `Via ${t.via}` : "", t.cookie ? `Cookie: ${t.cookie}` : "", t.setCookie ? `Set-Cookie: ${t.setCookie}` : "", t.origin ? `X-Served-By: ${t.origin}` : ""].filter(Boolean);
+    rows.push(["안 (두 끝만 풂)", inner.join(" · ")]);
+  }
+  return [tcp, { title: "TLS 1.3", rows }];
+}
+
 function tcpLayer(t: TcpSegment): HeaderLayer {
   const rows: [string, string][] = [
     ["출발지 포트", String(t.srcPort)],
@@ -426,7 +446,8 @@ function tcpLayer(t: TcpSegment): HeaderLayer {
     ["데이터 길이", `${t.len}B`],
   ];
   if (t.data) rows.push(["데이터 (요약)", t.srcPort === 22 || t.dstPort === 22 ? "SSH 암호화 데이터 (내용은 다루지 않음)" : t.data]);
-  if (t.target) rows.push(["요청 대상 (절대 URI)", `http://${t.target.replace(/:80$/, "")}/ — 프록시에게 대신 받아 달라는 요청`]);
+  if (t.target && t.method === "CONNECT") rows.push(["요청 (CONNECT)", `CONNECT ${t.target} HTTP/1.1 — 프록시에게 대상까지 TCP 터널을 열어 달라는 요청`]);
+  else if (t.target) rows.push(["요청 대상 (절대 URI)", `http://${t.target.replace(/:80$/, "")}/ — 프록시에게 대신 받아 달라는 요청`]);
   if (t.via !== undefined) rows.push(["Via (HTTP 헤더 흉내)", `로드밸런서·프록시 ${t.via}개 거침`]);
   if (t.cookie) rows.push(["Cookie", t.cookie]);
   if (t.setCookie) rows.push(["Set-Cookie", `${t.setCookie}; path=/ — 로드밸런서가 넣은 세션 고정 쿠키`]);
@@ -702,8 +723,35 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       out.push({ tool: "nginx error.log", line: `connect() failed while connecting to upstream, upstream: "http://${detail(ev, "backend") ?? "?"}/" — upstream server temporarily disabled` });
       break;
     case "proxy.use":
+      if (detail(ev, "method") === "CONNECT") {
+        out.push({ tool: "curl -v", line: `* Uses proxy env variable https_proxy == 'http://${detail(ev, "proxy") ?? "?"}'` });
+        out.push({ tool: "curl -v", line: `* Establish HTTP proxy tunnel to ${String(detail(ev, "dst") ?? "?")}:${String(detail(ev, "port") ?? 443)}` });
+        out.push({ tool: "curl -v", line: `> CONNECT ${String(detail(ev, "dst") ?? "?")}:${String(detail(ev, "port") ?? 443)} HTTP/1.1` });
+        break;
+      }
       out.push({ tool: "curl -v", line: `* Uses proxy env variable http_proxy == 'http://${detail(ev, "proxy") ?? "?"}'` });
       out.push({ tool: "curl -v", line: `> GET http://${String(detail(ev, "dst") ?? "?")}/ HTTP/1.1` });
+      break;
+    case "proxy.tunnel":
+      // 끝 클라이언트가 CONNECT 응답을 받은 줄 (프록시 쪽 줄은 access.log 가 터널이 닫힐 때 남는다)
+      if (detail(ev, "client") === "true") {
+        out.push({ tool: "curl -v", line: `< HTTP/1.1 200 Connection established` });
+        out.push({ tool: "curl -v", line: `* CONNECT tunnel established, response 200` });
+      }
+      break;
+    case "tls.hello":
+      if (detail(ev, "role") === "client") out.push({ tool: "curl -v", line: `* TLSv1.3 (OUT), TLS handshake, Client hello (1):` });
+      break;
+    case "tls.established":
+      if (detail(ev, "role") === "client") {
+        out.push({ tool: "curl -v", line: `* TLSv1.3 (IN), TLS handshake, Server hello (2):` });
+        out.push({ tool: "curl -v", line: `* SSL connection using TLSv1.3 / TLS_AES_128_GCM_SHA256` });
+        if (detail(ev, "sni") !== undefined) out.push({ tool: "curl -v", line: `*  subject: CN=${String(detail(ev, "sni"))}` });
+      }
+      break;
+    case "tls.fail":
+      if (ev.summary.startsWith("TLS 핸드셰이크 실패")) out.push({ tool: "curl", line: `curl: (35) OpenSSL/3.0.13: error:0A00010B:SSL routines::wrong version number` });
+      else out.push({ tool: "nginx (응답 본문)", line: `400 Bad Request — The plain HTTP request was sent to HTTPS port` });
       break;
     case "tcp.cookie":
       out.push({ tool: "curl -v", line: `< Set-Cookie: ${detail(ev, "cookie") ?? "?"}; path=/` });
@@ -713,11 +761,13 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
     case "proxy.fail": {
       // Squid access.log: 시각 경과ms 클라이언트 결과/상태 바이트 메서드 URL 사용자 계층/상대 형식
       const target = detail(ev, "target");
-      const url = detail(ev, "url") ?? (target ? `http://${target.replace(/:80$/, "")}/` : "-");
+      // CONNECT 는 URL 자리에 호스트:포트만 남는다 (경로는 암호화된 터널 안이라 프록시가 모른다)
+      const connect = detail(ev, "method") === "CONNECT";
+      const url = detail(ev, "url") ?? (target ? (connect ? target : `http://${target.replace(/:80$/, "")}/`) : "-");
       const code = detail(ev, "result") ?? "-";
       // 대상에 연결해 본 것(응답 전달·연결 실패)은 HIER_DIRECT, 연결하지 않은 것(차단·이름 실패·대상 없음)은 HIER_NONE
       const hier = detail(ev, "ip") ? `HIER_DIRECT/${detail(ev, "ip")}` : "HIER_NONE/-";
-      out.push({ tool: "Squid access.log", line: `${(ev.time / 1000).toFixed(3)}      0 ${detail(ev, "client") ?? "-"} ${code} ${detail(ev, "bytes") ?? 200} GET ${url} - ${hier} text/html` });
+      out.push({ tool: "Squid access.log", line: `${(ev.time / 1000).toFixed(3)}      0 ${detail(ev, "client") ?? "-"} ${code} ${detail(ev, "bytes") ?? 200} ${connect ? "CONNECT" : "GET"} ${url} - ${hier} ${connect && code.startsWith("TCP_TUNNEL") ? "-" : "text/html"}` });
       break;
     }
     case "lb.relay":

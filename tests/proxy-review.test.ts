@@ -67,12 +67,14 @@ describe("리뷰 회귀: 포워드 프록시", () => {
     expect(act({ kind: "tcp-connect", nodeId: id("pc-1"), dst: "example.com", port: 80 }).some((e) => e.kind === "proxy.use")).toBe(true);
   });
 
-  it("L7 로드밸런서 뒤의 프록시 팜: LB 가 요청 대상(절대 URI)을 그대로 넘겨 프록시가 대신 받아 오고, 구성 검사도 조용하다", () => {
+  it("L7 로드밸런서 뒤의 프록시 팜: LB 가 요청 대상(절대 URI)을 그대로 넘겨 프록시가 대신 받아 오고, 구성 검사는 HTTPS(CONNECT) 경고만", () => {
     let t = exampleLoadBalancerTopology();
     t = edit(t, "nginx 서버", (d) => host(d, { lb: { enabled: true, port: 3128, algorithm: "round-robin", backends: [{ ip: "192.168.0.13", port: 3128 }] } }));
     t = edit(t, "web-3", (d) => host(d, { proxy: { enabled: true, port: 3128, deny: [] } }));
     t = edit(t, "pc-1", (d) => host(d, { httpProxy: { enabled: true, server: "192.168.0.10", port: 3128 } }));
-    expect(lintTopology(t).map((i) => i.code)).toEqual([]);
+    // proxy.not-running 오탐은 없다. L7 은 CONNECT 를 중계하지 않아 HTTPS 만 경고 (L4 로 바꾸면 사라진다)
+    expect(lintTopology(t).map((i) => i.code)).toEqual(["proxy.l7-connect"]);
+    expect(lintTopology(edit(t, "nginx 서버", (d) => host(d, { lb: { ...d.host!.lb!, mode: "l4" } }))).map((i) => i.code)).toEqual([]);
     const { id, act, lastConn } = loadTopology(t);
     act({ kind: "tcp-connect", nodeId: id("pc-1"), dst: "192.168.0.11", port: 80 });
     expect(lastConn("pc-1")).toMatchObject({ state: "CLOSED", bytesReceived: 3000, servedBy: "192.168.0.11" });

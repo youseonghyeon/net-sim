@@ -955,11 +955,30 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
     await page.waitForFunction((d) => new RegExp(`${d}.*(종료됨|실패|HTTP)`).test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), dst, { timeout: 60000 });
     console.log(`proxy ${dst}:`, (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
   }
+  // HTTPS: CONNECT 터널 → TLS 는 github.com 과 직접, 프록시 기록에는 CONNECT 호스트:포트만
+  await page.fill(".tcp-row .input:not(.port)", "github.com");
+  await page.keyboard.press("Escape");
+  await page.fill(".tcp-row .input.port", "443");
+  console.log("https button:", (await page.locator(".tcp-row .btn").innerText()).trim());
+  await page.click(".tcp-row .btn");
+  await page.waitForFunction(() => /github\.com:443.*(종료됨|실패|HTTP)/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 60000 });
+  console.log("proxy https:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "), "| class:", await page.locator(".inspector .tcp-log li").first().getAttribute("class"));
   await page.screenshot({ path: `${OUT}/56-proxy-diag.png` });
+  // 로그: 응답 세그먼트(TLS 응용 데이터)를 받은 프레임의 패킷 상세 — TLS 층, 안쪽은 두 끝만
+  if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");
+  const tlsRow = page.locator(".log-list .row", { hasText: /프레임 수신: TCP DATA .*len=1000/ }).last();
+  await tlsRow.scrollIntoViewIfNeeded();
+  await tlsRow.click();
+  const tlsDetail = tlsRow.locator(".pkt-detail");
+  await tlsDetail.waitFor({ timeout: 5000 });
+  console.log("tls layers:", (await tlsDetail.locator(".pkt-layer-title").allTextContents()).join(","));
+  await tlsDetail.locator(".pkt-layer-title", { hasText: "TLS 1.3" }).first().scrollIntoViewIfNeeded();
+  await page.locator(".log").screenshot({ path: `${OUT}/56b-proxy-tls-detail.png` });
+  await page.click(".log-toggle");
   await clickDevice("proxy-1");
   await goTab("표");
   const log = page.locator(".inspector section", { has: page.locator("h3", { hasText: "프록시 요청" }) });
-  console.log("proxy access.log rows:", await log.locator("tbody tr").count());
+  console.log("proxy access.log rows:", await log.locator("tbody tr").count(), "| first:", (await log.locator("tbody tr").first().innerText()).replace(/\s+/g, " "));
   await goTab("설정");
   await page.locator(".inspector .toggle-row", { hasText: "프록시" }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${OUT}/57-proxy-settings.png` });
