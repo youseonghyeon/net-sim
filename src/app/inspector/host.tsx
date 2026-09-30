@@ -440,6 +440,14 @@ function LbFields({ d, h }: { d: Device; h: HostSettings }) {
           {lb.sticky === "ip" && <p class="note">NAT·프록시 뒤의 여러 사람은 한 주소로 보여 모두 같은 백엔드로 몰립니다. 사람마다 나누려면 쿠키를 쓰세요.</p>}
           {lb.sticky === "cookie" && lb.mode !== "l4" && <p class="note">첫 응답에 <span class="mono">Set-Cookie: SERVERID=백엔드</span> 를 넣고, 브라우저가 다음 요청에 실어 보내는 쿠키로 같은 백엔드를 고릅니다. 주소가 아니라 브라우저마다라 NAT 뒤에서도 사람별로 나뉩니다.</p>}
           {lb.sticky === "cookie" && lb.mode === "l4" && <p class="note error-note">L4 는 HTTP 를 보지 않아 쿠키 세션 고정이 동작하지 않습니다. 출발지 IP 로 바꾸거나 L7 프록시로 바꾸세요.</p>}
+          <label class="toggle-row">
+            <span>
+              액티브 헬스 체크 <span class="mono muted">2초 · 실패 3 · 복귀 2</span>
+              <small class="muted">요청이 오기 전에 죽은 백엔드를 뺌</small>
+            </span>
+            <Toggle on={lb.healthCheck === true} onToggle={() => set({ healthCheck: !lb.healthCheck })} />
+          </label>
+          {lb.healthCheck === true && <p class="note">2초마다 백엔드에 TCP 로 연결해 보고, 3번 연속 실패면 DOWN(요청을 보내지 않음), 2번 연속 응답하면 UP 입니다(HAProxy check 기본값). 끄면 패시브만 — 누군가의 요청이 실패해야 알고 그 요청을 다음 백엔드로 다시 보냅니다. 체크는 시간이 흐를 때만 돕니다(요청이 오가거나 위의 "+10초").</p>}
           {shadowsWeb && <p class="note">웹 서버도 포트 {lb.port} 인데, 이 포트로 온 연결은 로드밸런서가 받습니다.</p>}
           <h3 class="sub">백엔드</h3>
           {lb.backends.length === 0 && <p class="note error-note">백엔드가 없으면 모든 요청에 502 Bad Gateway 를 돌려줍니다. 뒤 서버의 주소와 포트를 추가하세요.</p>}

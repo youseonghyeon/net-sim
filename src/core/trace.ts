@@ -178,6 +178,8 @@ export type TraceKind =
   | "lb.pick"
   | "lb.relay"
   | "lb.down"
+  /** 액티브 헬스 체크: 실패(아직 DOWN 전)·UP 복귀 */
+  | "lb.check"
   | "lb.fail"
   | "lb.forward"
   | "vpn.config"

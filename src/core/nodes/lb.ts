@@ -3,7 +3,10 @@
 // 백엔드 입장에서 클라이언트는 LB 다. 서버의 서비스 토글(Host)과 로드밸런서 전용 장비가 이 모듈을 함께 쓴다.
 //
 // 헬스 체크는 패시브(nginx 의 max_fails/fail_timeout 방식): 백엔드가 거부(RST)하거나 timeout 이면 10초 동안 빼고
-// 곧바로 다음 백엔드로 다시 보낸다. 주기적인 액티브 헬스 체크는 없다 — 시뮬레이터 시계는 조용하면 멈추므로.
+// 곧바로 다음 백엔드로 다시 보낸다. 누군가 실패를 겪어야 안다.
+// 액티브 헬스 체크(설정 healthCheck, 기본 꺼짐 — HAProxy "check inter 2s fall 3 rise 2"): 2초마다 백엔드에 TCP 로 연결해 보고,
+// 3번 연속 실패면 DOWN(요청을 보내지 않음), 2번 연속 성공이면 UP. 요청이 오기 전에 죽은 백엔드를 뺀다.
+// 주기는 배경 타이머라 시계를 스스로 움직이지 않는다 — 요청이 오가거나 "+N초" 로 시간이 흐를 때만 돈다.
 //
 // L4 모드 (LVS FULLNAT·클라우드 NLB 식): 연결을 끊어 잇지 않고 패킷의 주소·포트만 바꿔 넘긴다.
 //   클라이언트 → LB:포트  ⇒  LB:변환 포트 → 백엔드:포트   (돌아올 때 반대로)
@@ -42,6 +45,23 @@ export interface LbConfig {
   mode?: LbMode;
   /** 세션 고정: "ip" 같은 출발지 IP 는 같은 백엔드로, "cookie" 응답에 넣은 쿠키로 (L7 만) */
   sticky?: LbSticky;
+  /** 액티브 헬스 체크: 2초마다 TCP 연결로 확인, 3번 실패면 DOWN, 2번 성공이면 UP (배경 타이머) */
+  healthCheck?: boolean;
+}
+
+/** 액티브 헬스 체크 간격·판정 (HAProxy 기본값 inter 2s, fall 3, rise 2). 체크의 timeout 은 간격과 같다 */
+export const LB_CHECK_INTERVAL = 2000;
+export const LB_CHECK_FALL = 3;
+export const LB_CHECK_RISE = 2;
+export const LB_CHECK_TAG = "lb-check";
+
+/** 백엔드 하나의 액티브 헬스 체크 상태 */
+interface CheckState {
+  down: boolean;
+  /** 지금 방향의 연속 횟수 (UP 이면 실패, DOWN 이면 성공) */
+  streak: number;
+  /** 마지막 실패 이유 */
+  reason?: string;
 }
 
 export type LbSticky = "ip" | "cookie";
@@ -114,6 +134,13 @@ export class LoadBalancer {
   private readonly flows = new Map<string, L4Flow>();
   private readonly byNatPort = new Map<number, L4Flow>();
   private nextNatPort = L4_PORT_START;
+  /** 액티브 헬스 체크: 백엔드 → 상태 */
+  private readonly checkState = new Map<string, CheckState>();
+  /** 진행 중인 체크 연결 id → 백엔드 */
+  private readonly checking = new Map<string, { key: string; conn: TcpConn }>();
+  /** 지금 유효한 체크 라운드 타이머 번호 */
+  private checkRound: number | undefined;
+  private checkToken = 0;
 
   constructor(
     private readonly tcp: TcpStack,
@@ -128,13 +155,15 @@ export class LoadBalancer {
     // 설정에 남은 백엔드의 상태·고정·흐름은 유지한다 (세션 고정만 켰는데 열린 연결이 끊기면 안 된다)
     const kept = new Set(cfg.backends.map(keyOf));
     for (const k of [...this.downUntil.keys()]) if (!kept.has(k)) this.downUntil.delete(k);
+    for (const k of [...this.checkState.keys()]) if (!kept.has(k) || !cfg.healthCheck) this.checkState.delete(k);
+    if (!cfg.enabled || !cfg.healthCheck) this.checkRound = undefined;
     for (const [ip, k] of [...this.affinity]) if (!kept.has(k) || cfg.sticky !== "ip") this.affinity.delete(ip);
     for (const f of [...this.flows.values()]) if (cfg.mode !== "l4" || !kept.has(keyOf(f.backend))) this.dropFlow(f);
     ctx.trace(
       "lb.config",
       "sys",
       cfg.enabled
-        ? `로드밸런서 켜짐 (${LB_MODE_LABEL[cfg.mode ?? "l7"]}${cfg.sticky ? `, ${LB_STICKY_LABEL[cfg.sticky]}` : ""}): 포트 ${cfg.port} 로 온 ${cfg.mode === "l4" ? "연결" : "요청"}을 ${LB_ALGORITHM_LABEL[cfg.algorithm]} 로 백엔드 ${cfg.backends.length}대(${cfg.backends.map(keyOf).join(", ") || "없음"})에 나눔`
+        ? `로드밸런서 켜짐 (${LB_MODE_LABEL[cfg.mode ?? "l7"]}${cfg.sticky ? `, ${LB_STICKY_LABEL[cfg.sticky]}` : ""}${cfg.healthCheck ? `, 액티브 헬스 체크 ${LB_CHECK_INTERVAL / 1000}초` : ""}): 포트 ${cfg.port} 로 온 ${cfg.mode === "l4" ? "연결" : "요청"}을 ${LB_ALGORITHM_LABEL[cfg.algorithm]} 로 백엔드 ${cfg.backends.length}대(${cfg.backends.map(keyOf).join(", ") || "없음"})에 나눔`
         : "로드밸런서 꺼짐",
       { ...cfg },
     );
@@ -145,9 +174,83 @@ export class LoadBalancer {
     return this.config.enabled && this.config.mode !== "l4" && conn.role === "server" && conn.localPort === this.config.port;
   }
 
-  /** 지금 살아 있는 것으로 보는 백엔드 */
+  /** 지금 살아 있는 것으로 보는 백엔드 (패시브로 빼 두지 않았고, 액티브 체크로 DOWN 이 아님) */
   isUp(b: LbBackend, now: number): boolean {
-    return (this.downUntil.get(keyOf(b)) ?? -Infinity) <= now;
+    return (this.downUntil.get(keyOf(b)) ?? -Infinity) <= now && !this.checkState.get(keyOf(b))?.down;
+  }
+
+  // ---------- 액티브 헬스 체크 ----------
+
+  /** 체크가 켜져 있는데 돌고 있지 않으면 다음 라운드를 건다 (링크 연결·설정 변경 때) */
+  ensureChecks(ctx: NodeContext): void {
+    if (!this.config.enabled || !this.config.healthCheck || this.checkRound !== undefined) return;
+    this.scheduleRound(ctx);
+  }
+
+  private scheduleRound(ctx: NodeContext): void {
+    this.checkRound = ++this.checkToken;
+    ctx.timer(LB_CHECK_INTERVAL, LB_CHECK_TAG, { round: this.checkRound }, true);
+  }
+
+  /** 체크 라운드: 지난 체크 중 답이 없던 것은 timeout, 백엔드마다 새로 연결해 본다 */
+  onTimer(data: unknown, ctx: NodeContext): void {
+    if ((data as { round: number }).round !== this.checkRound) return;
+    this.checkRound = undefined;
+    if (!this.config.enabled || !this.config.healthCheck) return;
+    for (const [id, c] of [...this.checking]) {
+      this.checking.delete(id);
+      this.result(c.key, false, `${LB_CHECK_INTERVAL / 1000}초 동안 응답 없음 (Layer4 timeout)`, ctx);
+      this.tcp.abandon(c.conn, "헬스 체크 timeout", ctx);
+    }
+    const me = this.localIp();
+    if (me) {
+      for (const b of this.config.backends) {
+        const key = keyOf(b);
+        this.tcp.connect(me, b.ip, b.port, ctx, { probe: true, onCreated: (conn) => this.checking.set(conn.id, { key, conn }) });
+      }
+    }
+    this.scheduleRound(ctx);
+  }
+
+  /** 체크 연결이 맺어짐: 성공으로 세고 닫는다. 체크 연결이었으면 true */
+  onEstablished(conn: TcpConn, ctx: NodeContext): boolean {
+    const c = this.checking.get(conn.id);
+    if (!c) return false;
+    this.checking.delete(conn.id);
+    this.result(c.key, true, "", ctx);
+    this.tcp.disconnect(conn.id, ctx);
+    return true;
+  }
+
+  /** 체크 한 번의 결과를 세어 DOWN·UP 을 정한다. 알리는 것은 실패와 상태가 바뀔 때만 (성공이 이어지는 동안은 조용히) */
+  private result(key: string, ok: boolean, reason: string, ctx: NodeContext): void {
+    if (!this.config.backends.some((b) => keyOf(b) === key)) return;
+    const st = this.checkState.get(key) ?? { down: false, streak: 0 };
+    this.checkState.set(key, st);
+    const bad = !ok;
+    if (bad === st.down) {
+      // 지금 상태와 같은 결과: 반대 방향 연속 횟수를 지운다
+      st.streak = 0;
+      if (bad) st.reason = reason;
+      return;
+    }
+    st.streak++;
+    if (bad) st.reason = reason;
+    const need = bad ? LB_CHECK_FALL : LB_CHECK_RISE;
+    if (st.streak < need) {
+      if (bad) ctx.trace("lb.check", "app", `헬스 체크: 백엔드 ${key} 실패 ${st.streak}/${LB_CHECK_FALL} — ${reason}`, { backend: key, reason, streak: st.streak });
+      else ctx.trace("lb.check", "app", `헬스 체크: 백엔드 ${key} 응답 ${st.streak}/${LB_CHECK_RISE} (아직 DOWN)`, { backend: key, streak: st.streak });
+      return;
+    }
+    st.down = bad;
+    st.streak = 0;
+    const alive = this.config.backends.filter((b) => keyOf(b) !== key && !this.checkState.get(keyOf(b))?.down).length + (bad ? 0 : 1);
+    if (bad) {
+      for (const [ip, k] of [...this.affinity]) if (k === key) this.affinity.delete(ip); // 고정도 풀어 다른 백엔드로
+      ctx.trace("lb.down", "app", `헬스 체크: 백엔드 ${key} ${LB_CHECK_FALL}번 연속 실패 (${reason}) → DOWN, 요청을 보내지 않음 (남은 백엔드 ${alive}대) — 요청이 오기 전에 뺀다`, { backend: key, reason, check: true, left: alive });
+    } else {
+      ctx.trace("lb.check", "app", `헬스 체크: 백엔드 ${key} ${LB_CHECK_RISE}번 연속 응답 → UP, 다시 요청을 보냄 (살아 있는 백엔드 ${alive}대)`, { backend: key, up: true, left: alive });
+    }
   }
 
   private active(b: LbBackend): number {
@@ -234,6 +337,14 @@ export class LoadBalancer {
 
   /** 백엔드 연결이 끝남: 응답을 받았으면 클라이언트에게 전달, 실패면 빼 두고 다음 백엔드로. LB 가 처리한 연결이면 true */
   onFinish(up: TcpConn, ctx: NodeContext): boolean {
+    const c = this.checking.get(up.id);
+    if (c) {
+      // 맺어지기 전에 끝난 체크 연결: 거부(RST)·닿지 않음(Unreachable)
+      this.checking.delete(up.id);
+      this.result(c.key, false, up.reason === "연결 거부 (RST)" ? "연결 거부 (RST, Layer4 connection problem)" : (up.reason ?? "연결 실패"), ctx);
+      return true;
+    }
+    if (up.probe) return true; // 성공으로 센 뒤 닫힌 체크 연결
     const p = this.pending.get(up.id);
     if (!p) return false;
     this.pending.delete(up.id);
@@ -292,6 +403,8 @@ export class LoadBalancer {
     const me = this.localIp();
     if (!me || pkt.dst !== me) return undefined;
     if (seg.dstPort === this.config.port) return this.l4FromClient(pkt, seg, me, ctx, frameId);
+    // 내 헬스 체크 연결의 응답은 변환하지 않는다 (임시 포트가 변환 포트 범위와 겹쳐도)
+    if ([...this.checking.values()].some((c) => c.conn.localPort === seg.dstPort) || [...this.tcp.conns.values()].some((c) => c.probe && c.localPort === seg.dstPort && c.state !== "CLOSED" && c.state !== "FAILED")) return undefined;
     const flow = this.byNatPort.get(seg.dstPort);
     if (flow && pkt.src === flow.backend.ip && seg.srcPort === flow.backend.port) return this.l4FromBackend(pkt, seg, flow, me, ctx, frameId);
     return undefined;
@@ -430,7 +543,14 @@ export class LoadBalancer {
     return this.config.backends.map((b) => {
       const st = this.stats.get(keyOf(b)) ?? { served: 0, fails: 0 };
       const until = this.downUntil.get(keyOf(b));
-      const state = until !== undefined && until > now ? `빠짐 (${Math.ceil((until - now) / 1000)}초 뒤 다시 시도)` : "사용 중";
+      const chk = this.checkState.get(keyOf(b));
+      const state = chk?.down
+        ? `DOWN (헬스 체크: ${chk.reason ?? "실패"})`
+        : until !== undefined && until > now
+          ? `빠짐 (${Math.ceil((until - now) / 1000)}초 뒤 다시 시도)`
+          : this.config.healthCheck
+            ? `사용 중 · 헬스 체크 ${chk?.streak ? `실패 ${chk.streak}/${LB_CHECK_FALL}` : "정상"}`
+            : "사용 중";
       return [keyOf(b), state, `${st.served}건`, st.fails ? `실패 ${st.fails}` : "-"];
     });
   }

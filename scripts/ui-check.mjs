@@ -988,6 +988,28 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   const rows = (await page.locator(".inspector .tcp-log li").allInnerTexts()).map((x) => x.replace(/\s+/g, " "));
   console.log("lb cookie:", rows.slice(0, 2).join(" | "));
 }
+// 로드밸런서 액티브 헬스 체크: lb-1 에 켜고 web-2 의 웹 서버를 끔 → 시간이 흐르기 전에는 모름 → "+10초" 뒤 lb-1 표에 DOWN
+{
+  await loadEx("lb");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await clickDevice("lb-1");
+  await goTab("설정");
+  await page.locator(".inspector .toggle-row", { hasText: "액티브 헬스 체크" }).locator(".toggle").click();
+  await page.locator(".inspector .toggle-row", { hasText: "액티브 헬스 체크" }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/55b-lb-health-setting.png` });
+  await clickDevice("web-2");
+  await goTab("설정");
+  await page.locator(".inspector .toggle-row", { hasText: "웹 서버" }).locator(".toggle").click();
+  await clickDevice("lb-1");
+  await goTab("표");
+  const backends = page.locator(".inspector section", { has: page.locator("h3", { hasText: "로드밸런서 백엔드" }) });
+  const web2Before = (await backends.locator("tbody tr").nth(1).innerText()).replace(/\s+/g, " ");
+  if (/DOWN/.test(web2Before)) errors.push(`lb health: 시간을 흘려보내기 전에 이미 DOWN (${web2Before}) / 체크는 배경 타이머라 시간이 흘러야 함 / src/core/nodes/lb.ts`);
+  await page.click(".transport .ff");
+  await page.waitForFunction(() => [...document.querySelectorAll(".inspector section")].some((s) => /로드밸런서 백엔드/.test(s.querySelector("h3")?.textContent ?? "") && /DOWN/.test(s.textContent ?? "")), null, { timeout: 20000 });
+  console.log("lb health: before", web2Before, "| after", (await backends.locator("tbody tr").nth(1).innerText()).replace(/\s+/g, " "));
+  await backends.screenshot({ path: `${OUT}/55c-lb-health-down.png` });
+}
 // 포워드 프록시: pc-1 의 웹 요청은 proxy-1 경유(이름도 프록시가 찾음), 차단 목록은 403, proxy-1 표에 access.log
 {
   await loadEx("proxy");

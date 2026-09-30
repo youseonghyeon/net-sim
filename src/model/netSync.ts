@@ -269,6 +269,7 @@ export function effectiveLb(d: Device) {
     algorithm: c.algorithm === "least-conn" ? ("least-conn" as const) : ("round-robin" as const),
     ...(c.mode === "l4" ? { mode: "l4" as const } : {}),
     ...(c.sticky === "cookie" ? { sticky: "cookie" as const } : c.sticky ? { sticky: "ip" as const } : {}),
+    ...(c.healthCheck === true ? { healthCheck: true } : {}),
     backends: c.backends.filter((b) => validIp(b.ip) && port(b.port)).map((b) => ({ ip: b.ip, port: b.port })),
   };
 }

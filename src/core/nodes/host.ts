@@ -25,7 +25,7 @@ import {
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, type DnsServerConfig } from "./dns";
 import { NetInterface } from "./iface";
-import { LB_ALGORITHM_LABEL, LB_MODE_LABEL, LB_STICKY_LABEL, LoadBalancer, type LbConfig } from "./lb";
+import { LB_ALGORITHM_LABEL, LB_CHECK_TAG, LB_MODE_LABEL, LB_STICKY_LABEL, LoadBalancer, type LbConfig } from "./lb";
 import { ForwardProxy, type ProxyConfig } from "./proxy";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { endpoint, HTTPS_PORT, TCP_TIMER_TAG, TcpStack, type TcpConn } from "./tcp";
@@ -174,7 +174,7 @@ export class Host implements SimNode {
       send: (pkt, ctx) => this.sendAny(pkt, ctx),
       onRequest: (conn, ctx) => this.lb.onRequest(conn, ctx) || this.proxy.onRequest(conn, ctx),
       onFinish: (conn, ctx) => void (this.lb.onFinish(conn, ctx) || this.proxy.onFinish(conn, ctx) || this.happyEyeballs(conn, ctx)),
-      onEstablished: (conn, ctx) => this.proxy.onEstablished(conn, ctx),
+      onEstablished: (conn, ctx) => void (this.lb.onEstablished(conn, ctx) || this.proxy.onEstablished(conn, ctx)),
       onRelay: (conn, seg, ctx) => this.proxy.onRelay(conn, seg, ctx),
     });
     this.lb = new LoadBalancer(this.tcp, () => this.iface.ip);
@@ -266,6 +266,7 @@ export class Host implements SimNode {
   setLb(cfg: LbConfig, ctx: NodeContext): void {
     this.lb.setConfig(cfg, ctx);
     this.syncListening(ctx);
+    this.lb.ensureChecks(ctx);
   }
 
   /** 포워드 프록시 설정 교체 */
@@ -366,6 +367,7 @@ export class Host implements SimNode {
       if (this.ipMode === "dhcp") this.dhcp.start(ctx, this.emit(ctx));
       else if (this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
       this.v6.linkUp(ctx, this.emit(ctx));
+      this.lb.ensureChecks(ctx); // 액티브 헬스 체크 (켜져 있으면)
       return;
     }
     ctx.trace("link.down", "L1", `링크 다운`);
@@ -1100,6 +1102,9 @@ export class Host implements SimNode {
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
     this.clock = ctx.now;
     switch (tag) {
+      case LB_CHECK_TAG:
+        this.lb.onTimer(data, ctx);
+        return;
       case DAD_TIMER_TAG:
         this.v6.finishDad(data, ctx, this.emit(ctx));
         return;
@@ -1216,7 +1221,7 @@ export class Host implements SimNode {
         ...(this.httpProxy ? [["HTTP 프록시", `http://${this.httpProxy.server}:${this.httpProxy.port} (웹 요청 80·443)`] as [string, string]] : []),
         ...(this.proxy.config.enabled ? [["프록시", `켜짐 · 포트 ${this.proxy.config.port}${this.proxy.config.deny.length ? ` · 차단 ${this.proxy.config.deny.length}개` : ""}`] as [string, string]] : []),
         ...(this.lb.config.enabled
-          ? [["로드밸런서", `켜짐 · ${LB_MODE_LABEL[this.lb.config.mode ?? "l7"]} · 포트 ${this.lb.config.port} · ${LB_ALGORITHM_LABEL[this.lb.config.algorithm]}${this.lb.config.sticky ? ` · ${LB_STICKY_LABEL[this.lb.config.sticky]}` : ""} · 백엔드 ${this.lb.config.backends.length}대`] as [string, string]]
+          ? [["로드밸런서", `켜짐 · ${LB_MODE_LABEL[this.lb.config.mode ?? "l7"]} · 포트 ${this.lb.config.port} · ${LB_ALGORITHM_LABEL[this.lb.config.algorithm]}${this.lb.config.sticky ? ` · ${LB_STICKY_LABEL[this.lb.config.sticky]}` : ""}${this.lb.config.healthCheck ? " · 액티브 헬스 체크" : ""} · 백엔드 ${this.lb.config.backends.length}대`] as [string, string]]
           : []),
       ],
       tables: [

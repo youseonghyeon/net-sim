@@ -111,6 +111,8 @@ export interface TcpConn {
   tunnel?: "wait" | "up";
   /** 중계 연결 (프록시의 CONNECT 터널 양쪽): 앱 흉내 없이 받은 데이터·FIN 을 앱에게 넘긴다 */
   relay?: boolean;
+  /** 헬스 체크 연결: 맺어지면 앱에게 알릴 뿐 요청을 보내지 않고, SYN 을 재전송하지 않는다 (timeout 은 앱이 정한다) */
+  probe?: boolean;
   /** TLS (포트 443): 핸드셰이크가 끝났는지, 핸드셰이크로 보낸 바이트 (서버가 응답을 이미 보냈는지 가를 때 뺀다), SNI */
   tls?: { done: boolean; sent: number; sni?: string };
   /** 클라이언트: 응답이 아니라 연결 준비로 받은 바이트 (CONNECT 응답·TLS 핸드셰이크) — 응답 크기에서 뺀다 */
@@ -157,6 +159,11 @@ export interface ConnectOptions {
   method?: "CONNECT";
   /** 중계 연결: 맺어지면 요청을 보내지 않고 host.onEstablished, 받은 것은 host.onRelay 로 */
   relay?: boolean;
+  /**
+   * 헬스 체크 연결: 맺어지면 host.onEstablished 만 (요청 없음), SYN 재전송 타이머를 걸지 않는다 —
+   * 주기 체크(배경 타이머)가 일반 타이머를 남기면 죽은 백엔드가 있는 동안 시계가 멈추지 않는다
+   */
+  probe?: boolean;
 }
 
 /** 응답에 붙이는 것 */
@@ -218,7 +225,7 @@ export class TcpStack {
   // ---------- 클라이언트 ----------
 
   connect(localIp: Ip, remoteIp: Ip, remotePort: number, ctx: NodeContext, opts: ConnectOptions = {}): TcpConn {
-    const { via, target, onCreated, method, relay } = opts;
+    const { via, target, onCreated, method, relay, probe } = opts;
     const localPort = this.nextPort++;
     // 쿠키는 끝 클라이언트(브라우저)만: 중계 연결(via 가 있는 로드밸런서·프록시)은 저장소를 쓰지 않는다
     const site = via === undefined ? siteOf(remoteIp, target, opts.site) : undefined;
@@ -248,11 +255,12 @@ export class TcpStack {
       ...(site !== undefined ? { site } : {}),
       ...(method ? { method } : {}),
       ...(relay ? { relay } : {}),
+      ...(probe ? { probe } : {}),
     };
     this.conns.set(conn.id, conn);
     this.prune();
     onCreated?.(conn);
-    ctx.trace("tcp.connect", "L4", `TCP 연결 시작: ${endpoint(localIp, localPort)} → ${endpoint(remoteIp, remotePort)} (초기 seq ${conn.iss})`, { conn: conn.id });
+    ctx.trace("tcp.connect", "L4", `TCP 연결 시작: ${endpoint(localIp, localPort)} → ${endpoint(remoteIp, remotePort)} (초기 seq ${conn.iss})${probe ? " — 헬스 체크 (연결되는지만 보고 닫음)" : ""}`, { conn: conn.id });
     this.transmit(conn, { syn: true }, ctx, `SYN 전송: "연결하자" seq=${conn.iss}`, "tcp.syn.sent");
     return conn;
   }
@@ -326,8 +334,8 @@ export class TcpStack {
           ctx.trace("tcp.synack.received", "L4", `SYN·ACK 수신: 서버 초기 seq ${seg.seq}, 내 SYN 확인(ack ${seg.ack})`, { conn: conn.id });
           this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송: 3-way handshake 완료 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
           ctx.trace("tcp.established", "L4", `연결 성립 ${endpoint(conn.localIp, conn.localPort)} ↔ ${endpoint(conn.remoteIp, conn.remotePort)}`, { conn: conn.id });
-          if (conn.relay) {
-            // 중계 연결 (프록시 → CONNECT 대상): 요청은 끝 클라이언트가 터널 너머로 보낸다
+          if (conn.relay || conn.probe) {
+            // 중계 연결 (프록시 → CONNECT 대상): 요청은 끝 클라이언트가 터널 너머로 보낸다. 헬스 체크는 연결된 것으로 끝
             this.host.onEstablished?.(conn, ctx);
             return;
           }
@@ -726,6 +734,16 @@ export class TcpStack {
     return true;
   }
 
+  /** 패킷 없이 연결을 실패로 접는다 (헬스 체크 timeout — 응답이 없으니 알릴 상대도 없다) */
+  abandon(conn: TcpConn, reason: string, ctx: NodeContext): void {
+    if (conn.state === "CLOSED" || conn.state === "FAILED") return;
+    conn.state = "FAILED";
+    conn.reason = reason;
+    conn.closedAt = ctx.now;
+    this.cancelAll(conn);
+    this.host.onFinish?.(conn, ctx);
+  }
+
   /** 연결을 RST 로 끊는다 (터널 반대편이 실패했을 때) */
   reset(conn: TcpConn, reason: string, ctx: NodeContext): void {
     if (conn.state === "CLOSED" || conn.state === "FAILED") return;
@@ -823,8 +841,11 @@ export class TcpStack {
     if (consumes > 0) {
       conn.sndNxt += consumes;
       conn.bytesSent += seg.len;
-      const timer = ctx.timer(TCP_RTO, TCP_TIMER_TAG, { conn: conn.id, seq: seg.seq });
-      conn.unacked.push({ seg, retries: 0, timer });
+      // 헬스 체크의 SYN 은 재전송하지 않는다 (응답이 없으면 다음 체크 때 timeout 으로 본다)
+      if (!(conn.probe && seg.syn)) {
+        const timer = ctx.timer(TCP_RTO, TCP_TIMER_TAG, { conn: conn.id, seq: seg.seq });
+        conn.unacked.push({ seg, retries: 0, timer });
+      }
     }
     this.host.send(this.packet(conn.localIp, conn.remoteIp, seg), ctx);
   }

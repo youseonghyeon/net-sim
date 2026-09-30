@@ -225,6 +225,8 @@ export interface LbSettings {
   mode?: "l7" | "l4";
   /** 세션 고정: "ip" 같은 출발지 IP → 같은 백엔드, "cookie" 응답에 넣은 쿠키로 (L7 만). 예전 저장본의 true 는 "ip" */
   sticky?: "ip" | "cookie";
+  /** 액티브 헬스 체크 (없으면 꺼짐 — 패시브만) */
+  healthCheck?: boolean;
 }
 
 export interface ProxySettings {
@@ -363,9 +365,9 @@ function normalizeHostExtras(h: HostSettings): HostSettings {
   if (h.lb) {
     // 예전 저장본: 세션 고정이 켜기/끄기(true)였다 → 출발지 IP. 모르는 값은 버린다
     const st = h.lb.sticky as unknown;
-    const { sticky: _drop, ...rest } = h.lb;
+    const { sticky: _drop, healthCheck: hc, ...rest } = h.lb;
     void _drop;
-    out.lb = { ...rest, ...(st === true || st === "ip" ? { sticky: "ip" as const } : st === "cookie" ? { sticky: "cookie" as const } : {}) };
+    out.lb = { ...rest, ...(st === true || st === "ip" ? { sticky: "ip" as const } : st === "cookie" ? { sticky: "cookie" as const } : {}), ...(hc === true ? { healthCheck: true } : {}) };
   }
   if (h.proxy) {
     const p = h.proxy as Partial<ProxySettings>;

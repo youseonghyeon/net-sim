@@ -720,7 +720,12 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       if (detail(ev, "vip")) out.push({ tool: "리눅스 ipvsadm -Lnc", line: `TCP 01:00  ${(detail(ev, "state") ?? "ESTABLISHED").padEnd(11)} ${detail(ev, "client")}  ${detail(ev, "vip")}  ${detail(ev, "backend")}` });
       break;
     case "lb.down":
-      out.push({ tool: "nginx error.log", line: `connect() failed while connecting to upstream, upstream: "http://${detail(ev, "backend") ?? "?"}/" — upstream server temporarily disabled` });
+      // 액티브 헬스 체크로 뺀 것은 HAProxy 의 상태 변경 줄, 요청이 실패해 뺀 것(패시브)은 nginx error.log
+      if (detail(ev, "check") === "true") out.push({ tool: "HAProxy 로그", line: `Server backend/${detail(ev, "backend") ?? "?"} is DOWN, reason: ${String(detail(ev, "reason") ?? "").includes("timeout") ? "Layer4 timeout" : "Layer4 connection problem"}. ${detail(ev, "left") ?? "?"} active and 0 backup servers left.` });
+      else out.push({ tool: "nginx error.log", line: `connect() failed while connecting to upstream, upstream: "http://${detail(ev, "backend") ?? "?"}/" — upstream server temporarily disabled` });
+      break;
+    case "lb.check":
+      if (detail(ev, "up") === "true") out.push({ tool: "HAProxy 로그", line: `Server backend/${detail(ev, "backend") ?? "?"} is UP, reason: Layer4 check passed. ${detail(ev, "left") ?? "?"} active and 0 backup servers online.` });
       break;
     case "proxy.use":
       if (detail(ev, "method") === "CONNECT") {
