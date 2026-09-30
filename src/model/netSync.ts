@@ -209,6 +209,7 @@ function validIp6(s: string | undefined): string | undefined {
 export function effectiveHost6(d: Device): Ipv6Settings {
   const v = d.host?.ipv6;
   if (!v?.enabled) return { enabled: false, addrs: [] };
+  if (v.mode === "slaac") return { enabled: true, addrs: [], slaac: true };
   const ip = validIp6(v.ip);
   const prefix = Number.isInteger(v.prefix) && v.prefix >= 1 && v.prefix <= 128 ? v.prefix : 64;
   const gateway = validIp6(v.gateway);
@@ -220,13 +221,16 @@ export function effectiveHost6(d: Device): Ipv6Settings {
 export function effectiveL3v6(d: Device, count: number) {
   const v = d.l3?.ipv6;
   if (!v?.enabled) return { enabled: false, interfaces: [], routes: [] };
+  const raDns = validIp6(v.raDns);
   return {
     enabled: true,
     interfaces: Array.from({ length: count }, (_, i) => {
       const c = v.interfaces[i];
       const ip = validIp6(c?.ip);
-      return ip && !isLinkLocal6(ip) ? { ip, prefix: c!.prefix >= 1 && c!.prefix <= 128 ? c!.prefix : 64 } : {};
+      const ra = c?.ra === true ? { ra: true } : {};
+      return ip && !isLinkLocal6(ip) ? { ip, prefix: Number.isInteger(c!.prefix) && c!.prefix >= 1 && c!.prefix <= 128 ? c!.prefix : 64, ...ra } : ra;
     }),
+    ...(raDns ? { raDns } : {}),
     routes: v.routes
       .map((r) => ({ dest: validIp6(r.dest), prefix: r.prefix, via: validIp6(r.via) }))
       .filter((r): r is { dest: string; prefix: number; via: string } => !!r.dest && !!r.via && !isLinkLocal6(r.via) && Number.isInteger(r.prefix) && r.prefix >= 0 && r.prefix <= 128),

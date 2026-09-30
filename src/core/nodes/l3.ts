@@ -82,9 +82,11 @@ export interface L3Config {
 /** 게이트웨이·NAT 박스의 IPv6: 켜면 물리 인터페이스마다 링크 로컬이 생기고, 인터페이스별 수동 주소와 IPv6 스태틱 라우팅(::/0 = 디폴트 라우트)으로 전달한다 */
 export interface L3Ipv6Config {
   enabled: boolean;
-  /** 물리 인터페이스별 주소 (인덱스 = 인터페이스). ip 가 없으면 링크 로컬만 */
-  interfaces: { ip?: Ip; prefix?: number }[];
+  /** 물리 인터페이스별 주소 (인덱스 = 인터페이스). ip 가 없으면 링크 로컬만. ra = 이 인터페이스로 RA 를 보냄 (SLAAC) */
+  interfaces: { ip?: Ip; prefix?: number; ra?: boolean }[];
   routes: StaticRoute[];
+  /** RA 의 RDNSS 로 알릴 DNS 서버 */
+  raDns?: Ip;
 }
 
 interface Route6 {
@@ -216,7 +218,7 @@ export class L3Node implements SimNode {
       this.ipv6Enabled = true;
       this.v6.forEach((v, i) => {
         const c = cfg.ipv6!.interfaces[i];
-        v.init({ enabled: true, addrs: c?.ip ? [{ ip: c.ip, prefix: c.prefix ?? 64 }] : [] });
+        v.init({ enabled: true, addrs: c?.ip ? [{ ip: c.ip, prefix: c.prefix ?? 64 }] : [], ra: c?.ra === true, raDns: cfg.ipv6!.raDns });
       });
       this.routes6 = [...cfg.ipv6.routes];
     }
@@ -255,7 +257,7 @@ export class L3Node implements SimNode {
     this.ipv6Enabled = cfg.enabled;
     this.v6.forEach((v, i) => {
       const c = cfg.interfaces[i];
-      v.configure({ enabled: cfg.enabled, addrs: c?.ip ? [{ ip: c.ip, prefix: c.prefix ?? 64 }] : [] }, this.linkUp[i] === true, ctx, this.emit(i, ctx));
+      v.configure({ enabled: cfg.enabled, addrs: c?.ip ? [{ ip: c.ip, prefix: c.prefix ?? 64 }] : [], ra: c?.ra === true, raDns: cfg.raDns }, this.linkUp[i] === true, ctx, this.emit(i, ctx));
     });
     const routes = cfg.enabled ? cfg.routes : [];
     const key = (r: StaticRoute) => `${r.dest}/${r.prefix} via ${r.via}`;
@@ -434,6 +436,7 @@ export class L3Node implements SimNode {
   }
 
   onRemove(ctx: NodeContext): void {
+    this.v6.forEach((v, i) => v.shutdown(ctx, this.emit(i, ctx)));
     this.ha.shutdown(ctx);
     this.rip.shutdown(ctx);
     this.clients.forEach((c, i) => {
@@ -967,7 +970,7 @@ export class L3Node implements SimNode {
 
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
     if (tag === DAD_TIMER_TAG) {
-      for (const v of this.v6) if (v.finishDad(data, ctx)) break;
+      for (let i = 0; i < this.v6.length; i++) if (this.v6[i]!.finishDad(data, ctx, this.emit(i, ctx))) break;
       return;
     }
     if (tag === NDP_TIMEOUT_TAG) {

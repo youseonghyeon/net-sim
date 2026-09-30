@@ -972,7 +972,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
 {
   await loadEx("ipv6");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-  console.log("ipv6 tiles:", await waitAddr("pc-1", /^2001:db8:1::10\/64$/), "| gw-1:", (await device("gw-1").locator(".addr, .status").allTextContents()).join(" / "), "| badge:", await device("pc-1").locator(".badge", { hasText: "IPv6" }).count());
+  console.log("ipv6 tiles:", await waitAddr("pc-1", /^2001:db8:1::10$/), "| gw-1:", (await device("gw-1").locator(".addr, .status").allTextContents()).join(" / "), "| badge:", await device("pc-1").locator(".badge", { hasText: "IPv6" }).count());
   await clickDevice("pc-1");
   await page.locator(".ping-row .picker .input").first().fill("2001:db8:1::11");
   await page.keyboard.press("Escape");
@@ -1010,6 +1010,30 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("ndp layers:", (await detail.locator(".pkt-layer-title").allTextContents()).join(","));
   await detail.screenshot({ path: `${OUT}/63-ipv6-ndp-detail.png` });
   await page.click(".log-toggle");
+}
+// IPv6 SLAAC: 자동 호스트가 RA 로 주소를 만든다. 게이트웨이 인터페이스별 RA 광고 토글, 호스트 자동/수동
+{
+  await loadEx("slaac");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  console.log("slaac tiles:", await waitAddr("pc-1", /^2001:db8:1::ff:fe00:1$/), "|", await waitAddr("laptop-1", /^2001:db8:1::/));
+  await clickDevice("pc-1");
+  await goTab("표");
+  console.log("slaac pc-1 gateway:", await page.locator(".inspector .stat-row", { hasText: "IPv6 게이트웨이" }).locator("b").textContent());
+  await goTab("설정");
+  await page.locator(".inspector h3", { hasText: "IPv6" }).first().scrollIntoViewIfNeeded();
+  console.log("slaac mode on:", await page.locator(".inspector .segmented button.on", { hasText: "자동 (SLAAC)" }).count());
+  await page.screenshot({ path: `${OUT}/64-slaac-host.png` });
+  await clickDevice("gw-1");
+  await goTab("설정");
+  const raRows = page.locator(".inspector .ra-row");
+  console.log("ra toggles:", await raRows.count(), "| on:", await raRows.locator(".toggle.on").count());
+  await raRows.nth(1).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/65-slaac-gw-ra.png` });
+  // if1 RA 끄기 → 자동 호스트의 주소가 사라진다
+  await raRows.nth(1).locator(".toggle").click();
+  console.log("after RA off:", await waitAddr("pc-1", /RA/));
+  await raRows.nth(1).locator(".toggle").click();
+  console.log("after RA on again:", await waitAddr("pc-1", /^2001:db8:1::ff:fe00:1$/));
 }
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {

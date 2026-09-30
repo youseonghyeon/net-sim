@@ -46,6 +46,8 @@ function l6Length(p: Ipv6Packet["payload"]): number {
     if (p.type === "echo-request" || p.type === "echo-reply") return ICMP_ECHO_LEN;
     if (p.type === "ns") return p.sll ? 32 : 24; // 머리 24 + 링크 계층 주소 옵션 8
     if (p.type === "na") return p.tll ? 32 : 24;
+    if (p.type === "rs") return 8 + (p.sll ? 8 : 0);
+    if (p.type === "ra") return 16 + p.prefixes.length * 32 + (p.rdnss?.length ? 8 + 16 * p.rdnss.length : 0) + (p.sll ? 8 : 0);
     return 48 + 8; // 오류: 머리 8 + 원래 패킷 앞부분
   }
   if (p.kind === "tcp") return 20 + p.len;
@@ -105,6 +107,8 @@ function ip6Line(pkt: Ipv6Packet): string {
 function icmp6Text(p: Icmpv6Packet): string {
   if (p.type === "ns") return `ICMP6, neighbor solicitation, who has ${p.target}`;
   if (p.type === "na") return `ICMP6, neighbor advertisement, tgt is ${p.target}`;
+  if (p.type === "rs") return "ICMP6, router solicitation";
+  if (p.type === "ra") return "ICMP6, router advertisement";
   if (p.type === "time-exceeded") return "ICMP6, time exceeded in-transit";
   if (p.type === "unreachable") {
     const o = p.original;
@@ -258,6 +262,26 @@ function icmp6Layer(p: Icmpv6Packet): HeaderLayer {
         ...(p.tll ? ([["옵션 2 대상 링크 계층 주소", p.tll]] as [string, string][]) : []),
       ],
     };
+  if (p.type === "rs")
+    return {
+      title: "ICMPv6 · NDP",
+      rows: [
+        ["타입 / 코드", "133 / 0 (Router Solicitation — 라우터를 찾는다)"],
+        ...(p.sll ? ([["옵션 1 출발지 링크 계층 주소", p.sll]] as [string, string][]) : []),
+      ],
+    };
+  if (p.type === "ra") {
+    const rows: [string, string][] = [
+      ["타입 / 코드", "134 / 0 (Router Advertisement)"],
+      ["Cur Hop Limit", `${p.curHopLimit} (호스트가 쓸 기본 Hop Limit)`],
+      ["플래그", `M=${p.managed ? 1 : 0} (주소는 DHCPv6) · O=${p.other ? 1 : 0} (그 밖의 정보는 DHCPv6) — 둘 다 0 이면 SLAAC 만`],
+      ["라우터 수명", `${p.routerLifetime}초${p.routerLifetime === 0 ? " (나를 기본 게이트웨이로 쓰지 말라)" : " (0 이 아니면 기본 게이트웨이 후보)"}`],
+    ];
+    for (const x of p.prefixes) rows.push(["옵션 3 프리픽스 정보", `${x.prefix}/${x.length} · L=${x.onLink ? 1 : 0} A=${x.autonomous ? 1 : 0} · 유효 수명 ${x.valid}초${x.valid === 0 ? " (거둠 — 이 프리픽스로 만든 주소를 지우라)" : ""}`]);
+    if (p.rdnss?.length) rows.push(["옵션 25 RDNSS", `${p.rdnss.join(", ")} (DNS 서버, RFC 8106)`]);
+    if (p.sll) rows.push(["옵션 1 출발지 링크 계층 주소", p.sll]);
+    return { title: "ICMPv6 · NDP", rows };
+  }
   if (p.type === "time-exceeded" || p.type === "unreachable") {
     const code = p.type === "time-exceeded" ? "3 / 0 (Time Exceeded — Hop Limit 초과)" : `1 / ${UNREACHABLE6_CODE[p.code]} (Destination Unreachable — ${p.code === "net" ? "no route to destination" : p.code === "host" ? "address unreachable" : "port unreachable"}, traceroute 표기 ${UNREACHABLE_FLAG[p.code]})`;
     return { title: "ICMPv6", rows: [["타입 / 코드", code], ["안에 담긴 원래 패킷", describeOriginal(p.original)]] };
@@ -501,6 +525,12 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       break;
     case "ndp.cache.update":
       if (detail(ev, "ip") && detail(ev, "mac")) out.push({ tool: "리눅스 ip -6 neigh", line: `${detail(ev, "ip")} dev eth0 lladdr ${detail(ev, "mac")} REACHABLE` });
+      break;
+    case "slaac.addr":
+      if (detail(ev, "ip") && !detail(ev, "removed")) out.push({ tool: "리눅스 ip -6 addr", line: `inet6 ${detail(ev, "ip")}/64 scope global dynamic mngtmpaddr` });
+      break;
+    case "slaac.router":
+      if (detail(ev, "router")) out.push({ tool: "리눅스 ip -6 route", line: `default via ${detail(ev, "router")} dev eth0 proto ra metric 1024 expires 1799sec hoplimit 64 pref medium` });
       break;
     case "ndp.dad.fail":
       out.push({ tool: "리눅스 커널 로그 (dmesg)", line: `IPv6: eth0: IPv6 duplicate address ${detail(ev, "ip") ?? "?"} used by ${detail(ev, "mac") ?? "?"} detected!` });

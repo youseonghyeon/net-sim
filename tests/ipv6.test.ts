@@ -19,7 +19,8 @@ import { L3Node } from "../src/core/nodes/l3";
 import { Switch } from "../src/core/nodes/switch";
 import type { EthernetFrame } from "../src/core/packet";
 import type { TraceEvent } from "../src/core/trace";
-import { exampleIpv6BasicsTopology } from "../src/model/examples";
+import { exampleIpv6BasicsTopology, exampleSlaacTopology } from "../src/model/examples";
+import { l3MacOf } from "../src/model/netSync";
 import { lintTopology } from "../src/model/lint";
 import { headerLayers, practitionerLines, tcpdumpLine } from "../src/model/packetView";
 import type { Topology } from "../src/model/topology";
@@ -420,5 +421,184 @@ describe("패킷 상세 (IPv6)", () => {
     expect(practitionerLines(ev("ndp.dad.fail", { ip: "2001:db8:1::20", mac: SRV }), {})[0]!.line).toBe(`IPv6: eth0: IPv6 duplicate address 2001:db8:1::20 used by ${SRV} detected!`);
     const reply = f({ kind: "icmp6", type: "echo-reply", id: 1, seq: 3 }, "2001:db8:2::10", "2001:db8:1::10", PC, 63);
     expect(practitionerLines(ev("icmp.reply.received", { seq: 3, rtt: 80 }), { received: reply })[0]!.line).toBe("64 bytes from 2001:db8:2::10: icmp_seq=3 ttl=63 time=80 ms");
+  });
+});
+
+describe("SLAAC (RS/RA)", () => {
+  const GW_IF1_LL = "fe80::ff:fe11:1";
+  /** pc(SLAAC) ─ sw1 ─ gw(if1 2001:db8:1::1 RA 켬) ─ sw2 ─ srv(수동) */
+  function slaacNet(opts: { ra?: boolean; prefix?: number; raDns?: string } = {}) {
+    const net = new Network();
+    net.addNode(new Switch("sw1", 4));
+    net.addNode(new Switch("sw2", 4));
+    net.addNode(
+      new L3Node({
+        id: "gw",
+        kind: "gateway",
+        interfaces: [
+          { name: "if0", mac: "02:00:00:10:00:01", mode: "static" },
+          { name: "if1", mac: "02:00:00:11:00:01", mode: "static" },
+          { name: "if2", mac: "02:00:00:12:00:01", mode: "static" },
+        ],
+        ipv6: { enabled: true, interfaces: [{}, { ip: "2001:db8:1::1", prefix: opts.prefix ?? 64, ra: opts.ra ?? true }, { ip: "2001:db8:2::1", prefix: 64 }], routes: [], raDns: opts.raDns },
+      }),
+    );
+    net.addNode(new Host({ id: "pc", mac: PC, ipMode: "static", ipv6: { enabled: true, addrs: [], slaac: true } }));
+    net.addNode(host("srv", SRV, "2001:db8:2::10", "2001:db8:2::1"));
+    net.connect("pc", 0, "sw1", 0);
+    net.connect("gw", 1, "sw1", 1);
+    net.connect("gw", 2, "sw2", 1);
+    net.connect("srv", 0, "sw2", 0);
+    net.runToIdle();
+    return net;
+  }
+  const gwCfg = (patch: { ip?: string; ra?: boolean; enabled?: boolean } = {}) => ({
+    enabled: patch.enabled ?? true,
+    interfaces: [{}, { ip: patch.ip ?? "2001:db8:1::1", prefix: 64, ra: patch.ra ?? true }, { ip: "2001:db8:2::1", prefix: 64 }],
+    routes: [],
+  });
+
+  it("RA 의 /64 프리픽스 + EUI-64 로 주소를 만들고, RA 를 보낸 라우터의 링크 로컬이 기본 게이트웨이", () => {
+    const net = slaacNet({ raDns: "2001:db8:2::53" });
+    const pc = net.getHost("pc");
+    expect(pc.v6.addrs.map((a) => [a.ip, a.origin, a.state])).toEqual([
+      ["fe80::ff:fe00:a", "link-local", "preferred"],
+      ["2001:db8:1::ff:fe00:a", "slaac", "preferred"],
+    ]);
+    expect(pc.v6.defaultRouter).toBe(GW_IF1_LL);
+    expect(pc.v6.raDnsLearned).toBe("2001:db8:2::53");
+    const kinds = net.trace.filter((e) => e.nodeId === "pc" && (e.kind.startsWith("slaac") || e.kind.startsWith("ndp.r"))).map((e) => e.kind);
+    expect(kinds).toContain("ndp.ra.received");
+    expect(kinds).toContain("slaac.addr");
+    expect(kinds).toContain("slaac.router");
+    act(net, { kind: "ping", nodeId: "pc", dst: "2001:db8:2::10" });
+    expect(pc.pings[0]!.status).toBe("ok");
+  });
+
+  it("RA 광고가 꺼져 있으면 RS 3번 뒤 포기 → 링크 로컬만", () => {
+    const net = slaacNet({ ra: false });
+    const pc = net.getHost("pc");
+    expect(net.trace.filter((e) => e.nodeId === "pc" && e.kind === "ndp.rs.sent")).toHaveLength(3);
+    expect(net.trace.some((e) => e.nodeId === "gw" && e.kind === "ndp.rs.received" && e.summary.includes("RA 광고가 꺼져 있어"))).toBe(true);
+    expect(net.trace.some((e) => e.nodeId === "pc" && e.kind === "slaac.timeout")).toBe(true);
+    expect(pc.v6.globals).toEqual([]);
+    const t = act(net, { kind: "ping", nodeId: "pc", dst: "2001:db8:2::10" });
+    expect(t.find((e) => e.kind === "ip.no-address")?.summary).toContain("RA 를 받지 못해 SLAAC 주소가 없음");
+  });
+
+  it("라우터가 나중에 RA 를 켜면 곧바로 RA → 주소가 생긴다", () => {
+    const net = slaacNet({ ra: false });
+    (net.nodes.get("gw") as L3Node).setIpv6(gwCfg(), net.contextFor("gw"));
+    net.runToIdle();
+    expect(net.getHost("pc").v6.globals.map((a) => a.ip)).toEqual(["2001:db8:1::ff:fe00:a"]);
+  });
+
+  it("/64 가 아닌 프리픽스로는 SLAAC 주소를 만들지 않는다", () => {
+    const net = slaacNet({ prefix: 56 });
+    expect(net.getHost("pc").v6.globals).toEqual([]);
+    expect(net.trace.find((e) => e.nodeId === "pc" && e.kind === "slaac.addr")?.summary).toContain("/64 가 아니라 SLAAC 주소를 만들 수 없음");
+  });
+
+  it("프리픽스를 바꾸면 옛 프리픽스는 유효 수명 0 으로 거두고 새 주소를 만든다", () => {
+    const net = slaacNet();
+    (net.nodes.get("gw") as L3Node).setIpv6(gwCfg({ ip: "2001:db8:9::1" }), net.contextFor("gw"));
+    net.runToIdle();
+    expect(net.getHost("pc").v6.globals.map((a) => a.ip)).toEqual(["2001:db8:9::ff:fe00:a"]);
+  });
+
+  it("RA 를 끄거나 라우터를 지우면 수명 0 RA → 기본 게이트웨이·주소를 지운다", () => {
+    const net = slaacNet();
+    (net.nodes.get("gw") as L3Node).setIpv6(gwCfg({ ra: false }), net.contextFor("gw"));
+    net.runToIdle();
+    const pc = net.getHost("pc");
+    expect(pc.v6.defaultRouter).toBeUndefined();
+    expect(pc.v6.globals).toEqual([]);
+    const net2 = slaacNet();
+    net2.removeNode("gw");
+    net2.runToIdle();
+    expect(net2.getHost("pc").v6.defaultRouter).toBeUndefined();
+  });
+
+  it("RA 를 껐다 다시 켜면 주소·게이트웨이를 다시 받는다", () => {
+    const net = slaacNet();
+    const gw = net.nodes.get("gw") as L3Node;
+    gw.setIpv6(gwCfg({ ra: false }), net.contextFor("gw"));
+    net.runToIdle();
+    gw.setIpv6(gwCfg({ ra: true }), net.contextFor("gw"));
+    net.runToIdle();
+    expect(net.getHost("pc").v6.globals.map((a) => a.ip)).toEqual(["2001:db8:1::ff:fe00:a"]);
+    expect(net.getHost("pc").v6.defaultRouter).toBe(GW_IF1_LL);
+  });
+
+  it("수동 설정 호스트는 RA 로 주소를 만들지 않는다", () => {
+    const net = slaacNet();
+    const srvLike = net.getHost("pc");
+    srvLike.setIpv6({ enabled: true, addrs: [{ ip: "2001:db8:1::77", prefix: 64 }], gateway: "2001:db8:1::1" }, net.contextFor("pc"));
+    net.runToIdle();
+    expect(srvLike.v6.addrs.map((a) => a.origin)).toEqual(["link-local", "manual"]);
+    expect(srvLike.v6.defaultRouter).toBe("2001:db8:1::1");
+  });
+
+  it("링크 다운이면 RA 로 배운 것을 잊고, 다시 붙으면 RS 로 새로 받는다", () => {
+    const net = slaacNet();
+    const link = [...net.links.values()].find((l) => l.a.node === "pc" || l.b.node === "pc")!;
+    net.disconnect(link.id);
+    expect(net.getHost("pc").v6.globals).toEqual([]);
+    net.connect("pc", 0, "sw1", 0);
+    net.runToIdle();
+    expect(net.getHost("pc").v6.globals.map((a) => a.ip)).toEqual(["2001:db8:1::ff:fe00:a"]);
+  });
+});
+
+describe("예제 IPv6 자동 주소 (SLAAC)", () => {
+  it("설명대로: 자동 호스트가 RA 로 주소·게이트웨이를 받고 서버로 ping·TCP, RA 를 끄면 사라진다", () => {
+    const t = exampleSlaacTopology();
+    expect(lintTopology(t)).toEqual([]);
+    const L = loadTopology(t);
+    const pc1 = L.host("pc-1");
+    expect(pc1.v6.globals.map((a) => a.ip)).toEqual(["2001:db8:1::ff:fe00:1"]);
+    expect(pc1.v6.defaultRouter).toBe(linkLocalOf(l3MacOf(t.devices.find((d) => d.name === "gw-1")!.mac, 1)));
+    L.act({ kind: "ping", nodeId: pc1.id, dst: "2001:db8:2::10" });
+    expect(pc1.pings.at(-1)!.status).toBe("ok");
+    L.act({ kind: "tcp-connect", nodeId: pc1.id, dst: "2001:db8:2::10", port: 80 });
+    expect([...pc1.tcp.conns.values()].at(-1)).toMatchObject({ state: "CLOSED", bytesReceived: 3000 });
+    // 서버(수동)는 RA 를 받아도 주소를 만들지 않는다
+    expect(L.host("srv-1").v6.addrs.map((a) => a.origin)).toEqual(["link-local", "manual"]);
+    const gw = t.devices.find((d) => d.name === "gw-1")!;
+    const next = structuredClone(t);
+    next.devices.find((d) => d.id === gw.id)!.l3!.ipv6!.interfaces[1]!.ra = false;
+    L.apply(next);
+    expect(pc1.v6.globals).toEqual([]);
+    expect(pc1.v6.defaultRouter).toBeUndefined();
+  });
+
+  it("구성 검사: RA 가 없는 링크의 자동 호스트, /64 가 아닌 RA 프리픽스", () => {
+    const t = exampleSlaacTopology();
+    const gw = t.devices.find((d) => d.name === "gw-1")!;
+    gw.l3!.ipv6!.interfaces[1]!.ra = false;
+    const issues = lintTopology(t);
+    expect(issues.filter((i) => i.code === "ipv6.slaac-no-ra").map((i) => t.devices.find((d) => d.id === i.deviceId)!.name).sort()).toEqual(["laptop-1", "pc-1"]);
+    gw.l3!.ipv6!.interfaces[1] = { ip: "2001:db8:1::1", prefix: 56, ra: true };
+    expect(lintTopology(t).map((i) => i.code)).toEqual(["ipv6.ra-prefix"]);
+  });
+});
+
+describe("패킷 상세 (RS/RA)", () => {
+  const f = (payload: any, src: string, dst: string, dstMac: string): EthernetFrame => ({ kind: "ethernet", id: 1, src: PC, dst: dstMac, payload: { kind: "ipv6", src, dst, hopLimit: 255, payload } });
+  const ra = { kind: "icmp6", type: "ra", curHopLimit: 64, managed: false, other: false, routerLifetime: 1800, prefixes: [{ prefix: "2001:db8:1::", length: 64, onLink: true, autonomous: true, valid: 86400 }], rdnss: ["2001:db8:1::53"], sll: PC };
+  it("tcpdump: router solicitation·advertisement", () => {
+    expect(tcpdumpLine(f({ kind: "icmp6", type: "rs", sll: PC }, "fe80::ff:fe00:a", "ff02::2", "33:33:00:00:00:02"))).toContain("fe80::ff:fe00:a > ff02::2: ICMP6, router solicitation, length 16");
+    expect(tcpdumpLine(f(ra, "fe80::ff:fe11:1", "ff02::1", "33:33:00:00:00:01"))).toContain("fe80::ff:fe11:1 > ff02::1: ICMP6, router advertisement, length 80");
+  });
+  it("헤더: RA 의 플래그·라우터 수명·프리픽스 정보·RDNSS", () => {
+    const rows = Object.fromEntries(headerLayers(f(ra, "fe80::ff:fe11:1", "ff02::1", "33:33:00:00:00:01"))[2]!.rows);
+    expect(rows["타입 / 코드"]).toBe("134 / 0 (Router Advertisement)");
+    expect(rows["옵션 3 프리픽스 정보"]).toContain("2001:db8:1::/64 · L=1 A=1");
+    expect(rows["옵션 25 RDNSS"]).toContain("2001:db8:1::53");
+  });
+  it("실무 출력: SLAAC 주소는 ip -6 addr, RA 기본 경로는 ip -6 route", () => {
+    const ev = (kind: string, details: Record<string, unknown>) => ({ seq: 0, time: 0, nodeId: "a", kind, layer: "L3", summary: "", details }) as TraceEvent;
+    expect(practitionerLines(ev("slaac.addr", { ip: "2001:db8:1::ff:fe00:a" }), {})[0]!.line).toBe("inet6 2001:db8:1::ff:fe00:a/64 scope global dynamic mngtmpaddr");
+    expect(practitionerLines(ev("slaac.router", { router: "fe80::ff:fe11:1" }), {})[0]!.line).toContain("default via fe80::ff:fe11:1 dev eth0 proto ra");
   });
 });

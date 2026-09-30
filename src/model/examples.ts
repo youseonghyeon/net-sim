@@ -10,7 +10,7 @@ import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTop
 import { exampleLoadBalancerTopology, exampleProxyTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology } from "./examples/internet";
 import { exampleRoamingTopology } from "./examples/wireless";
-import { exampleIpv6BasicsTopology } from "./examples/ipv6";
+import { exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
 
 export * from "./examples/basic";
 export * from "./examples/parts";
@@ -22,7 +22,7 @@ export * from "./examples/internet";
 export * from "./examples/wireless";
 export * from "./examples/ipv6";
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "lb" | "proxy" | "roaming" | "docker" | "ipv6";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -196,6 +196,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "IPv6 기초 (링크 로컬·NDP·라우팅)",
     blurb: "IPv4 없이 IPv6 만 씁니다. pc-1 에서 2001:db8:1::11(pc-2) 로 ping 하면 ARP 대신 NDP — NS 가 solicited-node 멀티캐스트로 가고 NA 가 유니캐스트로 돌아옵니다. 2001:db8:2::10(srv-1) 으로 \"경로\" 를 보면 gw-1 이 NAT 없이 Hop Limit 만 줄여 넘기고, TCP 80 으로 연결도 됩니다. pc-2 의 기본 게이트웨이는 gw-1 의 링크 로컬(fe80::) 주소입니다. srv-1 의 링크 로컬(fe80::ff:fe00:6)로 ping 하면 라우터를 넘지 못해 실패합니다.",
     build: exampleIpv6BasicsTopology,
+  },
+  slaac: {
+    id: "slaac",
+    group: "IPv6",
+    label: "IPv6 자동 주소 (SLAAC·RA)",
+    blurb: "pc-1·노트북은 IPv6 가 자동(SLAAC)입니다. 링크가 올라가면 RS 를 보내고, gw-1 의 RA 가 알린 2001:db8:1::/64 에 MAC 에서 만든 인터페이스 ID 를 붙여 주소를 스스로 만듭니다 — DHCP 서버가 없습니다. 기본 게이트웨이는 RA 를 보낸 gw-1 의 링크 로컬 주소입니다(표 탭). pc-1 에서 2001:db8:2::10(srv-1)로 ping·TCP 80 을 보내 보세요. gw-1 의 if1 RA 광고를 끄면 거둠 RA(라우터 수명 0)로 주소와 게이트웨이가 사라집니다.",
+    build: exampleSlaacTopology,
   },
 };
 

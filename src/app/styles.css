@@ -1039,6 +1039,11 @@ select.btn.example {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* 게이트웨이 IPv6 인터페이스 칸 아래의 RA 광고 토글 */
+.toggle-row.ra-row {
+  margin-top: 6px;
+  font-size: 12px;
+}
 /* 마스크 글자(255.255.255.0)는 좁은 패널에서 잘리게 */
 .prefix .muted {
   min-width: 0;

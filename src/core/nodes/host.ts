@@ -1,5 +1,5 @@
 import { ipToInt, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
-import { ALL_NODES, canonIp6, isIpv6 } from "../addr6";
+import { ALL_NODES, canonIp6, isIpv6, isMulticast6 } from "../addr6";
 import {
   DHCP_CLIENT_PORT,
   DHCP_SERVER_PORT,
@@ -30,7 +30,7 @@ import { ForwardProxy, type ProxyConfig } from "./proxy";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { TCP_TIMER_TAG, TcpStack } from "./tcp";
 import { RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
-import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, type Ipv6Settings } from "./ipv6";
+import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
 export type IpMode = "dhcp" | "static";
 
@@ -320,7 +320,7 @@ export class Host implements SimNode {
         this.iface.arpCache.clear();
         this.iface.clearPending();
         this.tcp.abortAll("주소 변경", ctx, (c) => !isIpv6(c.localIp));
-        this.cancelTraceroute("주소 변경", ctx);
+        this.cancelTraceroute("주소 변경", ctx, (rec) => !isIpv6(rec.resolved ?? rec.dst));
         this.ra.lost(ctx, "주소 변경");
         if (this.linkUp && this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
       }
@@ -337,7 +337,7 @@ export class Host implements SimNode {
     this.iface.arpCache.clear();
     this.iface.clearPending();
     if (before) this.tcp.abortAll("주소 변경", ctx, (c) => !isIpv6(c.localIp));
-    if (before) this.cancelTraceroute("주소 변경", ctx);
+    if (before) this.cancelTraceroute("주소 변경", ctx, (rec) => !isIpv6(rec.resolved ?? rec.dst));
     ctx.trace("ip.config", "sys", `자동(DHCP) 로 전환 → 기존 주소 지움`, { ...cfg });
     if (this.linkUp) this.dhcp.start(ctx, this.emit(ctx));
     else this.dhcp.stop();
@@ -536,7 +536,7 @@ export class Host implements SimNode {
       this.failTrace(rec, this.v6.enabled ? "IPv6 주소 없음" : "IPv6 꺼짐", ctx, this.v6.whyNoSource(target));
       return;
     }
-    if (!this.v6.onLink(target) && !this.v6.gateway) {
+    if (!this.v6.onLink(target) && !this.v6.defaultRouter) {
       this.failTrace(rec, "IPv6 게이트웨이 없음", ctx, `${target} 은(는) 다른 네트워크인데 IPv6 기본 게이트웨이가 없음 — IPv6 설정에서 게이트웨이를 넣으세요`);
       return;
     }
@@ -603,8 +603,9 @@ export class Host implements SimNode {
   }
 
   /** 진행 중인 traceroute 를 모두 실패로 끝낸다 (이름 해석 대기 중인 것 포함) */
-  private cancelTraceroute(reason: string, ctx: NodeContext): void {
-    for (const rec of this.traceroutes) if (rec.status === "running") this.failTrace(rec, reason, ctx);
+  /** only 가 있으면 그 조건에 맞는 것만 (예: IPv4 주소가 바뀌면 IPv4 traceroute 만) */
+  private cancelTraceroute(reason: string, ctx: NodeContext, only?: (rec: TracerouteRecord) => boolean): void {
+    for (const rec of this.traceroutes) if (rec.status === "running" && (!only || only(rec))) this.failTrace(rec, reason, ctx);
   }
 
   private handleTimeExceeded(pkt: IpPacket, icmp: IcmpTimeExceeded | Icmpv6TimeExceeded, frameId: number, ctx: NodeContext): void {
@@ -632,7 +633,7 @@ export class Host implements SimNode {
       const seq = o.l4.seq;
       const rec = this.pings.find((p) => p.seq === seq && p.status === "pending");
       if (rec) {
-        this.finishPing(rec, "failed", { reason: "TTL 초과" });
+        this.finishPing(rec, "failed", { reason: pkt.kind === "ipv6" ? "Hop Limit 초과" : "TTL 초과" });
         ctx.trace(
           "icmp.ttl-received",
           "app",
@@ -724,6 +725,11 @@ export class Host implements SimNode {
 
   /** IPv6 주소로 TCP 연결 (HTTP 프록시는 IPv4 만 다뤄 거치지 않는다) */
   private connect6(dst: Ip, port: number, ctx: NodeContext): void {
+    if (isMulticast6(dst)) {
+      ctx.trace("ip.drop", "L4", `[${dst}]:${port} 연결 실패: 멀티캐스트 주소로는 TCP 연결을 할 수 없음 (TCP 는 두 장치 사이의 연결)`, { dst, port });
+      this.tcp.recordFailure(this.v6.sourceFor(dst) ?? "::", dst, port, "멀티캐스트 주소", ctx);
+      return;
+    }
     const src = this.v6.sourceFor(dst);
     if (!src) {
       const why = this.v6.whyNoSource(dst);
@@ -790,6 +796,10 @@ export class Host implements SimNode {
       return;
     }
     const p = pkt.payload;
+    if (p.kind === "tcp" && pkt.dst === ALL_NODES) {
+      ctx.trace("ip.drop", "L4", `멀티캐스트(${pkt.dst})로 온 TCP → 드롭 (TCP 는 유니캐스트로만 연결한다, RFC 1122)`, { dst: pkt.dst }, frameId);
+      return;
+    }
     if (p.kind === "tcp") {
       this.tcp.handle(pkt, p, ctx);
       return;
@@ -814,7 +824,7 @@ export class Host implements SimNode {
       this.handleUnreachable(pkt, icmp, frameId, ctx);
       return;
     }
-    if (icmp.type === "ns" || icmp.type === "na") return;
+    if (icmp.type === "ns" || icmp.type === "na" || icmp.type === "rs" || icmp.type === "ra") return;
     if (icmp.type === "echo-request") {
       ctx.trace("icmp.echo.received", "app", `ICMPv6 Echo 요청 수신 (from ${pkt.src}, seq=${icmp.seq})`, { from: pkt.src, seq: icmp.seq }, frameId);
       // 멀티캐스트(ff02::1)로 온 ping 에는 내 유니캐스트 주소로 답한다
@@ -833,7 +843,9 @@ export class Host implements SimNode {
     }
     const rec = icmp.id === this.icmpId ? this.pings.find((p) => p.seq === icmp.seq && p.status === "pending") : undefined;
     if (!rec) {
-      ctx.trace("ip.drop", "L3", `내가 보낸 적 없는 ICMPv6 Echo 응답 (id=${icmp.id}, seq=${icmp.seq}) → 무시`, {}, frameId);
+      const done = icmp.id === this.icmpId ? this.pings.find((p) => p.seq === icmp.seq) : undefined;
+      if (done) ctx.trace("icmp.reply.received", "app", `ping ${done.dst}: ${pkt.src} 의 추가 응답 seq=${icmp.seq} (DUP! — 멀티캐스트로 보내 여러 장치가 답함)`, { from: pkt.src, seq: icmp.seq, dup: true }, frameId);
+      else ctx.trace("ip.drop", "L3", `내가 보낸 적 없는 ICMPv6 Echo 응답 (id=${icmp.id}, seq=${icmp.seq}) → 무시`, {}, frameId);
       return;
     }
     this.finishPing(rec, "ok", { rtt: ctx.now - rec.sentAt });
@@ -955,7 +967,10 @@ export class Host implements SimNode {
     this.clock = ctx.now;
     switch (tag) {
       case DAD_TIMER_TAG:
-        this.v6.finishDad(data, ctx);
+        this.v6.finishDad(data, ctx, this.emit(ctx));
+        return;
+      case RS_TIMER_TAG:
+        this.v6.onRsTimer(data, ctx, this.emit(ctx));
         return;
       case NDP_TIMEOUT_TAG: {
         const { ip: nextHop } = data as { ip: Ip };
@@ -1005,7 +1020,7 @@ export class Host implements SimNode {
         if (!a || a.seq !== seq) return;
         a.timer = undefined;
         a.rec.hops.push({ ttl: a.ttl });
-        ctx.trace("trace.timeout", "app", `traceroute ${a.rec.dst}: TTL=${a.ttl} timeout (${Host.TRACEROUTE_TIMEOUT}ms 동안 응답 없음) → ${a.ttl} 번째 홉 = * (다음 TTL 로 계속)`, { dst: a.rec.dst, ttl: a.ttl, seq });
+        ctx.trace("trace.timeout", "app", `traceroute ${a.rec.dst}: ${isIpv6(a.target) ? "Hop Limit" : "TTL"}=${a.ttl} timeout (${Host.TRACEROUTE_TIMEOUT}ms 동안 응답 없음) → ${a.ttl} 번째 홉 = * (다음 ${isIpv6(a.target) ? "Hop Limit" : "TTL"} 로 계속)`, { dst: a.rec.dst, ttl: a.ttl, seq });
         this.nextProbe(ctx);
         return;
       }
@@ -1052,7 +1067,8 @@ export class Host implements SimNode {
           ? ([
               ["IPv6", this.v6.summary() || "없음"],
               ["링크 로컬", this.v6.linkLocal],
-              ["IPv6 게이트웨이", this.v6.gateway ?? "없음"],
+              ["IPv6 게이트웨이", this.v6.defaultRouter ? `${this.v6.defaultRouter}${this.v6.gateway ? "" : " (RA)"}` : "없음"],
+              ...(this.v6.slaac ? ([["IPv6 설정", `자동 (SLAAC)${this.v6.raDnsLearned ? ` · DNS ${this.v6.raDnsLearned} (RDNSS)` : ""}`]] as [string, string][]) : []),
             ] as [string, string][])
           : []),
         ["TCP 서비스", this.tcp.listening.size ? [...this.tcp.listening].map((p) => `포트 ${p}`).join(", ") : "없음"],

@@ -1,8 +1,9 @@
-// IPv6 규칙: 주소 중복, 호스트 기본 게이트웨이(프리픽스 밖·이 링크의 라우터가 아님·라우터 IPv6 꺼짐), 라우터 프리픽스 밖 주소.
+// IPv6 규칙: 주소 중복, 호스트 기본 게이트웨이(프리픽스 밖·이 링크의 라우터가 아님·라우터 IPv6 꺼짐), 라우터 프리픽스 밖 주소,
+// SLAAC(자동 호스트가 있는데 이 링크에 RA 가 없음·RA 로 알릴 /64 프리픽스가 없음).
 // IPv4 규칙과 따로 돈다 — IPv6 를 켠 장치만 본다. 주소 칸은 netSync 의 effective* 와 같은 기준(표준 표기, 링크 로컬 주소 칸은 없음)
 import { isLinkLocal6, linkLocalOf, network6, sameSubnet6 } from "../../core/addr6";
 import { effectiveHost6, effectiveL3v6, l3MacOf } from "../netSync";
-import { DEVICE_SPECS, type Device } from "../topology";
+import { DEVICE_SPECS, wirelessLinks, type Device, type Topology } from "../topology";
 import type { LintContext } from "./context";
 import { portName } from "./segments";
 
@@ -14,6 +15,31 @@ interface V6Router {
   prefix: number;
   linkLocal: string;
   seg: number | undefined;
+  /** 이 인터페이스로 RA 를 보냄 */
+  ra: boolean;
+}
+
+/** 케이블·무선으로 이어진 장치 묶음 번호 (따로 떨어진 두 실습은 주소가 겹쳐도 서로 닿지 않는다) */
+function components(t: Topology): Map<string, number> {
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.get(r) !== undefined && parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(x, r);
+    return r;
+  };
+  const union = (a: string, b: string) => parent.set(find(a), find(b));
+  for (const d of t.devices) parent.set(d.id, d.id);
+  for (const c of t.cables) union(c.a.device, c.b.device);
+  for (const l of wirelessLinks(t)) union(l.client, l.base);
+  const ids = new Map<string, number>();
+  const out = new Map<string, number>();
+  for (const d of t.devices) {
+    const r = find(d.id);
+    if (!ids.has(r)) ids.set(r, ids.size);
+    out.set(d.id, ids.get(r)!);
+  }
+  return out;
 }
 
 function safeLinkLocal(mac: string): string {
@@ -38,33 +64,56 @@ export function ipv6Rules({ t, m, add }: LintContext): void {
         off.push({ device: d, port: i, seg });
         return;
       }
-      const c = v6.interfaces[i] as { ip?: string; prefix?: number };
-      routers.push({ device: d, port: i, label: `${d.name} ${portName(d, i)}`, ip: c.ip, prefix: c.prefix ?? 64, linkLocal: safeLinkLocal(l3MacOf(d.mac, i)), seg });
+      const c = v6.interfaces[i] as { ip?: string; prefix?: number; ra?: boolean };
+      routers.push({ device: d, port: i, label: `${d.name} ${portName(d, i)}`, ip: c.ip, prefix: c.prefix ?? 64, linkLocal: safeLinkLocal(l3MacOf(d.mac, i)), seg, ra: c.ra === true });
     });
   }
   const hosts = t.devices.filter((d) => d.host).map((d) => ({ device: d, v6: effectiveHost6(d), seg: m.ids.get(`${d.id}:0`) })).filter((h) => h.v6.enabled);
 
-  // 주소 중복: 전역 주소는 어디서든 하나여야 한다 (같은 링크면 나중에 켠 쪽이 DAD 로 포기)
+  // 주소 중복: 이어진 망 안에서 전역 주소는 하나여야 한다 (같은 링크면 나중에 켠 쪽이 DAD 로 포기, 동시에 켜면 둘 다 포기)
+  const comp = components(t);
   const owners = new Map<string, { device: Device; label: string }[]>();
   const own = (ip: string | undefined, device: Device, label: string) => {
     if (!ip) return;
-    const list = owners.get(ip) ?? [];
+    const key = `${comp.get(device.id)}|${ip}`;
+    const list = owners.get(key) ?? [];
     list.push({ device, label });
-    owners.set(ip, list);
+    owners.set(key, list);
   };
   for (const h of hosts) for (const a of h.v6.addrs) own(a.ip, h.device, h.device.name);
   for (const r of routers) own(r.ip, r.device, r.label);
-  for (const [ip, list] of owners) {
+  for (const [key, list] of owners) {
     if (list.length < 2) continue;
+    const ip = key.slice(key.indexOf("|") + 1);
     for (const o of list) {
       const others = list.filter((x) => x !== o);
       add({
         deviceId: o.device.id,
         severity: "error",
         code: "ipv6.duplicate",
-        message: `IPv6 주소 ${ip} 를 ${others.map((x) => x.label).join(", ")} 도 씁니다 — 같은 링크면 나중에 켠 쪽이 DAD 로 그 주소를 포기합니다`,
+        message: `IPv6 주소 ${ip} 를 ${others.map((x) => x.label).join(", ")} 도 씁니다 — 같은 링크면 나중에 켠 쪽이 DAD 로 그 주소를 포기합니다 (동시에 켜면 둘 다 포기)`,
         fix: `${o.label} 의 IPv6 주소를 다른 값으로 바꾸기`,
         related: others.map((x) => x.device.id),
+      });
+    }
+  }
+
+  // SLAAC: RA 를 보내는 라우터 인터페이스가 알릴 /64 프리픽스가 없으면 그 링크의 자동 호스트가 주소를 못 만든다
+  const slaacHosts = hosts.filter((h) => h.v6.slaac && h.seg !== undefined && m.linked.has(`${h.device.id}:0`));
+  for (const r of routers) {
+    if (!r.ra || r.seg === undefined) continue;
+    const waiting = slaacHosts.filter((h) => h.seg === r.seg);
+    if (waiting.length === 0) continue;
+    if (!r.ip || r.prefix !== 64) {
+      add({
+        deviceId: r.device.id,
+        severity: "error",
+        code: "ipv6.ra-prefix",
+        message: r.ip
+          ? `${r.label} 가 RA 로 알리는 프리픽스가 /${r.prefix} 입니다 — SLAAC 는 /64 에서만 주소를 만들어 ${waiting.map((h) => h.device.name).join(", ")} 가 주소를 못 받습니다`
+          : `${r.label} 는 RA 를 보내지만 IPv6 주소가 없어 알릴 프리픽스가 없습니다 — ${waiting.map((h) => h.device.name).join(", ")} 가 SLAAC 주소를 못 만듭니다`,
+        fix: `${r.device.name} → IPv6 → ${portName(r.device, r.port)} 에 /64 주소(예: 2001:db8:1::1/64)`,
+        related: waiting.map((h) => h.device.id),
       });
     }
   }
@@ -72,6 +121,35 @@ export function ipv6Rules({ t, m, add }: LintContext): void {
   for (const h of hosts) {
     const d = h.device;
     const gw = h.v6.gateway;
+    if (h.v6.slaac) {
+      // 자동 호스트: 이 링크에 IPv6 라우터는 있는데 RA 를 보내는 인터페이스가 없음, 또는 라우터가 IPv6 를 끔
+      if (h.seg === undefined || !m.linked.has(`${d.id}:0`)) continue;
+      const segRouters = routers.filter((r) => r.seg === h.seg);
+      if (segRouters.length > 0 && !segRouters.some((r) => r.ra)) {
+        const r = segRouters.find((x) => x.ip) ?? segRouters[0]!;
+        add({
+          deviceId: d.id,
+          severity: "error",
+          code: "ipv6.slaac-no-ra",
+          message: `IPv6 가 자동(SLAAC)인데 이 링크의 라우터 ${segRouters.map((x) => x.label).join(", ")} 가 RA 를 보내지 않아 주소·기본 게이트웨이를 못 받습니다 (링크 로컬만)`,
+          fix: `${r.device.name} → IPv6 → ${portName(r.device, r.port)} 의 RA 광고 켜기, 또는 ${d.name} 의 IPv6 를 수동으로`,
+          related: [r.device.id],
+        });
+      } else if (segRouters.length === 0) {
+        const r = off.find((o) => o.seg !== undefined && o.seg === h.seg);
+        if (r) {
+          add({
+            deviceId: d.id,
+            severity: "error",
+            code: "ipv6.router-off",
+            message: `IPv6 가 자동(SLAAC)인데 이 링크의 라우터 ${r.device.name} 는 IPv6 가 꺼져 있어 RA 가 오지 않습니다`,
+            fix: `${r.device.name} → IPv6 를 켜고 ${portName(r.device, r.port)} 에 /64 주소를 넣은 뒤 RA 광고 켜기`,
+            related: [r.device.id],
+          });
+        }
+      }
+      continue;
+    }
     const addr = h.v6.addrs[0];
     const segRouters = routers.filter((r) => r.seg !== undefined && r.seg === h.seg);
     // 기본 게이트웨이가 내 프리픽스 밖 (글로벌 게이트웨이인데)

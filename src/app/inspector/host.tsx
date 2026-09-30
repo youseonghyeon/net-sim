@@ -90,8 +90,16 @@ export function Ipv6Section({ d, h }: { d: Device; h: HostSettings }) {
       </label>
       {!v.enabled ? (
         <p class="note">켜면 MAC 에서 만든 링크 로컬 주소({ll})가 생기고, ARP 대신 NDP 로 이웃을 찾습니다. 실제 OS 는 IPv6 가 기본으로 켜져 있지만, 여기서는 켜야 IPv6 패킷이 오갑니다.</p>
+      ) : v.mode === "slaac" ? (
+        <>
+          <Ipv6ModeSwitch mode={v.mode} onChange={(mode) => set({ mode })} />
+          <p class="note">
+            라우터 광고(RA)가 알린 /64 프리픽스에 MAC 에서 만든 인터페이스 ID 를 붙여 주소를 스스로 만들고(SLAAC), RA 를 보낸 라우터의 링크 로컬 주소를 기본 게이트웨이로 씁니다. DNS 는 RA 의 RDNSS 옵션으로 받습니다. 링크 로컬 <span class="mono">{ll}</span>
+          </p>
+        </>
       ) : (
         <>
+          <Ipv6ModeSwitch mode={v.mode} onChange={(mode) => set({ mode })} />
           <Field label="IPv6 주소" error={ip6Error(v.ip, false)}>
             <div class="prefix addr6">
               <input class="input mono" value={v.ip} placeholder="2001:db8:1::10" onInput={(e) => set({ ip: e.currentTarget.value })} />
@@ -103,7 +111,7 @@ export function Ipv6Section({ d, h }: { d: Device; h: HostSettings }) {
                 max={128}
                 value={v.prefix}
                 title="프리픽스 길이 (보통 64)"
-                onInput={(e) => { if (e.currentTarget.value === "") return; set({ prefix: Math.min(128, Math.max(1, Number(e.currentTarget.value) || 64)) }); }}
+                onInput={(e) => { if (e.currentTarget.value === "") return; set({ prefix: Math.min(128, Math.max(1, Math.round(Number(e.currentTarget.value)) || 64)) }); }}
               />
             </div>
           </Field>
@@ -116,6 +124,19 @@ export function Ipv6Section({ d, h }: { d: Device; h: HostSettings }) {
         </>
       )}
     </Section>
+  );
+}
+
+function Ipv6ModeSwitch({ mode, onChange }: { mode: Ipv6HostSettings["mode"]; onChange: (m: Ipv6HostSettings["mode"]) => void }) {
+  return (
+    <div class="segmented" role="radiogroup">
+      <button class={mode === "slaac" ? "on" : ""} onClick={() => onChange("slaac")}>
+        자동 (SLAAC)
+      </button>
+      <button class={mode === "static" ? "on" : ""} onClick={() => onChange("static")}>
+        수동
+      </button>
+    </div>
   );
 }
 

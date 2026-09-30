@@ -76,7 +76,7 @@
 구조: 이더넷 payload 에 `ipv6` 종류를 새로 추가 — 기존 코드는 `ipv4` 만 보므로 IPv6 프레임은 기본적으로 무시되어 기존 동작이 안 바뀐다. `core/addr6.ts`(파싱·RFC 5952 축약·프리픽스·EUI-64·solicited-node), `nodes/ipv6.ts`(인터페이스별 주소·이웃 캐시·NDP·DAD). L3 전달은 `forward6` 로 따로(NAT·VPN·이중화·RIP 가 얽힌 IPv4 경로를 건드리지 않음). TCP·UDP·DNS 메시지는 그대로 IPv6 안에 싣는다.
 
 1. ✅ (2026-09-30) 기반: 주소·NDP·ping/traceroute/TCP over IPv6·게이트웨이 IPv6 라우팅(연결·스태틱·디폴트 ::/0, Hop Limit, Time Exceeded·Unreachable), 방화벽 규칙의 IPv6 주소, 스위치·허브·AP·공유기 브리지의 멀티캐스트. UI·패킷 상세·예제 "IPv6 기초".
-2. SLAAC: 게이트웨이 인터페이스별 RA 광고(프리픽스·RDNSS), 호스트 "자동(SLAAC)/수동", RS/RA, EUI-64 + DAD, 기본 게이트웨이 = 라우터 링크 로컬. 구성 검사.
+2. ✅ (2026-09-30) SLAAC: 게이트웨이 인터페이스별 RA 광고(프리픽스·RDNSS), 호스트 "자동(SLAAC)/수동", RS/RA, EUI-64 + DAD, 기본 게이트웨이 = 라우터 링크 로컬, 거둠 RA(수명 0). 구성 검사. 예제 "IPv6 자동 주소 (SLAAC·RA)". 1단계 리뷰 결함 10건 수정.
 3. 듀얼 스택: DNS AAAA(서버 레코드·공인 zone·인터넷 IPv6 서버·공인 DNS 2001:4860:4860::8888), 이름 대상은 AAAA 우선(ping·traceroute 는 폴백 없음, TCP 는 IPv6 실패 시 IPv4 — Happy Eyeballs 축소판), 인터넷 노드 IPv6. (TCP over IPv6·진단 자동완성의 IPv6 묶음은 1단계에 넣었다)
 4. 공유기 IPv6(NAT 없음): ISP 가 DHCPv6-PD 로 /56 위임 → 공유기가 LAN 에 /64 RA, IPv6 인바운드 기본 차단(Stateful), 인터넷 저편 클라이언트의 IPv6 접속으로 "NAT 가 아니라 방화벽이 막는다". 예제 "듀얼 스택 집".
 

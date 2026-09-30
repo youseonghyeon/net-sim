@@ -7,13 +7,17 @@
 // - NDP 는 ICMPv6(L3) 위에서 돈다. ARP 는 IP 와 따로인 L2 프로토콜이다
 // - 주소마다 쓰기 전에 DAD 를 한다: 출발지 :: 로 "이 주소를 쓰는 장치가 있나?" 를 묻고 1초 동안 답(NA)이 없으면 쓴다
 // - 켜기만 하면 MAC 에서 만든 링크 로컬 주소(fe80::)가 생겨, 설정 없이도 같은 링크의 이웃과 통신한다
+// - SLAAC: 라우터가 RA 로 알린 /64 프리픽스 + 내 인터페이스 ID 로 주소를 스스로 만든다 (DHCP 서버 없이).
+//   기본 게이트웨이는 RA 를 보낸 라우터의 링크 로컬 주소. 주기 RA 는 없고(시계 구조) 링크 업·설정 변경·RS 에 답할 때만 보낸다
 import type { Ip, Mac } from "../addr";
 import {
   ALL_NODES,
   ALL_NODES_MAC,
+  ALL_ROUTERS,
   ALL_ROUTERS_MAC,
   UNSPECIFIED6,
   commonPrefixLength6,
+  eui64Address,
   isLinkLocal6,
   isMulticast6,
   linkLocalOf,
@@ -22,17 +26,19 @@ import {
   sameSubnet6,
   solicitedNode,
 } from "../addr6";
-import { describeFrame, icmpv6ErrorFor, UNREACHABLE6_LABEL, type EthernetFrame, type Ipv6Packet, type NdpMessage, type UnreachableCode } from "../packet";
+import { describeFrame, icmpv6ErrorFor, UNREACHABLE6_LABEL, type EthernetFrame, type Ipv6Packet, type NdpMessage, type RaPrefix, type RouterAdvertisement, type UnreachableCode } from "../packet";
 import type { Emit } from "./iface";
 import type { NodeContext, TimerHandle } from "./node";
 
 export const NDP_TIMEOUT_TAG = "ndp-timeout";
 export const DAD_TIMER_TAG = "ndp-dad";
+export const RS_TIMER_TAG = "ndp-rs";
 
 export interface Addr6 {
   ip: Ip;
   prefix: number;
-  origin: "link-local" | "manual";
+  /** slaac = RA 의 프리픽스로 스스로 만든 주소 */
+  origin: "link-local" | "manual" | "slaac";
   /** tentative = DAD 중(아직 못 씀), preferred = 사용 중, duplicate = 다른 장치가 이미 써서 포기 */
   state: "tentative" | "preferred" | "duplicate";
 }
@@ -50,9 +56,16 @@ export interface Ipv6Settings {
   addrs: { ip: Ip; prefix: number }[];
   gateway?: Ip;
   dns?: Ip;
+  /** 호스트: RA 로 주소·기본 게이트웨이·DNS 를 받는다 (SLAAC) */
+  slaac?: boolean;
+  /** 라우터: 이 인터페이스로 RA 를 보낸다 (프리픽스 = 수동 주소의 프리픽스) */
+  ra?: boolean;
+  /** 라우터: RA 의 RDNSS 옵션으로 알릴 DNS 서버 */
+  raDns?: Ip;
 }
 
 const STATE_LABEL: Record<Addr6["state"], string> = { tentative: "DAD 중", preferred: "사용 중", duplicate: "중복 · 사용 안 함" };
+const ORIGIN_LABEL: Record<Addr6["origin"], string> = { "link-local": "링크 로컬", manual: "수동", slaac: "SLAAC" };
 
 export class Ipv6Interface {
   static readonly NS_TIMEOUT = 1000;
@@ -61,6 +74,12 @@ export class Ipv6Interface {
   /** DAD: NS 를 보내고 기다리는 시간 (RFC 4861 RetransTimer 1초) */
   static readonly DAD_WAIT = 1000;
   static readonly HOP_LIMIT = 64;
+  /** RS 재전송 간격과 횟수 (RFC 4861 RTR_SOLICITATION_INTERVAL 4초, MAX_RTR_SOLICITATIONS 3) */
+  static readonly RS_INTERVAL = 4000;
+  static readonly RS_MAX = 3;
+  /** RA 의 라우터 수명(초) — 표시용. 시계 구조상 수명이 다해 사라지지는 않고, 거둘 때 0 을 보낸다 */
+  static readonly ROUTER_LIFETIME = 1800;
+  static readonly PREFIX_VALID = 86400;
 
   readonly mac: Mac;
   readonly linkLocal: Ip;
@@ -74,6 +93,23 @@ export class Ipv6Interface {
   loopback: ((pkt: Ipv6Packet, ctx: NodeContext) => void) | undefined;
   private readonly nsTimers = new Map<Ip, TimerHandle>();
   private readonly dadTimers = new Map<Ip, TimerHandle>();
+  /** 호스트 SLAAC: RA 로 주소·기본 게이트웨이를 받는다 */
+  slaac = false;
+  /** RA 로 배운 기본 게이트웨이 후보 (라우터의 링크 로컬 주소, 먼저 배운 것이 먼저) */
+  readonly routers = new Map<Ip, { learnedAt: number }>();
+  /** RA 의 RDNSS 옵션으로 받은 DNS 서버 */
+  raDnsLearned: Ip | undefined;
+  private rsTries = 0;
+  private rsTimer: TimerHandle | undefined;
+  /** 링크가 살아 있는지 (실패 문구용) */
+  private up = false;
+  /** 라우터: 이 인터페이스로 RA 를 보내는지, RDNSS 로 알릴 DNS */
+  raOn = false;
+  raDns: Ip | undefined;
+  /** 지난번 RA 에 실은 프리픽스 (바뀌면 빠진 것을 유효 수명 0 으로 거둔다) */
+  private advertised: RaPrefix[] = [];
+  /** 지난번 RA 의 내용 (프리픽스·DNS). 설정이 바뀌어 이것과 달라지면 새 RA */
+  private advertisedKey = "";
 
   /**
    * @param router 라우터면 모든 라우터 그룹(ff02::2)에 가입하고 NA 에 R 플래그를 붙인다
@@ -104,6 +140,24 @@ export class Ipv6Interface {
     ];
     this.gateway = cfg.gateway;
     this.dns = cfg.dns;
+    this.slaac = cfg.slaac === true && !this.router;
+    this.raOn = cfg.ra === true && this.router;
+    this.raDns = cfg.raDns;
+  }
+
+  /** SLAAC 호스트가 아직 RA 를 기다리는 중 (RS 를 보내고 답을 기다림) */
+  get raWaiting(): boolean {
+    return this.rsTimer !== undefined;
+  }
+
+  /** 기본 게이트웨이: 수동 설정, 없으면 RA 로 배운 첫 라우터 */
+  get defaultRouter(): Ip | undefined {
+    return this.gateway ?? this.routers.keys().next().value;
+  }
+
+  /** 쓸 DNS 서버: 수동 설정, 없으면 RA 의 RDNSS */
+  get effectiveDns(): Ip | undefined {
+    return this.dns ?? this.raDnsLearned;
   }
 
   /**
@@ -111,13 +165,17 @@ export class Ipv6Interface {
    * @returns 주소가 바뀌었는지 (호스트는 연결을 정리한다)
    */
   configure(cfg: Ipv6Settings, linkUp: boolean, ctx: NodeContext, emit: Emit): boolean {
+    this.up = linkUp;
     if (!cfg.enabled) {
       if (!this.enabled) return false;
+      if (this.raOn && linkUp) this.sendRa(ctx, emit, true);
       this.enabled = false;
       this.reset();
       this.addrs = [];
       this.gateway = undefined;
       this.dns = undefined;
+      this.forgetRa();
+      this.raOn = false;
       ctx.trace("ip.config", "sys", `${this.tag}IPv6 꺼짐 → IPv6 주소·이웃 캐시를 모두 지움`, {});
       return true;
     }
@@ -158,9 +216,36 @@ export class Ipv6Interface {
     }
     if (cfg.gateway !== this.gateway) {
       this.gateway = cfg.gateway;
-      ctx.trace("ip.config", "sys", cfg.gateway ? `${this.tag}IPv6 기본 게이트웨이: ${cfg.gateway}${isLinkLocal6(cfg.gateway) ? " (라우터의 링크 로컬 주소 — IPv6 에서 흔한 방식)" : ""}` : `${this.tag}IPv6 기본 게이트웨이 없음`, { gateway: cfg.gateway });
+      if (cfg.gateway || !cfg.slaac) ctx.trace("ip.config", "sys", cfg.gateway ? `${this.tag}IPv6 기본 게이트웨이: ${cfg.gateway}${isLinkLocal6(cfg.gateway) ? " (라우터의 링크 로컬 주소 — IPv6 에서 흔한 방식)" : ""}` : `${this.tag}IPv6 기본 게이트웨이 없음`, { gateway: cfg.gateway });
     }
     if (cfg.dns !== this.dns) this.dns = cfg.dns;
+    // 호스트 SLAAC 켜기·끄기
+    const slaac = cfg.slaac === true && !this.router;
+    if (slaac !== this.slaac) {
+      this.slaac = slaac;
+      if (slaac) {
+        ctx.trace("ip.config", "sys", `${this.tag}IPv6 자동 설정 (SLAAC): 라우터 광고(RA)의 프리픽스로 주소를 만들고, RA 를 보낸 라우터를 기본 게이트웨이로 쓴다`, {});
+        this.rsTries = 0;
+        if (linkUp && this.owns(this.linkLocal)) this.sendRs(ctx, emit);
+      } else {
+        changed = this.dropSlaac(ctx, "수동 설정으로 전환") || changed;
+      }
+    }
+    // 라우터 RA: 켜기·끄기, 알릴 프리픽스·DNS 가 바뀌면 곧바로 새 RA (꺼지면 수명 0 으로 거둠)
+    if (this.router) {
+      const raOn = cfg.ra === true;
+      const wasOn = this.raOn;
+      if (raOn !== wasOn) ctx.trace("ip.config", "sys", raOn ? `${this.tag}RA 광고 켜짐: 이 링크의 호스트들이 SLAAC 로 주소를 만들 수 있게 프리픽스를 알린다` : `${this.tag}RA 광고 꺼짐`, { ra: raOn });
+      this.raOn = raOn;
+      this.raDns = cfg.raDns;
+      const ready = linkUp && this.owns(this.linkLocal);
+      if (ready && raOn && this.raKey() !== this.advertisedKey) this.sendRa(ctx, emit);
+      else if (ready && !raOn && wasOn) this.sendRa(ctx, emit, true);
+      if (!raOn) {
+        this.advertised = [];
+        this.advertisedKey = "";
+      }
+    }
     return changed;
   }
 
@@ -176,6 +261,27 @@ export class Ipv6Interface {
     for (const t of this.dadTimers.values()) t.cancel();
     this.dadTimers.clear();
     this.neighbors.clear();
+    this.rsTimer?.cancel();
+    this.rsTimer = undefined;
+  }
+
+  /** RA 로 배운 것(SLAAC 주소·기본 게이트웨이·DNS)을 잊는다. 주소를 지웠으면 true */
+  private forgetRa(): boolean {
+    const had = this.addrs.some((a) => a.origin === "slaac");
+    for (const a of this.addrs.filter((x) => x.origin === "slaac")) this.removeAddr(a);
+    this.routers.clear();
+    this.raDnsLearned = undefined;
+    this.rsTimer?.cancel();
+    this.rsTimer = undefined;
+    return had;
+  }
+
+  private dropSlaac(ctx: NodeContext, why: string): boolean {
+    const gone = this.addrs.filter((a) => a.origin === "slaac").map((a) => a.ip);
+    const hadRouter = this.routers.size > 0;
+    const removed = this.forgetRa();
+    if (gone.length || hadRouter) ctx.trace("slaac.addr", "L3", `${this.tag}${why} → SLAAC 주소${gone.length ? ` ${gone.join(", ")}` : ""}·RA 로 배운 기본 게이트웨이를 지움`, { removed: gone });
+    return removed;
   }
 
   clearPending(): void {
@@ -184,19 +290,25 @@ export class Ipv6Interface {
     this.pending.clear();
   }
 
-  /** 링크가 살아남: 모든 주소를 다시 DAD */
+  /** 링크가 살아남: 모든 주소를 다시 DAD (링크 로컬이 끝나면 호스트는 RS, 라우터는 RA) */
   linkUp(ctx: NodeContext, emit: Emit): void {
+    this.up = true;
     if (!this.enabled) return;
+    this.rsTries = 0;
     for (const a of this.addrs) {
       a.state = "tentative";
       this.startDad(a, ctx, emit);
     }
   }
 
-  /** 링크 다운: 이웃·대기열을 비우고 주소는 다시 확인이 필요한 상태로 */
+  /** 링크 다운: 이웃·대기열을 비우고 주소는 다시 확인이 필요한 상태로. RA 로 배운 것은 잊는다 (다시 붙으면 RS 로 새로 묻는다) */
   linkDown(): void {
+    this.up = false;
     if (!this.enabled) return;
     this.reset();
+    this.forgetRa();
+    this.advertised = [];
+    this.advertisedKey = "";
     for (const a of this.addrs) a.state = "tentative";
   }
 
@@ -246,9 +358,11 @@ export class Ipv6Interface {
   /** 주소가 없는 이유 (실패 문구용) */
   whyNoSource(dst: Ip): string {
     if (!this.enabled) return "IPv6 가 꺼져 있음 — IPv6 설정에서 켜세요";
+    if (!this.up) return "링크 다운 — 케이블을 연결하세요 (다시 연결되면 주소를 DAD 로 확인한 뒤 쓴다)";
     if (this.addrs.some((a) => a.state === "tentative")) return "주소를 DAD 로 확인하는 중 (1초 뒤 다시 시도하세요)";
     if (isLinkLocal6(dst)) return "링크 로컬 주소가 중복이라 쓰지 않는 중";
     if (this.addrs.some((a) => a.origin !== "link-local" && a.state === "duplicate")) return "IPv6 주소가 다른 장치와 중복이라 쓰지 않는 중 — 다른 주소를 넣으세요";
+    if (this.slaac) return "RA 를 받지 못해 SLAAC 주소가 없음 — 링크 로컬 주소(fe80::)로는 다른 네트워크로 나갈 수 없음. 이 링크 라우터의 IPv6·RA 광고를 확인하세요";
     return "IPv6 글로벌 주소가 없음 — 링크 로컬 주소(fe80::)로는 다른 네트워크로 나갈 수 없음. IPv6 주소를 넣으세요";
   }
 
@@ -265,11 +379,17 @@ export class Ipv6Interface {
       ctx.trace("ip.route", "L3", `${this.tag}${dst} 는 같은 프리픽스 ${network6(a.ip, a.prefix)}/${a.prefix} → 직접 전달 (next hop = ${dst})`, { dst, nextHop: dst });
       return dst;
     }
-    if (this.gateway) {
-      ctx.trace("ip.route", "L3", `${this.tag}${dst} 는 다른 네트워크 → IPv6 기본 게이트웨이 ${this.gateway} 로 전달`, { dst, nextHop: this.gateway });
-      return this.gateway;
+    const gw = this.defaultRouter;
+    if (gw) {
+      ctx.trace("ip.route", "L3", `${this.tag}${dst} 는 다른 네트워크 → IPv6 기본 게이트웨이 ${gw}${this.gateway ? "" : " (RA 로 배운 라우터)"} 로 전달`, { dst, nextHop: gw });
+      return gw;
     }
-    ctx.trace("ip.no-route", "L3", `${this.tag}${dst} 는 다른 네트워크인데 IPv6 기본 게이트웨이가 없음 → 드롭 (IPv6 설정에서 게이트웨이를 넣으세요)`, { dst });
+    ctx.trace(
+      "ip.no-route",
+      "L3",
+      `${this.tag}${dst} 는 다른 네트워크인데 IPv6 기본 게이트웨이가 없음 → 드롭 (${this.slaac ? "RA 를 보낸 라우터가 없음 — 이 링크 라우터의 RA 광고를 확인하세요" : "IPv6 설정에서 게이트웨이를 넣으세요"})`,
+      { dst },
+    );
     return undefined;
   }
 
@@ -353,26 +473,40 @@ export class Ipv6Interface {
     this.dadTimers.set(a.ip, ctx.timer(Ipv6Interface.DAD_WAIT, DAD_TIMER_TAG, { mac: this.mac, ip: a.ip }));
   }
 
-  /** "ndp-dad" 타이머. 아무도 주장하지 않았으면 사용 시작. 처리했으면 true */
-  finishDad(data: unknown, ctx: NodeContext): boolean {
+  /** "ndp-dad" 타이머. 아무도 주장하지 않았으면 사용 시작 — 링크 로컬이 준비되면 호스트(SLAAC)는 RS, 라우터(RA 켬)는 RA. 처리했으면 true */
+  finishDad(data: unknown, ctx: NodeContext, emit: Emit): boolean {
     const { mac, ip } = data as { mac: Mac; ip: Ip };
     if (mac !== this.mac) return false;
     this.dadTimers.delete(ip);
     const a = this.addrs.find((x) => x.ip === ip);
     if (!a || a.state !== "tentative") return true;
     a.state = "preferred";
-    ctx.trace("ndp.dad", "L3", `${this.tag}DAD 통과: ${Ipv6Interface.DAD_WAIT}ms 동안 아무도 ${ip} 를 주장하지 않음 → ${a.origin === "link-local" ? "링크 로컬 주소" : "주소"} 사용 시작`, { ip, ok: true });
+    ctx.trace("ndp.dad", "L3", `${this.tag}DAD 통과: ${Ipv6Interface.DAD_WAIT}ms 동안 아무도 ${ip} 를 주장하지 않음 → ${a.origin === "link-local" ? "링크 로컬 주소" : a.origin === "slaac" ? "SLAAC 주소" : "주소"} 사용 시작`, { ip, ok: true });
+    if (a.origin === "link-local") {
+      if (this.slaac && this.routers.size === 0) this.sendRs(ctx, emit);
+      if (this.raOn) this.sendRa(ctx, emit);
+    }
+    // 수동 주소는 MAC 과 무관해 장비를 바꿔 끼워도 같은 주소일 수 있다: 요청하지 않은 NA 로 알려 이웃 캐시의 옛 MAC 을 고치게 한다
+    // (IPv4 의 Gratuitous ARP. 링크 로컬·SLAAC 주소는 MAC 에서 나오므로 장비가 바뀌면 주소도 바뀐다)
+    if (a.origin === "manual") {
+      const na: Ipv6Packet = { kind: "ipv6", src: a.ip, dst: ALL_NODES, hopLimit: 255, payload: { kind: "icmp6", type: "na", target: a.ip, router: this.router, solicited: false, override: true, tll: this.mac } };
+      ctx.trace("ndp.na.sent", "L3", `${this.tag}주소 알림: 요청하지 않은 NA 를 모든 노드(ff02::1)에게 "${a.ip} 는 ${this.mac}" — 이웃 캐시에 옛 MAC 이 남아 있으면 고치도록 (IPv4 의 Gratuitous ARP)`, { target: a.ip });
+      this.transmit(ALL_NODES_MAC, na, ctx, emit);
+    }
     return true;
   }
 
-  private dadFailed(a: Addr6, byMac: Mac | undefined, frameId: number, ctx: NodeContext): void {
+  /** @param simultaneous 상대도 같은 주소를 동시에 DAD 로 확인 중 (그 DAD NS 를 받음) — RFC 4862 대로 둘 다 포기한다 */
+  private dadFailed(a: Addr6, byMac: Mac | undefined, frameId: number, ctx: NodeContext, simultaneous = false): void {
     this.dadTimers.get(a.ip)?.cancel();
     this.dadTimers.delete(a.ip);
     a.state = "duplicate";
     ctx.trace(
       "ndp.dad.fail",
       "L3",
-      `${this.tag}DAD 실패: ${a.ip} 는 이미 ${byMac ?? "다른 장치"} 가 쓰는 주소 → 이 주소를 쓰지 않음 (리눅스: "IPv6 duplicate address detected"). 다른 주소를 넣으세요`,
+      simultaneous
+        ? `${this.tag}DAD 실패: ${byMac ?? "다른 장치"} 도 ${a.ip} 를 동시에 확인하는 중(그쪽 DAD NS 를 받음) → RFC 4862 대로 둘 다 이 주소를 포기 (리눅스: "IPv6 duplicate address detected"). 한쪽 주소를 바꾸세요`
+        : `${this.tag}DAD 실패: ${a.ip} 는 이미 ${byMac ?? "다른 장치"} 가 쓰는 주소 (NA 로 방어함) → 이 주소를 쓰지 않음 (리눅스: "IPv6 duplicate address detected"). 다른 주소를 넣으세요`,
       { ip: a.ip, mac: byMac },
       frameId,
     );
@@ -380,8 +514,16 @@ export class Ipv6Interface {
 
   // ---------- 수신 ----------
 
-  /** NS/NA 처리 */
+  /** NDP 처리: NS/NA (이웃), RS/RA (라우터) */
   handleNdp(pkt: Ipv6Packet, msg: NdpMessage, frame: EthernetFrame, ctx: NodeContext, emit: Emit): void {
+    if (msg.type === "rs") {
+      this.handleRs(pkt, msg.sll, frame, ctx, emit);
+      return;
+    }
+    if (msg.type === "ra") {
+      this.handleRa(pkt, msg, frame, ctx, emit);
+      return;
+    }
     const mine = this.addrs.find((a) => a.ip === msg.target);
     if (msg.type === "ns") {
       const dad = pkt.src === UNSPECIFIED6;
@@ -390,7 +532,7 @@ export class Ipv6Interface {
         return;
       }
       if (mine.state === "tentative") {
-        if (dad) this.dadFailed(mine, frame.src, frame.id, ctx);
+        if (dad) this.dadFailed(mine, frame.src, frame.id, ctx, true);
         // DAD 중인 주소로 온 보통 NS 에는 답하지 않는다 (아직 내 주소가 아니므로)
         return;
       }
@@ -402,7 +544,11 @@ export class Ipv6Interface {
         return;
       }
       ctx.trace("ndp.ns.received", "L3", `${this.tag}NDP NS 수신: "${msg.target} 의 MAC 은?" (보낸이 ${pkt.src} / ${msg.sll ?? frame.src})`, { target: msg.target, from: pkt.src }, frame.id);
-      if (msg.sll) this.learn(pkt.src, msg.sll, false, "NS 의 출발지 링크 계층 주소 옵션에서 학습", frame.id, ctx);
+      if (msg.sll) {
+        this.learn(pkt.src, msg.sll, false, "NS 의 출발지 링크 계층 주소 옵션에서 학습", frame.id, ctx);
+        // 나도 그 이웃을 찾던 중이면 (서로 동시에 NS) 여기서 배운 것으로 기다리던 패킷을 보낸다 — NA 하나를 잃어도 대기열이 남지 않게
+        this.flushPending(pkt.src, ctx, emit);
+      }
       const reply: Ipv6Packet = {
         kind: "ipv6",
         src: mine.ip,
@@ -428,6 +574,176 @@ export class Ipv6Interface {
     if (known && known.mac !== msg.tll && !msg.override) return;
     this.learn(msg.target, msg.tll, msg.router, "NA 에서 학습", frame.id, ctx);
     this.flushPending(msg.target, ctx, emit);
+  }
+
+  // ---------- 라우터 찾기 (RS/RA) ----------
+
+  /** 호스트: 모든 라우터(ff02::2)에게 RS. 4초 안에 RA 가 없으면 다시, 3번까지 */
+  private sendRs(ctx: NodeContext, emit: Emit): void {
+    this.rsTimer?.cancel();
+    this.rsTries += 1;
+    const pkt: Ipv6Packet = { kind: "ipv6", src: this.linkLocal, dst: ALL_ROUTERS, hopLimit: 255, payload: { kind: "icmp6", type: "rs", sll: this.mac } };
+    const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: this.mac, dst: ALL_ROUTERS_MAC, payload: pkt };
+    ctx.trace("ndp.rs.sent", "L3", `${this.tag}RS 멀티캐스트 (모든 라우터 ff02::2): "이 링크에 라우터 있나요? RA 를 보내 주세요" (${this.rsTries}/${Ipv6Interface.RS_MAX})`, { tries: this.rsTries }, frame.id);
+    emit(frame);
+    this.rsTimer = ctx.timer(Ipv6Interface.RS_INTERVAL, RS_TIMER_TAG, { mac: this.mac });
+  }
+
+  /** "ndp-rs" 타이머: RA 가 없으면 RS 를 다시, 3번 뒤에는 포기. 처리했으면 true */
+  onRsTimer(data: unknown, ctx: NodeContext, emit: Emit): boolean {
+    if ((data as { mac: Mac }).mac !== this.mac) return false;
+    this.rsTimer = undefined;
+    if (!this.enabled || !this.slaac || this.routers.size > 0 || this.addrs.some((a) => a.origin === "slaac")) return true;
+    if (this.rsTries < Ipv6Interface.RS_MAX) {
+      this.sendRs(ctx, emit);
+      return true;
+    }
+    ctx.trace(
+      "slaac.timeout",
+      "L3",
+      `${this.tag}RS ${Ipv6Interface.RS_MAX}번에 RA 가 없음 → SLAAC 주소·기본 게이트웨이 없이 링크 로컬만 (이 링크의 라우터가 없거나 IPv6·RA 광고가 꺼져 있음)`,
+      {},
+    );
+    return true;
+  }
+
+  /** 라우터: 알릴 프리픽스 (수동 주소의 프리픽스, 중복으로 포기한 것 제외) */
+  private raPrefixes(): RaPrefix[] {
+    const out: RaPrefix[] = [];
+    for (const a of this.addrs) {
+      if (a.origin !== "manual" || a.state === "duplicate") continue;
+      const prefix = network6(a.ip, a.prefix);
+      if (!out.some((p) => p.prefix === prefix && p.length === a.prefix)) out.push({ prefix, length: a.prefix, onLink: true, autonomous: true, valid: Ipv6Interface.PREFIX_VALID });
+    }
+    return out;
+  }
+
+  private raKey(): string {
+    return JSON.stringify([this.raPrefixes().map((p) => `${p.prefix}/${p.length}`), this.raDns ?? ""]);
+  }
+
+  /**
+   * 라우터: 모든 노드(ff02::1)에게 RA. final 이면 라우터 수명 0 + 알렸던 프리픽스를 유효 수명 0 으로 (거둠).
+   * 지난번에 알렸다가 빠진 프리픽스도 유효 수명 0 으로 실어 호스트가 그 주소를 지우게 한다
+   */
+  sendRa(ctx: NodeContext, emit: Emit, final = false, frameId?: number): void {
+    if (!this.enabled || !this.owns(this.linkLocal)) return;
+    const current = final ? [] : this.raPrefixes();
+    const withdrawn = this.advertised.filter((p) => !current.some((c) => c.prefix === p.prefix && c.length === p.length)).map((p) => ({ ...p, valid: 0 }));
+    const ra: RouterAdvertisement = {
+      kind: "icmp6",
+      type: "ra",
+      curHopLimit: Ipv6Interface.HOP_LIMIT,
+      managed: false,
+      other: false,
+      routerLifetime: final ? 0 : Ipv6Interface.ROUTER_LIFETIME,
+      prefixes: [...current, ...withdrawn],
+      ...(!final && this.raDns ? { rdnss: [this.raDns] } : {}),
+      sll: this.mac,
+    };
+    this.advertised = current;
+    this.advertisedKey = final ? "" : this.raKey();
+    const pkt: Ipv6Packet = { kind: "ipv6", src: this.linkLocal, dst: ALL_NODES, hopLimit: 255, payload: ra };
+    const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: this.mac, dst: ALL_NODES_MAC, payload: pkt };
+    const prefixText = current.map((p) => `${p.prefix}/${p.length}`).join(", ");
+    ctx.trace(
+      "ndp.ra.sent",
+      "L3",
+      final
+        ? `${this.tag}RA 거둠 (모든 노드 ff02::1): 라우터 수명 0 — 나(${this.linkLocal})를 기본 게이트웨이에서 빼고${withdrawn.length ? ` 프리픽스 ${withdrawn.map((p) => `${p.prefix}/${p.length}`).join(", ")} 로 만든 주소를 지우라` : ""}`
+        : `${this.tag}RA 멀티캐스트 (모든 노드 ff02::1): "나(${this.linkLocal})는 이 링크의 라우터${prefixText ? `, 프리픽스 ${prefixText} 로 주소를 만드세요(SLAAC)` : " (알릴 프리픽스 없음 — 이 인터페이스에 주소가 없음)"}${this.raDns ? `, DNS 는 ${this.raDns}` : ""}"${withdrawn.length ? ` · 빠진 프리픽스 ${withdrawn.map((p) => `${p.prefix}/${p.length}`).join(", ")} 는 유효 수명 0 으로 거둠` : ""}`,
+      { prefixes: current.map((p) => `${p.prefix}/${p.length}`), final },
+      frame.id,
+    );
+    void frameId;
+    emit(frame);
+  }
+
+  /** 장치를 지울 때: RA 를 보내던 인터페이스는 거둠 RA (호스트가 옛 게이트웨이·주소를 들고 있지 않게) */
+  shutdown(ctx: NodeContext, emit: Emit): void {
+    if (this.enabled && this.raOn) this.sendRa(ctx, emit, true);
+  }
+
+  private handleRs(pkt: Ipv6Packet, sll: Mac | undefined, frame: EthernetFrame, ctx: NodeContext, emit: Emit): void {
+    if (!this.router) return; // 호스트는 모든 라우터 그룹에 가입하지 않아 오지 않는다
+    if (!this.raOn) {
+      ctx.trace("ndp.rs.received", "L3", `${this.tag}RS 수신 (from ${pkt.src}) — 이 인터페이스는 RA 광고가 꺼져 있어 응답 안 함 (IPv6 설정에서 RA 광고를 켜면 SLAAC 호스트가 주소를 만든다)`, { from: pkt.src }, frame.id);
+      return;
+    }
+    ctx.trace("ndp.rs.received", "L3", `${this.tag}RS 수신 (from ${pkt.src}): 라우터를 찾는 호스트 → 곧바로 RA`, { from: pkt.src }, frame.id);
+    if (sll && pkt.src !== UNSPECIFIED6) {
+      this.learn(pkt.src, sll, false, "RS 의 출발지 링크 계층 주소 옵션에서 학습", frame.id, ctx);
+      this.flushPending(pkt.src, ctx, emit);
+    }
+    this.sendRa(ctx, emit, false, frame.id);
+  }
+
+  private handleRa(pkt: Ipv6Packet, ra: RouterAdvertisement, frame: EthernetFrame, ctx: NodeContext, emit: Emit): void {
+    const from = pkt.src;
+    const summary = ra.routerLifetime === 0 ? "라우터 수명 0 (거둠)" : `프리픽스 ${ra.prefixes.filter((p) => p.valid > 0).map((p) => `${p.prefix}/${p.length}`).join(", ") || "없음"}${ra.rdnss?.length ? `, DNS ${ra.rdnss.join(", ")}` : ""}`;
+    if (this.router) {
+      ctx.trace("ndp.ra.received", "L3", `${this.tag}RA 수신 (from ${from}, ${summary}) — 라우터는 다른 라우터의 RA 로 주소·게이트웨이를 만들지 않음 → 무시`, { from }, frame.id);
+      return;
+    }
+    if (!this.slaac) {
+      ctx.trace("ndp.ra.received", "L3", `${this.tag}RA 수신 (from ${from}, ${summary}) — 수동 설정이라 주소·게이트웨이는 그대로 (자동(SLAAC)으로 두면 이 RA 로 주소를 만든다)`, { from }, frame.id);
+      return;
+    }
+    if (!isLinkLocal6(from)) {
+      ctx.trace("frame.drop", "L3", `${this.tag}RA 의 출발지 ${from} 가 링크 로컬이 아님 → RFC 4861 에 따라 무시`, { from }, frame.id);
+      return;
+    }
+    ctx.trace("ndp.ra.received", "L3", `${this.tag}RA 수신: 라우터 ${from} — ${summary}`, { from, lifetime: ra.routerLifetime }, frame.id);
+    this.rsTimer?.cancel();
+    this.rsTimer = undefined;
+    if (ra.sll) {
+      this.learn(from, ra.sll, true, "RA 의 출발지 링크 계층 주소 옵션에서 학습", frame.id, ctx);
+      this.flushPending(from, ctx, emit);
+    }
+    if (ra.routerLifetime > 0) {
+      if (!this.routers.has(from)) {
+        this.routers.set(from, { learnedAt: ctx.now });
+        const first = this.routers.size === 1 && !this.gateway;
+        ctx.trace("slaac.router", "L3", `${this.tag}기본 게이트웨이${first ? "" : " 후보"}: ${from} — RA 를 보낸 라우터의 링크 로컬 주소 (라우터 수명 ${ra.routerLifetime}초)`, { router: from }, frame.id);
+      }
+    } else if (this.routers.delete(from)) {
+      ctx.trace("slaac.router", "L3", `${this.tag}${from} 가 라우터 수명 0 을 알림 → 기본 게이트웨이에서 뺌${this.routers.size ? ` (남은 라우터 ${[...this.routers.keys()].join(", ")})` : " (남은 라우터 없음 — 다른 네트워크로 못 나감)"}`, { router: from }, frame.id);
+    }
+    for (const p of ra.prefixes) {
+      if (!p.autonomous) continue;
+      const existing = this.addrs.find((a) => a.origin === "slaac" && a.prefix === p.length && sameSubnet6(a.ip, p.prefix, p.length));
+      if (p.valid === 0) {
+        if (existing) {
+          this.removeAddr(existing);
+          this.neighbors.clear();
+          this.clearPending();
+          ctx.trace("slaac.addr", "L3", `${this.tag}프리픽스 ${p.prefix}/${p.length} 를 라우터가 거둠 (유효 수명 0) → SLAAC 주소 ${existing.ip} 삭제`, { ip: existing.ip, removed: true }, frame.id);
+        }
+        continue;
+      }
+      if (p.length !== 64) {
+        ctx.trace("slaac.addr", "L3", `${this.tag}프리픽스 ${p.prefix}/${p.length} 는 /64 가 아니라 SLAAC 주소를 만들 수 없음 (인터페이스 ID 가 64비트라 프리픽스는 /64 여야 한다)`, { prefix: p.prefix, length: p.length, bad: true }, frame.id);
+        continue;
+      }
+      if (existing) continue;
+      const ip = eui64Address(p.prefix, this.mac);
+      if (this.addrs.some((a) => a.ip === ip)) continue;
+      const addr: Addr6 = { ip, prefix: 64, origin: "slaac", state: "tentative" };
+      this.addrs.push(addr);
+      ctx.trace(
+        "slaac.addr",
+        "L3",
+        `${this.tag}SLAAC: 프리픽스 ${p.prefix}/64 + 인터페이스 ID(MAC ${this.mac} 의 EUI-64) → ${ip} 생성 → DAD 로 확인 (실제 OS 는 개인정보 때문에 보통 무작위 인터페이스 ID)`,
+        { ip, prefix: p.prefix },
+        frame.id,
+      );
+      this.startDad(addr, ctx, emit);
+    }
+    const dns = ra.rdnss?.[0];
+    if (dns && dns !== this.raDnsLearned) {
+      this.raDnsLearned = dns;
+      ctx.trace("slaac.router", "L3", `${this.tag}DNS 서버 ${dns} — RA 의 RDNSS 옵션 (DHCPv6 없이 DNS 를 알린다)`, { dns }, frame.id);
+    }
   }
 
   private learn(ip: Ip, mac: Mac, router: boolean, how: string, frameId: number, ctx: NodeContext): void {
@@ -457,7 +773,12 @@ export class Ipv6Interface {
     if (mac !== this.mac) return [];
     this.nsTimers.delete(ip);
     const queue = this.pending.get(ip);
-    if (!queue || this.neighbors.has(ip)) return [];
+    if (!queue) return [];
+    if (this.neighbors.has(ip)) {
+      // 다른 길(NS·RA)로 이미 배웠다 — 남은 대기열을 두면 다음 NS 가 막힌다
+      this.pending.delete(ip);
+      return [];
+    }
     this.pending.delete(ip);
     ctx.trace("ndp.timeout", "L3", `${this.tag}NDP timeout: ${ip} 가 ${Ipv6Interface.NS_TIMEOUT}ms 동안 NA 로 응답하지 않음 → 대기 패킷 ${queue.length}개 드롭 (Address unreachable)`, { ip, dropped: queue.length });
     return queue.map((q) => q.pkt);
@@ -501,7 +822,7 @@ export class Ipv6Interface {
   }
 
   addrRows(): string[][] {
-    return this.addrs.map((a) => [`${a.ip}/${a.prefix}`, a.origin === "link-local" ? "링크 로컬" : "수동", STATE_LABEL[a.state]]);
+    return this.addrs.map((a) => [`${a.ip}/${a.prefix}`, ORIGIN_LABEL[a.origin], STATE_LABEL[a.state]]);
   }
 
   neighborRows(): string[][] {

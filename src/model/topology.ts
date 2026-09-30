@@ -193,8 +193,8 @@ export interface HostSettings {
 /** 호스트의 IPv6 설정 */
 export interface Ipv6HostSettings {
   enabled: boolean;
-  /** 수동 주소 */
-  mode: "static";
+  /** slaac = 라우터 광고(RA)로 주소·게이트웨이·DNS 를 받음, static = 아래 칸 */
+  mode: "slaac" | "static";
   ip: string;
   prefix: number;
   /** IPv6 기본 게이트웨이 (라우터의 글로벌 또는 링크 로컬 주소) */
@@ -202,15 +202,17 @@ export interface Ipv6HostSettings {
   dns?: string;
 }
 
-export const DEFAULT_IPV6_HOST: Ipv6HostSettings = { enabled: true, mode: "static", ip: "", prefix: 64, gateway: "" };
+export const DEFAULT_IPV6_HOST: Ipv6HostSettings = { enabled: true, mode: "slaac", ip: "", prefix: 64, gateway: "" };
 
 /** 게이트웨이·NAT 박스의 IPv6 설정 */
 export interface Ipv6L3Settings {
   enabled: boolean;
-  /** 물리 인터페이스별 주소 (인덱스 = 인터페이스, 빈 칸 = 링크 로컬만) */
-  interfaces: { ip: string; prefix: number }[];
+  /** 물리 인터페이스별 주소 (인덱스 = 인터페이스, 빈 칸 = 링크 로컬만). ra = 이 인터페이스로 라우터 광고(RA)를 보냄 */
+  interfaces: { ip: string; prefix: number; ra?: boolean }[];
   /** IPv6 스태틱 라우팅. ::/0 이 디폴트 라우트 */
   routes: StaticRouteSettings[];
+  /** RA 의 RDNSS 옵션으로 알릴 DNS 서버 (비우면 없음) */
+  raDns?: string;
 }
 
 export interface LbSettings {
@@ -328,7 +330,7 @@ const text = (v: unknown) => (typeof v === "string" ? v : "");
 
 /** 불러온 JSON 의 호스트 IPv6 설정 정리 */
 function normalizeIpv6Host(v: Partial<Ipv6HostSettings>): Ipv6HostSettings {
-  return { enabled: v.enabled === true, mode: "static", ip: text(v.ip), prefix: prefix6(v.prefix, 64), gateway: text(v.gateway), ...(typeof v.dns === "string" ? { dns: v.dns } : {}) };
+  return { enabled: v.enabled === true, mode: v.mode === "slaac" ? "slaac" : "static", ip: text(v.ip), prefix: prefix6(v.prefix, 64), gateway: text(v.gateway), ...(typeof v.dns === "string" ? { dns: v.dns } : {}) };
 }
 
 /** 불러온 JSON 의 게이트웨이 IPv6 설정 정리 */
@@ -338,9 +340,10 @@ function normalizeIpv6L3(v: Partial<Ipv6L3Settings>): Ipv6L3Settings {
   return {
     enabled: v.enabled === true,
     interfaces: ifs.map((x) => {
-      const o = (x && typeof x === "object" ? x : {}) as Partial<{ ip: unknown; prefix: unknown }>;
-      return { ip: text(o.ip), prefix: prefix6(o.prefix, 64) };
+      const o = (x && typeof x === "object" ? x : {}) as Partial<{ ip: unknown; prefix: unknown; ra: unknown }>;
+      return { ip: text(o.ip), prefix: prefix6(o.prefix, 64), ...(o.ra === true ? { ra: true } : {}) };
     }),
+    ...(typeof v.raDns === "string" ? { raDns: v.raDns } : {}),
     routes: routes
       .filter((r): r is { dest: string; prefix: number; via: string } => !!r && typeof r === "object" && typeof (r as { dest?: unknown }).dest === "string")
       .map((r) => ({ dest: r.dest, prefix: prefix6(r.prefix, 64, 0), via: text(r.via) })),

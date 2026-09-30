@@ -23,14 +23,17 @@ function conflictLine(label: string, iface: NetInterface): StatusLine | null {
   return { text: `${label}${iface.ip} 충돌${iface.conflict.refused ? " · 사용 안 함" : ""}`, tone: "warn", mono: false };
 }
 
-/** IPv6 인터페이스 한 줄: 글로벌 주소(없으면 링크 로컬), DAD 중·중복이면 그 상태 */
-function v6Line(v: Ipv6Interface): StatusLine | null {
+/** IPv6 인터페이스 한 줄: 글로벌 주소(없으면 링크 로컬), DAD 중·중복이면 그 상태. 타일에는 /64 를 빼 폭을 줄인다 (IPv6 는 거의 늘 /64) */
+function v6Line(v: Ipv6Interface, tile = false): StatusLine | null {
   if (!v.enabled) return null;
   const dup = v.addrs.find((a) => a.state === "duplicate");
   if (dup) return { text: `${dup.ip} 중복`, tone: "warn", mono: false };
   const g = v.addrs.find((a) => a.origin !== "link-local");
-  if (g) return g.state === "preferred" ? { text: `${g.ip}/${g.prefix}`, tone: "ok", mono: true } : { text: "IPv6 DAD 중", tone: "muted", mono: false };
-  return v.owns(v.linkLocal) ? { text: v.linkLocal, tone: "ok", mono: true } : { text: "IPv6 DAD 중", tone: "muted", mono: false };
+  if (g) return g.state === "preferred" ? { text: tile && g.prefix === 64 ? g.ip : `${g.ip}/${g.prefix}`, tone: "ok", mono: true } : { text: "IPv6 DAD 중", tone: "muted", mono: false };
+  if (!v.owns(v.linkLocal)) return { text: "IPv6 DAD 중", tone: "muted", mono: false };
+  // SLAAC 인데 RA 를 못 받음: 기다리는 중이면 흐리게, RS 를 다 보내고도 없으면 경고
+  if (v.slaac) return v.raWaiting ? { text: "RA 기다리는 중", tone: "muted", mono: false } : { text: "RA 없음 · 링크 로컬만", tone: "warn", mono: false };
+  return { text: v.linkLocal, tone: "ok", mono: true };
 }
 
 /** 개요 탭의 IPv6 줄 (꺼져 있으면 null) */
@@ -55,7 +58,7 @@ export function hostStatusOf(node: SimNode | undefined, wireless: boolean): Stat
     if (node.ip) return { text: `${node.ip}/${node.iface.prefix}`, tone: "ok", mono: true };
     if (!node.linkUp) return { text: wireless ? "무선 연결 없음" : "링크 다운", tone: "muted", mono: false };
     // IPv4 주소가 없고 IPv6 만 쓰는 호스트는 IPv6 주소를 보인다
-    const v6 = node.ipMode === "static" ? v6Line(node.v6) : null;
+    const v6 = node.ipMode === "static" ? v6Line(node.v6, true) : null;
     if (v6) return v6;
     if (node.ipMode === "static") return { text: "IP 미설정", tone: "warn", mono: false };
     switch (node.dhcp.state) {

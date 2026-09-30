@@ -145,7 +145,8 @@ export function Ipv6L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
       return { ...x, l3: { ...cur, ipv6: { ...(cur.ipv6 ?? { enabled: false, interfaces: [], routes: [] }), ...patch } } };
     });
   const iface = (i: number) => v6.interfaces[i] ?? { ip: "", prefix: 64 };
-  const setIface = (i: number, patch: Partial<{ ip: string; prefix: number }>) => set({ interfaces: names.map((_, k) => (k === i ? { ...iface(k), ...patch } : iface(k))) });
+  const setIface = (i: number, patch: Partial<{ ip: string; prefix: number; ra: boolean }>) => set({ interfaces: names.map((_, k) => (k === i ? { ...iface(k), ...patch } : iface(k))) });
+  const anyRa = names.some((_, i) => iface(i).ra === true);
   const setRoutes = (routes: Ipv6L3Settings["routes"]) => set({ routes });
   const isNat = d.kind === "nat";
   return (
@@ -169,12 +170,25 @@ export function Ipv6L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
                   min={1}
                   max={128}
                   value={iface(i).prefix}
-                  onInput={(e) => { if (e.currentTarget.value === "") return; setIface(i, { prefix: Math.min(128, Math.max(1, Number(e.currentTarget.value) || 64)) }); }}
+                  onInput={(e) => { if (e.currentTarget.value === "") return; setIface(i, { prefix: Math.min(128, Math.max(1, Math.round(Number(e.currentTarget.value)) || 64)) }); }}
                 />
               </div>
+              <label class="toggle-row ra-row">
+                <span>
+                  RA 광고 <span class="muted">SLAAC</span>
+                </span>
+                <Toggle on={iface(i).ra === true} onToggle={() => setIface(i, { ra: !iface(i).ra })} />
+              </label>
             </Field>
           ))}
-          <p class="note">인터페이스 이름 옆의 fe80:: 는 MAC 에서 자동으로 만든 링크 로컬 주소입니다. 이 링크의 호스트는 기본 게이트웨이를 이 링크 로컬 주소나 위의 글로벌 주소로 둡니다.</p>
+          <p class="note">
+            인터페이스 이름 옆의 fe80:: 는 MAC 에서 자동으로 만든 링크 로컬 주소입니다. RA 광고를 켜면 그 링크의 자동(SLAAC) 호스트가 이 인터페이스의 프리픽스(/64 여야 함)로 주소를 만들고 이 링크 로컬 주소를 기본 게이트웨이로 씁니다. 수동 호스트는 게이트웨이를 이 링크 로컬이나 글로벌 주소로 둡니다.
+          </p>
+          {anyRa && (
+            <Field label="RA 의 DNS" hint="RDNSS" error={ip6Error(v6.raDns ?? "", false)}>
+              <input class="input mono" value={v6.raDns ?? ""} placeholder="비우면 알리지 않음" onInput={(e) => set({ raDns: e.currentTarget.value })} />
+            </Field>
+          )}
           <h3 class="sub">IPv6 스태틱 라우팅</h3>
           {v6.routes.length === 0 && <p class="note">연결된 프리픽스 밖으로 보낼 경로를 추가합니다. 디폴트 라우트는 목적지 :: / 0 입니다.</p>}
           {v6.routes.map((r, i) => (
@@ -182,7 +196,7 @@ export function Ipv6L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
               <span class="muted">목적지</span>
               <input class="input mono" value={r.dest} placeholder="2001:db8:3::" title="목적지 프리픽스" onInput={(e) => setRoutes(v6.routes.map((x, k) => (k === i ? { ...x, dest: e.currentTarget.value } : x)))} />
               <span class="mono">/</span>
-              <input class="input mono prefix-in" type="number" min={0} max={128} value={r.prefix} onInput={(e) => { if (e.currentTarget.value === "") return; setRoutes(v6.routes.map((x, k) => (k === i ? { ...x, prefix: Math.min(128, Math.max(0, Number(e.currentTarget.value) || 0)) } : x))); }} />
+              <input class="input mono prefix-in" type="number" min={0} max={128} value={r.prefix} onInput={(e) => { if (e.currentTarget.value === "") return; setRoutes(v6.routes.map((x, k) => (k === i ? { ...x, prefix: Math.min(128, Math.max(0, Math.round(Number(e.currentTarget.value)) || 0)) } : x))); }} />
               <span class="muted">넥스트 홉</span>
               <input class="input mono via" value={r.via} placeholder="연결된 프리픽스 안의 주소" title="넥스트 홉 주소 (연결된 프리픽스 안의 글로벌 주소)" onInput={(e) => setRoutes(v6.routes.map((x, k) => (k === i ? { ...x, via: e.currentTarget.value } : x)))} />
               <button class="icon-btn" title="경로 삭제" onClick={() => setRoutes(v6.routes.filter((_, k) => k !== i))}>

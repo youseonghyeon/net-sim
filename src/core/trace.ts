@@ -32,6 +32,14 @@ export type TraceKind =
   | "ndp.timeout"
   | "ndp.dad"
   | "ndp.dad.fail"
+  /** IPv6 라우터 찾기 (NDP RS/RA) 와 SLAAC */
+  | "ndp.rs.sent"
+  | "ndp.rs.received"
+  | "ndp.ra.sent"
+  | "ndp.ra.received"
+  | "slaac.addr"
+  | "slaac.router"
+  | "slaac.timeout"
   | "timer.stale"
   | "switch.learn"
   | "switch.flood"
@@ -211,6 +219,7 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "arp.timeout",
   "ndp.timeout",
   "ndp.dad.fail",
+  "slaac.timeout",
   "ip.conflict",
   "link.unconnected",
   "link.lost",

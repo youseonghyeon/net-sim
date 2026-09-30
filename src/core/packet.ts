@@ -139,12 +139,51 @@ export interface NeighborAdvertisement {
   tll?: Mac;
 }
 
-export type NdpMessage = NeighborSolicitation | NeighborAdvertisement;
+/** Router Solicitation (NDP, ICMPv6 타입 133): 호스트가 "라우터 있으면 RA 를 보내 주세요" 를 모든 라우터(ff02::2)에게 */
+export interface RouterSolicitation {
+  kind: "icmp6";
+  type: "rs";
+  sll?: Mac;
+}
+
+/** RA 의 프리픽스 정보 옵션 (옵션 3) */
+export interface RaPrefix {
+  prefix: Ip;
+  length: number;
+  /** L: 이 프리픽스는 링크 안 (직접 전달) */
+  onLink: boolean;
+  /** A: 이 프리픽스로 SLAAC 주소를 만들어도 된다 */
+  autonomous: boolean;
+  /** 유효 수명(초). 0 = 이 프리픽스를 거둔다 (주소를 지우라) */
+  valid: number;
+}
+
+/**
+ * Router Advertisement (NDP, ICMPv6 타입 134): 라우터가 "나는 이 링크의 라우터, 프리픽스는 이것" 을 알린다.
+ * 호스트는 프리픽스 + 자기 인터페이스 ID 로 주소를 만들고(SLAAC), 보낸 라우터의 링크 로컬 주소를 기본 게이트웨이로 쓴다
+ */
+export interface RouterAdvertisement {
+  kind: "icmp6";
+  type: "ra";
+  curHopLimit: number;
+  /** M: 주소는 DHCPv6 로 받아라 (여기서는 늘 0) */
+  managed: boolean;
+  /** O: 주소 말고 다른 정보(DNS 등)는 DHCPv6 로 (여기서는 늘 0 — DNS 는 RDNSS 옵션으로) */
+  other: boolean;
+  /** 라우터 수명(초). 0 = 나를 기본 게이트웨이로 쓰지 말라 */
+  routerLifetime: number;
+  prefixes: RaPrefix[];
+  /** RDNSS 옵션 (옵션 25, RFC 8106): DNS 서버 */
+  rdnss?: Ip[];
+  sll?: Mac;
+}
+
+export type NdpMessage = NeighborSolicitation | NeighborAdvertisement | RouterSolicitation | RouterAdvertisement;
 
 export type Icmpv6Packet = Icmpv6Echo | Icmpv6Error | NdpMessage;
 
 export function isNdp(p: Ipv6Payload): p is NdpMessage {
-  return p.kind === "icmp6" && (p.type === "ns" || p.type === "na");
+  return p.kind === "icmp6" && (p.type === "ns" || p.type === "na" || p.type === "rs" || p.type === "ra");
 }
 
 export function isIcmpv6Error(p: Ipv6Payload): p is Icmpv6Error {
@@ -190,6 +229,8 @@ export function icmpv6Label(p: Icmpv6Packet): string {
   if (p.type === "time-exceeded" || p.type === "unreachable") return icmpv6ErrorLabel(p);
   if (p.type === "ns") return "Neighbor Solicitation";
   if (p.type === "na") return "Neighbor Advertisement";
+  if (p.type === "rs") return "Router Solicitation";
+  if (p.type === "ra") return "Router Advertisement";
   return p.type === "echo-request" ? "Echo 요청" : "Echo 응답";
 }
 
@@ -564,6 +605,9 @@ function describeIpv6(p: Ipv6Packet): string {
   if (inner.kind === "icmp6") {
     if (inner.type === "ns") return p.src === "::" ? `NDP NS — DAD (${inner.target} 를 쓰는 장치가 있나?)` : `NDP NS (${inner.target} 의 MAC 은?)`;
     if (inner.type === "na") return `NDP NA (${inner.target} = ${inner.tll ?? "?"}${inner.router ? ", 라우터" : ""})`;
+    if (inner.type === "rs") return `NDP RS (라우터 있나요?)`;
+    if (inner.type === "ra")
+      return `NDP RA (${inner.routerLifetime === 0 ? "라우터 수명 0 — 거둠" : `프리픽스 ${inner.prefixes.filter((x) => x.valid > 0).map((x) => `${x.prefix}/${x.length}`).join(", ") || "없음"}`}${inner.rdnss?.length ? `, DNS ${inner.rdnss.join(", ")}` : ""})`;
     if (inner.type === "time-exceeded" || inner.type === "unreachable") return `ICMPv6 ${icmpv6ErrorLabel(inner)} (원래 ${describeOriginal(inner.original)})`;
     return inner.type === "echo-request" ? `ICMPv6 Echo 요청 seq=${inner.seq}` : `ICMPv6 Echo 응답 seq=${inner.seq}`;
   }
@@ -589,7 +633,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (p.kind === "bpdu") return "BPDU";
   if (p.kind === "ipv6") {
     const i6 = p.payload;
-    if (i6.kind === "icmp6") return i6.type === "ns" ? (p.src === "::" ? "DAD" : "NS") : i6.type === "na" ? "NA" : i6.type === "echo-request" ? "ping6 요청" : i6.type === "echo-reply" ? "ping6 응답" : i6.type === "time-exceeded" ? "Hop Limit 초과" : "도달 불가";
+    if (i6.kind === "icmp6") return i6.type === "ns" ? (p.src === "::" ? "DAD" : "NS") : i6.type === "na" ? "NA" : i6.type === "rs" ? "RS" : i6.type === "ra" ? "RA" : i6.type === "echo-request" ? "ping6 요청" : i6.type === "echo-reply" ? "ping6 응답" : i6.type === "time-exceeded" ? "Hop Limit 초과" : "도달 불가";
     if (i6.kind === "tcp") return i6.len > 0 ? `${i6.data ?? "DATA"} ${i6.len}B` : tcpFlags(i6);
     return i6.payload.kind === "dns" ? (i6.payload.op === "query" ? "DNS 질의" : "DNS 응답") : "UDP";
   }
@@ -614,7 +658,8 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.kind === "ipv6") {
     // NDP 는 ARP 와 같은 역할(이웃 주소 해석)이라 같은 색
     const i6 = p.payload;
-    if (i6.kind === "icmp6") return i6.type === "ns" || i6.type === "na" ? "arp" : "icmp";
+    // RS·RA 는 주소를 알려 주는 역할이라 DHCP 와 같은 색
+    if (i6.kind === "icmp6") return i6.type === "ns" || i6.type === "na" ? "arp" : i6.type === "rs" || i6.type === "ra" ? "dhcp" : "icmp";
     if (i6.kind === "tcp") return "tcp";
     return i6.payload.kind === "dns" ? "dns" : "dhcp";
   }
