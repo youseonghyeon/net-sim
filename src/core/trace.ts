@@ -21,6 +21,17 @@ export type TraceKind =
   | "ip.conflict"
   | "ip.conflict.clear"
   | "arp.timeout"
+  /** IPv6 NDP: ARP 요청·응답에 해당하는 NS·NA, 이웃 캐시, DAD (ICMPv6 위라 L3) */
+  | "ndp.ns.sent"
+  | "ndp.ns.received"
+  | "ndp.na.sent"
+  | "ndp.na.received"
+  | "ndp.cache.hit"
+  | "ndp.cache.miss"
+  | "ndp.cache.update"
+  | "ndp.timeout"
+  | "ndp.dad"
+  | "ndp.dad.fail"
   | "timer.stale"
   | "switch.learn"
   | "switch.flood"
@@ -198,6 +209,8 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "proxy.deny",
   "proxy.fail",
   "arp.timeout",
+  "ndp.timeout",
+  "ndp.dad.fail",
   "ip.conflict",
   "link.unconnected",
   "link.lost",

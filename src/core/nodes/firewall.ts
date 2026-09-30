@@ -1,7 +1,8 @@
 // 방화벽: 라우터/게이트웨이/NAT 박스를 "지나가는" 패킷을 규칙으로 거른다 (iptables 의 FORWARD 체인에 해당).
 // 규칙은 위에서부터 첫 일치가 이긴다. Stateful 검사를 켜면 안에서 시작한 통신의 응답은 규칙과 무관하게 통과한다.
 import { ipToInt, prefixToMask, type Ip } from "../addr";
-import { describeOriginal, hasPorts, icmpErrorLabel, isIcmpError, type Ipv4Packet } from "../packet";
+import { isIpv6, sameSubnet6 } from "../addr6";
+import { describeOriginal, hasPorts, icmpErrorLabel, icmpv6ErrorLabel, isIcmpErrorAny, type IpPacket } from "../packet";
 import type { NodeContext } from "./node";
 
 export type FwAction = "allow" | "deny";
@@ -36,10 +37,14 @@ export const DEFAULT_FIREWALL: FirewallConfig = { enabled: false, defaultPolicy:
 export const PROTO_LABEL: Record<FwProto, string> = { any: "모든 프로토콜", icmp: "ICMP(ping)", tcp: "TCP", udp: "UDP", esp: "ESP(IPsec)" };
 export const DIRECTION_LABEL: Record<FwDirection, string> = { in: "인바운드", out: "아웃바운드", any: "양방향" };
 
-/** "a.b.c.d" 또는 "a.b.c.d/n" 이 ip 를 포함하는지. 형식이 틀리면 false */
+/** "a.b.c.d" 또는 "a.b.c.d/n" (IPv6 는 "2001:db8::/32") 이 ip 를 포함하는지. 형식이 틀리거나 버전이 다르면 false */
 export function cidrContains(cidr: string, ip: Ip): boolean {
   const [base, prefixStr] = cidr.trim().split("/");
   if (!base || prefixStr === "") return false;
+  if (isIpv6(base)) {
+    const p6 = prefixStr === undefined ? 128 : Number(prefixStr);
+    return Number.isInteger(p6) && p6 >= 0 && p6 <= 128 && isIpv6(ip) && sameSubnet6(base, ip, p6);
+  }
   const prefix = prefixStr === undefined ? 32 : Number(prefixStr);
   if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
   try {
@@ -53,6 +58,10 @@ export function cidrContains(cidr: string, ip: Ip): boolean {
 export function validCidr(cidr: string): boolean {
   const [base, prefixStr] = cidr.trim().split("/");
   if (!base || prefixStr === "") return false;
+  if (isIpv6(base)) {
+    const p = prefixStr === undefined ? 128 : Number(prefixStr);
+    return Number.isInteger(p) && p >= 0 && p <= 128;
+  }
   if (prefixStr !== undefined) {
     const p = Number(prefixStr);
     if (!Number.isInteger(p) || p < 0 || p > 32) return false;
@@ -74,16 +83,16 @@ export function describeRule(r: FirewallRule): string {
 }
 
 /** 새 통신을 여는 패킷인가 (conntrack 의 NEW). 응답 패킷은 흐름을 만들지 않는다 */
-function isInitiator(pkt: Ipv4Packet): boolean {
+function isInitiator(pkt: IpPacket): boolean {
   const p = pkt.payload;
-  if (p.kind === "icmp") return p.type === "echo-request";
+  if (p.kind === "icmp" || p.kind === "icmp6") return p.type === "echo-request";
   if (p.kind === "tcp") return !!p.syn && !p.ackFlag;
   return true;
 }
 
-function flowKey(pkt: Ipv4Packet, reverse: boolean): string {
+function flowKey(pkt: IpPacket, reverse: boolean): string {
   const p = pkt.payload;
-  if (isIcmpError(p)) {
+  if (isIcmpErrorAny(p)) {
     // ICMP 오류는 내장된 원래 패킷에 대한 응답이다: 역방향 키 = 원래 흐름의 정방향 키. 스스로 흐름을 만들지는 않는다
     if (!reverse) return `icmp-error:${pkt.src}:${pkt.dst}`;
     const o = p.original;
@@ -91,7 +100,7 @@ function flowKey(pkt: Ipv4Packet, reverse: boolean): string {
   }
   const a = reverse ? pkt.dst : pkt.src;
   const b = reverse ? pkt.src : pkt.dst;
-  if (p.kind === "icmp") return `icmp:${a}:${b}:${p.id}`;
+  if (p.kind === "icmp" || p.kind === "icmp6") return `icmp:${a}:${b}:${"id" in p ? p.id : 0}`;
   if (!hasPorts(p)) return `${p.kind}:${a}:${b}`; // ESP·제어 멀티캐스트는 포트가 없어 주소 쌍으로 본다
   const ap = reverse ? p.dstPort : p.srcPort;
   const bp = reverse ? p.srcPort : p.dstPort;
@@ -135,10 +144,12 @@ export class Firewall {
     );
   }
 
-  private matches(r: FirewallRule, pkt: Ipv4Packet, dir: FlowDirection): boolean {
+  private matches(r: FirewallRule, pkt: IpPacket, dir: FlowDirection): boolean {
     if (r.direction !== "any" && r.direction !== dir) return false;
     const p = pkt.payload;
-    if (r.proto !== "any" && r.proto !== p.kind) return false;
+    // "ICMP" 규칙은 ICMPv6 에도 걸린다 (ping 을 막거나 여는 규칙이 두 버전에 같이)
+    const kind = p.kind === "icmp6" ? "icmp" : p.kind;
+    if (r.proto !== "any" && r.proto !== kind) return false;
     if (r.src && !cidrContains(r.src, pkt.src)) return false;
     if (r.dst && !cidrContains(r.dst, pkt.dst)) return false;
     if (r.dstPort) {
@@ -149,7 +160,7 @@ export class Firewall {
   }
 
   /** 지나가는 패킷 검사. true 면 통과. 차단이면 이유를 트레이스로 남긴다 */
-  check(pkt: Ipv4Packet, dir: FlowDirection, ctx: NodeContext, frameId?: number): boolean {
+  check(pkt: IpPacket, dir: FlowDirection, ctx: NodeContext, frameId?: number): boolean {
     if (!this.config.enabled) return true;
     const what = describePacket(pkt);
     const dirLabel = dir === "in" ? "인바운드" : dir === "out" ? "아웃바운드" : "서브넷 간";
@@ -162,7 +173,7 @@ export class Firewall {
       ctx.trace(
         "fw.established",
         "L3",
-        `방화벽: ${dirLabel} ${what} 은(는) ${rule ? `규칙 ${idx + 1}(${describeRule(rule)})` : "기본 정책"} 상 차단이지만, 안에서 시작한 통신의 ${isIcmpError(pkt.payload) ? "오류 통지라" : "응답이라"} Stateful 검사로 허용`,
+        `방화벽: ${dirLabel} ${what} 은(는) ${rule ? `규칙 ${idx + 1}(${describeRule(rule)})` : "기본 정책"} 상 차단이지만, 안에서 시작한 통신의 ${isIcmpErrorAny(pkt.payload) ? "오류 통지라" : "응답이라"} Stateful 검사로 허용`,
         { rule: idx, dir },
         frameId,
       );
@@ -195,10 +206,14 @@ export class Firewall {
   }
 }
 
-function describePacket(pkt: Ipv4Packet): string {
+function describePacket(pkt: IpPacket): string {
   const p = pkt.payload;
-  if (isIcmpError(p)) return `ICMP ${icmpErrorLabel(p)} ${pkt.src} → ${pkt.dst} (원래 ${describeOriginal(p.original)})`;
+  if (p.kind === "icmp6") {
+    if (p.type === "time-exceeded" || p.type === "unreachable") return `ICMPv6 ${icmpv6ErrorLabel(p)} ${pkt.src} → ${pkt.dst} (원래 ${describeOriginal(p.original)})`;
+    return `ICMPv6 ${p.type === "echo-request" ? "ping 요청" : p.type === "echo-reply" ? "ping 응답" : p.type.toUpperCase()} ${pkt.src} → ${pkt.dst}`;
+  }
+  if (p.kind === "icmp" && (p.type === "time-exceeded" || p.type === "unreachable")) return `ICMP ${icmpErrorLabel(p)} ${pkt.src} → ${pkt.dst} (원래 ${describeOriginal(p.original)})`;
   if (p.kind === "icmp") return `ICMP ${p.type === "echo-request" ? "ping 요청" : "ping 응답"} ${pkt.src} → ${pkt.dst}`;
   if (!hasPorts(p)) return `${p.kind.toUpperCase()} ${pkt.src} → ${pkt.dst}${p.kind === "esp" ? " (IPsec)" : ""}`;
-  return `${p.kind.toUpperCase()} ${pkt.src}:${p.srcPort} → ${pkt.dst}:${p.dstPort}`;
+  return pkt.kind === "ipv6" ? `${p.kind.toUpperCase()} [${pkt.src}]:${p.srcPort} → [${pkt.dst}]:${p.dstPort}` : `${p.kind.toUpperCase()} ${pkt.src}:${p.srcPort} → ${pkt.dst}:${p.dstPort}`;
 }

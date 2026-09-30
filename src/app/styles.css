@@ -1033,6 +1033,12 @@ select.btn.example {
   width: 56px;
   flex-shrink: 0;
 }
+/* IPv6 주소 칸: 주소는 남은 폭을 다 쓰고 프리픽스 길이만 좁게 */
+.prefix.addr6 input:first-child {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 /* 마스크 글자(255.255.255.0)는 좁은 패널에서 잘리게 */
 .prefix .muted {
   min-width: 0;

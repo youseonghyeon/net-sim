@@ -1,7 +1,8 @@
 // 진단(ping·traceroute·TCP 연결·DHCP 임대 갱신, 인터넷의 외부 접속)과 표 탭(현재 상태·라이브 테이블).
 import { useState } from "preact/hooks";
 import { Host } from "../../core/nodes/host";
-import { TCP_STATE_LABEL } from "../../core/nodes/tcp";
+import { endpoint, TCP_STATE_LABEL } from "../../core/nodes/tcp";
+import { isIpv6 } from "../../core/addr6";
 import { Internet } from "../../core/nodes/internet";
 import { L3Node } from "../../core/nodes/l3";
 import type { SnapshotTable as SnapshotTableData } from "../../core/nodes/node";
@@ -174,7 +175,7 @@ export function DiagSection({ d }: { d: Device }) {
   const [tcpPort, setTcpPort] = useDiagField(d.id, "port", "80");
   if (!(node instanceof Host)) return null;
 
-  const okTarget = (v: string) => validIp(v) || (looksLikeName(v) && /^[a-z0-9.-]+$/i.test(v));
+  const okTarget = (v: string) => validIp(v) || isIpv6(v) || (looksLikeName(v) && /^[a-z0-9.-]+$/i.test(v));
   const send = () => {
     const dst = pingDst.trim();
     if (!dst || !okTarget(dst)) return;
@@ -224,9 +225,9 @@ export function DiagSection({ d }: { d: Device }) {
             {tr.hops.map((h) => {
               const who = h.ip ? topology.value.devices.find((x) => {
                 const n = sim.node(x.id);
-                if (n instanceof Host) return n.ip === h.ip;
+                if (n instanceof Host) return n.ip === h.ip || n.v6.owns(h.ip!);
                 if (n instanceof Router) return n.lan.ip === h.ip || n.wan.ip === h.ip;
-                if (n instanceof L3Node) return n.ifaces.some((f) => f.ip === h.ip);
+                if (n instanceof L3Node) return n.ifaces.some((f) => f.ip === h.ip) || n.v6.some((v) => v.owns(h.ip!));
                 if (n instanceof Internet) return n.iface.ip === h.ip;
                 return false;
               })?.name : undefined;
@@ -268,7 +269,7 @@ export function DiagSection({ d }: { d: Device }) {
               return (
                 <li key={c.id} class={c.state === "FAILED" || httpErr ? "failed" : (c.state === "CLOSED" && c.bytesReceived > 0) || (c.ssh?.open && c.state === "ESTABLISHED") ? "ok" : ""} title={c.setCookie ? `Set-Cookie: ${c.setCookie}` : c.cookie ? `Cookie: ${c.cookie}` : undefined}>
                   <span class="mono" title={c.target ? `프록시 ${c.remoteIp}:${c.remotePort} 경유` : undefined}>
-                    {c.target ?? `${c.remoteIp}:${c.remotePort}`}
+                    {c.target ?? endpoint(c.remoteIp, c.remotePort)}
                     {c.target && <small class="via">프록시 경유</small>}
                   </span>
                   <span>

@@ -1,7 +1,7 @@
 // 투명(브리지) 방화벽 장비: IP 없이 케이블 사이에 끼어 지나가는 패킷만 검사한다 ("bump in the wire").
 // 학습 포인트: 방화벽은 라우터가 아니어도 된다. 주소가 없으니 ping 대상도 아니고 traceroute 홉에도 안 보이며,
 // 주소·경로·서브넷을 하나도 안 바꾸고 "어디에 꽂느냐" 만으로 무엇을 보호할지 정한다.
-import { describeFrame, type EthernetFrame } from "../packet";
+import { describeFrame, isNdp, type EthernetFrame } from "../packet";
 import { Firewall, type FirewallConfig } from "./firewall";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 
@@ -42,10 +42,12 @@ export class FirewallBridge implements SimNode {
       ctx.trace("link.unconnected", "L1", `${this.portName(out)} 에 케이블이 없음 → 드롭`, { port: out }, frame.id);
       return;
     }
-    // IP 패킷만 규칙에 걸린다. ARP 는 L2 라 그대로 통과 (실제 투명 방화벽도 ARP 는 통과시킨다). DHCP·DNS 는 IP 라 규칙 대상
-    if (frame.payload.kind === "ipv4") {
+    // IP 패킷만 규칙에 걸린다. ARP 는 L2 라 그대로 통과 (실제 투명 방화벽도 ARP 는 통과시킨다). DHCP·DNS 는 IP 라 규칙 대상.
+    // IPv6 의 NDP(NS/NA)는 ARP 와 같은 역할이라 통과 — 막으면 양쪽이 서로의 MAC 을 몰라 IPv6 가 아예 안 된다
+    const pl = frame.payload;
+    if (pl.kind === "ipv4" || (pl.kind === "ipv6" && !isNdp(pl.payload))) {
       const dir = port === FirewallBridge.OUTSIDE ? "in" : "out";
-      if (!this.firewall.check(frame.payload, dir, ctx, frame.id)) return;
+      if (!this.firewall.check(pl, dir, ctx, frame.id)) return;
     }
     ctx.send(out, { ...frame, hops: (frame.hops ?? 0) + 1 });
   }

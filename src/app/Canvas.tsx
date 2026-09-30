@@ -504,7 +504,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
       <div class="legend">
         <span>
           <i class="arp" />
-          ARP
+          {t.devices.some((d) => d.host?.ipv6?.enabled || d.l3?.ipv6?.enabled) ? "ARP·NDP" : "ARP"}
         </span>
         <span>
           <i class="dhcp" />

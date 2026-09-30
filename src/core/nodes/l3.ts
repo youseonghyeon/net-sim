@@ -1,5 +1,6 @@
 // 순수 L3 장치: 인터페이스 N개 사이를 라우팅한다. 게이트웨이(NAT 없음)와 NAT 박스(outside 인터페이스에서 변환)가 이 클래스다.
 import { isMulticastMac, networkOf, sameSubnet, type Ip, type Mac } from "../addr";
+import { ALL_NODES, ALL_ROUTERS, isLinkLocal6, isMulticast6, network6, sameSubnet6, UNSPECIFIED6 } from "../addr6";
 import {
   DHCP_CLIENT_PORT,
   DHCP_SERVER_PORT,
@@ -14,6 +15,9 @@ import {
   type EthernetFrame,
   type IcmpPacket,
   type Ipv4Packet,
+  type Ipv6Packet,
+  icmpv6Label,
+  isNdp,
 } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient } from "./dhcp";
 import { hashCode } from "./host";
@@ -27,6 +31,7 @@ import { IKE_TIMER_TAG, VPN_MODE_LABEL, Vpn, type VpnConfig } from "./vpn";
 import { RaServer, type RaServerConfig } from "./ravpn";
 import { TunnelEnds } from "./l3tunnel";
 import { HA_SYNC_TAG, SessionSync } from "./hasync";
+import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG } from "./ipv6";
 
 
 export interface L3IfaceConfig {
@@ -70,6 +75,23 @@ export interface L3Config {
   rip?: RipConfig;
   /** 사이트 간 VPN (WireGuard 식) */
   vpn?: VpnConfig;
+  /** IPv6 라우팅 (없으면 꺼짐) */
+  ipv6?: L3Ipv6Config;
+}
+
+/** 게이트웨이·NAT 박스의 IPv6: 켜면 물리 인터페이스마다 링크 로컬이 생기고, 인터페이스별 수동 주소와 IPv6 스태틱 라우팅(::/0 = 디폴트 라우트)으로 전달한다 */
+export interface L3Ipv6Config {
+  enabled: boolean;
+  /** 물리 인터페이스별 주소 (인덱스 = 인터페이스). ip 가 없으면 링크 로컬만 */
+  interfaces: { ip?: Ip; prefix?: number }[];
+  routes: StaticRoute[];
+}
+
+interface Route6 {
+  out: number;
+  nextHop: Ip;
+  kind: "connected" | "static" | "default";
+  prefix: number;
 }
 
 interface Route {
@@ -168,6 +190,11 @@ export class L3Node implements SimNode {
   /** 인터페이스 i 가 붙은 물리 포트와 VLAN 태그. 물리 인터페이스는 i === port, 서브 인터페이스는 그 뒤에 붙는다 */
   meta: { port: number; vlan?: number }[];
   private readonly macBase: Mac;
+  /** 물리 인터페이스별 IPv6 (서브 인터페이스에는 없다) */
+  readonly v6: Ipv6Interface[];
+  ipv6Enabled = false;
+  /** IPv6 스태틱 라우팅 (prefix 0 = 디폴트 라우트 ::/0) */
+  routes6: StaticRoute[] = [];
 
   constructor(cfg: L3Config) {
     this.id = cfg.id;
@@ -184,6 +211,15 @@ export class L3Node implements SimNode {
     this.relays = cfg.interfaces.map((i) => i.relay);
     this.meta = cfg.interfaces.map((_, i) => ({ port: i }));
     this.macBase = cfg.interfaces[0]?.mac ?? "02:00:00:10:00:00";
+    this.v6 = cfg.interfaces.map((c) => new Ipv6Interface(c.mac, true, c.name));
+    if (cfg.ipv6?.enabled) {
+      this.ipv6Enabled = true;
+      this.v6.forEach((v, i) => {
+        const c = cfg.ipv6!.interfaces[i];
+        v.init({ enabled: true, addrs: c?.ip ? [{ ip: c.ip, prefix: c.prefix ?? 64 }] : [] });
+      });
+      this.routes6 = [...cfg.ipv6.routes];
+    }
     if (this.nat && cfg.forwards) this.nat.setForwards(cfg.forwards);
     this.firewall = new Firewall(cfg.firewall);
     // 이중화 세션 동기화: master 가 새로 만든 매핑·흐름을 backup 에 복사한다
@@ -212,6 +248,22 @@ export class L3Node implements SimNode {
 
   setVpn(cfg: VpnConfig, ctx: NodeContext): void {
     this.vpn.setConfig(cfg, ctx);
+  }
+
+  /** IPv6 설정 교체: 인터페이스 주소는 바뀐 것만, 스태틱 라우팅은 추가·삭제를 기록 */
+  setIpv6(cfg: L3Ipv6Config, ctx: NodeContext): void {
+    this.ipv6Enabled = cfg.enabled;
+    this.v6.forEach((v, i) => {
+      const c = cfg.interfaces[i];
+      v.configure({ enabled: cfg.enabled, addrs: c?.ip ? [{ ip: c.ip, prefix: c.prefix ?? 64 }] : [] }, this.linkUp[i] === true, ctx, this.emit(i, ctx));
+    });
+    const routes = cfg.enabled ? cfg.routes : [];
+    const key = (r: StaticRoute) => `${r.dest}/${r.prefix} via ${r.via}`;
+    const before = new Set(this.routes6.map(key));
+    const after = new Set(routes.map(key));
+    for (const r of routes) if (!before.has(key(r))) ctx.trace("ip.config", "sys", `IPv6 스태틱 라우팅 추가: ${key(r)}${r.prefix === 0 ? " (디폴트 라우트)" : ""}`, { ...r });
+    for (const r of this.routes6) if (!after.has(key(r))) ctx.trace("ip.config", "sys", `IPv6 스태틱 라우팅 삭제: ${key(r)}`, { ...r });
+    this.routes6 = [...routes];
   }
 
   /** 터널의 바깥(인터넷 쪽) 경로: VPN 경로를 빼고 찾는다 (상대 공인 주소가 터널 대역에 걸려 되돌아가지 않게) */
@@ -393,6 +445,8 @@ export class L3Node implements SimNode {
     const name = this.names[port]!;
     if (up) ctx.trace("link.up", "L1", `${name} 링크 연결됨`, { port });
     else ctx.trace("link.down", "L1", `${name} 링크 다운`, { port });
+    if (up) this.v6[port]?.linkUp(ctx, this.emit(port, ctx));
+    else this.v6[port]?.linkDown();
     this.meta.forEach((m, i) => {
       if (m.port !== port) return;
       this.linkUp[i] = up;
@@ -454,8 +508,11 @@ export class L3Node implements SimNode {
     // 멀티캐스트: RIP 를 켰으면 RIP 그룹(224.0.0.9)만 받고, 나머지는 NIC 가 조용히 거른다
     const ripFrame = frame.dst === RIP_MULTICAST_MAC && this.rip.config.enabled;
     const vrrpFrame = (frame.dst === VRRP_MULTICAST_MAC && this.ha.config.enabled) || (frame.dst === PFSYNC_MULTICAST_MAC && this.ha.config.enabled && this.ha.config.sync === true);
-    if (isMulticastMac(frame.dst) && !ripFrame && !vrrpFrame) return;
-    if (!ripFrame && !vrrpFrame && !iface.accepts(frame)) {
+    // IPv6 는 물리 인터페이스만 (서브 인터페이스는 IPv4 전용)
+    const v6 = i < this.portCount ? this.v6[i] : undefined;
+    const v6Group = v6?.accepts(frame.dst) === true;
+    if (isMulticastMac(frame.dst) && !ripFrame && !vrrpFrame && !v6Group) return;
+    if (!ripFrame && !vrrpFrame && !v6Group && !iface.accepts(frame)) {
       ctx.trace("frame.drop", "L2", `${name} 수신: 목적지 MAC ${frame.dst} 가 내 MAC 아님 → 드롭`, { dst: frame.dst }, frame.id);
       return;
     }
@@ -465,6 +522,136 @@ export class L3Node implements SimNode {
       return;
     }
     if (frame.payload.kind === "ipv4") this.handleIp(i, frame.payload, frame.id, ctx);
+    else if (frame.payload.kind === "ipv6") {
+      if (!v6?.enabled) ctx.trace("frame.drop", "L3", `${name} 에 IPv6 패킷 → ${v6 ? "이 장치는 IPv6 가 꺼져 있어" : "VLAN 서브 인터페이스는 IPv6 를 다루지 않아"} 드롭`, {}, frame.id);
+      else if (isNdp(frame.payload.payload)) v6.handleNdp(frame.payload, frame.payload.payload, frame, ctx, this.emit(i, ctx));
+      else this.handleIp6(i, frame.payload, frame.id, ctx);
+    }
+  }
+
+  // ---------- IPv6 ----------
+
+  /** 이 IPv6 주소를 가진 인터페이스. 링크 로컬은 받은 인터페이스 것만 (링크마다 따로라서). 없으면 -1 */
+  private own6(ip: Ip, inIdx: number): number {
+    if (isLinkLocal6(ip)) return this.v6[inIdx]?.owns(ip) ? inIdx : -1;
+    return this.v6.findIndex((v) => v.owns(ip));
+  }
+
+  private handleIp6(i: number, pkt: Ipv6Packet, frameId: number, ctx: NodeContext): void {
+    const name = this.names[i]!;
+    const mine = this.own6(pkt.dst, i);
+    const p = pkt.payload;
+    if (mine >= 0 || pkt.dst === ALL_NODES || pkt.dst === ALL_ROUTERS) {
+      if (p.kind === "icmp6" && p.type === "echo-request") {
+        ctx.trace("icmp.echo.received", "app", `ICMPv6 Echo 요청 수신 (from ${pkt.src}, seq=${p.seq})`, { from: pkt.src, seq: p.seq }, frameId);
+        const src = mine >= 0 ? pkt.dst : this.v6[i]!.sourceFor(pkt.src);
+        if (!src) return;
+        const reply: Ipv6Packet = { kind: "ipv6", src, dst: pkt.src, hopLimit: Ipv6Interface.HOP_LIMIT, payload: { kind: "icmp6", type: "echo-reply", id: p.id, seq: p.seq } };
+        ctx.trace("icmp.reply.sent", "app", `ICMPv6 Echo 응답 생성 → ${pkt.src} (seq=${p.seq})`, { to: pkt.src, seq: p.seq });
+        this.sendVia6(reply, ctx, frameId, i);
+        return;
+      }
+      if (p.kind === "icmp6") ctx.trace("ip.drop", "L3", `요청한 적 없는 ICMPv6 ${icmpv6Label(p)} → 무시`, {}, frameId);
+      else if (p.kind === "tcp") ctx.trace("ip.drop", "L4", `이 장치는 TCP 서비스를 열지 않음 → 드롭`, {}, frameId);
+      else ctx.trace("ip.drop", "L4", `[${name}] UDP 포트 ${p.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: p.dstPort }, frameId);
+      return;
+    }
+    if (this.v6.some((v) => v.addrs.some((a) => a.ip === pkt.dst && a.state !== "preferred"))) {
+      ctx.trace("ip.drop", "L3", `[${name}] ${pkt.dst} 는 내 주소지만 아직 쓰지 못함 (DAD 중이거나 중복) → 드롭`, { dst: pkt.dst }, frameId);
+      return;
+    }
+    this.forward6(pkt, i, frameId, ctx);
+  }
+
+  /** IPv6 라우팅 테이블 조회: 연결된 프리픽스 → IPv6 스태틱 라우팅 중 긴 마스크 (::/0 이 디폴트 라우트) */
+  route6(dst: Ip): Route6 | undefined {
+    for (let i = 0; i < this.v6.length; i++) {
+      const v = this.v6[i]!;
+      if (!v.enabled) continue;
+      const a = v.addrs.find((x) => x.origin !== "link-local" && x.state !== "duplicate" && sameSubnet6(dst, x.ip, x.prefix));
+      if (a) return { out: i, nextHop: dst, kind: "connected", prefix: a.prefix };
+    }
+    let best: Route6 | undefined;
+    for (const r of this.routes6) {
+      if (!sameSubnet6(dst, r.dest, r.prefix) || (best && best.prefix >= r.prefix)) continue;
+      const out = this.ifaceFor6(r.via);
+      if (out >= 0) best = { out, nextHop: r.via, kind: r.prefix === 0 ? "default" : "static", prefix: r.prefix };
+    }
+    return best;
+  }
+
+  /** IPv6 넥스트 홉이 속한(직접 연결된) 인터페이스 */
+  private ifaceFor6(nextHop: Ip): number {
+    return this.v6.findIndex((v) => v.enabled && v.addrs.some((a) => a.origin !== "link-local" && a.state !== "duplicate" && sameSubnet6(nextHop, a.ip, a.prefix)));
+  }
+
+  /** 내가 만든 IPv6 패킷을 내보낸다. 링크 로컬·멀티캐스트 목적지는 경로가 아니라 그 인터페이스(via)로 */
+  private sendVia6(pkt: Ipv6Packet, ctx: NodeContext, frameId?: number, via?: number): void {
+    if ((isLinkLocal6(pkt.dst) || isMulticast6(pkt.dst)) && via !== undefined) {
+      this.v6[via]!.send(pkt, ctx, this.emit(via, ctx));
+      return;
+    }
+    const r = this.route6(pkt.dst);
+    if (!r) {
+      ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 로 가는 IPv6 경로가 없음 → 드롭`, { dst: pkt.dst }, frameId);
+      return;
+    }
+    this.v6[r.out]!.send(pkt, ctx, this.emit(r.out, ctx), r.nextHop);
+  }
+
+  /** IPv6 전달: NAT 없이 주소 그대로, Hop Limit 만 줄인다. 링크 로컬은 넘기지 않는다 */
+  private forward6(pkt: Ipv6Packet, inPort: number, frameId: number, ctx: NodeContext): void {
+    const name = this.names[inPort]!;
+    if (isMulticast6(pkt.dst)) {
+      ctx.trace("ip.drop", "L3", `[${name}] 멀티캐스트 ${pkt.dst} 는 라우터가 다른 링크로 넘기지 않음 → 드롭`, { dst: pkt.dst }, frameId);
+      return;
+    }
+    if (pkt.src === UNSPECIFIED6) {
+      ctx.trace("ip.drop", "L3", `[${name}] 출발지가 :: 인 패킷은 넘기지 않음 → 드롭`, {}, frameId);
+      return;
+    }
+    if (isLinkLocal6(pkt.src) || isLinkLocal6(pkt.dst)) {
+      const which = isLinkLocal6(pkt.dst) ? `목적지 ${pkt.dst}` : `출발지 ${pkt.src}`;
+      ctx.trace("ip.drop", "L3", `[${name}] ${which} 는 링크 로컬 주소(fe80::/10) — 그 링크 안에서만 쓰는 주소라 라우터가 다른 링크로 넘기지 않음 → 드롭. 다른 네트워크와는 글로벌 주소로 통신하세요`, { src: pkt.src, dst: pkt.dst }, frameId);
+      return;
+    }
+    if (pkt.hopLimit <= 1) {
+      const notice = this.v6[inPort]!.timeExceeded(pkt, ctx, frameId);
+      if (notice) this.sendVia6(notice, ctx, frameId, inPort);
+      return;
+    }
+    const r = this.route6(pkt.dst);
+    if (!r) {
+      ctx.trace(
+        "ip.no-route",
+        "L3",
+        `No route: ${pkt.dst} 로 가는 IPv6 경로가 없음 (연결된 프리픽스·IPv6 스태틱 라우팅·디폴트 라우트 ::/0 모두 해당 없음) → 드롭. IPv6 스태틱 라우팅에 경로나 ::/0 을 추가하세요`,
+        { dst: pkt.dst },
+        frameId,
+      );
+      const notice = this.v6[inPort]!.unreachable(pkt, "net", ctx, frameId);
+      if (notice) this.sendVia6(notice, ctx, frameId, inPort);
+      return;
+    }
+    if (!this.firewall.check(pkt, this.flowDirection(inPort, r.out), ctx, frameId)) return;
+    const out: Ipv6Packet = { ...pkt, hopLimit: pkt.hopLimit - 1 };
+    const outIface = this.v6[r.out]!;
+    const conn = outIface.addrs.find((a) => a.origin !== "link-local" && sameSubnet6(pkt.dst, a.ip, a.prefix));
+    const via =
+      r.kind === "connected" && conn
+        ? `${network6(conn.ip, conn.prefix)}/${conn.prefix} 에 직접 연결`
+        : r.kind === "default"
+          ? `디폴트 라우트 ::/0, 넥스트 홉 ${r.nextHop}`
+          : `IPv6 스태틱 라우팅, 넥스트 홉 ${r.nextHop}`;
+    // NAT 박스라도 IPv6 는 변환하지 않는다: 바깥에서 안쪽 주소로 바로 들어올 수 있어 막는 것은 방화벽 몫
+    const natNote =
+      this.nat && r.out === this.outside
+        ? " — IPv6 는 NAT 하지 않고 주소 그대로 (글로벌 주소라 바꿀 필요가 없다)"
+        : this.nat && inPort === this.outside
+          ? " — IPv6 는 NAT 가 없어 바깥에서 안쪽 주소로 바로 들어온다 (막으려면 방화벽 인바운드 규칙)"
+          : "";
+    ctx.trace("ip.forward", "L3", `라우팅(IPv6): ${pkt.dst} → ${this.names[r.out]} (${via}), Hop Limit ${pkt.hopLimit} → ${out.hopLimit}${natNote}`, { dst: pkt.dst, out: this.names[r.out], kind: r.kind }, frameId);
+    outIface.send(out, ctx, this.emit(r.out, ctx), r.nextHop);
   }
 
   private handleIp(port: number, pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
@@ -779,6 +966,22 @@ export class L3Node implements SimNode {
   // ---------- 타이머 ----------
 
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
+    if (tag === DAD_TIMER_TAG) {
+      for (const v of this.v6) if (v.finishDad(data, ctx)) break;
+      return;
+    }
+    if (tag === NDP_TIMEOUT_TAG) {
+      for (const v of this.v6) {
+        // 넘기려던 패킷의 목적지(또는 넥스트 홉)가 NS 에 응답하지 않음 → 보낸 이에게 Address Unreachable
+        for (const pkt of v.onNsTimeout(data, ctx)) {
+          if (this.v6.some((x) => x.owns(pkt.src)) || isLinkLocal6(pkt.src)) continue;
+          const back = this.route6(pkt.src);
+          const notice = (back ? this.v6[back.out]! : v).unreachable(pkt, "host", ctx);
+          if (notice) this.sendVia6(notice, ctx);
+        }
+      }
+      return;
+    }
     if (tag === "arp-timeout") {
       for (const iface of this.ifaces) {
         // 넘기려던 패킷의 목적지(또는 넥스트 홉)가 ARP 에 응답하지 않음 → 보낸 이에게 Host Unreachable
@@ -840,6 +1043,18 @@ export class L3Node implements SimNode {
     const def = this.staticDefault();
     if (def) routes.push(["0.0.0.0/0", this.names[def.out]!, def.nextHop, "디폴트 라우트"]);
     const tables: NodeSnapshot["tables"] = [{ title: "라우팅 테이블", columns: ["목적지", "인터페이스", "넥스트 홉", "출처"], rows: routes }];
+    if (this.ipv6Enabled) {
+      const r6: string[][] = [];
+      this.v6.forEach((v, i) => {
+        for (const a of v.addrs) if (a.origin !== "link-local" && a.state !== "duplicate") r6.push([`${network6(a.ip, a.prefix)}/${a.prefix}`, this.names[i]!, "-", "직접 연결"]);
+      });
+      for (const r of this.routes6) {
+        const out = this.ifaceFor6(r.via);
+        r6.push([`${r.dest}/${r.prefix}`, out >= 0 ? this.names[out]! : "(넥스트 홉에 닿는 인터페이스 없음)", r.via, r.prefix === 0 ? "디폴트 라우트" : "스태틱"]);
+      }
+      tables.push({ title: "IPv6 라우팅 테이블", columns: ["목적지", "인터페이스", "넥스트 홉", "출처"], rows: r6 });
+      tables.push({ title: "IPv6 주소", columns: ["인터페이스", "주소", "상태"], rows: this.v6.flatMap((v, i) => v.addrRows().map((row) => [this.names[i]!, row[0]!, `${row[1]} · ${row[2]}`])) });
+    }
     if (this.firewall.config.enabled) tables.push({ title: "방화벽 규칙", columns: ["#", "규칙"], rows: this.firewall.rows() });
     if (this.ra.config.enabled) tables.push({ title: "원격 접속 클라이언트", columns: ["사용자", "가상 주소", "바깥 주소", "방식"], rows: this.ra.rows() });
     if (this.nat) {
@@ -848,12 +1063,14 @@ export class L3Node implements SimNode {
       tables.push({ title: "포트 포워딩", columns: ["공인 포트", "내부"], rows: this.nat.forwardRows(publicIp) });
     }
     this.ifaces.forEach((iface, i) => tables.push({ title: `ARP 캐시 (${this.names[i]})`, columns: ["IP", "MAC", "학습 시각"], rows: iface.arpRows() }));
+    if (this.ipv6Enabled) this.v6.forEach((v, i) => tables.push({ title: `이웃 캐시 (${this.names[i]})`, columns: ["IPv6", "MAC", "학습 시각"], rows: v.neighborRows() }));
     return {
       id: this.id,
       type: this.type,
       label: this.id,
       info: [
         ...this.ifaces.map((_, i) => [this.names[i]!, this.ifaceStatus(i) + (this.relays[i] ? ` · DHCP 릴레이 → ${this.relays[i]}` : "")] as [string, string]),
+        ...(this.ipv6Enabled ? this.v6.map((v, i) => [`${this.names[i]} IPv6`, v.summary() || "링크 로컬만"] as [string, string]) : []),
         ...(this.vpn.config.enabled
           ? [
               [

@@ -4,6 +4,8 @@ import { topology, updateDevice } from "../../model/store";
 import {
   DEFAULT_DHCP_SERVER,
   DEFAULT_DNS_SERVER,
+  DEFAULT_IPV6_HOST,
+  type Ipv6HostSettings,
   DEFAULT_LB_SETTINGS,
   DEFAULT_PROXY_SETTINGS,
   DEFAULT_ROUTER_WIFI,
@@ -15,7 +17,8 @@ import {
   wirelessStatus,
 } from "../../model/topology";
 import { Icon } from "../Icons";
-import { Field, Section, Toggle, ipError, validIp } from "./ui";
+import { Field, Section, Toggle, ip6Error, ipError, validIp } from "./ui";
+import { linkLocalOf } from "../../core/addr6";
 import { sim, simVersion } from "../../model/sim";
 import { Host } from "../../core/nodes/host";
 
@@ -34,8 +37,8 @@ export function HostSection({ d, h }: { d: Device; h: HostSettings }) {
       </div>
       {isStatic ? (
         <>
-          <Field label="IP 주소" error={ipError(h.ip, true)}>
-            <input class="input mono" value={h.ip} placeholder="192.168.0.10" onInput={(e) => set({ ip: e.currentTarget.value })} />
+          <Field label="IP 주소" error={ipError(h.ip, !h.ipv6?.enabled)}>
+            <input class="input mono" value={h.ip} placeholder={h.ipv6?.enabled ? "비우면 IPv6 만" : "192.168.0.10"} onInput={(e) => set({ ip: e.currentTarget.value })} />
           </Field>
           <Field label="서브넷">
             <div class="prefix">
@@ -60,6 +63,57 @@ export function HostSection({ d, h }: { d: Device; h: HostSettings }) {
         </>
       ) : (
         <p class="note">연결된 네트워크의 DHCP 서버에서 IP 주소, 서브넷, 게이트웨이, DNS 를 받습니다. DHCP 가 없으면 주소 없이 남습니다.</p>
+      )}
+    </Section>
+  );
+}
+
+/** MAC 에서 만든 링크 로컬 주소 (MAC 이 이상하면 빈 문자열) */
+export function linkLocalLabel(mac: string): string {
+  try {
+    return linkLocalOf(mac);
+  } catch {
+    return "";
+  }
+}
+
+/** 호스트의 IPv6: 켜기 + 수동 주소·프리픽스·기본 게이트웨이. 링크 로컬은 MAC 에서 자동 */
+export function Ipv6Section({ d, h }: { d: Device; h: HostSettings }) {
+  const v = h.ipv6 ?? { ...DEFAULT_IPV6_HOST, enabled: false };
+  const set = (patch: Partial<Ipv6HostSettings>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ipv6: { ...(x.host!.ipv6 ?? DEFAULT_IPV6_HOST), ...patch } } }));
+  const ll = linkLocalLabel(d.mac);
+  return (
+    <Section title="IPv6">
+      <label class="toggle-row">
+        <span>{v.enabled ? "켜짐" : "꺼짐"}</span>
+        <Toggle on={v.enabled} onToggle={() => set({ enabled: !v.enabled })} />
+      </label>
+      {!v.enabled ? (
+        <p class="note">켜면 MAC 에서 만든 링크 로컬 주소({ll})가 생기고, ARP 대신 NDP 로 이웃을 찾습니다. 실제 OS 는 IPv6 가 기본으로 켜져 있지만, 여기서는 켜야 IPv6 패킷이 오갑니다.</p>
+      ) : (
+        <>
+          <Field label="IPv6 주소" error={ip6Error(v.ip, false)}>
+            <div class="prefix addr6">
+              <input class="input mono" value={v.ip} placeholder="2001:db8:1::10" onInput={(e) => set({ ip: e.currentTarget.value })} />
+              <span class="mono">/</span>
+              <input
+                class="input mono"
+                type="number"
+                min={1}
+                max={128}
+                value={v.prefix}
+                title="프리픽스 길이 (보통 64)"
+                onInput={(e) => { if (e.currentTarget.value === "") return; set({ prefix: Math.min(128, Math.max(1, Number(e.currentTarget.value) || 64)) }); }}
+              />
+            </div>
+          </Field>
+          <Field label="기본 게이트웨이" error={ip6Error(v.gateway, false, true)}>
+            <input class="input mono" value={v.gateway} placeholder="라우터 주소 (fe80:: 도 됨)" onInput={(e) => set({ gateway: e.currentTarget.value })} />
+          </Field>
+          <p class="note">
+            링크 로컬 <span class="mono">{ll}</span> 은 MAC 에서 자동으로 생깁니다(fe80::/64 + EUI-64). 주소를 비우면 링크 로컬만으로 같은 링크의 이웃과 통신합니다. 기본 게이트웨이는 라우터의 글로벌 주소나 링크 로컬 주소 어느 쪽이든 됩니다.
+          </p>
+        </>
       )}
     </Section>
   );

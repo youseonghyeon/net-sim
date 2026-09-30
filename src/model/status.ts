@@ -5,6 +5,7 @@ import { DHCP_MAX_ATTEMPTS, DHCP_STATE_LABEL, Host } from "../core/nodes/host";
 import { Internet } from "../core/nodes/internet";
 import { L3Node } from "../core/nodes/l3";
 import type { NetInterface } from "../core/nodes/iface";
+import type { Ipv6Interface } from "../core/nodes/ipv6";
 import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { Switch } from "../core/nodes/switch";
@@ -22,12 +23,40 @@ function conflictLine(label: string, iface: NetInterface): StatusLine | null {
   return { text: `${label}${iface.ip} 충돌${iface.conflict.refused ? " · 사용 안 함" : ""}`, tone: "warn", mono: false };
 }
 
+/** IPv6 인터페이스 한 줄: 글로벌 주소(없으면 링크 로컬), DAD 중·중복이면 그 상태 */
+function v6Line(v: Ipv6Interface): StatusLine | null {
+  if (!v.enabled) return null;
+  const dup = v.addrs.find((a) => a.state === "duplicate");
+  if (dup) return { text: `${dup.ip} 중복`, tone: "warn", mono: false };
+  const g = v.addrs.find((a) => a.origin !== "link-local");
+  if (g) return g.state === "preferred" ? { text: `${g.ip}/${g.prefix}`, tone: "ok", mono: true } : { text: "IPv6 DAD 중", tone: "muted", mono: false };
+  return v.owns(v.linkLocal) ? { text: v.linkLocal, tone: "ok", mono: true } : { text: "IPv6 DAD 중", tone: "muted", mono: false };
+}
+
+/** 개요 탭의 IPv6 줄 (꺼져 있으면 null) */
+export function ipv6StatusOf(node: SimNode | undefined): StatusLine | null {
+  if (node instanceof Host) {
+    const l = v6Line(node.v6);
+    return l && { ...l, text: `IPv6 ${l.text}` };
+  }
+  if (node instanceof L3Node && node.ipv6Enabled) {
+    const parts = node.v6.map((v, i) => ({ v, i })).filter(({ v, i }) => node.linkUp[i] || v.addrs.some((a) => a.origin !== "link-local"));
+    if (parts.length === 0) return { text: "IPv6 켜짐 · 연결 없음", tone: "muted", mono: false };
+    const lines = parts.map(({ v, i }) => ({ name: node.names[i]!, l: v6Line(v) }));
+    return { text: `IPv6 ${lines.map(({ name, l }) => `${name} ${l?.text ?? "-"}`).join(" · ")}`, tone: lines.some(({ l }) => l?.tone === "warn") ? "warn" : "ok", mono: true };
+  }
+  return null;
+}
+
 export function hostStatusOf(node: SimNode | undefined, wireless: boolean): StatusLine | null {
   if (node instanceof Host) {
     const c = conflictLine("IP ", node.iface);
     if (c) return c;
     if (node.ip) return { text: `${node.ip}/${node.iface.prefix}`, tone: "ok", mono: true };
     if (!node.linkUp) return { text: wireless ? "무선 연결 없음" : "링크 다운", tone: "muted", mono: false };
+    // IPv4 주소가 없고 IPv6 만 쓰는 호스트는 IPv6 주소를 보인다
+    const v6 = node.ipMode === "static" ? v6Line(node.v6) : null;
+    if (v6) return v6;
     if (node.ipMode === "static") return { text: "IP 미설정", tone: "warn", mono: false };
     switch (node.dhcp.state) {
       case "discovering":
@@ -54,10 +83,12 @@ export function hostStatusOf(node: SimNode | undefined, wireless: boolean): Stat
     for (let p = 1; p < node.portCount; p++) {
       const iface = node.ifaces[p]!;
       const subs = node.meta.map((m, i) => ({ m, i })).filter(({ m, i }) => i >= node.portCount && m.port === p);
+      const g6 = node.ipv6Enabled ? node.v6[p]?.addrs.find((a) => a.origin !== "link-local" && a.state === "preferred") : undefined;
       if (iface.ip && iface.conflict) {
         parts.push(`${iface.ip} 충돌`);
         ok = false;
       } else if (iface.ip) parts.push(iface.ip);
+      else if (g6) parts.push(g6.ip); // IPv4 없이 IPv6 만 쓰는 인터페이스
       else if (subs.length) parts.push(`${node.names[p]}.${subs.map(({ m }) => m.vlan).join("/")}`);
       else if (node.linkUp[p]) {
         // 케이블이 꽂혔는데 주소가 없으면 경고. 케이블 없는 빈 인터페이스는 쓰지 않는 포트라 요약에서 뺀다
@@ -82,6 +113,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.lb.config.enabled) out.push(`LB ${node.lb.config.backends.length}대`);
     if (node.proxy.config.enabled) out.push("프록시");
     if (node.ra.config.enabled) out.push(node.ra.state === "up" ? "VPN 연결됨" : "VPN");
+    if (node.v6.enabled) out.push("IPv6");
   } else if (node instanceof Router) {
     if (node.dhcp.enabled) out.push("DHCP");
     if (node.dnsForwarder.config.enabled) out.push("DNS");
@@ -96,6 +128,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.ha.config.enabled) out.push(node.ha.state === "master" ? "HA master" : "HA backup");
     if (node.nat) out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
     if (node.firewall.config.enabled) out.push("방화벽");
+    if (node.ipv6Enabled) out.push("IPv6");
   } else if (node instanceof Internet) {
     out.push("ISP DHCP", "DNS", "웹");
   } else if (node instanceof Switch && (node.vlanAware || node.stp.config.enabled)) {

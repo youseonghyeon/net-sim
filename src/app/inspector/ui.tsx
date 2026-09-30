@@ -1,6 +1,7 @@
 // 인스펙터 공용 부품: 접히는 섹션, 필드 행, 토글, 인터페이스 주소 입력, 주소 검증.
 import type { ComponentChildren } from "preact";
 import { ipToInt, prefixToMask, intToIp } from "../../core/addr";
+import { isIpv6, isLinkLocal6 } from "../../core/addr6";
 import { collapsedSections, toggleSection } from "../../model/store";
 import { type IfaceSettings } from "../../model/topology";
 import { Icon } from "../Icons";
@@ -63,6 +64,15 @@ export function ipError(s: string, required: boolean): string | undefined {
   return validIp(s) ? undefined : "예: 192.168.0.10";
 }
 
+/** IPv6 주소 칸 검증. linkLocalOk 가 아니면 fe80:: 는 "자동으로 생긴다" 고 안내 (주소 칸) */
+export function ip6Error(s: string, required: boolean, linkLocalOk = false): string | undefined {
+  const v = s.trim();
+  if (!v) return required ? "필요한 값입니다" : undefined;
+  if (!isIpv6(v)) return "예: 2001:db8:1::10";
+  if (!linkLocalOk && isLinkLocal6(v)) return "링크 로컬(fe80::)은 MAC 에서 자동으로 생깁니다. 글로벌 주소(예: 2001:db8:1::10)를 넣으세요";
+  return undefined;
+}
+
 export function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
     <span
@@ -82,7 +92,8 @@ export function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) 
 }
 
 /** 인터페이스 하나의 IP 설정 (자동/수동 + 주소·서브넷·게이트웨이). 호스트·WAN·게이트웨이가 공유 */
-export function IfaceFields({ value, onChange, gatewayLabel = "게이트웨이", dhcpNote }: { value: IfaceSettings; onChange: (patch: Partial<IfaceSettings>) => void; gatewayLabel?: string; dhcpNote: string }) {
+/** ipRequired: 수동인데 주소가 비었을 때 오류로 보일지 (IPv6 만 쓰는 인터페이스는 비워 둬도 된다) */
+export function IfaceFields({ value, onChange, gatewayLabel = "게이트웨이", dhcpNote, ipRequired = true }: { value: IfaceSettings; onChange: (patch: Partial<IfaceSettings>) => void; gatewayLabel?: string; dhcpNote: string; ipRequired?: boolean }) {
   const isStatic = value.ipMode === "static";
   return (
     <>
@@ -96,8 +107,8 @@ export function IfaceFields({ value, onChange, gatewayLabel = "게이트웨이",
       </div>
       {isStatic ? (
         <>
-          <Field label="IP 주소" error={ipError(value.ip, true)}>
-            <input class="input mono" value={value.ip} placeholder="192.168.0.1" onInput={(e) => onChange({ ip: e.currentTarget.value })} />
+          <Field label="IP 주소" error={ipError(value.ip, ipRequired)}>
+            <input class="input mono" value={value.ip} placeholder={ipRequired ? "192.168.0.1" : "비우면 IPv6 만"} onInput={(e) => onChange({ ip: e.currentTarget.value })} />
           </Field>
           <Field label="서브넷">
             <div class="prefix">

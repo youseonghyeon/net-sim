@@ -186,6 +186,31 @@ export interface HostSettings {
   httpProxy?: HttpProxySettings;
   /** 원격 접속 VPN 클라이언트. 없으면 꺼짐 */
   ra?: RaClientSettings;
+  /** IPv6. 없으면 꺼짐 (실제 OS 는 기본으로 켜져 있지만, 여기서는 켜야 링크 로컬·NDP 가 오간다) */
+  ipv6?: Ipv6HostSettings;
+}
+
+/** 호스트의 IPv6 설정 */
+export interface Ipv6HostSettings {
+  enabled: boolean;
+  /** 수동 주소 */
+  mode: "static";
+  ip: string;
+  prefix: number;
+  /** IPv6 기본 게이트웨이 (라우터의 글로벌 또는 링크 로컬 주소) */
+  gateway: string;
+  dns?: string;
+}
+
+export const DEFAULT_IPV6_HOST: Ipv6HostSettings = { enabled: true, mode: "static", ip: "", prefix: 64, gateway: "" };
+
+/** 게이트웨이·NAT 박스의 IPv6 설정 */
+export interface Ipv6L3Settings {
+  enabled: boolean;
+  /** 물리 인터페이스별 주소 (인덱스 = 인터페이스, 빈 칸 = 링크 로컬만) */
+  interfaces: { ip: string; prefix: number }[];
+  /** IPv6 스태틱 라우팅. ::/0 이 디폴트 라우트 */
+  routes: StaticRouteSettings[];
 }
 
 export interface LbSettings {
@@ -261,6 +286,8 @@ export interface L3Settings {
   ha?: HaSettings;
   /** 원격 접속 VPN 서버. 없으면 꺼짐 */
   ra?: RaServerSettings;
+  /** IPv6 라우팅. 없으면 꺼짐 */
+  ipv6?: Ipv6L3Settings;
 }
 
 export interface RaServerSettings {
@@ -296,6 +323,30 @@ export interface HaSettings {
   sync?: boolean;
 }
 
+const prefix6 = (v: unknown, dflt: number, min = 1) => (typeof v === "number" && Number.isInteger(v) && v >= min && v <= 128 ? v : dflt);
+const text = (v: unknown) => (typeof v === "string" ? v : "");
+
+/** 불러온 JSON 의 호스트 IPv6 설정 정리 */
+function normalizeIpv6Host(v: Partial<Ipv6HostSettings>): Ipv6HostSettings {
+  return { enabled: v.enabled === true, mode: "static", ip: text(v.ip), prefix: prefix6(v.prefix, 64), gateway: text(v.gateway), ...(typeof v.dns === "string" ? { dns: v.dns } : {}) };
+}
+
+/** 불러온 JSON 의 게이트웨이 IPv6 설정 정리 */
+function normalizeIpv6L3(v: Partial<Ipv6L3Settings>): Ipv6L3Settings {
+  const ifs = Array.isArray(v.interfaces) ? (v.interfaces as unknown[]) : [];
+  const routes = Array.isArray(v.routes) ? (v.routes as unknown[]) : [];
+  return {
+    enabled: v.enabled === true,
+    interfaces: ifs.map((x) => {
+      const o = (x && typeof x === "object" ? x : {}) as Partial<{ ip: unknown; prefix: unknown }>;
+      return { ip: text(o.ip), prefix: prefix6(o.prefix, 64) };
+    }),
+    routes: routes
+      .filter((r): r is { dest: string; prefix: number; via: string } => !!r && typeof r === "object" && typeof (r as { dest?: unknown }).dest === "string")
+      .map((r) => ({ dest: r.dest, prefix: prefix6(r.prefix, 64, 0), via: text(r.via) })),
+  };
+}
+
 /** 불러온 JSON 의 원격 접속 VPN 서버 설정 정리 */
 /** 로드밸런서 세션 고정·프록시·HTTP 프록시 설정을 타입대로 정리 (JSON 은 믿을 수 없다) */
 function normalizeHostExtras(h: HostSettings): HostSettings {
@@ -320,6 +371,7 @@ function normalizeHostExtras(h: HostSettings): HostSettings {
     const p = h.httpProxy as Partial<HttpProxySettings>;
     out.httpProxy = { enabled: p.enabled === true, server: typeof p.server === "string" ? p.server : typeof p.server === "number" ? String(p.server) : "", port: port(p.port, 3128) };
   }
+  if (h.ipv6) out.ipv6 = normalizeIpv6Host(h.ipv6 as Partial<Ipv6HostSettings>);
   return out;
 }
 
@@ -964,6 +1016,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...(fixed.l3.vpn ? { vpn: normalizeVpn(fixed.l3.vpn) } : {}),
           ...(fixed.l3.ha ? { ha: normalizeHa(fixed.l3.ha) } : {}),
           ...(fixed.l3.ra ? { ra: normalizeRaServer(fixed.l3.ra) } : {}),
+          ...(fixed.l3.ipv6 ? { ipv6: normalizeIpv6L3(fixed.l3.ipv6) } : {}),
         };
       }
     }

@@ -1,5 +1,7 @@
 // 토폴로지(편집 모델) → Network(코어) 변환과 diff 동기화. 신호·DOM 에 의존하지 않아 유닛 테스트가 가능하다.
 import { ipToInt } from "../core/addr";
+import { canonIp6, isLinkLocal6 } from "../core/addr6";
+import type { Ipv6Settings } from "../core/nodes/ipv6";
 import { Network } from "../core/network";
 import { AccessPoint } from "../core/nodes/ap";
 import { FirewallBridge } from "../core/nodes/fwbridge";
@@ -39,6 +41,8 @@ export const WIFI_LATENCY = 20;
 interface SyncedDevice {
   net: string;
   services: string;
+  /** 호스트의 IPv6 (IPv4 설정과 따로 반영해 한쪽만 바뀌었을 때 다른 쪽 로그가 나지 않게) */
+  v6: string;
 }
 
 export class NetworkSync {
@@ -102,7 +106,11 @@ export class NetworkSync {
       }
     }
     for (const d of t.devices) {
-      const key: SyncedDevice = { net: configKey(d), services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d) }) };
+      const key: SyncedDevice = {
+        net: configKey(d),
+        services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d) }),
+        v6: d.host ? JSON.stringify(effectiveHost6(d)) : "",
+      };
       const prev = this.syncedConfig.get(d.id);
       if (prev === undefined) {
         settle();
@@ -117,6 +125,11 @@ export class NetworkSync {
         if (prev.net !== key.net) {
           settle();
           applyConfig(net, d);
+        }
+        if (prev.v6 !== key.v6) {
+          settle();
+          const node = net.nodes.get(d.id);
+          if (node instanceof Host) node.setIpv6(effectiveHost6(d), net.contextFor(d.id));
         }
         if (prev.services !== key.services) {
           settle();
@@ -136,7 +149,7 @@ export class NetworkSync {
           }
         }
       }
-      if (prev === undefined || prev.net !== key.net || prev.services !== key.services) this.syncedConfig.set(d.id, key);
+      if (prev === undefined || prev.net !== key.net || prev.services !== key.services || prev.v6 !== key.v6) this.syncedConfig.set(d.id, key);
     }
     for (const c of links) {
       const loss = c.loss ?? 0;
@@ -185,6 +198,39 @@ function validIp(s: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** IPv6 주소 칸: 표준 표기로, 틀리면 없음 */
+function validIp6(s: string | undefined): string | undefined {
+  return canonIp6(s?.trim());
+}
+
+/** 호스트의 IPv6 설정 (꺼져 있으면 enabled: false) */
+export function effectiveHost6(d: Device): Ipv6Settings {
+  const v = d.host?.ipv6;
+  if (!v?.enabled) return { enabled: false, addrs: [] };
+  const ip = validIp6(v.ip);
+  const prefix = Number.isInteger(v.prefix) && v.prefix >= 1 && v.prefix <= 128 ? v.prefix : 64;
+  const gateway = validIp6(v.gateway);
+  const dns = validIp6(v.dns);
+  return { enabled: true, addrs: ip && !isLinkLocal6(ip) ? [{ ip, prefix }] : [], ...(gateway ? { gateway } : {}), ...(dns ? { dns } : {}) };
+}
+
+/** 게이트웨이의 IPv6 설정: 인터페이스별 주소, 넥스트 홉이 올바른 스태틱 라우팅 */
+export function effectiveL3v6(d: Device, count: number) {
+  const v = d.l3?.ipv6;
+  if (!v?.enabled) return { enabled: false, interfaces: [], routes: [] };
+  return {
+    enabled: true,
+    interfaces: Array.from({ length: count }, (_, i) => {
+      const c = v.interfaces[i];
+      const ip = validIp6(c?.ip);
+      return ip && !isLinkLocal6(ip) ? { ip, prefix: c!.prefix >= 1 && c!.prefix <= 128 ? c!.prefix : 64 } : {};
+    }),
+    routes: v.routes
+      .map((r) => ({ dest: validIp6(r.dest), prefix: r.prefix, via: validIp6(r.via) }))
+      .filter((r): r is { dest: string; prefix: number; via: string } => !!r.dest && !!r.via && !isLinkLocal6(r.via) && Number.isInteger(r.prefix) && r.prefix >= 0 && r.prefix <= 128),
+  };
 }
 
 /** 입력 중인 불완전한 주소는 "없음" 으로 취급해 시뮬레이션에 넘긴다 */
@@ -299,7 +345,7 @@ function wanMacOf(mac: string): string {
 }
 
 /** 게이트웨이/NAT 의 i 번째 인터페이스 MAC: 4번째 옥텟을 1i 로 */
-function l3MacOf(mac: string, i: number): string {
+export function l3MacOf(mac: string, i: number): string {
   return mac.replace(/^02:00:00:00/, `02:00:00:${(0x10 + i).toString(16)}`);
 }
 
@@ -373,6 +419,7 @@ export function effectiveL3(d: Device) {
       vips: spec.ports.map((_, i) => validIp(l3.ha?.vips?.[i])),
       sync: l3.ha?.sync === true,
     },
+    ipv6: effectiveL3v6(d, spec.ports.length),
     vpn: {
       enabled: l3.vpn?.enabled === true,
       ...(l3.vpn?.mode === "ipsec" ? { mode: "ipsec" as const, psk: l3.vpn.psk ?? "" } : {}),
@@ -422,9 +469,10 @@ export function makeNode(d: Device): SimNode {
       subinterfaces: cfg.subinterfaces,
       rip: cfg.rip,
       vpn: cfg.vpn,
+      ipv6: cfg.ipv6,
     });
   }
-  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d), lb: effectiveLb(d), proxy: effectiveProxy(d), httpProxy: effectiveHttpProxy(d) });
+  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d), lb: effectiveLb(d), proxy: effectiveProxy(d), httpProxy: effectiveHttpProxy(d), ipv6: effectiveHost6(d) });
 }
 
 export function applyConfig(net: Network, d: Device): void {
@@ -450,5 +498,6 @@ export function applyConfig(net: Network, d: Device): void {
     node.setVpn(cfg.vpn, net.contextFor(d.id));
     node.setHa(cfg.ha, net.contextFor(d.id));
     node.setRa(cfg.ra, net.contextFor(d.id));
+    node.setIpv6(cfg.ipv6, net.contextFor(d.id));
   }
 }

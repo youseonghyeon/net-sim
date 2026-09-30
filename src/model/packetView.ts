@@ -3,8 +3,9 @@
 // - headerLayers: 이더넷 → ARP/IPv4 → ICMP/TCP/UDP → DHCP/DNS/RIP 필드를 실제 번호(타입·코드·옵션)와 함께
 // - practitionerLines: 장치가 내린 판단을 실무 명령의 출력(시스코 debug, iptables LOG, dhclient, ping, curl …)으로
 // 시뮬레이터에 없는 필드(체크섬, 윈도우 크기, IP ID 등)는 넣지 않고, 길이는 근사값이다.
-import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, IkeMessage, Ipv4Packet, TcpSegment, UdpPacket } from "../core/packet";
-import { describeOriginal, IP_PROTO, tcpFlags, UNREACHABLE_FLAG } from "../core/packet";
+import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, TcpSegment, UdpPacket } from "../core/packet";
+import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE } from "../core/packet";
+import { scopeLabel6 } from "../core/addr6";
 import type { TraceEvent } from "../core/trace";
 
 export interface HeaderLayer {
@@ -39,6 +40,18 @@ function l4Length(p: Ipv4Packet["payload"]): number {
   if (p.kind === "pfsync") return 12 + (p.nat.length + p.flows.length) * 64; // 머리 + 상태 하나당 대략
   return 8 + appLength(p);
 }
+/** ICMPv6·TCP·UDP 길이 (IPv6 헤더 40 은 빼고) */
+function l6Length(p: Ipv6Packet["payload"]): number {
+  if (p.kind === "icmp6") {
+    if (p.type === "echo-request" || p.type === "echo-reply") return ICMP_ECHO_LEN;
+    if (p.type === "ns") return p.sll ? 32 : 24; // 머리 24 + 링크 계층 주소 옵션 8
+    if (p.type === "na") return p.tll ? 32 : 24;
+    return 48 + 8; // 오류: 머리 8 + 원래 패킷 앞부분
+  }
+  if (p.kind === "tcp") return 20 + p.len;
+  return 8 + appLength(p);
+}
+
 /** ESP 머리(SPI 4 + seq 4) + IV 16 + 암호화된 원래 IP 패킷 + 패딩·무결성 값 약 16 */
 function espLength(e: EspPacket): number {
   return 8 + 16 + 20 + l4Length(e.inner.payload) + 16;
@@ -63,7 +76,8 @@ export function tcpdumpLine(frame: EthernetFrame): string {
     const port = (0x8000 + p.port + 1).toString(16);
     return `${frame.src} > ${frame.dst}, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id ${p.bridge.prio.toString(16)}.${p.bridge.mac}.${port}, length 35 (root ${p.root.prio.toString(16)}.${p.root.mac}, root-pathcost ${p.cost}, message-age ${p.age}s)`;
   }
-  const eth = `${frame.src} > ${frame.dst}${frame.vlan !== undefined ? `, 802.1Q vlan ${frame.vlan}` : ""}, ethertype ${p.kind === "arp" ? "ARP (0x0806)" : "IPv4 (0x0800)"}: `;
+  const eth = `${frame.src} > ${frame.dst}${frame.vlan !== undefined ? `, 802.1Q vlan ${frame.vlan}` : ""}, ethertype ${p.kind === "arp" ? "ARP (0x0806)" : p.kind === "ipv6" ? "IPv6 (0x86dd)" : "IPv4 (0x0800)"}: `;
+  if (p.kind === "ipv6") return eth + ip6Line(p);
   if (p.kind === "arp") {
     return eth + (p.op === "request" ? `ARP, Request who-has ${p.targetIp} tell ${p.senderIp}, length 28` : `ARP, Reply ${p.senderIp} is-at ${p.senderMac}, length 28`);
   }
@@ -78,6 +92,25 @@ function ipLine(pkt: Ipv4Packet): string {
   if (p.kind === "pfsync") return `IP ${pkt.src} > ${pkt.dst}: pfsync${p.bulk ? " (bulk update)" : ""}, INS ST count ${p.nat.length + p.flows.length}, length ${l4Length(p)}`;
   if (p.kind === "vrrp") return `IP ${pkt.src} > ${pkt.dst}: VRRPv3, Advertisement, vrid ${p.vrid}, prio ${p.priority}, intvl 100cs, length 12`;
   return `IP ${pkt.src}.${p.srcPort} > ${pkt.dst}.${p.dstPort}: ${udpText(p)}`;
+}
+
+/** tcpdump 의 IPv6 표기: 포트는 주소 뒤에 점으로 (2001:db8::1.80) */
+function ip6Line(pkt: Ipv6Packet): string {
+  const p = pkt.payload;
+  if (p.kind === "icmp6") return `${pkt.src} > ${pkt.dst}: ${icmp6Text(p)}, length ${l6Length(p)}`;
+  if (p.kind === "tcp") return `${pkt.src}.${p.srcPort} > ${pkt.dst}.${p.dstPort}: ${tcpText(p)}`;
+  return `${pkt.src}.${p.srcPort} > ${pkt.dst}.${p.dstPort}: ${udpText(p)}`;
+}
+
+function icmp6Text(p: Icmpv6Packet): string {
+  if (p.type === "ns") return `ICMP6, neighbor solicitation, who has ${p.target}`;
+  if (p.type === "na") return `ICMP6, neighbor advertisement, tgt is ${p.target}`;
+  if (p.type === "time-exceeded") return "ICMP6, time exceeded in-transit";
+  if (p.type === "unreachable") {
+    const o = p.original;
+    return p.code === "net" ? `ICMP6, destination unreachable, unreachable route ${o.dst}` : p.code === "host" ? `ICMP6, destination unreachable, unreachable address ${o.dst}` : `ICMP6, destination unreachable, unreachable port, ${o.dst} ${o.l4.kind} port ${o.l4.kind === "icmp" ? "?" : o.l4.dstPort}`;
+  }
+  return `ICMP6, echo ${p.type === "echo-request" ? "request" : "reply"}, id ${p.id}, seq ${p.seq}`;
 }
 
 function icmpText(p: IcmpPacket): string {
@@ -141,9 +174,9 @@ export function headerLayers(frame: EthernetFrame): HeaderLayer[] {
   const eth: HeaderLayer = {
     title: "이더넷 (L2)",
     rows: [
-      ["목적지 MAC", `${frame.dst}${frame.dst === "ff:ff:ff:ff:ff:ff" ? " (브로드캐스트)" : frame.dst.startsWith("01:00:5e") ? " (멀티캐스트)" : ""}`],
+      ["목적지 MAC", `${frame.dst}${frame.dst === "ff:ff:ff:ff:ff:ff" ? " (브로드캐스트)" : frame.dst.startsWith("01:00:5e") ? " (멀티캐스트)" : frame.dst.startsWith("33:33") ? " (IPv6 멀티캐스트 — 33:33 + 주소 끝 32비트)" : ""}`],
       ["출발지 MAC", frame.src],
-      ["EtherType", p.kind === "arp" ? "0x0806 (ARP)" : "0x0800 (IPv4)"],
+      ["EtherType", p.kind === "arp" ? "0x0806 (ARP)" : p.kind === "ipv6" ? "0x86DD (IPv6)" : "0x0800 (IPv4)"],
     ],
   };
   if (frame.vlan !== undefined) eth.rows.splice(2, 0, ["802.1Q 태그", `0x8100, VLAN ${frame.vlan}`]);
@@ -175,8 +208,68 @@ export function headerLayers(frame: EthernetFrame): HeaderLayer[] {
     });
     return layers;
   }
+  if (p.kind === "ipv6") {
+    layers.push(...ip6Layers(p));
+    return layers;
+  }
   layers.push(...ipLayers(p));
   return layers;
+}
+
+function ip6Layers(p: Ipv6Packet): HeaderLayer[] {
+  const l4 = p.payload;
+  const nh = IP6_NEXT_HEADER[l4.kind];
+  const layers: HeaderLayer[] = [
+    {
+      title: "IPv6 (L3)",
+      rows: [
+        ["버전", "6"],
+        ["출발지", `${p.src} (${scopeLabel6(p.src)}${p.src === "::" ? " — DAD: 아직 주소를 쓰지 않음" : ""})`],
+        ["목적지", `${p.dst} (${scopeLabel6(p.dst)}${p.dst === "ff02::1" ? " — 모든 노드" : p.dst.startsWith("ff02::1:ff") ? " — solicited-node 그룹" : ""})`],
+        ["Hop Limit", `${p.hopLimit}${p.hopLimit === 255 && l4.kind === "icmp6" && (l4.type === "ns" || l4.type === "na") ? " (NDP 는 255 — 라우터를 거쳐 온 가짜를 거르려고)" : ""}`],
+        ["Next Header", `${nh.num} (${nh.label})`],
+        ["페이로드 길이", `${l6Length(l4)} (근사, 헤더 40바이트 고정 — 체크섬·단편화 필드 없음)`],
+      ],
+    },
+  ];
+  if (l4.kind === "icmp6") layers.push(icmp6Layer(l4));
+  else if (l4.kind === "tcp") layers.push(tcpLayer(l4));
+  else layers.push(...udpLayers(l4));
+  return layers;
+}
+
+function icmp6Layer(p: Icmpv6Packet): HeaderLayer {
+  if (p.type === "ns")
+    return {
+      title: "ICMPv6 · NDP",
+      rows: [
+        ["타입 / 코드", "135 / 0 (Neighbor Solicitation — ARP 요청에 해당)"],
+        ["대상 주소", p.target],
+        ...(p.sll ? ([["옵션 1 출발지 링크 계층 주소", p.sll]] as [string, string][]) : ([["옵션", "없음 (DAD — 출발지가 :: 라 링크 계층 주소도 싣지 않음)"]] as [string, string][])),
+      ],
+    };
+  if (p.type === "na")
+    return {
+      title: "ICMPv6 · NDP",
+      rows: [
+        ["타입 / 코드", "136 / 0 (Neighbor Advertisement — ARP 응답에 해당)"],
+        ["플래그", `R=${p.router ? 1 : 0} (라우터) · S=${p.solicited ? 1 : 0} (요청에 대한 답) · O=${p.override ? 1 : 0} (캐시 덮어쓰기)`],
+        ["대상 주소", p.target],
+        ...(p.tll ? ([["옵션 2 대상 링크 계층 주소", p.tll]] as [string, string][]) : []),
+      ],
+    };
+  if (p.type === "time-exceeded" || p.type === "unreachable") {
+    const code = p.type === "time-exceeded" ? "3 / 0 (Time Exceeded — Hop Limit 초과)" : `1 / ${UNREACHABLE6_CODE[p.code]} (Destination Unreachable — ${p.code === "net" ? "no route to destination" : p.code === "host" ? "address unreachable" : "port unreachable"}, traceroute 표기 ${UNREACHABLE_FLAG[p.code]})`;
+    return { title: "ICMPv6", rows: [["타입 / 코드", code], ["안에 담긴 원래 패킷", describeOriginal(p.original)]] };
+  }
+  return {
+    title: "ICMPv6",
+    rows: [
+      ["타입 / 코드", p.type === "echo-request" ? "128 / 0 (Echo 요청)" : "129 / 0 (Echo 응답)"],
+      ["식별자 (id)", String(p.id)],
+      ["순서 (seq)", String(p.seq)],
+    ],
+  };
 }
 
 /** IPv4 부터 위 계층. VPN 터널이면 암호화 층 뒤에 "터널 안(복호화하면)" 원래 패킷을 겹겹이 */
@@ -399,10 +492,18 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
   const out: PractitionerLine[] = [];
   const f = frames.received ?? frames.sent;
   const ip = f && f.payload.kind === "ipv4" ? f.payload : undefined;
-  const len = ip ? 20 + l4Length(ip.payload) : 0;
+  const ip6 = f && f.payload.kind === "ipv6" ? f.payload : undefined;
+  const len = ip ? 20 + l4Length(ip.payload) : ip6 ? 40 + l6Length(ip6.payload) : 0;
   switch (ev.kind) {
     case "ip.forward":
       if (ip) out.push({ tool: "시스코 debug ip packet", line: `IP: s=${ip.src}, d=${ip.dst} (${detail(ev, "out") ?? "?"}), len ${len}, forward` });
+      if (ip6) out.push({ tool: "시스코 debug ipv6 packet", line: `IPV6: source ${ip6.src}\n      dest ${ip6.dst} (${detail(ev, "out") ?? "?"})\n      traffic class 0, flow 0x0, len ${len}, prot ${IP6_NEXT_HEADER[ip6.payload.kind].num}, hops ${ip6.hopLimit}, forwarding` });
+      break;
+    case "ndp.cache.update":
+      if (detail(ev, "ip") && detail(ev, "mac")) out.push({ tool: "리눅스 ip -6 neigh", line: `${detail(ev, "ip")} dev eth0 lladdr ${detail(ev, "mac")} REACHABLE` });
+      break;
+    case "ndp.dad.fail":
+      out.push({ tool: "리눅스 커널 로그 (dmesg)", line: `IPv6: eth0: IPv6 duplicate address ${detail(ev, "ip") ?? "?"} used by ${detail(ev, "mac") ?? "?"} detected!` });
       break;
     case "ip.no-route":
       if (ip) out.push({ tool: "시스코 debug ip packet", line: `IP: s=${ip.src}, d=${ip.dst}, len ${len}, unroutable` });
@@ -420,6 +521,11 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
     }
     case "fw.deny":
     case "fw.allow":
+      if (ip6) {
+        const l4 = ip6.payload;
+        const rest = l4.kind === "icmp6" ? ` PROTO=ICMPv6 TYPE=${l4.type === "echo-request" ? 128 : l4.type === "echo-reply" ? 129 : l4.type === "time-exceeded" ? 3 : l4.type === "unreachable" ? 1 : l4.type === "ns" ? 135 : 136} CODE=0` : ` PROTO=${l4.kind.toUpperCase()} SPT=${l4.srcPort} DPT=${l4.dstPort}`;
+        out.push({ tool: ev.kind === "fw.deny" ? "리눅스 ip6tables LOG (DROP 전에 기록)" : "리눅스 ip6tables LOG", line: `${ev.kind === "fw.deny" ? "[DROP] " : "[ACCEPT] "}SRC=${ip6.src} DST=${ip6.dst} LEN=${len} HOPLIMIT=${ip6.hopLimit}${rest}` });
+      }
       if (ip) {
         const l4 = ip.payload;
         const ports = l4.kind === "tcp" || l4.kind === "udp" ? ` SPT=${l4.srcPort} DPT=${l4.dstPort}` : "";
@@ -454,8 +560,12 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       break;
     case "icmp.reply.received":
       if (ip) out.push({ tool: "ping", line: `64 bytes from ${ip.src}: icmp_seq=${detail(ev, "seq") ?? "?"} ttl=${ip.ttl} time=${detail(ev, "rtt") ?? "?"} ms` });
+      if (ip6) out.push({ tool: "ping (IPv6)", line: `64 bytes from ${ip6.src}: icmp_seq=${detail(ev, "seq") ?? "?"} ttl=${ip6.hopLimit} time=${detail(ev, "rtt") ?? "?"} ms` });
       break;
     case "icmp.unreachable.received":
+      if (ip6 && ip6.payload.kind === "icmp6" && ip6.payload.type === "unreachable") {
+        out.push({ tool: "ping (IPv6)", line: `From ${ip6.src} icmp_seq=… Destination unreachable: ${ip6.payload.code === "net" ? "No route" : ip6.payload.code === "host" ? "Address unreachable" : "Port unreachable"}` });
+      }
       if (ip && ip.payload.kind === "icmp" && ip.payload.type === "unreachable") {
         out.push({ tool: "ping", line: `From ${ip.src} icmp_seq=… Destination ${ip.payload.code === "net" ? "Net" : ip.payload.code === "host" ? "Host" : "Port"} Unreachable` });
       }

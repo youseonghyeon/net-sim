@@ -1,6 +1,6 @@
 // 무선 AP: 유선 포트 하나와 전파(라디오 슬롯 N개) 사이를 잇는 L2 브리지.
 // 학습 포인트: 무선도 같은 브로드캐스트 도메인이고, 전파는 같은 채널의 모든 단말에 닿는다(그래서 암호화가 필요하다).
-import { isBroadcastMac, type Mac } from "../addr";
+import { isBroadcastMac, isMulticastMac, type Mac } from "../addr";
 import { describeFrame, type EthernetFrame } from "../packet";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { guardLoop } from "./switch";
@@ -73,12 +73,12 @@ export class AccessPoint implements SimNode {
       this.stations.set(frame.src, { port, learnedAt: ctx.now });
       ctx.trace("switch.learn", "L2", `단말 등록: ${frame.src} → 무선 슬롯 ${port}`, { mac: frame.src, port }, frame.id);
     }
-    if (isBroadcastMac(frame.dst)) {
+    if (isBroadcastMac(frame.dst) || isMulticastMac(frame.dst)) {
       const others = this.radioPorts(ctx).filter((p) => p !== port);
       ctx.trace(
         "wifi.air",
         "L2",
-        `브로드캐스트 → 유선(eth0)과 다른 무선 단말 ${others.length}대로 중계 — 무선도 같은 브로드캐스트 도메인`,
+        `${isBroadcastMac(frame.dst) ? "브로드캐스트" : `멀티캐스트 ${frame.dst}`} → 유선(eth0)과 다른 무선 단말 ${others.length}대로 중계 — 무선도 같은 브로드캐스트 도메인`,
         { ports: others },
         frame.id,
       );
@@ -111,8 +111,8 @@ export class AccessPoint implements SimNode {
       ctx.trace("wifi.air", "L2", `연결된 무선 단말이 없음 → 송출할 곳 없음`, {}, frame.id);
       return;
     }
-    if (isBroadcastMac(frame.dst)) {
-      ctx.trace("wifi.air", "L2", `전파로 송출 (SSID ${this.ssid}): 브로드캐스트 → 단말 ${radios.length}대 모두 받음`, { ports: radios }, frame.id);
+    if (isBroadcastMac(frame.dst) || isMulticastMac(frame.dst)) {
+      ctx.trace("wifi.air", "L2", `전파로 송출 (SSID ${this.ssid}): ${isBroadcastMac(frame.dst) ? "브로드캐스트" : "멀티캐스트"} → 단말 ${radios.length}대 모두 받음`, { ports: radios }, frame.id);
       for (const p of radios) ctx.send(p, frame);
       return;
     }

@@ -968,6 +968,49 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.locator(".inspector h3", { hasText: "HTTP 프록시" }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${OUT}/58-http-proxy.png` });
 }
+// IPv6 기초: IPv4 없이 링크 로컬·NDP·라우팅. 타일은 IPv6 주소, 진단은 IPv6 주소를 받고, 로그 상세는 tcpdump 의 IPv6 표기
+{
+  await loadEx("ipv6");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  console.log("ipv6 tiles:", await waitAddr("pc-1", /^2001:db8:1::10\/64$/), "| gw-1:", (await device("gw-1").locator(".addr, .status").allTextContents()).join(" / "), "| badge:", await device("pc-1").locator(".badge", { hasText: "IPv6" }).count());
+  await clickDevice("pc-1");
+  await page.locator(".ping-row .picker .input").first().fill("2001:db8:1::11");
+  await page.keyboard.press("Escape");
+  await page.click(".ping-row .btn:has-text('ping')");
+  await page.locator(".inspector .ping-log li.ok").first().waitFor({ timeout: 30000 });
+  console.log("ping6 same link:", await page.locator(".inspector .ping-log li").first().textContent());
+  await page.locator(".ping-row .picker .input").first().fill("2001:db8:2::10");
+  await page.keyboard.press("Escape");
+  await page.click(".ping-row .btn:has-text('경로')");
+  await page.locator(".inspector .trace-result.done").waitFor({ timeout: 30000 });
+  console.log("traceroute6 hops:", (await page.locator(".inspector .trace-hops li").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim()).join(" / "));
+  await page.screenshot({ path: `${OUT}/60-ipv6-diag.png` });
+  // 자동완성 후보에 IPv6 묶음
+  await page.locator(".ping-row .picker .input").first().fill("");
+  await page.locator(".ping-row .picker .input").first().click();
+  await page.locator(".picker-list").waitFor({ timeout: 10000 }).catch(() => {});
+  console.log("picker groups:", (await page.locator(".picker-list h5").allTextContents()).join(", "));
+  await page.keyboard.press("Escape");
+  await goTab("설정");
+  await page.locator(".inspector h3", { hasText: "IPv6" }).first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/61-ipv6-host-settings.png` });
+  await clickDevice("gw-1");
+  await goTab("설정");
+  await page.locator(".inspector h3", { hasText: "IPv6" }).first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/62-ipv6-gw-settings.png` });
+  await goTab("개요");
+  console.log("gw-1 overview:", (await page.locator(".device-summary .summary-line").allTextContents()).join(" | "));
+  if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");
+  const nsRow = page.locator(".log-list .row", { hasText: "NDP NS 멀티캐스트" }).last();
+  await nsRow.scrollIntoViewIfNeeded();
+  await nsRow.click();
+  const detail = nsRow.locator(".pkt-detail");
+  await detail.waitFor({ timeout: 5000 });
+  console.log("ndp tcpdump:", await detail.locator(".pkt-line", { hasText: "tcpdump" }).first().locator("code").textContent().catch(() => "?"));
+  console.log("ndp layers:", (await detail.locator(".pkt-layer-title").allTextContents()).join(","));
+  await detail.screenshot({ path: `${OUT}/63-ipv6-ndp-detail.png` });
+  await page.click(".log-toggle");
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

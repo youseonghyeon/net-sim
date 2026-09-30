@@ -4,7 +4,7 @@ import { useSignal } from "@preact/signals";
 import { useRef } from "preact/hooks";
 import { REACH_GROUP_LABEL, type ReachCandidate, type ReachGroup, type ReachResult } from "../model/reach";
 
-const GROUPS: ReachGroup[] = ["same", "routed", "internet", "name"];
+const GROUPS: ReachGroup[] = ["same", "routed", "internet", "ipv6", "name"];
 
 export function TargetPicker({
   value,

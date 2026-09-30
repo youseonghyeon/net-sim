@@ -7,6 +7,7 @@ import type { Topology } from "./topology";
 import { dhcpServiceRules, interfaceOverlapRule, segmentConflictRules, staticHostRules, uplinkSubnetRule } from "./lint/addressing";
 import { finalize, type LintContext, type LintIssue } from "./lint/context";
 import { haRules } from "./lint/ha";
+import { ipv6Rules } from "./lint/ipv6";
 import { loopStpRule, vlanTrunkRules } from "./lint/l2";
 import { lbRules } from "./lint/lb";
 import { relayRouteRule, returnRouteRule, uplinkDefaultRule } from "./lint/routing";
@@ -48,6 +49,7 @@ const RULES: ((ctx: LintContext) => void)[] = [
   remoteAccessRules, // 20
   httpProxyRule, // 21
   proxyPortClashRule, // 21b
+  ipv6Rules, // 22 (IPv6)
 ];
 
 export function lintTopology(t: Topology): LintIssue[] {

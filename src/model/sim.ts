@@ -5,7 +5,7 @@ import type { ActionSpec, Transmission } from "../core/network";
 import type { SimNode } from "../core/nodes/node";
 import { NetworkSync } from "./netSync";
 import { advanceClock, EVENT_BURST_LIMIT, settleTimeOf } from "./simClock";
-import { hostStatusOf, serviceBadgesOf, wanStatusOf, type StatusLine } from "./status";
+import { hostStatusOf, ipv6StatusOf, serviceBadgesOf, wanStatusOf, type StatusLine } from "./status";
 import { topology } from "./store";
 import { DEVICE_SPECS, type Topology } from "./topology";
 
@@ -139,6 +139,11 @@ export function hostStatus(id: string): StatusLine | null {
 /** 타일에 붙는 서비스 배지: 어느 상자에서 어떤 소프트웨어가 도는지 */
 export function serviceBadges(id: string): string[] {
   return serviceBadgesOf(sim.node(id));
+}
+
+/** 개요 탭의 IPv6 줄 */
+export function ipv6Status(id: string): StatusLine | null {
+  return ipv6StatusOf(sim.node(id));
 }
 
 /** 라우터 타일의 WAN 줄 */

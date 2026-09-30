@@ -6,7 +6,7 @@ export interface EthernetFrame {
   id: number; // 추적용 ID (같은 패킷이 여러 링크를 지나도 유지)
   src: Mac;
   dst: Mac;
-  payload: ArpPacket | Ipv4Packet | BpduPacket;
+  payload: ArpPacket | Ipv4Packet | Ipv6Packet | BpduPacket;
   /** 스위치를 거친 횟수. 실제 이더넷엔 없지만 L2 루프 폭주를 막기 위한 안전장치 */
   hops?: number;
   /** 802.1Q VLAN 태그. 트렁크 링크 위에서만 붙는다 */
@@ -62,6 +62,138 @@ export interface Ipv4Packet {
 export type IpPayload = Ipv4Packet["payload"];
 
 /**
+ * IPv6 패킷. IPv4 의 TTL 은 Hop Limit 이 되고, 체크섬·단편화 필드는 없다(라우터는 단편화하지 않는다).
+ * 헤더는 40바이트 고정, 안에 실린 것은 Next Header 번호로 구분한다 (ICMPv6 58, TCP 6, UDP 17)
+ */
+export interface Ipv6Packet {
+  kind: "ipv6";
+  src: Ip;
+  dst: Ip;
+  hopLimit: number;
+  payload: Ipv6Payload;
+}
+
+export type Ipv6Payload = Icmpv6Packet | UdpPacket | TcpSegment;
+
+/** IPv4·IPv6 둘 다 (방화벽·TCP 처럼 두 버전을 같이 다루는 곳) */
+export type IpPacket = Ipv4Packet | Ipv6Packet;
+
+export const IP6_NEXT_HEADER: Record<Ipv6Payload["kind"], { num: number; label: string }> = {
+  icmp6: { num: 58, label: "ICMPv6" },
+  tcp: { num: 6, label: "TCP" },
+  udp: { num: 17, label: "UDP" },
+};
+
+/** ICMPv6 Echo (ping): IPv4 의 ICMP Echo 와 같지만 타입 번호가 128/129 */
+export interface Icmpv6Echo {
+  kind: "icmp6";
+  type: "echo-request" | "echo-reply";
+  id: number;
+  seq: number;
+}
+
+/** ICMPv6 Time Exceeded (타입 3): Hop Limit 이 0 이 되어 라우터가 드롭했음 */
+export interface Icmpv6TimeExceeded {
+  kind: "icmp6";
+  type: "time-exceeded";
+  original: OriginalPacket;
+}
+
+/**
+ * ICMPv6 Destination Unreachable (타입 1). 코드: net = 0 (no route to destination), host = 3 (address unreachable — NDP 에 응답 없음),
+ * port = 4 (port unreachable)
+ */
+export interface Icmpv6Unreachable {
+  kind: "icmp6";
+  type: "unreachable";
+  code: UnreachableCode;
+  original: OriginalPacket;
+}
+
+export type Icmpv6Error = Icmpv6TimeExceeded | Icmpv6Unreachable;
+
+/**
+ * Neighbor Solicitation (NDP, ICMPv6 타입 135): ARP 요청에 해당. "target 의 MAC 은?" 을 브로드캐스트 대신
+ * target 의 solicited-node 멀티캐스트 주소로 보낸다. 출발지가 :: 이고 sll 이 없으면 DAD (이 주소를 쓰는 장치가 있나?)
+ */
+export interface NeighborSolicitation {
+  kind: "icmp6";
+  type: "ns";
+  target: Ip;
+  /** Source Link-Layer Address 옵션 (보낸 이의 MAC). DAD 에는 없다 */
+  sll?: Mac;
+}
+
+/**
+ * Neighbor Advertisement (NDP, ICMPv6 타입 136): ARP 응답에 해당. "target 은 tll 이다".
+ * R = 보낸 이가 라우터, S = 요청(NS)에 대한 답, O = 캐시에 있는 값을 덮어써라
+ */
+export interface NeighborAdvertisement {
+  kind: "icmp6";
+  type: "na";
+  target: Ip;
+  router: boolean;
+  solicited: boolean;
+  override: boolean;
+  /** Target Link-Layer Address 옵션 */
+  tll?: Mac;
+}
+
+export type NdpMessage = NeighborSolicitation | NeighborAdvertisement;
+
+export type Icmpv6Packet = Icmpv6Echo | Icmpv6Error | NdpMessage;
+
+export function isNdp(p: Ipv6Payload): p is NdpMessage {
+  return p.kind === "icmp6" && (p.type === "ns" || p.type === "na");
+}
+
+export function isIcmpv6Error(p: Ipv6Payload): p is Icmpv6Error {
+  return p.kind === "icmp6" && (p.type === "time-exceeded" || p.type === "unreachable");
+}
+
+/** IPv4·IPv6 의 ICMP 오류 (보낸 이에게 돌려주는 통지) */
+export function isIcmpErrorAny(p: IpPacket["payload"]): p is IcmpError | Icmpv6Error {
+  return (p.kind === "icmp" || p.kind === "icmp6") && (p.type === "time-exceeded" || p.type === "unreachable");
+}
+
+export const UNREACHABLE6_LABEL: Record<UnreachableCode, string> = {
+  net: "Destination Unreachable (no route)",
+  host: "Destination Unreachable (address unreachable)",
+  port: "Destination Unreachable (port unreachable)",
+};
+
+export const UNREACHABLE6_CODE: Record<UnreachableCode, number> = { net: 0, host: 3, port: 4 };
+
+export function icmpv6ErrorLabel(p: Icmpv6Error): string {
+  return p.type === "time-exceeded" ? "Time Exceeded" : UNREACHABLE6_LABEL[p.code];
+}
+
+/**
+ * 드롭한 IPv6 패킷을 보낸 이에게 돌려줄 ICMPv6 오류. ICMPv6 오류·NDP 에 대한 것, 출발지가 :: 인 것,
+ * 멀티캐스트로 간 것에는 만들지 않는다 → undefined
+ */
+export function icmpv6ErrorFor(from: Ip, dropped: Ipv6Packet, err: { type: "time-exceeded" } | { type: "unreachable"; code: UnreachableCode }): Ipv6Packet | undefined {
+  if (dropped.src === "::" || dropped.dst.startsWith("ff")) return undefined;
+  const p = dropped.payload;
+  let l4: OriginalPacket["l4"];
+  if (p.kind === "icmp6") {
+    if (p.type !== "echo-request" && p.type !== "echo-reply") return undefined;
+    l4 = { kind: "icmp", id: p.id, seq: p.seq };
+  } else l4 = { kind: p.kind, srcPort: p.srcPort, dstPort: p.dstPort };
+  const original = { src: dropped.src, dst: dropped.dst, l4 };
+  const payload: Icmpv6Error = err.type === "time-exceeded" ? { kind: "icmp6", type: "time-exceeded", original } : { kind: "icmp6", type: "unreachable", code: err.code, original };
+  return { kind: "ipv6", src: from, dst: dropped.src, hopLimit: 64, payload };
+}
+
+/** ICMPv6 메시지 종류 라벨 */
+export function icmpv6Label(p: Icmpv6Packet): string {
+  if (p.type === "time-exceeded" || p.type === "unreachable") return icmpv6ErrorLabel(p);
+  if (p.type === "ns") return "Neighbor Solicitation";
+  if (p.type === "na") return "Neighbor Advertisement";
+  return p.type === "echo-request" ? "Echo 요청" : "Echo 응답";
+}
+
+/**
  * IP 프로토콜 번호와 이름. 새 종류를 넣으면 여기와 아래 두 판별 함수부터 본다 —
  * 장비들은 종류를 하나하나 나열하지 않고 "포트가 있나(hasPorts)", "라우터끼리의 제어 멀티캐스트인가(isControl)" 로 나눈다.
  */
@@ -75,7 +207,7 @@ export const IP_PROTO: Record<IpPayload["kind"], { num: number; label: string }>
 };
 
 /** 포트가 있는 전송 계층 (TCP·UDP) — NAT 가 포트로 구분하고, 방화벽 규칙의 포트 칸이 뜻을 가진다 */
-export function hasPorts(p: IpPayload): p is TcpSegment | UdpPacket {
+export function hasPorts(p: IpPayload | Ipv6Payload): p is TcpSegment | UdpPacket {
   return p.kind === "tcp" || p.kind === "udp";
 }
 
@@ -407,6 +539,7 @@ export function describeFrame(frame: EthernetFrame): string {
     return p.op === "request" ? `ARP 요청 (${p.targetIp}?)` : `ARP 응답 (${p.senderIp}=${p.senderMac})`;
   }
   if (p.kind === "bpdu") return `STP BPDU (루트 ${bridgeIdLabel(p.root)}, 비용 ${p.cost}, 보낸 스위치 ${bridgeIdLabel(p.bridge)} 포트 ${p.port})`;
+  if (p.kind === "ipv6") return describeIpv6(p);
   const inner = p.payload;
   if (inner.kind === "icmp") {
     if (inner.type === "time-exceeded" || inner.type === "unreachable") return `ICMP ${icmpErrorLabel(inner)} (원래 ${describeOriginal(inner.original)})`;
@@ -425,6 +558,21 @@ export function describeFrame(frame: EthernetFrame): string {
   return `DHCP ${DHCP_LABEL[d.op]}${d.yiaddr ? ` (${d.yiaddr})` : ""}`;
 }
 
+/** IPv6 패킷 설명 (로그용) */
+function describeIpv6(p: Ipv6Packet): string {
+  const inner = p.payload;
+  if (inner.kind === "icmp6") {
+    if (inner.type === "ns") return p.src === "::" ? `NDP NS — DAD (${inner.target} 를 쓰는 장치가 있나?)` : `NDP NS (${inner.target} 의 MAC 은?)`;
+    if (inner.type === "na") return `NDP NA (${inner.target} = ${inner.tll ?? "?"}${inner.router ? ", 라우터" : ""})`;
+    if (inner.type === "time-exceeded" || inner.type === "unreachable") return `ICMPv6 ${icmpv6ErrorLabel(inner)} (원래 ${describeOriginal(inner.original)})`;
+    return inner.type === "echo-request" ? `ICMPv6 Echo 요청 seq=${inner.seq}` : `ICMPv6 Echo 응답 seq=${inner.seq}`;
+  }
+  if (inner.kind === "tcp") return `TCP ${tcpFlags(inner)} seq=${inner.seq} ack=${inner.ack}${inner.len ? ` len=${inner.len}` : ""} (IPv6)`;
+  const d = inner.payload;
+  if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}?) (IPv6)` : `DNS 응답 (${d.name} = ${d.answer ?? d.rcode}) (IPv6)`;
+  return `UDP ${inner.srcPort} → ${inner.dstPort} (IPv6)`;
+}
+
 /** 세그먼트 플래그를 사람이 읽는 형태로: SYN, SYN·ACK, ACK, FIN·ACK, RST, DATA */
 export function tcpFlags(t: TcpSegment): string {
   if (t.rst) return "RST";
@@ -439,6 +587,12 @@ export function shortLabel(frame: EthernetFrame): string {
   const p = frame.payload;
   if (p.kind === "arp") return p.op === "request" ? "ARP 요청" : "ARP 응답";
   if (p.kind === "bpdu") return "BPDU";
+  if (p.kind === "ipv6") {
+    const i6 = p.payload;
+    if (i6.kind === "icmp6") return i6.type === "ns" ? (p.src === "::" ? "DAD" : "NS") : i6.type === "na" ? "NA" : i6.type === "echo-request" ? "ping6 요청" : i6.type === "echo-reply" ? "ping6 응답" : i6.type === "time-exceeded" ? "Hop Limit 초과" : "도달 불가";
+    if (i6.kind === "tcp") return i6.len > 0 ? `${i6.data ?? "DATA"} ${i6.len}B` : tcpFlags(i6);
+    return i6.payload.kind === "dns" ? (i6.payload.op === "query" ? "DNS 질의" : "DNS 응답") : "UDP";
+  }
   const inner = p.payload;
   if (inner.kind === "icmp") return inner.type === "echo-request" ? "ping 요청" : inner.type === "echo-reply" ? "ping 응답" : inner.type === "time-exceeded" ? "TTL 초과" : "도달 불가";
   if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
@@ -457,6 +611,13 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   const p = frame.payload;
   if (p.kind === "arp") return "arp";
   if (p.kind === "bpdu") return "stp";
+  if (p.kind === "ipv6") {
+    // NDP 는 ARP 와 같은 역할(이웃 주소 해석)이라 같은 색
+    const i6 = p.payload;
+    if (i6.kind === "icmp6") return i6.type === "ns" || i6.type === "na" ? "arp" : "icmp";
+    if (i6.kind === "tcp") return "tcp";
+    return i6.payload.kind === "dns" ? "dns" : "dhcp";
+  }
   if (p.payload.kind === "icmp") return "icmp";
   if (p.payload.kind === "tcp") return "tcp";
   if (p.payload.kind === "esp") return "vpn";

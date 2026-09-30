@@ -1,6 +1,7 @@
 // 진단 자동완성용 "닿는 후보" 계산. 지금 토폴로지를 복제한 시뮬레이션을 뒤에서 돌려, 후보마다 실제로 ping(또는 TCP 연결)을 보내 본다.
 // 화면의 시뮬레이션에는 손대지 않는다. 라우팅·NAT·방화벽·VLAN 이 모두 반영되고, 버튼을 눌렀을 때의 결과와 같다.
 import { isPrivateIp, sameSubnet } from "../core/addr";
+import { isIpv6 } from "../core/addr6";
 import type { Network } from "../core/network";
 import { PUBLIC_ZONE } from "../core/nodes/dns";
 import { Host } from "../core/nodes/host";
@@ -11,12 +12,13 @@ import { NetworkSync } from "./netSync";
 import type { Topology } from "./topology";
 
 /** 출발 호스트에서 본 상대의 위치 */
-export type ReachGroup = "same" | "routed" | "internet" | "name";
+export type ReachGroup = "same" | "routed" | "internet" | "ipv6" | "name";
 
 export const REACH_GROUP_LABEL: Record<ReachGroup, string> = {
   same: "같은 서브넷 · 바로 (ARP)",
   routed: "다른 서브넷 · 게이트웨이 경유",
   internet: "인터넷 · NAT 경유",
+  ipv6: "IPv6 (NDP · NAT 없음)",
   name: "이름 (DNS)",
 };
 
@@ -80,16 +82,22 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
   const first = fresh();
   if (!first) return t.devices.some((d) => d.id === fromId && d.host) ? { candidates: [], note: "구성이 커서 확인하지 못했습니다" } : { candidates: [] };
   let { net, src } = first;
-  if (!src.ip) return { candidates: [], note: "이 장치에 IP 가 없어 닿는 곳을 확인할 수 없습니다 (IP 미설정)" };
-  const srcIp = src.ip;
+  const hasV6 = src.v6.enabled && src.v6.globals.length > 0;
+  if (!src.ip && !hasV6) return { candidates: [], note: "이 장치에 IP 가 없어 닿는 곳을 확인할 수 없습니다 (IP 미설정)" };
+  const srcIp = src.ip ?? "";
   const srcPrefix = src.iface.prefix;
   const names = new Map(t.devices.map((d) => [d.id, d.name]));
 
   // 후보 모으기 (값 기준 중복 제거)
   const raw = new Map<string, { value: string; label: string; isName: boolean; deviceId?: string }>();
   const addIp = (ip: string | undefined, label: string, deviceId?: string) => {
-    if (!ip || ip === srcIp || raw.has(ip)) return;
+    if (!ip || ip === srcIp || raw.has(ip) || (!src.ip && !isIpv6(ip))) return;
     raw.set(ip, { value: ip, label, isName: false, deviceId });
+  };
+  /** IPv6 글로벌 주소 후보 (출발 호스트가 IPv6 글로벌 주소를 가질 때만) */
+  const addIp6 = (ips: string[], label: string, deviceId?: string) => {
+    if (!hasV6) return;
+    for (const ip of ips) if (!src.v6.owns(ip) && !raw.has(ip)) raw.set(ip, { value: ip, label, isName: false, deviceId });
   };
   let hasInternet = false;
   for (const d of t.devices) {
@@ -97,16 +105,24 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
     const n = net.nodes.get(d.id);
     if (n instanceof Internet) hasInternet = true;
     if (mode === "tcp") {
-      if (n instanceof Host && n.tcp.listening.has(port)) addIp(n.ip, d.name, d.id);
+      if (n instanceof Host && n.tcp.listening.has(port)) {
+        addIp(n.ip, d.name, d.id);
+        addIp6(n.v6.globals.map((a) => a.ip), d.name, d.id);
+      }
       continue;
     }
-    if (n instanceof Host) addIp(n.ip, d.name, d.id);
-    else if (n instanceof Router) {
+    if (n instanceof Host) {
+      addIp(n.ip, d.name, d.id);
+      addIp6(n.v6.globals.map((a) => a.ip), d.name, d.id);
+    } else if (n instanceof Router) {
       addIp(n.lan.ip, `${d.name} LAN`, d.id);
       addIp(n.wan.ip, `${d.name} WAN`, d.id);
-    } else if (n instanceof L3Node) n.ifaces.forEach((f, i) => addIp(f.ip, `${d.name} ${n.names[i]}`, d.id));
+    } else if (n instanceof L3Node) {
+      n.ifaces.forEach((f, i) => addIp(f.ip, `${d.name} ${n.names[i]}`, d.id));
+      n.v6.forEach((v, i) => addIp6(v.globals.map((a) => a.ip), `${d.name} ${n.names[i]}`, d.id));
+    }
   }
-  if (hasInternet) {
+  if (hasInternet && src.ip) {
     for (const [ip, name] of Object.entries(KNOWN_SERVERS)) {
       if (mode === "tcp" && port !== 80) continue;
       addIp(ip, name);
@@ -116,9 +132,9 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
   const nameList: { name: string; ip: string }[] = [];
   for (const d of t.devices) {
     const n = net.nodes.get(d.id);
-    if (n instanceof Host && n.dnsServer.config.enabled) for (const r of n.dnsServer.config.records) nameList.push({ name: r.name, ip: r.ip });
+    if (n instanceof Host && n.dnsServer.config.enabled && src.ip) for (const r of n.dnsServer.config.records) nameList.push({ name: r.name, ip: r.ip });
   }
-  if (hasInternet) for (const r of PUBLIC_ZONE) nameList.push({ name: r.name, ip: r.ip });
+  if (hasInternet && src.ip) for (const r of PUBLIC_ZONE) nameList.push({ name: r.name, ip: r.ip });
   for (const r of nameList) {
     if (raw.has(r.name)) continue;
     if (mode === "tcp") {
@@ -178,7 +194,7 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
       }
     }
     const ip = c.isName ? resolved ?? nameList.find((r) => r.name === c.value)?.ip : c.value;
-    const group: ReachGroup = c.isName ? "name" : ip && sameSubnet(ip, srcIp, srcPrefix) ? "same" : ip && isPrivateIp(ip) ? "routed" : "internet";
+    const group: ReachGroup = c.isName ? "name" : ip && isIpv6(ip) ? "ipv6" : ip && sameSubnet(ip, srcIp, srcPrefix) ? "same" : ip && isPrivateIp(ip) ? "routed" : "internet";
     candidates.push({
       value: c.value,
       label,
@@ -189,7 +205,7 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
       reason: ok ? undefined : failureReason(net, start, reason, names),
     });
   }
-  const order: ReachGroup[] = ["same", "routed", "internet", "name"];
+  const order: ReachGroup[] = ["same", "routed", "internet", "ipv6", "name"];
   candidates.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group) || (a.hops ?? 99) - (b.hops ?? 99));
   return { candidates };
 }

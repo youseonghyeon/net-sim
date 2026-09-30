@@ -1,5 +1,8 @@
 // 게이트웨이·NAT 박스 설정: 인터페이스, 스태틱 라우팅, 동적 라우팅(RIP), VPN, 이중화(HA), VLAN 서브 인터페이스. 스위치 포트 VLAN 도 여기.
 import { sameSubnet } from "../../core/addr";
+import { canonIp6, isIpv6, isLinkLocal6, sameSubnet6 } from "../../core/addr6";
+import { linkLocalLabel } from "./host";
+import { l3MacOf } from "../../model/netSync";
 import { L3Node } from "../../core/nodes/l3";
 import { sim, simVersion } from "../../model/sim";
 import { updateDevice } from "../../model/store";
@@ -9,13 +12,14 @@ import {
   specOf,
   type Device,
   type IfaceSettings,
+  type Ipv6L3Settings,
   type L3Settings,
   type SubIfaceSettings,
   vlanColor,
 } from "../../model/topology";
 import { Icon } from "../Icons";
 import { FirewallSection, ForwardSection } from "./rules";
-import { Field, IfaceFields, Section, Toggle, ipError, validIp } from "./ui";
+import { Field, IfaceFields, Section, Toggle, ip6Error, ipError, validIp } from "./ui";
 
 /** 다른 수동 인터페이스와 서브넷이 겹치면 그 인터페이스 이름 */
 export function subnetClash(l3: L3Settings, names: string[], i: number): string | undefined {
@@ -60,6 +64,7 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
             <IfaceFields
               value={v}
               onChange={(patch) => setIface(i, patch)}
+              ipRequired={!l3.ipv6?.enabled}
               gatewayLabel={isUp ? "디폴트 라우트" : "게이트웨이"}
               dhcpNote={isUp ? "위쪽에 연결된 장치(인터넷 또는 다른 라우터)에서 주소와 디폴트 라우트를 받습니다." : "이 인터페이스가 DHCP 로 주소를 받습니다. 보통 안쪽 인터페이스는 수동으로 고정합니다."}
             />
@@ -98,6 +103,7 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
           경로 추가
         </button>
       </Section>
+      <Ipv6L3Section d={d} l3={l3} />
       <RipSection d={d} l3={l3} />
       <VpnSection d={d} l3={l3} />
       <RaServerSection d={d} l3={l3} />
@@ -115,6 +121,83 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
         uplinkName={isNat ? "outside" : "if0"}
       />
     </>
+  );
+}
+
+/** IPv6 스태틱 라우팅 한 줄의 문제 (넥스트 홉은 연결된 프리픽스 안의 글로벌 주소) */
+export function route6Error(v6: Ipv6L3Settings, r: Ipv6L3Settings["routes"][number]): string | undefined {
+  if (!isIpv6(r.dest) || !isIpv6(r.via)) return "목적지와 넥스트 홉 IPv6 주소가 필요합니다 (디폴트 라우트는 :: / 0)";
+  if (isLinkLocal6(r.via)) return "넥스트 홉은 링크 로컬 말고 연결된 프리픽스 안의 글로벌 주소로 넣으세요 (링크 로컬은 어느 인터페이스인지 정할 수 없음)";
+  const mine = v6.interfaces.filter((f) => isIpv6(f.ip));
+  if (mine.some((f) => canonIp6(f.ip) === canonIp6(r.via))) return "넥스트 홉이 내 주소입니다";
+  if (mine.length > 0 && !mine.some((f) => sameSubnet6(r.via, f.ip, f.prefix))) return "넥스트 홉이 연결된 프리픽스 안에 없습니다";
+  return undefined;
+}
+
+/** 게이트웨이·NAT 박스의 IPv6: 켜기 + 인터페이스별 주소 + IPv6 스태틱 라우팅 (::/0 = 디폴트 라우트) */
+export function Ipv6L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
+  const spec = specOf(d);
+  const names = spec.ports.map((p) => p.name);
+  const v6: Ipv6L3Settings = l3.ipv6 ?? { enabled: false, interfaces: [], routes: [] };
+  const set = (patch: Partial<Ipv6L3Settings>) =>
+    updateDevice(d.id, (x) => {
+      const cur = x.l3 ?? defaultL3(x.kind);
+      return { ...x, l3: { ...cur, ipv6: { ...(cur.ipv6 ?? { enabled: false, interfaces: [], routes: [] }), ...patch } } };
+    });
+  const iface = (i: number) => v6.interfaces[i] ?? { ip: "", prefix: 64 };
+  const setIface = (i: number, patch: Partial<{ ip: string; prefix: number }>) => set({ interfaces: names.map((_, k) => (k === i ? { ...iface(k), ...patch } : iface(k))) });
+  const setRoutes = (routes: Ipv6L3Settings["routes"]) => set({ routes });
+  const isNat = d.kind === "nat";
+  return (
+    <Section title="IPv6">
+      <label class="toggle-row">
+        <span>{v6.enabled ? "켜짐" : "꺼짐"}</span>
+        <Toggle on={v6.enabled} onToggle={() => set({ enabled: !v6.enabled })} />
+      </label>
+      {!v6.enabled ? (
+        <p class="note">켜면 모든 인터페이스에 링크 로컬 주소가 생기고, IPv6 패킷을 주소 그대로 넘깁니다(Hop Limit 만 줄임). {isNat ? "NAT 박스라도 IPv6 는 변환하지 않습니다 — 바깥에서 안쪽 주소로 바로 들어오므로 막으려면 방화벽 인바운드 규칙이 필요합니다." : ""}</p>
+      ) : (
+        <>
+          {names.map((name, i) => (
+            <Field key={name} label={name} hint={linkLocalLabel(l3MacOf(d.mac, i))} error={ip6Error(iface(i).ip, false)}>
+              <div class="prefix addr6">
+                <input class="input mono" value={iface(i).ip} placeholder="비우면 링크 로컬만" onInput={(e) => setIface(i, { ip: e.currentTarget.value })} />
+                <span class="mono">/</span>
+                <input
+                  class="input mono"
+                  type="number"
+                  min={1}
+                  max={128}
+                  value={iface(i).prefix}
+                  onInput={(e) => { if (e.currentTarget.value === "") return; setIface(i, { prefix: Math.min(128, Math.max(1, Number(e.currentTarget.value) || 64)) }); }}
+                />
+              </div>
+            </Field>
+          ))}
+          <p class="note">인터페이스 이름 옆의 fe80:: 는 MAC 에서 자동으로 만든 링크 로컬 주소입니다. 이 링크의 호스트는 기본 게이트웨이를 이 링크 로컬 주소나 위의 글로벌 주소로 둡니다.</p>
+          <h3 class="sub">IPv6 스태틱 라우팅</h3>
+          {v6.routes.length === 0 && <p class="note">연결된 프리픽스 밖으로 보낼 경로를 추가합니다. 디폴트 라우트는 목적지 :: / 0 입니다.</p>}
+          {v6.routes.map((r, i) => (
+            <div key={i} class="route-row">
+              <span class="muted">목적지</span>
+              <input class="input mono" value={r.dest} placeholder="2001:db8:3::" title="목적지 프리픽스" onInput={(e) => setRoutes(v6.routes.map((x, k) => (k === i ? { ...x, dest: e.currentTarget.value } : x)))} />
+              <span class="mono">/</span>
+              <input class="input mono prefix-in" type="number" min={0} max={128} value={r.prefix} onInput={(e) => { if (e.currentTarget.value === "") return; setRoutes(v6.routes.map((x, k) => (k === i ? { ...x, prefix: Math.min(128, Math.max(0, Number(e.currentTarget.value) || 0)) } : x))); }} />
+              <span class="muted">넥스트 홉</span>
+              <input class="input mono via" value={r.via} placeholder="연결된 프리픽스 안의 주소" title="넥스트 홉 주소 (연결된 프리픽스 안의 글로벌 주소)" onInput={(e) => setRoutes(v6.routes.map((x, k) => (k === i ? { ...x, via: e.currentTarget.value } : x)))} />
+              <button class="icon-btn" title="경로 삭제" onClick={() => setRoutes(v6.routes.filter((_, k) => k !== i))}>
+                <Icon name="trash" size={15} />
+              </button>
+              {route6Error(v6, r) && <div class="error route-error">{route6Error(v6, r)}</div>}
+            </div>
+          ))}
+          <button class="btn wide" onClick={() => setRoutes([...v6.routes, { dest: "", prefix: 64, via: "" }])}>
+            <Icon name="plus" size={14} />
+            IPv6 경로 추가
+          </button>
+        </>
+      )}
+    </Section>
   );
 }
 

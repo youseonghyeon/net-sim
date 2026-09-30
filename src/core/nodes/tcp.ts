@@ -5,7 +5,8 @@
 //   명령은 주고받지 않는다 (내용은 암호화라 보여 줄 것도 없다). 오래 열린 연결이 NAT·방화벽·이중화 변화에 어떻게 반응하는지 보는 용도
 //   (keepalive 없음 — 조용한 세션은 경로가 끊겨도 모르고, 다음에 보낼 때 알게 된다)
 import type { Ip } from "../addr";
-import { tcpFlags, type Ipv4Packet, type TcpSegment } from "../packet";
+import { isIpv6 } from "../addr6";
+import { tcpFlags, type IpPacket, type TcpSegment } from "../packet";
 import type { NodeContext, TimerHandle } from "./node";
 
 export type TcpState = "SYN_SENT" | "SYN_RCVD" | "ESTABLISHED" | "FIN_WAIT_1" | "FIN_WAIT_2" | "CLOSE_WAIT" | "LAST_ACK" | "CLOSED" | "FAILED";
@@ -96,7 +97,7 @@ export interface TcpConn {
 
 export interface TcpHost {
   /** 세그먼트를 IP 패킷으로 감싸 내보낸다 */
-  send(pkt: Ipv4Packet, ctx: NodeContext): void;
+  send(pkt: IpPacket, ctx: NodeContext): void;
   /** 서버 연결에 요청이 도착: true 를 돌려주면 앱이 맡아 나중에 respond() 로 응답한다 (로드밸런서) */
   onRequest?(conn: TcpConn, ctx: NodeContext): boolean;
   /** 연결이 끝남 (정상 종료·거부·timeout·중단) */
@@ -132,11 +133,12 @@ export interface ResponseMeta {
 }
 
 function connKey(localIp: Ip, localPort: number, remoteIp: Ip, remotePort: number): string {
-  return `${localIp}:${localPort}-${remoteIp}:${remotePort}`;
+  return `${endpoint(localIp, localPort)}-${endpoint(remoteIp, remotePort)}`;
 }
 
-function endpoint(ip: Ip, port: number): string {
-  return `${ip}:${port}`;
+/** 주소:포트. IPv6 는 주소에 콜론이 있어 대괄호로 감싼다 ([2001:db8::10]:80) */
+export function endpoint(ip: Ip, port: number): string {
+  return isIpv6(ip) ? `[${ip}]:${port}` : `${ip}:${port}`;
 }
 
 /** 쿠키의 사이트: 사용자가 적은 이름, 프록시 경유면 부탁한 대상의 호스트, 아니면 접속한 주소 (브라우저처럼 호스트 이름 기준, 대소문자 무시) */
@@ -199,7 +201,7 @@ export class TcpStack {
 
   // ---------- 수신 ----------
 
-  handle(pkt: Ipv4Packet, seg: TcpSegment, ctx: NodeContext): void {
+  handle(pkt: IpPacket, seg: TcpSegment, ctx: NodeContext): void {
     const key = connKey(pkt.dst, seg.dstPort, pkt.src, seg.srcPort);
     let conn = this.conns.get(key);
     const flags = tcpFlags(seg);
@@ -376,7 +378,7 @@ export class TcpStack {
     for (const c of done.slice(0, Math.max(0, done.length - 12))) this.conns.delete(c.id);
   }
 
-  private accept(pkt: Ipv4Packet, seg: TcpSegment, ctx: NodeContext): void {
+  private accept(pkt: IpPacket, seg: TcpSegment, ctx: NodeContext): void {
     if (!this.listening.has(seg.dstPort)) {
       ctx.trace("tcp.rst.sent", "L4", `SYN 수신 (from ${endpoint(pkt.src, seg.srcPort)}) 그러나 포트 ${seg.dstPort} 를 듣는 서비스 없음 → RST 로 거절`, { port: seg.dstPort, from: pkt.src });
       this.host.send(this.packet(pkt.dst, pkt.src, { srcPort: seg.dstPort, dstPort: seg.srcPort, seq: 0, ack: seg.seq + 1, rst: true, ackFlag: true, len: 0 }), ctx);
@@ -594,7 +596,8 @@ export class TcpStack {
     this.host.send(this.packet(conn.localIp, conn.remoteIp, seg), ctx);
   }
 
-  private packet(src: Ip, dst: Ip, seg: Omit<TcpSegment, "kind">): Ipv4Packet {
+  private packet(src: Ip, dst: Ip, seg: Omit<TcpSegment, "kind">): IpPacket {
+    if (isIpv6(dst)) return { kind: "ipv6", src, dst, hopLimit: 64, payload: { kind: "tcp", ...seg } };
     return { kind: "ipv4", src, dst, ttl: 64, payload: { kind: "tcp", ...seg } };
   }
 
@@ -660,9 +663,11 @@ export class TcpStack {
   }
 
   /** 노드 삭제/링크 끊김 등으로 모든 연결을 정리 */
-  abortAll(reason: string, ctx: NodeContext): void {
+  /** 열린 연결을 모두 실패로 끝낸다. only 가 있으면 그 조건에 맞는 연결만 (예: 주소가 바뀐 IP 버전) */
+  abortAll(reason: string, ctx: NodeContext, only?: (conn: TcpConn) => boolean): void {
     for (const conn of this.conns.values()) {
       if (conn.state === "CLOSED" || conn.state === "FAILED") continue;
+      if (only && !only(conn)) continue;
       this.cancelAll(conn);
       conn.state = "FAILED";
       conn.reason = reason;

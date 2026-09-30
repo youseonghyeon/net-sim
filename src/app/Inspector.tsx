@@ -1,7 +1,7 @@
 // 오른쪽 속성 패널: 선택(장치·다중·케이블·영역·없음)에 따라 패널을 고르고, 단일 장치는 개요/설정/진단/표 탭으로 나눈다.
 // 섹션 구현은 ./inspector/* 에 있다 (ui: 공용 부품, panels: 장치 외 패널, l3·rules·host·router: 설정, diag: 진단·표).
 import { useRef } from "preact/hooks";
-import { hostStatus, serviceBadges, sim, simVersion, wanStatus } from "../model/sim";
+import { hostStatus, ipv6Status, serviceBadges, sim, simVersion, wanStatus } from "../model/sim";
 import { signal } from "@preact/signals";
 import {
   beginCoalesce,
@@ -25,7 +25,7 @@ import {
 import { cableAt, DEFAULT_FIREWALL_SETTINGS, defaultL3, peerOf, specOf, type Device } from "../model/topology";
 import { Icon } from "./Icons";
 import { DiagSection, InternetDiagSection, LiveTables, StatusSection } from "./inspector/diag";
-import { HostSection, HttpProxySection, LbSection, ServiceSection, WifiBaseSection, WifiClientSection, RemoteVpnSection } from "./inspector/host";
+import { HostSection, HttpProxySection, Ipv6Section, LbSection, ServiceSection, WifiBaseSection, WifiClientSection, RemoteVpnSection } from "./inspector/host";
 import { L3Section, StpSection, VlanSection } from "./inspector/l3";
 import { CablePanel, CablesPanel, LintSection, MultiPanel, NetworkPanel, ZonePanel, deviceName, portName } from "./inspector/panels";
 import { RouterSection } from "./inspector/router";
@@ -130,9 +130,10 @@ function DevicePanel({ d }: { d: Device }) {
   const tab = tabs.includes(deviceTab.value) ? deviceTab.value : "overview";
   const addr = hostStatus(d.id);
   const wan = wanStatus(d.id);
+  const v6 = ipv6Status(d.id);
   const badges = serviceBadges(d.id);
   const issues = lintIssues.value.filter((i) => i.deviceId === d.id);
-  const worst = issues.some((i) => i.severity === "error") ? "error" : issues.length ? "warn" : addr?.tone === "warn" || wan?.tone === "warn" ? "warn" : "ok";
+  const worst = issues.some((i) => i.severity === "error") ? "error" : issues.length ? "warn" : addr?.tone === "warn" || wan?.tone === "warn" || v6?.tone === "warn" ? "warn" : "ok";
   const hasConfig =
     !!d.host || !!d.router || spec.role === "l3" || d.kind === "switch" || d.kind === "ap" || d.kind === "firewall" || !!d.wifi;
   return (
@@ -162,6 +163,7 @@ function DevicePanel({ d }: { d: Device }) {
           <section class="device-summary">
             {wan && <SummaryLine line={wan} />}
             {addr && <SummaryLine line={addr} primary={!wan} />}
+            {v6 && v6.text !== `IPv6 ${addr?.text}` && <SummaryLine line={v6} />}
             {badges.length > 0 && (
               <div class="summary-badges">
                 {badges.map((b) => (
@@ -229,6 +231,7 @@ function DevicePanel({ d }: { d: Device }) {
           {d.kind === "switch" && <StpSection d={d} />}
           {d.kind === "switch" && <VlanSection d={d} />}
           {d.host && <HostSection d={d} h={d.host} />}
+          {d.host && <Ipv6Section d={d} h={d.host} />}
           {d.host && (d.kind === "lb" ? <LbSection d={d} h={d.host} /> : <ServiceSection d={d} h={d.host} />)}
           {d.host && (d.kind === "pc" || d.kind === "laptop" || d.kind === "phone") && <RemoteVpnSection d={d} h={d.host} />}
           {d.host && d.kind !== "lb" && <HttpProxySection d={d} h={d.host} />}

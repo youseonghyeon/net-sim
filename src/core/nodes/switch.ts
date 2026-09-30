@@ -1,4 +1,4 @@
-import { isBroadcastMac, type Mac } from "../addr";
+import { isBroadcastMac, isMulticastMac, type Mac } from "../addr";
 import { describeFrame, MAX_L2_HOPS, type EthernetFrame } from "../packet";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { Stp, STP_TIMER_TAG, type StpConfig } from "./stp";
@@ -139,6 +139,11 @@ export class Switch implements SimNode {
 
     if (isBroadcastMac(frame.dst)) {
       this.flood(port, vlan, frame, ctx, "브로드캐스트");
+      return;
+    }
+    // 멀티캐스트 MAC 은 출발지로 쓰이지 않아 학습되는 일이 없다 — MLD·IGMP 스누핑이 없는 스위치는 브로드캐스트처럼 뿌린다
+    if (isMulticastMac(frame.dst)) {
+      this.flood(port, vlan, frame, ctx, `멀티캐스트 ${frame.dst} (스누핑 없는 스위치는 브로드캐스트처럼)`);
       return;
     }
     const entry = this.macTable.get(this.key(vlan, frame.dst));

@@ -1,5 +1,27 @@
 import { ipToInt, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
-import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, describeFrame, describeOriginal, isControl, type EthernetFrame, type IcmpPacket, type IcmpTimeExceeded, type Ipv4Packet, UNREACHABLE_FLAG, UNREACHABLE_LABEL, type IcmpUnreachable } from "../packet";
+import { ALL_NODES, canonIp6, isIpv6 } from "../addr6";
+import {
+  DHCP_CLIENT_PORT,
+  DHCP_SERVER_PORT,
+  DNS_PORT,
+  describeFrame,
+  describeOriginal,
+  isControl,
+  isNdp,
+  type EthernetFrame,
+  type IcmpPacket,
+  type IcmpTimeExceeded,
+  type Icmpv6Packet,
+  type Icmpv6TimeExceeded,
+  type Icmpv6Unreachable,
+  type IpPacket,
+  type Ipv4Packet,
+  type Ipv6Packet,
+  UNREACHABLE_FLAG,
+  UNREACHABLE_LABEL,
+  UNREACHABLE6_LABEL,
+  type IcmpUnreachable,
+} from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, type DnsServerConfig } from "./dns";
 import { NetInterface } from "./iface";
@@ -8,6 +30,7 @@ import { ForwardProxy, type ProxyConfig } from "./proxy";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { TCP_TIMER_TAG, TcpStack } from "./tcp";
 import { RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
+import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, type Ipv6Settings } from "./ipv6";
 
 export type IpMode = "dhcp" | "static";
 
@@ -34,6 +57,8 @@ export interface HostConfig {
   httpProxy?: HttpProxySetting;
   /** 원격 접속 VPN 클라이언트 */
   ra?: RaClientConfig;
+  /** IPv6 (없으면 꺼짐) */
+  ipv6?: Ipv6Settings;
 }
 
 export interface HttpProxySetting {
@@ -109,6 +134,8 @@ export class Host implements SimNode {
   httpProxy: HttpProxySetting | undefined;
   /** 원격 접속 VPN 클라이언트 */
   readonly ra: RaClient;
+  /** IPv6 (IPv4 인터페이스와 나란히, 같은 MAC) */
+  readonly v6: Ipv6Interface;
   /** 웹 등 직접 응답하는 TCP 포트. 실제로 듣는 포트는 여기에 LB 포트를 더한 것 */
   private services: number[];
   /** 마지막으로 본 시뮬레이션 시각 (표시용: LB 가 빼 둔 백엔드가 언제 돌아오는지) */
@@ -135,8 +162,11 @@ export class Host implements SimNode {
     this.icmpId = 0x1000 + (Math.abs(hashCode(cfg.id)) % 0x1000);
     this.trId = 0x2000 + (Math.abs(hashCode(cfg.id)) % 0x1000);
     this.dhcp = new DhcpClient(this.iface, hashCode(cfg.id));
+    this.v6 = new Ipv6Interface(cfg.mac);
+    this.v6.loopback = (pkt, ctx) => this.loopback6(pkt, ctx);
+    if (cfg.ipv6?.enabled) this.v6.init(cfg.ipv6);
     this.tcp = new TcpStack({
-      send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)),
+      send: (pkt, ctx) => this.sendAny(pkt, ctx),
       onRequest: (conn, ctx) => this.lb.onRequest(conn, ctx) || this.proxy.onRequest(conn, ctx),
       onFinish: (conn, ctx) => void (this.lb.onFinish(conn, ctx) || this.proxy.onFinish(conn, ctx)),
     });
@@ -170,10 +200,29 @@ export class Host implements SimNode {
     this.ra.setConfig(cfg, ctx);
   }
 
+  /** IPv6 설정 교체. 주소가 바뀌면 IPv6 연결·traceroute 를 정리한다 */
+  setIpv6(cfg: Ipv6Settings, ctx: NodeContext): void {
+    const changed = this.v6.configure(cfg, this.linkUp, ctx, this.emit(ctx));
+    if (!changed) return;
+    this.tcp.abortAll("IPv6 주소 변경", ctx, (c) => isIpv6(c.localIp));
+    for (const rec of this.traceroutes) if (rec.status === "running" && isIpv6(rec.resolved ?? rec.dst)) this.failTrace(rec, "IPv6 주소 변경", ctx);
+  }
+
+  /** IPv4·IPv6 를 알맞은 인터페이스로 */
+  private sendAny(pkt: IpPacket, ctx: NodeContext): void {
+    if (pkt.kind === "ipv6") this.v6.send(pkt, ctx, this.emit(ctx));
+    else this.iface.sendIp(pkt, ctx, this.emit(ctx));
+  }
+
   /** 내 주소로 보내는 패킷은 네트워크로 나가지 않고 바로 받는다 (루프백) */
   private loopback(pkt: Ipv4Packet, ctx: NodeContext): void {
     ctx.trace("ip.route", "L3", `${pkt.dst} 는 내 주소 → 루프백으로 바로 처리`, { dst: pkt.dst });
     this.handleIp(pkt, -1, ctx);
+  }
+
+  private loopback6(pkt: Ipv6Packet, ctx: NodeContext): void {
+    ctx.trace("ip.route", "L3", `${pkt.dst} 는 내 IPv6 주소 → 루프백으로 바로 처리`, { dst: pkt.dst });
+    this.handleIp6(pkt, -1, ctx);
   }
 
   /** DNS 서버 서비스 설정 교체 */
@@ -270,7 +319,7 @@ export class Host implements SimNode {
         this.dhcpServer.onInterfaceChanged(ctx);
         this.iface.arpCache.clear();
         this.iface.clearPending();
-        this.tcp.abortAll("주소 변경", ctx);
+        this.tcp.abortAll("주소 변경", ctx, (c) => !isIpv6(c.localIp));
         this.cancelTraceroute("주소 변경", ctx);
         this.ra.lost(ctx, "주소 변경");
         if (this.linkUp && this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
@@ -287,7 +336,7 @@ export class Host implements SimNode {
     this.iface.prefix = 24;
     this.iface.arpCache.clear();
     this.iface.clearPending();
-    if (before) this.tcp.abortAll("주소 변경", ctx);
+    if (before) this.tcp.abortAll("주소 변경", ctx, (c) => !isIpv6(c.localIp));
     if (before) this.cancelTraceroute("주소 변경", ctx);
     ctx.trace("ip.config", "sys", `자동(DHCP) 로 전환 → 기존 주소 지움`, { ...cfg });
     if (this.linkUp) this.dhcp.start(ctx, this.emit(ctx));
@@ -304,9 +353,11 @@ export class Host implements SimNode {
       ctx.trace("link.up", "L1", `링크 연결됨`);
       if (this.ipMode === "dhcp") this.dhcp.start(ctx, this.emit(ctx));
       else if (this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
+      this.v6.linkUp(ctx, this.emit(ctx));
       return;
     }
     ctx.trace("link.down", "L1", `링크 다운`);
+    this.v6.linkDown();
     this.ra.lost(ctx, "링크 다운");
     this.iface.clearPending();
     this.tcp.abortAll("링크 다운", ctx);
@@ -326,6 +377,10 @@ export class Host implements SimNode {
     const seq = ++this.icmpSeq;
     const rec: PingRecord = { dst: target, seq, sentAt: ctx.now, status: "pending" };
     this.pings.push(rec);
+    if (isIpv6(target)) {
+      this.sendPing6(rec, canonIp6(target)!, ctx);
+      return;
+    }
     if (!this.iface.ip) {
       rec.status = "failed";
       rec.reason = "IP 미설정";
@@ -377,6 +432,28 @@ export class Host implements SimNode {
     this.pingTimers.set(seq, ctx.timer(Host.PING_TIMEOUT, "ping-timeout", { seq }));
   }
 
+  /** ping over IPv6 (ICMPv6 Echo) */
+  private sendPing6(rec: PingRecord, dst: Ip, ctx: NodeContext): void {
+    rec.sentAt = ctx.now;
+    if (this.v6.owns(dst) || dst === "::1") {
+      rec.status = "ok";
+      rec.rtt = 0;
+      ctx.trace("icmp.reply.received", "app", `ping ${dst}: 내 주소(루프백) → 네트워크로 나가지 않고 즉시 응답`, { dst });
+      return;
+    }
+    const src = this.v6.sourceFor(dst);
+    if (!src) {
+      rec.status = "failed";
+      rec.reason = this.v6.enabled ? "IPv6 주소 없음" : "IPv6 꺼짐";
+      ctx.trace("ip.no-address", "L3", `ping ${dst} 실패: ${this.v6.whyNoSource(dst)}`, { dst });
+      return;
+    }
+    const pkt: Ipv6Packet = { kind: "ipv6", src, dst, hopLimit: Ipv6Interface.HOP_LIMIT, payload: { kind: "icmp6", type: "echo-request", id: this.icmpId, seq: rec.seq } };
+    ctx.trace("icmp.echo.sent", "app", `ping ${dst} (seq=${rec.seq}) → ICMPv6 Echo 요청 생성 (출발지 ${src})`, { dst, seq: rec.seq });
+    this.v6.send(pkt, ctx, this.emit(ctx));
+    this.pingTimers.set(rec.seq, ctx.timer(Host.PING_TIMEOUT, "ping-timeout", { seq: rec.seq }));
+  }
+
   private finishPing(rec: PingRecord, status: "ok" | "failed", extra: { rtt?: number; reason?: string }): void {
     rec.status = status;
     if (extra.rtt !== undefined) rec.rtt = extra.rtt;
@@ -396,6 +473,10 @@ export class Host implements SimNode {
     const rec: TracerouteRecord = { dst: target, hops: [], status: "running", startedAt: ctx.now };
     this.traceroutes.push(rec);
     while (this.traceroutes.length > Host.TRACEROUTE_KEEP) this.traceroutes.shift();
+    if (isIpv6(target)) {
+      this.startTrace6(rec, canonIp6(target)!, ctx);
+      return;
+    }
     if (!this.iface.ip) {
       this.failTrace(rec, "IP 미설정", ctx, "DHCP 로 받거나 수동 설정 필요");
       return;
@@ -442,14 +523,52 @@ export class Host implements SimNode {
     this.sendProbe(ctx);
   }
 
+  /** traceroute over IPv6 (traceroute6): Hop Limit 을 1 부터 늘린다 */
+  private startTrace6(rec: TracerouteRecord, target: Ip, ctx: NodeContext): void {
+    if (this.v6.owns(target) || target === "::1") {
+      rec.hops.push({ ttl: 1, ip: target, rtt: 0 });
+      rec.status = "done";
+      ctx.trace("trace.done", "app", `traceroute ${rec.dst}: 내 주소(루프백) → 네트워크로 나가지 않고 1 홉으로 완료`, { dst: rec.dst, hops: 1 });
+      return;
+    }
+    const src = this.v6.sourceFor(target);
+    if (!src) {
+      this.failTrace(rec, this.v6.enabled ? "IPv6 주소 없음" : "IPv6 꺼짐", ctx, this.v6.whyNoSource(target));
+      return;
+    }
+    if (!this.v6.onLink(target) && !this.v6.gateway) {
+      this.failTrace(rec, "IPv6 게이트웨이 없음", ctx, `${target} 은(는) 다른 네트워크인데 IPv6 기본 게이트웨이가 없음 — IPv6 설정에서 게이트웨이를 넣으세요`);
+      return;
+    }
+    ctx.trace(
+      "trace.start",
+      "app",
+      `traceroute ${rec.dst}: Hop Limit 을 1 부터 늘려 가며 ICMPv6 Echo 요청을 보내고, 각 라우터가 돌려주는 ICMPv6 Time Exceeded 로 경로를 알아낸다 (최대 ${Host.TRACEROUTE_MAX_HOPS} 홉, 홉당 ${Host.TRACEROUTE_TIMEOUT}ms 대기)`,
+      { dst: rec.dst, target },
+    );
+    this.activeTrace = { rec, target, ttl: 0, seq: 0, sentAt: ctx.now };
+    this.sendProbe(ctx);
+  }
+
   private sendProbe(ctx: NodeContext): void {
     const a = this.activeTrace!;
     a.ttl += 1;
     a.seq = ++this.trSeq;
     a.sentAt = ctx.now;
-    const pkt: Ipv4Packet = { kind: "ipv4", src: this.iface.ip!, dst: a.target, ttl: a.ttl, payload: { kind: "icmp", type: "echo-request", id: this.trId, seq: a.seq } };
-    ctx.trace("trace.probe", "app", `traceroute ${a.rec.dst}: TTL=${a.ttl} 로 Echo 요청 송신 (seq=${a.seq}) — ${a.ttl} 번째 라우터에서 TTL 이 0 이 된다`, { dst: a.rec.dst, ttl: a.ttl, seq: a.seq });
-    this.iface.sendIp(pkt, ctx, this.emit(ctx));
+    if (isIpv6(a.target)) {
+      const src = this.v6.sourceFor(a.target);
+      if (!src) {
+        this.failTrace(a.rec, "IPv6 주소 없음", ctx, this.v6.whyNoSource(a.target));
+        return;
+      }
+      const pkt: Ipv6Packet = { kind: "ipv6", src, dst: a.target, hopLimit: a.ttl, payload: { kind: "icmp6", type: "echo-request", id: this.trId, seq: a.seq } };
+      ctx.trace("trace.probe", "app", `traceroute ${a.rec.dst}: Hop Limit=${a.ttl} 로 ICMPv6 Echo 요청 송신 (seq=${a.seq}) — ${a.ttl} 번째 라우터에서 Hop Limit 이 0 이 된다`, { dst: a.rec.dst, ttl: a.ttl, seq: a.seq });
+      this.v6.send(pkt, ctx, this.emit(ctx));
+    } else {
+      const pkt: Ipv4Packet = { kind: "ipv4", src: this.iface.ip!, dst: a.target, ttl: a.ttl, payload: { kind: "icmp", type: "echo-request", id: this.trId, seq: a.seq } };
+      ctx.trace("trace.probe", "app", `traceroute ${a.rec.dst}: TTL=${a.ttl} 로 Echo 요청 송신 (seq=${a.seq}) — ${a.ttl} 번째 라우터에서 TTL 이 0 이 된다`, { dst: a.rec.dst, ttl: a.ttl, seq: a.seq });
+      this.iface.sendIp(pkt, ctx, this.emit(ctx));
+    }
     a.timer = ctx.timer(Host.TRACEROUTE_TIMEOUT, "tr-timeout", { seq: a.seq });
   }
 
@@ -488,7 +607,7 @@ export class Host implements SimNode {
     for (const rec of this.traceroutes) if (rec.status === "running") this.failTrace(rec, reason, ctx);
   }
 
-  private handleTimeExceeded(pkt: Ipv4Packet, icmp: IcmpTimeExceeded, frameId: number, ctx: NodeContext): void {
+  private handleTimeExceeded(pkt: IpPacket, icmp: IcmpTimeExceeded | Icmpv6TimeExceeded, frameId: number, ctx: NodeContext): void {
     const o = icmp.original;
     if (o.l4.kind === "icmp" && o.l4.id === this.trId) {
       const a = this.activeTrace;
@@ -502,7 +621,7 @@ export class Host implements SimNode {
       ctx.trace(
         "trace.hop",
         "app",
-        `traceroute ${a.rec.dst}: ${pkt.src} 가 Time Exceeded 회신 (TTL ${a.ttl} 이 거기서 0 이 됨) → ${a.ttl} 번째 홉 = ${pkt.src}, RTT ${rtt}ms`,
+        `traceroute ${a.rec.dst}: ${pkt.src} 가 Time Exceeded 회신 (${pkt.kind === "ipv6" ? "Hop Limit" : "TTL"} ${a.ttl} 이 거기서 0 이 됨) → ${a.ttl} 번째 홉 = ${pkt.src}, RTT ${rtt}ms`,
         { dst: a.rec.dst, ttl: a.ttl, ip: pkt.src, rtt },
         frameId,
       );
@@ -517,7 +636,7 @@ export class Host implements SimNode {
         ctx.trace(
           "icmp.ttl-received",
           "app",
-          `${pkt.src} 로부터 Time Exceeded 수신 (원래 ${describeOriginal(o)}) → ping ${rec.dst} 실패: 경로 위에서 TTL 이 다 됨 (라우팅 루프 의심 — 라우터들의 스태틱 라우팅·디폴트 라우트가 서로를 가리키는지 확인)`,
+          `${pkt.src} 로부터 Time Exceeded 수신 (원래 ${describeOriginal(o)}) → ping ${rec.dst} 실패: 경로 위에서 ${pkt.kind === "ipv6" ? "Hop Limit" : "TTL"} 이 다 됨 (라우팅 루프 의심 — 라우터들의 스태틱 라우팅·디폴트 라우트가 서로를 가리키는지 확인)`,
           { from: pkt.src, dst: rec.dst, seq },
           frameId,
         );
@@ -528,12 +647,12 @@ export class Host implements SimNode {
   }
 
   /** ICMP Destination Unreachable: 원래 패킷으로 누가 보낸 것인지 찾아 timeout 을 기다리지 않고 바로 끝낸다 */
-  private handleUnreachable(pkt: Ipv4Packet, icmp: IcmpUnreachable, frameId: number, ctx: NodeContext): void {
+  private handleUnreachable(pkt: IpPacket, icmp: IcmpUnreachable | Icmpv6Unreachable, frameId: number, ctx: NodeContext): void {
     const o = icmp.original;
-    const label = UNREACHABLE_LABEL[icmp.code];
+    const label = icmp.kind === "icmp6" ? UNREACHABLE6_LABEL[icmp.code] : UNREACHABLE_LABEL[icmp.code];
     const reason = `${label} (${pkt.src})`;
     const done = (what: string) =>
-      ctx.trace("icmp.unreachable.received", "app", `${pkt.src} 로부터 ICMP ${label} 수신 (원래 ${describeOriginal(o)}) → ${what}`, { from: pkt.src, code: icmp.code }, frameId);
+      ctx.trace("icmp.unreachable.received", "app", `${pkt.src} 로부터 ${icmp.kind === "icmp6" ? "ICMPv6" : "ICMP"} ${label} 수신 (원래 ${describeOriginal(o)}) → ${what}`, { from: pkt.src, code: icmp.code }, frameId);
     if (o.l4.kind === "icmp" && o.l4.id === this.trId) {
       const a = this.activeTrace;
       if (a && a.seq === o.l4.seq) {
@@ -567,6 +686,10 @@ export class Host implements SimNode {
 
   /** TCP 연결 시작 (클라이언트) */
   connect(target: string, port: number, ctx: NodeContext): void {
+    if (isIpv6(target)) {
+      this.connect6(canonIp6(target)!, port, ctx);
+      return;
+    }
     if (!this.iface.ip) {
       ctx.trace("ip.no-address", "L3", `${target}:${port} 연결 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)`, { dst: target, port });
       this.tcp.recordFailure("0.0.0.0", target, port, "IP 미설정", ctx);
@@ -597,6 +720,19 @@ export class Host implements SimNode {
       return;
     }
     this.tcp.connect(this.iface.ip, target, port, ctx);
+  }
+
+  /** IPv6 주소로 TCP 연결 (HTTP 프록시는 IPv4 만 다뤄 거치지 않는다) */
+  private connect6(dst: Ip, port: number, ctx: NodeContext): void {
+    const src = this.v6.sourceFor(dst);
+    if (!src) {
+      const why = this.v6.whyNoSource(dst);
+      ctx.trace("ip.no-address", "L3", `[${dst}]:${port} 연결 실패: ${why}`, { dst, port });
+      this.tcp.recordFailure("::", dst, port, this.v6.enabled ? "IPv6 주소 없음" : "IPv6 꺼짐", ctx);
+      return;
+    }
+    if (this.proxyFor(dst, port)) ctx.trace("proxy.use", "app", `IPv6 주소 [${dst}] 는 HTTP 프록시를 거치지 않고 직접 연결 (이 시뮬레이터의 프록시는 IPv4 만 다룸)`, { dst, port });
+    this.tcp.connect(src, dst, port, ctx);
   }
 
   /**
@@ -630,15 +766,78 @@ export class Host implements SimNode {
       ctx.trace("vlan.drop", "L2", `VLAN ${frame.vlan} 태그가 달린 프레임 → 호스트는 태그를 이해하지 못해 드롭 (스위치 포트를 액세스로 바꾸세요)`, { vlan: frame.vlan }, frame.id);
       return;
     }
-    // 가입하지 않은 멀티캐스트(예: 라우터끼리 주고받는 RIP)는 NIC 가 하드웨어에서 조용히 거른다
-    if (isMulticastMac(frame.dst)) return;
-    if (!this.iface.accepts(frame)) {
+    // 가입하지 않은 멀티캐스트(예: 라우터끼리 주고받는 RIP)는 NIC 가 하드웨어에서 조용히 거른다. IPv6 는 모든 노드·내 solicited-node 그룹에 가입한다
+    const v6Group = this.v6.accepts(frame.dst);
+    if (isMulticastMac(frame.dst) && !v6Group) return;
+    if (!this.iface.accepts(frame) && !v6Group) {
       ctx.trace("frame.drop", "L2", `목적지 MAC ${frame.dst} 가 내 MAC(${this.iface.mac}) 아님 → 드롭`, { dst: frame.dst }, frame.id);
       return;
     }
-    ctx.trace("frame.receive", "L2", `프레임 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === this.iface.mac ? "내 MAC" : "브로드캐스트"}]`, { src: frame.src, dst: frame.dst }, frame.id);
+    const to = frame.dst === this.iface.mac ? "내 MAC" : isMulticastMac(frame.dst) ? `멀티캐스트 ${frame.dst}` : "브로드캐스트";
+    ctx.trace("frame.receive", "L2", `프레임 수신: ${describeFrame(frame)} [${frame.src} → ${to}]`, { src: frame.src, dst: frame.dst }, frame.id);
     if (frame.payload.kind === "arp") this.iface.handleArp(frame.payload, frame.id, ctx, this.emit(ctx));
     else if (frame.payload.kind === "ipv4") this.handleIp(frame.payload, frame.id, ctx);
+    else if (frame.payload.kind === "ipv6") {
+      if (!this.v6.enabled) ctx.trace("frame.drop", "L3", `IPv6 패킷 수신 → 이 장치는 IPv6 가 꺼져 있어 드롭 (IPv6 설정에서 켜세요)`, {}, frame.id);
+      else if (isNdp(frame.payload.payload)) this.v6.handleNdp(frame.payload, frame.payload.payload, frame, ctx, this.emit(ctx));
+      else this.handleIp6(frame.payload, frame.id, ctx);
+    }
+  }
+
+  private handleIp6(pkt: Ipv6Packet, frameId: number, ctx: NodeContext): void {
+    if (!this.v6.owns(pkt.dst) && pkt.dst !== ALL_NODES) {
+      ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 가 내 IPv6 주소가 아님 → 드롭 (호스트는 포워딩 안 함)`, { dst: pkt.dst }, frameId);
+      return;
+    }
+    const p = pkt.payload;
+    if (p.kind === "tcp") {
+      this.tcp.handle(pkt, p, ctx);
+      return;
+    }
+    if (p.kind === "udp") {
+      ctx.trace("ip.drop", "L4", `UDP 포트 ${p.dstPort} 를 듣는 프로그램 없음 → 드롭`, { port: p.dstPort }, frameId);
+      if (pkt.dst !== ALL_NODES) {
+        const notice = this.v6.unreachable(pkt, "port", ctx, frameId);
+        if (notice) this.v6.send(notice, ctx, this.emit(ctx));
+      }
+      return;
+    }
+    this.handleIcmp6(pkt, p, frameId, ctx);
+  }
+
+  private handleIcmp6(pkt: Ipv6Packet, icmp: Icmpv6Packet, frameId: number, ctx: NodeContext): void {
+    if (icmp.type === "time-exceeded") {
+      this.handleTimeExceeded(pkt, icmp, frameId, ctx);
+      return;
+    }
+    if (icmp.type === "unreachable") {
+      this.handleUnreachable(pkt, icmp, frameId, ctx);
+      return;
+    }
+    if (icmp.type === "ns" || icmp.type === "na") return;
+    if (icmp.type === "echo-request") {
+      ctx.trace("icmp.echo.received", "app", `ICMPv6 Echo 요청 수신 (from ${pkt.src}, seq=${icmp.seq})`, { from: pkt.src, seq: icmp.seq }, frameId);
+      // 멀티캐스트(ff02::1)로 온 ping 에는 내 유니캐스트 주소로 답한다
+      const src = pkt.dst === ALL_NODES ? this.v6.sourceFor(pkt.src) : pkt.dst;
+      if (!src) return;
+      const reply: Ipv6Packet = { kind: "ipv6", src, dst: pkt.src, hopLimit: Ipv6Interface.HOP_LIMIT, payload: { kind: "icmp6", type: "echo-reply", id: icmp.id, seq: icmp.seq } };
+      ctx.trace("icmp.reply.sent", "app", `ICMPv6 Echo 응답 생성 → ${pkt.src} (seq=${icmp.seq})`, { to: pkt.src, seq: icmp.seq });
+      this.v6.send(reply, ctx, this.emit(ctx));
+      return;
+    }
+    if (icmp.id === this.trId) {
+      const a = this.activeTrace;
+      if (a && a.seq === icmp.seq) this.finishTrace(a, pkt.src, ctx, frameId);
+      else ctx.trace("ip.drop", "L3", `지난 traceroute 프로브(seq=${icmp.seq})의 Echo 응답 → 무시`, { seq: icmp.seq }, frameId);
+      return;
+    }
+    const rec = icmp.id === this.icmpId ? this.pings.find((p) => p.seq === icmp.seq && p.status === "pending") : undefined;
+    if (!rec) {
+      ctx.trace("ip.drop", "L3", `내가 보낸 적 없는 ICMPv6 Echo 응답 (id=${icmp.id}, seq=${icmp.seq}) → 무시`, {}, frameId);
+      return;
+    }
+    this.finishPing(rec, "ok", { rtt: ctx.now - rec.sentAt });
+    ctx.trace("icmp.reply.received", "app", `ping 성공: ${pkt.src} seq=${icmp.seq} RTT=${rec.rtt}ms`, { from: pkt.src, seq: icmp.seq, rtt: rec.rtt }, frameId);
   }
 
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
@@ -755,6 +954,26 @@ export class Host implements SimNode {
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
     this.clock = ctx.now;
     switch (tag) {
+      case DAD_TIMER_TAG:
+        this.v6.finishDad(data, ctx);
+        return;
+      case NDP_TIMEOUT_TAG: {
+        const { ip: nextHop } = data as { ip: Ip };
+        for (const pkt of this.v6.onNsTimeout(data, ctx)) {
+          if (pkt.payload.kind !== "icmp6" || pkt.payload.type !== "echo-request") continue;
+          const icmp = pkt.payload;
+          if (icmp.id === this.trId) {
+            const a = this.activeTrace;
+            if (a && a.seq === icmp.seq) this.failTrace(a.rec, "NDP timeout · 응답 없음", ctx, `첫 홉 ${nextHop} 이(가) NS 에 응답하지 않음 — 케이블과 IPv6 게이트웨이 주소를 확인`);
+            continue;
+          }
+          const rec = this.pings.find((p) => p.seq === icmp.seq && p.status === "pending");
+          if (!rec) continue;
+          this.finishPing(rec, "failed", { reason: "NDP timeout · 응답 없음" });
+          ctx.trace("icmp.failed", "app", `ping ${rec.dst} 실패: 그 주소를 가진 장치가 NS 에 응답하지 않음 (Address unreachable)`, { dst: rec.dst, seq: rec.seq });
+        }
+        return;
+      }
       case "arp-probe":
         if ((data as { mac: string }).mac === this.iface.mac) this.iface.finishProbe(ctx, this.emit(ctx));
         this.ra.connect(ctx); // 고정 주소를 쓰기 시작 → 원격 접속 VPN 접속
@@ -829,6 +1048,13 @@ export class Host implements SimNode {
         ["DNS", i.dns ?? "없음"],
         ["링크", this.linkUp ? "연결됨" : "끊김"],
         ["IP 설정", this.ipMode === "dhcp" ? `자동 (DHCP: ${DHCP_STATE_LABEL[this.dhcp.state]})` : "수동"],
+        ...(this.v6.enabled
+          ? ([
+              ["IPv6", this.v6.summary() || "없음"],
+              ["링크 로컬", this.v6.linkLocal],
+              ["IPv6 게이트웨이", this.v6.gateway ?? "없음"],
+            ] as [string, string][])
+          : []),
         ["TCP 서비스", this.tcp.listening.size ? [...this.tcp.listening].map((p) => `포트 ${p}`).join(", ") : "없음"],
         ...(this.ra.config.enabled ? [["원격 접속 VPN", this.ra.summary()!] as [string, string]] : []),
         ...(this.dhcpServer.config.enabled
@@ -852,12 +1078,19 @@ export class Host implements SimNode {
         ...(this.resolver.cache.size > 0 ? [{ title: "DNS 캐시 (리졸버)", columns: ["이름", "IP", "시각"], rows: this.resolver.rows() }] : []),
         { title: "TCP 연결", columns: ["상대", "상태", "보냄 / 받음"], rows: this.tcp.rows() },
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: i.arpRows() },
+        ...(this.v6.enabled
+          ? [
+              { title: "IPv6 주소", columns: ["주소", "출처", "상태"], rows: this.v6.addrRows() },
+              { title: "이웃 캐시 (NDP)", columns: ["IPv6", "MAC", "학습 시각"], rows: this.v6.neighborRows() },
+            ]
+          : []),
       ],
     };
   }
 }
 
 function isValidIp(s: string): boolean {
+  if (isIpv6(s)) return true;
   try {
     ipToInt(s);
     return true;
