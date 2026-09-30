@@ -89,8 +89,8 @@ export function App() {
       if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable) return;
       // select 는 자체 되돌리기가 없으므로 ⌘Z·⌘⇧Z 만 앱이 처리한다 (나머지 키 — 화살표·Space·Delete 등 — 는 select 몫)
       if (el.tagName === "SELECT" && !(mod && e.code === "KeyZ")) return;
-      // 토글 스위치 위에서 Space 는 토글이 처리한다 (재생까지 같이 바뀌지 않게)
-      if (e.defaultPrevented || el.getAttribute?.("role") === "switch") return;
+      // 토글 스위치 위에서 Space 같은 일반 키는 토글이 처리한다 (재생까지 같이 바뀌지 않게). ⌘Z·⌘C 같은 단축키는 토글을 막 누른 뒤에도 앱이 처리한다
+      if (e.defaultPrevented || (el.getAttribute?.("role") === "switch" && !mod)) return;
       // 문자 키는 e.code 로 판정 (한글 입력 상태에서도 동작, ₩ 로 바뀌는 \ 포함)
       const code = e.code;
       if (mod && code === "Backslash") {

@@ -1032,8 +1032,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   // if1 RA 끄기 → 자동 호스트의 주소가 사라진다
   await raRows.nth(1).locator(".toggle").click();
   console.log("after RA off:", await waitAddr("pc-1", /RA/));
-  await raRows.nth(1).locator(".toggle").click();
-  console.log("after RA on again:", await waitAddr("pc-1", /^2001:db8:1::ff:fe00:1$/));
+  // 토글에 포커스가 남은 채로 ⌘Z — 되돌리기가 먹어야 한다 (예전에는 토글 포커스가 단축키를 모두 막았다)
+  const focused = await page.evaluate(() => document.activeElement?.getAttribute("role"));
+  await page.keyboard.press("Meta+z");
+  console.log("undo with toggle focused (" + focused + "):", await waitAddr("pc-1", /^2001:db8:1::ff:fe00:1$/));
 }
 // 듀얼 스택: 이름으로 연결하면 AAAA 우선 → IPv6, AAAA 없는 이름은 IPv4. DNS 레코드 칸은 IPv6 주소(AAAA)도 받는다
 {

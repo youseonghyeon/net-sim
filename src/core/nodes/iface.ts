@@ -353,6 +353,9 @@ export class NetInterface {
       }
     }
 
+    // 나도 그 장치를 찾던 중이면 (서로 동시에 ARP 요청) 요청에서 배운 것으로 기다리던 패킷을 보낸다 — 응답 하나를 잃어도 대기열이 남지 않게
+    if (arp.op === "request" && this.pending.has(arp.senderIp) && this.arpCache.has(arp.senderIp)) this.flushPending(arp.senderIp, ctx, emit);
+
     if (arp.op === "request") {
       if (!isTarget) {
         ctx.trace("frame.drop", "L2", `${arp.targetIp} 는 내 IP(${this.ip}) 아님 → 응답 안 함`, { targetIp: arp.targetIp }, frameId);
@@ -388,7 +391,12 @@ export class NetInterface {
     const { ip } = data as { ip: Ip };
     this.arpTimers.delete(ip);
     const queue = this.pending.get(ip);
-    if (!queue || this.arpCache.has(ip)) return [];
+    if (!queue) return [];
+    if (this.arpCache.has(ip)) {
+      // 다른 길로 이미 배웠다 — 남은 대기열을 두면 다음 요청이 막힌다 (queue.length === 1 일 때만 ARP 요청을 보내므로)
+      this.pending.delete(ip);
+      return [];
+    }
     this.pending.delete(ip);
     ctx.trace("arp.timeout", "L2", `ARP timeout: ${ip} 가 ${NetInterface.ARP_TIMEOUT}ms 동안 응답 없음 → 대기 패킷 ${queue.length}개 드롭`, { ip, dropped: queue.length });
     return queue.map((q) => q.pkt);
