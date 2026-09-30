@@ -37,6 +37,9 @@ export function haRules({ t, m, add }: LintContext): void {
           if (i === vipIfs[0]!.i && (ha.sync === true) !== (other.sync === true)) {
             add({ deviceId: d.id, severity: "warn", code: "ha.sync-mismatch", message: `짝 ${g.device.name} 와 세션 동기화 설정이 다름 → 한쪽으로 넘어갈 때만 진행 중인 연결이 끊김`, fix: "쌍의 두 장비 모두 세션 동기화를 켜거나 끄기", related: [g.device.id] });
           }
+          if (i === vipIfs[0]!.i && (ha.advert === true) !== (other.advert === true)) {
+            add({ deviceId: d.id, severity: "warn", code: "ha.advert-mismatch", message: `짝 ${g.device.name} 와 주기 광고 설정이 다름 → 주기 광고를 켠 backup 은 광고를 기다리다 시간이 흐르면 master 가 되고, 켜지 않은 master 의 답을 들으면 물러나기를 되풀이함`, fix: "쌍의 두 장비 모두 주기 광고를 켜거나 끄기 (실제 VRRP 도 광고 간격이 같아야 함)", related: [g.device.id] });
+          }
           if (theirVip !== vip) {
             add({ deviceId: d.id, severity: "error", code: "ha.vip-mismatch", message: `짝 ${g.device.name} 의 ${portName(g.device, g.port)} 가상 주소(${theirVip ?? "없음"})가 내 것(${vip})과 다름 → 넘어가면 호스트가 쓰던 주소가 사라짐`, fix: "쌍의 두 장비에 같은 가상 주소를 넣기", related: [g.device.id] });
           }

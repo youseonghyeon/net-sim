@@ -1,4 +1,5 @@
 // 애니메이션 시계: 패킷이 링크 위에 있을 때만 흐르고, 대기 이벤트만 있으면 그 시각으로 점프, 아무것도 없으면 정지.
+// 배경 타이머(주기 광고 등)는 시계를 움직이지 않고, 시계가 그 시각을 지나갈 때 발화한다.
 // 신호·DOM 에 의존하지 않아 유닛 테스트가 가능하다.
 import type { Network } from "../core/network";
 
@@ -31,7 +32,13 @@ export function advanceClock(net: Network, time: number, dtMs: number, speed: nu
     const next = net.peekNextTime();
     if (next === undefined) break;
     if (next > t) {
-      if (net.inFlight(t).length > 0) break; // 패킷이 움직이는 중이면 애니메이션을 기다린다
+      if (net.inFlight(t).length > 0) {
+        // 패킷이 움직이는 중이면 애니메이션을 기다린다. 그사이 지나간 배경 타이머는 발화
+        if (!net.stepUntil(t)) break;
+        changed = true;
+        if (++processed > burstLimit) return { time: net.now, changed, burst: true };
+        continue;
+      }
       t = next; // 아무것도 안 움직이면 다음 이벤트로 점프
     }
     net.step();

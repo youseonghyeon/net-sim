@@ -439,6 +439,14 @@ export function HaSection({ d, l3 }: { d: Device; l3: L3Settings }) {
             </span>
             <Toggle on={ha.sync === true} onToggle={() => set({ sync: !ha.sync })} />
           </label>
+          <label class="toggle-row">
+            <span>
+              주기 광고 <span class="mono muted">1초 · Master_Down 3초</span>
+              <small class="muted">말없이 죽은 master 를 backup 이 알아챔</small>
+            </span>
+            <Toggle on={ha.advert === true} onToggle={() => set({ advert: !ha.advert })} />
+          </label>
+          {ha.advert === true && <p class="note">master 가 1초마다 광고하고, backup 은 3초(+skew) 동안 못 들으면 이어받습니다. 광고·감시는 시간이 흐를 때만 돕니다 — 시계는 패킷이 오갈 때만 가므로 ping 을 이어 보내거나 위의 "+10초" 로 시간을 흘려보내세요. 짝 장비도 같게 켭니다.</p>}
           <h3 class="sub">가상 주소</h3>
           {names.map((n, i) => (
             <Field key={n} label={n} error={vipError(i)}>

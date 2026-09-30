@@ -162,6 +162,9 @@ export function App() {
             <span class="clock mono" title="시뮬레이션 시각. 패킷이 움직일 때만 흐릅니다">
               {Math.round(simTime.value).toLocaleString()} ms
             </span>
+            <button class="ff mono" onClick={() => sim.fastForward(10_000)} title="시간 흘려보내기: 10초를 한꺼번에 진행합니다. 켜 둔 주기 동작(이중화 광고 등)은 시간이 흘러야 일어납니다">
+              +10초
+            </button>
           </div>
         </div>
         <div class="topbar-right">

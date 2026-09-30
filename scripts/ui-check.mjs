@@ -23,7 +23,8 @@ process.on("unhandledRejection", async (e) => {
   process.exit(1);
 });
 
-const device = (name) => page.locator("[data-device]", { hasText: name });
+// 이름 칸(text.name)이 정확히 그 이름인 타일 — 구성 검사 배지의 툴팁(<title>)에 다른 장치 이름이 들어가도 섞이지 않게
+const device = (name) => page.locator("[data-device]").filter({ has: page.locator("text.name", { hasText: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }) });
 /** 인스펙터 탭 이동 (없으면 무시) */
 async function goTab(name) {
   const b = page.locator(".inspector .tabs button", { hasText: name });
@@ -844,6 +845,52 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("ha failover: B master");
   console.log("ha ping via B:", await pingOnce());
   await page.screenshot({ path: `${OUT}/51-ha-failover.png` });
+}
+// 이중화 주기 광고: 두 방화벽에 켜고 A 의 케이블 둘을 손실 100%(말없이 죽음) → 그대로는 B 가 모름 → "+10초" 로 시간을 흘려보내면 B 가 이어받음
+{
+  await loadEx("ha");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => /방화벽 A/.test(el.textContent ?? "") && /HA master/.test(el.textContent ?? "")), null, { timeout: 20000 });
+  for (const name of ["방화벽 A", "방화벽 B"]) {
+    await clickDevice(name);
+    await goTab("설정");
+    await page.locator(".inspector .toggle-row", { hasText: "주기 광고" }).locator(".toggle").click();
+  }
+  // 주기 광고를 켜도 넘어가지 않는다 (선출을 다시 하지 않음)
+  await page.waitForTimeout(300);
+  const flipped = (await device("방화벽 A").locator(".badge", { hasText: "HA" }).textContent()) !== "HA master";
+  if (flipped) errors.push("ha advert toggle: 주기 광고를 켰더니 master 가 바뀜 / 광고 설정만 바뀌면 선출을 다시 하지 않아야 함 / src/core/nodes/ha.ts setConfig");
+  await page.locator(".inspector .toggle-row", { hasText: "주기 광고" }).scrollIntoViewIfNeeded();
+  await page.locator(".inspector section", { has: page.locator("h3", { hasText: "이중화" }) }).first().screenshot({ path: `${OUT}/51b-ha-advert.png` });
+  const aCables = await page.evaluate(() => {
+    const t = JSON.parse(localStorage.getItem("net-sim.topology.v1"));
+    const a = t.devices.find((d) => d.name === "방화벽 A").id;
+    return t.cables.filter((c) => c.a.device === a || c.b.device === a).map((c) => c.id);
+  });
+  // 곡선 케이블은 상자 가운데가 선 위가 아니다: 경로의 중간 점을 누른다
+  const midOf = (id) =>
+    page.evaluate((cid) => {
+      const p = document.querySelector(`[data-cable="${cid}"] .hit`);
+      const pt = p.getPointAtLength(p.getTotalLength() / 2);
+      const m = p.getScreenCTM();
+      return { x: pt.x * m.a + pt.y * m.c + m.e, y: pt.x * m.b + pt.y * m.d + m.f };
+    }, id);
+  const m0 = await midOf(aCables[0]);
+  await page.mouse.click(m0.x, m0.y);
+  const m1 = await midOf(aCables[1]);
+  await page.keyboard.down("Shift");
+  await page.mouse.click(m1.x, m1.y);
+  await page.keyboard.up("Shift");
+  await page.locator(".inspector .field", { hasText: "손실률" }).locator("select").selectOption("100");
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.waitForTimeout(300);
+  const bBefore = await device("방화벽 B").locator(".badge", { hasText: "HA" }).textContent();
+  if (bBefore !== "HA backup") errors.push(`ha advert: 시간을 흘려보내기 전에 이미 B 가 ${bBefore} — 손실 100% 만으로는 B 가 알 수 없어야 함 / src/core/nodes/ha.ts`);
+  const clockBefore = await page.locator(".transport .clock").innerText();
+  await page.click(".transport .ff");
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => /방화벽 B/.test(el.textContent ?? "") && /HA master/.test(el.textContent ?? "")), null, { timeout: 20000 });
+  console.log("ha advert: B before", bBefore, "| clock", clockBefore, "→", await page.locator(".transport .clock").innerText(), "| B after: HA master");
+  await page.screenshot({ path: `${OUT}/51c-ha-silent-failover.png` });
 }
 // 스위치 이중화 (STP): 막힌 포트 표시(점선·⊘), 루트 배지, ping
 {

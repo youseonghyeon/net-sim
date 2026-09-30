@@ -222,12 +222,13 @@ export function CablePanel({ c }: { c: Cable }) {
             <option value="10">10%</option>
             <option value="30">30%</option>
             <option value="50">50%</option>
+            <option value="100">100% (링크는 살아 있음)</option>
           </select>
         </Field>
         <button class="btn wide" onClick={() => sim.dropNext(c.id)}>
           다음 패킷 1개 손실시키기
         </button>
-        <p class="note">손실된 패킷은 케이블 중간에서 사라집니다. TCP 는 ACK 가 안 오면 재전송하고, ping 은 timeout 으로 실패합니다. Shift+클릭으로 케이블을 더 고르면 손실률을 한 번에 바꿀 수 있습니다.</p>
+        <p class="note">손실된 패킷은 케이블 중간에서 사라집니다. TCP 는 ACK 가 안 오면 재전송하고, ping 은 timeout 으로 실패합니다. 100% 는 케이블을 뽑은 것과 달리 링크가 살아 있어 양쪽 장비가 고장을 모릅니다(멈춘 장비·한쪽만 끊긴 광케이블 흉내). Shift+클릭으로 케이블을 더 고르면 손실률을 한 번에 바꿀 수 있습니다.</p>
       </Section>
       <Section>
         <button class="btn danger" onClick={() => removeCable(c.id)}>
@@ -245,8 +246,8 @@ export function common<T>(values: T[]): T | undefined {
 }
 
 /** 손실률 선택지 (%) — 단일 케이블 패널과 같은 값 */
-const LOSS_CHOICES = [0, 10, 30, 50];
-const lossLabel = (p: number) => (p === 0 ? "없음" : `${p}%`);
+const LOSS_CHOICES = [0, 10, 30, 50, 100];
+const lossLabel = (p: number) => (p === 0 ? "없음" : p === 100 ? "100% (링크는 살아 있음)" : `${p}%`);
 
 /** 케이블 다중 선택 패널: 손실률 일괄 설정(한 번 = 되돌리기 한 단계) + 함께 삭제 */
 export function CablesPanel({ ids }: { ids: string[] }) {

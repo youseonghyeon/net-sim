@@ -428,6 +428,7 @@ export function effectiveL3(d: Device) {
       priority: Number.isInteger(l3.ha?.priority) && l3.ha!.priority >= 1 && l3.ha!.priority <= 254 ? l3.ha!.priority : 100,
       vips: spec.ports.map((_, i) => validIp(l3.ha?.vips?.[i])),
       sync: l3.ha?.sync === true,
+      ...(l3.ha?.advert === true ? { advert: true } : {}),
     },
     ipv6: effectiveL3v6(d, spec.ports.length),
     vpn: {

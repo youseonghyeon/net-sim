@@ -97,6 +97,19 @@ class SimController {
     this.bump();
   }
 
+  /** 시간 흘려보내기: ms 만큼 한꺼번에 진행한다 (배경 타이머 — 주기 광고·헬스 체크·DPD — 가 그 사이에 발화) */
+  fastForward(ms: number): void {
+    const net = this.net;
+    try {
+      net.runUntil(this.settleTime() + ms, EVENT_BURST_LIMIT * 10);
+    } catch {
+      running.value = false;
+      simNotice.value = `시간을 흘려보내는 중 이벤트가 폭주해 멈췄습니다 (${EVENT_BURST_LIMIT * 10}개 초과). 케이블이 두 경로로 이어진 L2 루프가 있는지 확인하세요`;
+    }
+    simTime.value = net.now;
+    this.bump();
+  }
+
   private settleTime(): number {
     const t = settleTimeOf(this.net, simTime.peek());
     if (t !== simTime.peek()) simTime.value = t;

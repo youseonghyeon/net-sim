@@ -13,8 +13,12 @@ export interface NodeContext {
   /** 지정 포트에 연결된 링크로 프레임 송신 */
   send(port: number, frame: EthernetFrame): void;
   isPortConnected(port: number): boolean;
-  /** delay(ms) 후 onTimer(tag, data) 호출. 핸들로 취소 가능 */
-  timer(delay: number, tag: string, data?: unknown): TimerHandle;
+  /**
+   * delay(ms) 후 onTimer(tag, data) 호출. 핸들로 취소 가능.
+   * background 면 배경 타이머: 스스로 시계를 움직이지 않고, 다른 일(패킷 이동·timeout·"+N초")로 시간이 그 시각을 지날 때만 발화한다.
+   * 주기 동작(광고·헬스 체크·DPD)용 — 조용한 네트워크에서 시계가 끝없이 점프하지 않게
+   */
+  timer(delay: number, tag: string, data?: unknown, background?: boolean): TimerHandle;
   trace(kind: TraceKind, layer: Layer, summary: string, details?: Record<string, unknown>, packetId?: number): void;
   nextPacketId(): number;
 }

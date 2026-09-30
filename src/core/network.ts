@@ -93,6 +93,8 @@ export class Network {
   eventCount = 0;
 
   private readonly sched = new Scheduler<SimEvent>();
+  /** 배경 타이머: 다음 일반 이벤트(또는 runUntil 의 끝)까지 시간이 지나갈 때만 발화한다. 시계를 스스로 움직이지 않는다 */
+  private readonly bg = new Scheduler<SimEvent>();
   /** 장치별 걸려 있는 타이머 (장치를 지울 때 취소) */
   private readonly timersOf = new Map<string, Set<SimEvent>>();
   private readonly portMap = new Map<string, { link: Link; other: Endpoint }>();
@@ -228,6 +230,20 @@ export class Network {
     }
   }
 
+  /** 다음 배경 타이머 시각 (취소·고아 제외) */
+  peekBackgroundTime(): number | undefined {
+    for (;;) {
+      const head = this.bg.peek();
+      if (!head) return undefined;
+      const p = head.payload;
+      if (p.type === "timer" && (p.cancelled || !this.nodes.has(p.nodeId))) {
+        this.bg.pop();
+        continue;
+      }
+      return head.time;
+    }
+  }
+
   /** 실제로 처리될 이벤트 수 (취소·고아 타이머, 손실 배달 제외) */
   get pendingEvents(): number {
     this.peekNextTime();
@@ -238,9 +254,31 @@ export class Network {
     });
   }
 
-  /** 이벤트 하나 처리. 처리한 게 없으면 false */
+  /** 이벤트 하나 처리 (그보다 이른 배경 타이머가 있으면 그것 먼저). 일반 이벤트가 없으면(조용함) false — 배경 타이머만으로는 시계가 가지 않는다 */
   step(): boolean {
-    if (this.peekNextTime() === undefined) return false;
+    const next = this.peekNextTime();
+    if (next === undefined) return false;
+    return this.stepUntil(next);
+  }
+
+  /**
+   * limit 이하에서 가장 이른 이벤트 하나를 처리한다. 배경 타이머와 일반 이벤트가 같은 시각이면 일반 이벤트 먼저
+   * (그 순간 도착한 광고가 Master_Down 보다 앞선다). 처리한 게 없으면 false
+   */
+  stepUntil(limit: number): boolean {
+    const next = this.peekNextTime();
+    const bg = this.peekBackgroundTime();
+    if (bg !== undefined && bg <= limit && (next === undefined || bg < next)) {
+      const item = this.bg.pop()!;
+      this.now = item.time;
+      this.eventCount++;
+      const ev = item.payload as Extract<SimEvent, { type: "timer" }>;
+      this.timersOf.get(ev.nodeId)?.delete(ev);
+      const node = this.nodes.get(ev.nodeId);
+      node?.onTimer(ev.tag, ev.data, this.ctx(ev.nodeId));
+      return true;
+    }
+    if (next === undefined || next > limit) return false;
     const item = this.sched.pop()!;
     this.now = item.time;
     this.eventCount++;
@@ -275,14 +313,11 @@ export class Network {
     return true;
   }
 
-  /** time 이하의 이벤트를 모두 처리하고 now 를 time 으로 맞춘다 */
-  runUntil(time: number): number {
+  /** time 이하의 이벤트(배경 타이머 포함 — 그만큼 시간이 지나가므로)를 모두 처리하고 now 를 time 으로 맞춘다 */
+  runUntil(time: number, maxEvents = Infinity): number {
     let n = 0;
-    for (;;) {
-      const next = this.peekNextTime();
-      if (next === undefined || next > time) break;
-      this.step();
-      n++;
+    while (this.stepUntil(time)) {
+      if (++n >= maxEvents) throw new Error(`runUntil: exceeded ${maxEvents} events`);
     }
     if (time > this.now) this.now = time;
     return n;
@@ -360,9 +395,9 @@ export class Network {
       },
       send: (port, frame) => this.send(nodeId, port, frame),
       isPortConnected: (port) => this.portMap.has(epKey({ node: nodeId, port })),
-      timer: (delay, tag, data): TimerHandle => {
+      timer: (delay, tag, data, background): TimerHandle => {
         const ev: SimEvent = { type: "timer", nodeId, tag, data, cancelled: false };
-        this.sched.push(this.now + delay, ev);
+        (background ? this.bg : this.sched).push(this.now + delay, ev);
         let set = this.timersOf.get(nodeId);
         if (!set) this.timersOf.set(nodeId, (set = new Set()));
         set.add(ev);

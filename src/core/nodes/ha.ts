@@ -10,7 +10,10 @@
 // 이 시뮬레이터의 시계는 조용하면 멈추므로 주기 광고 대신 변화가 있을 때만 광고한다(RIP 와 같은 방식):
 //   시작·링크 복구·설정 변경 → 내 우선순위를 알림,  master 가 물러날 때(링크 다운·제거·끔) → 우선순위 0 광고,
 //   backup 은 우선순위 0 을 들으면 skew 시간((256 − 우선순위)/256 초) 뒤 master 가 된다.
-// 그래서 "말없이 죽은 master" 는 없다고 본다 — 시뮬레이터 안의 고장은 모두 링크 다운·제거로 일어난다.
+// 주기 광고(설정 advert, 기본 꺼짐)를 켜면 실제처럼 master 가 1초마다 광고하고, backup 은 광고를 들을 때마다
+// Master_Down(3초 + skew) 감시를 다시 건다 — 둘 다 배경 타이머라 시계를 스스로 움직이지 않고, 패킷이 오가거나 "+N초" 로
+// 시간이 흐를 때만 돈다. 그래서 끄면 "말없이 죽은 master"(케이블을 모두 뽑아 물러남 광고도 못 보냄)를 모르고, 켜면 시간이
+// 흐르는 동안 backup 이 알아채 이어받는다. 감시는 장비 단위라 어느 VIP 인터페이스로든 광고를 들으면 살아 있는 것으로 본다.
 // 세션(NAT 테이블·방화벽 흐름·IPsec SA) 동기화는 없다 → 넘어가면 진행 중이던 연결은 끊기고 새 연결부터 된다.
 import type { Ip, Mac } from "../addr";
 import { ipToInt } from "../addr";
@@ -27,12 +30,16 @@ export interface HaConfig {
   vips: (Ip | undefined)[];
   /** 세션 동기화 (pfsync 식): master 의 NAT 매핑·방화벽 흐름을 backup 에 복사 */
   sync?: boolean;
+  /** 주기 광고: master 는 1초마다 광고, backup 은 3초 + skew 동안 못 들으면 master 가 된다 (배경 타이머) */
+  advert?: boolean;
 }
 
 export const DEFAULT_HA: HaConfig = { enabled: false, vrid: 1, priority: 100, vips: [] };
 export const HA_TIMER_TAG = "vrrp-down";
 /** 시작할 때 master 광고를 기다리는 시간 (VRRP: 광고 간격 1초 × 3) */
 export const MASTER_DOWN = 3000;
+/** 주기 광고 간격 (VRRP 기본 1초) */
+export const ADVERT_INTERVAL = 1000;
 
 export type HaState = "init" | "backup" | "master";
 export const HA_STATE_LABEL: Record<HaState, string> = { init: "시작 전", backup: "backup (대기)", master: "master (일하는 중)" };
@@ -71,6 +78,10 @@ export class Ha {
   private timerToken = 0;
   /** 이번 타이머가 유효한지 확인하는 번호 */
   private armed: number | undefined;
+  /** 주기 광고 (master): 지금 유효한 배경 타이머 번호 */
+  private advertising: number | undefined;
+  /** Master_Down 감시 (backup): 지금 유효한 배경 타이머 번호 */
+  private watching: number | undefined;
 
   constructor(private readonly host: HaHost) {}
 
@@ -94,11 +105,31 @@ export class Ha {
   setConfig(cfg: HaConfig, ctx: NodeContext): void {
     const same = JSON.stringify(cfg) === JSON.stringify(this.config);
     if (same) return;
+    // 주기 광고만 바뀜: 선출을 다시 하지 않고(넘어가지 않게) 광고·감시 타이머만 켜고 끈다
+    const rest = (c: HaConfig) => JSON.stringify({ ...c, advert: undefined });
+    if (this.config.enabled && rest(cfg) === rest(this.config)) {
+      this.config = { ...cfg, vips: [...cfg.vips] };
+      this.advertising = undefined;
+      this.watching = undefined;
+      ctx.trace(
+        "ha.config",
+        "sys",
+        cfg.advert
+          ? `이중화 주기 광고 켜짐: master 는 ${ADVERT_INTERVAL / 1000}초마다 광고, backup 은 ${MASTER_DOWN / 1000}초 + skew 동안 못 들으면 이어받음 (시간이 흐를 때만 돈다)`
+          : "이중화 주기 광고 꺼짐: 변화가 있을 때만 광고",
+        { advert: cfg.advert === true },
+      );
+      if (this.state === "master") this.scheduleAdvert(ctx);
+      else if (this.masterIp) this.watch(ctx);
+      return;
+    }
     const wasMaster = this.state === "master";
     if (wasMaster) this.resign(ctx, "설정이 바뀜");
     this.config = { ...cfg, vips: [...cfg.vips] };
     this.state = "init";
     this.masterIp = undefined;
+    this.advertising = undefined;
+    this.watching = undefined;
     ctx.trace(
       "ha.config",
       "sys",
@@ -146,8 +177,47 @@ export class Ha {
     ctx.timer(ms, HA_TIMER_TAG, { token: this.armed });
   }
 
+  /** master: 다음 주기 광고 (배경 타이머) */
+  private scheduleAdvert(ctx: NodeContext): void {
+    if (!this.config.advert) return;
+    this.advertising = ++this.timerToken;
+    ctx.timer(ADVERT_INTERVAL, HA_TIMER_TAG, { advert: this.advertising }, true);
+  }
+
+  /** backup: master 광고를 들었다 → Master_Down 감시를 다시 건다 (배경 타이머) */
+  private watch(ctx: NodeContext): void {
+    if (!this.config.advert) return;
+    this.watching = ++this.timerToken;
+    ctx.timer(MASTER_DOWN + skewMs(this.effectivePriority()), HA_TIMER_TAG, { watch: this.watching }, true);
+  }
+
   onTimer(data: unknown, ctx: NodeContext): void {
-    const token = (data as { token: number }).token;
+    const d = data as { token?: number; advert?: number; watch?: number };
+    if (d.advert !== undefined) {
+      if (d.advert !== this.advertising) return;
+      this.advertising = undefined;
+      if (!this.config.enabled || this.state !== "master") return;
+      this.advertise(ctx, this.config.priority);
+      this.scheduleAdvert(ctx);
+      return;
+    }
+    if (d.watch !== undefined) {
+      if (d.watch !== this.watching) return;
+      this.watching = undefined;
+      // 이미 다른 이유로 master 가 되려고 기다리는 중(armed)이면 그쪽에 맡긴다
+      if (!this.config.enabled || this.state === "master" || this.armed !== undefined) return;
+      const mine = this.effectivePriority();
+      if (mine === 0) return;
+      ctx.trace(
+        "ha.state",
+        "L3",
+        `이중화: master ${this.masterIp ?? "?"} 의 광고를 ${(MASTER_DOWN + skewMs(mine)) / 1000}초 동안 못 들음 (Master_Down = 광고 간격 ${ADVERT_INTERVAL / 1000}초 × 3 + skew) → master 가 말없이 죽은 것으로 보고 이어받음`,
+        { master: this.masterIp, priority: mine },
+      );
+      this.becomeMaster(ctx);
+      return;
+    }
+    const token = d.token;
     if (token !== this.armed) return;
     this.armed = undefined;
     if (!this.config.enabled || this.state === "master") return;
@@ -166,7 +236,9 @@ export class Ha {
       { vrid, priority: this.config.priority },
     );
     for (const i of this.vipIfaces()) this.host.setVip(i, { ip: this.config.vips[i]!, mac: virtualMac(vrid) }, ctx);
+    this.watching = undefined;
     this.advertise(ctx, this.config.priority);
+    this.scheduleAdvert(ctx);
   }
 
   /** master 에서 물러난다: 가상 주소를 놓고 우선순위 0 광고 (backup 이 곧바로 이어받게) */
@@ -174,6 +246,7 @@ export class Ha {
     if (this.state !== "master") return;
     for (const i of this.vipIfaces()) this.host.setVip(i, undefined, ctx);
     this.state = "backup";
+    this.advertising = undefined;
     ctx.trace("ha.backup", "L3", `이중화: master 에서 물러남 (${why}) → 가상 주소를 놓고 우선순위 0 광고 — backup 이 곧 이어받는다`, { why });
     this.host.onResign?.(ctx);
     this.advertise(ctx, 0);
@@ -249,7 +322,14 @@ export class Ha {
       }
       this.armed = undefined; // master 가 있으므로 기다림을 멈춘다
       this.masterIp = src;
-      ctx.trace("ha.advert", "L3", `[${name}] master ${src} 의 VRRP 광고 (우선순위 ${msg.priority}) 수신 → 나(${mine})보다 높으므로 backup 유지`, { from: src, priority: msg.priority }, frameId);
+      ctx.trace(
+        "ha.advert",
+        "L3",
+        `[${name}] master ${src} 의 VRRP 광고 (우선순위 ${msg.priority}) 수신 → 나(${mine})보다 높으므로 backup 유지${this.config.advert ? ` — Master_Down 감시 다시 시작 (${(MASTER_DOWN + skewMs(mine)) / 1000}초)` : ""}`,
+        { from: src, priority: msg.priority },
+        frameId,
+      );
+      this.watch(ctx);
       return;
     }
     // 나보다 낮은 쪽이 master 거나 경쟁 중: 내 우선순위를 알린다 (그쪽이 master 면 물러나고, 내 타이머가 끝나면 내가 master)

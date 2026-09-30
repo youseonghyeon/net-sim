@@ -323,6 +323,8 @@ export interface HaSettings {
   vips: string[];
   /** 세션 동기화 (없으면 꺼짐) */
   sync?: boolean;
+  /** 주기 광고 + Master_Down 감시 (없으면 꺼짐 — 변화가 있을 때만 광고) */
+  advert?: boolean;
 }
 
 const prefix6 = (v: unknown, dflt: number, min = 1) => (typeof v === "number" && Number.isInteger(v) && v >= min && v <= 128 ? v : dflt);
@@ -427,6 +429,7 @@ function normalizeHa(h: Partial<HaSettings>): HaSettings {
     priority: int(h.priority, 1, 254, 100),
     vips: Array.isArray(h.vips) ? h.vips.map((v) => (typeof v === "string" ? v : "")) : [],
     ...(h.sync === true ? { sync: true } : {}),
+    ...(h.advert === true ? { advert: true } : {}),
   };
 }
 
