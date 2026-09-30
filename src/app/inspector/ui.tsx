@@ -64,6 +64,13 @@ export function ipError(s: string, required: boolean): string | undefined {
   return validIp(s) ? undefined : "예: 192.168.0.10";
 }
 
+/** IPv4 또는 IPv6 주소 칸 (DNS 레코드·업스트림처럼 둘 다 되는 곳) */
+export function anyIpError(s: string, required: boolean): string | undefined {
+  const v = s.trim();
+  if (!v) return required ? "필요한 값입니다" : undefined;
+  return validIp(v) || isIpv6(v) ? undefined : "예: 192.168.0.20 또는 2001:db8::20";
+}
+
 /** IPv6 주소 칸 검증. linkLocalOk 가 아니면 fe80:: 는 "자동으로 생긴다" 고 안내 (주소 칸) */
 export function ip6Error(s: string, required: boolean, linkLocalOk = false): string | undefined {
   const v = s.trim();

@@ -1,9 +1,26 @@
 // DNS: 호스트 리졸버(질의·캐시)와 DNS 서버(레코드 응답, 모르는 이름은 업스트림 서버로 재귀 질의).
 // 호스트의 서비스, 라우터의 포워더, 인터넷의 공인 DNS 가 같은 DnsServer 를 쓴다.
 import type { Ip } from "../addr";
-import { DNS_PORT, type DnsMessage, type Ipv4Packet } from "../packet";
+import { isIpv6 } from "../addr6";
+import { DNS_PORT, type DnsMessage, type IpPacket, type Ipv4Packet } from "../packet";
 import type { NetInterface, Emit } from "./iface";
+import type { Ipv6Interface } from "./ipv6";
 import type { NodeContext, TimerHandle } from "./node";
+
+/** A = IPv4 주소, AAAA = IPv6 주소. 레코드 종류는 주소 모양으로 정한다 */
+export type QType = "A" | "AAAA";
+
+export function qtypeOf(ip: Ip): QType {
+  return isIpv6(ip) ? "AAAA" : "A";
+}
+
+/** 캐시 키: A 는 이름 그대로 (예전과 같음), AAAA 는 뒤에 표시 */
+function cacheKey(name: string, qtype: QType): string {
+  return qtype === "A" ? name : `${name} (AAAA)`;
+}
+
+/** 리졸버 결과: 주소, 또는 실패 이유. nodata = 이름은 있지만 그 종류의 레코드가 없음 (AAAA 가 없으면 A 로 다시 묻는다) */
+export type ResolveDone = (ip: Ip | undefined, error?: string, nodata?: boolean) => void;
 
 export interface DnsRecord {
   name: string;
@@ -35,17 +52,20 @@ export function normalizeName(name: string): string {
 }
 
 export function looksLikeName(s: string): boolean {
-  return /[a-z]/i.test(s) && !/^\d+\.\d+\.\d+\.\d+$/.test(s);
+  return /[a-z]/i.test(s) && !/^\d+\.\d+\.\d+\.\d+$/.test(s) && !isIpv6(s);
 }
 
 interface PendingQuery {
   name: string;
+  qtype: QType;
+  /** 질의를 보낸 DNS 서버 */
+  server: Ip;
   attempts: number;
   timer: TimerHandle;
-  done: (ip: Ip | undefined, error?: string) => void;
+  done: ResolveDone;
 }
 
-/** 호스트 쪽 리졸버: 설정된 DNS 서버에 묻고 결과를 캐시한다 */
+/** 호스트 쪽 리졸버: 설정된 DNS 서버에 묻고 결과를 캐시한다. DNS 서버는 IPv4 가 있으면 그쪽, 없으면 IPv6 DNS (질의 종류와 운반 버전은 따로 — AAAA 를 IPv4 로 물어도 된다) */
 export class DnsResolver {
   readonly cache = new Map<string, { ip: Ip; at: number }>();
   private readonly pending = new Map<number, PendingQuery>();
@@ -59,48 +79,67 @@ export class DnsResolver {
   constructor(
     private readonly iface: NetInterface,
     seed: number,
+    /** 호스트의 IPv6 (IPv6 DNS 서버에 묻거나 AAAA 를 물을 때) */
+    private readonly v6?: Ipv6Interface,
   ) {
     this.idSeq = 0x100 + (Math.abs(seed) % 0x1000);
     this.port = 50000 + (Math.abs(seed) % 5000);
   }
 
   get server(): Ip | undefined {
-    return this.iface.dns;
+    return this.pick()?.server ?? this.iface.dns ?? this.v6?.effectiveDns;
   }
 
-  resolve(rawName: string, ctx: NodeContext, emit: Emit, done: (ip: Ip | undefined, error?: string) => void): void {
+  /** 물어볼 DNS 서버와 내 출발지: IPv4 DNS 가 있고 내 IPv4 주소가 있으면 그쪽, 아니면 IPv6 DNS */
+  private pick(): { server: Ip; src: Ip } | undefined {
+    if (this.iface.dns && this.iface.ip) return { server: this.iface.dns, src: this.iface.ip };
+    const d6 = this.v6?.effectiveDns;
+    const src6 = d6 ? this.v6!.sourceFor(d6) : undefined;
+    if (d6 && src6) return { server: d6, src: src6 };
+    return undefined;
+  }
+
+  /** qtype = 물을 레코드 종류 (A: IPv4 주소, AAAA: IPv6 주소) */
+  resolve(rawName: string, ctx: NodeContext, emit: Emit, done: ResolveDone, qtype: QType = "A"): void {
     const name = normalizeName(rawName);
-    const cached = this.cache.get(name);
+    const key = cacheKey(name, qtype);
+    const cached = this.cache.get(key);
     if (cached && ctx.now - cached.at <= DNS_CACHE_TTL) {
-      ctx.trace("dns.cache.hit", "app", `DNS 캐시 적중: ${name} = ${cached.ip} (서버에 묻지 않음)`, { name, ip: cached.ip });
+      ctx.trace("dns.cache.hit", "app", `DNS 캐시 적중: ${name}${qtype === "AAAA" ? " AAAA" : ""} = ${cached.ip} (서버에 묻지 않음)`, { name, ip: cached.ip });
       done(cached.ip);
       return;
     }
-    if (cached) this.cache.delete(name);
-    const server = this.iface.dns;
-    if (!server) {
-      ctx.trace("dns.no-server", "app", `${name} 을(를) 찾을 수 없음: DNS 서버가 설정되지 않음 (수동이면 DNS 칸 입력, 자동이면 DHCP 서버가 DNS 를 안내하는지 확인)`, { name });
-      done(undefined, "DNS 서버 없음");
-      return;
-    }
-    if (!this.iface.ip) {
-      ctx.trace("dns.no-server", "app", `${name} 을(를) 찾을 수 없음: 내 IP 주소가 없음`, { name });
-      done(undefined, "IP 미설정");
+    if (cached) this.cache.delete(key);
+    const pick = this.pick();
+    if (!pick) {
+      if (!this.iface.dns && !this.v6?.effectiveDns) {
+        ctx.trace("dns.no-server", "app", `${name} 을(를) 찾을 수 없음: DNS 서버가 설정되지 않음 (수동이면 DNS 칸 입력, 자동이면 DHCP 서버가 DNS 를 안내하는지 확인)`, { name });
+        done(undefined, "DNS 서버 없음");
+      } else {
+        ctx.trace("dns.no-server", "app", `${name} 을(를) 찾을 수 없음: 내 IP 주소가 없음`, { name });
+        done(undefined, "IP 미설정");
+      }
       return;
     }
     const id = ++this.idSeq;
     const timer = ctx.timer(DNS_TIMEOUT, DNS_TIMER_TAG, { id });
-    this.pending.set(id, { name, attempts: 1, timer, done });
+    this.pending.set(id, { name, qtype, server: pick.server, attempts: 1, timer, done });
     this.send(id, name, 1, ctx, emit);
   }
 
   private send(id: number, name: string, attempt: number, ctx: NodeContext, emit: Emit): void {
-    const server = this.iface.dns;
-    if (!server || !this.iface.ip) {
+    const q = this.pending.get(id);
+    const pick = this.pick();
+    if (!q || !pick) {
       this.fail(id, "DNS 설정이 사라짐", ctx);
       return;
     }
-    if (server === this.iface.ip) {
+    q.server = pick.server;
+    const server = pick.server;
+    const qtype = q.qtype;
+    const what = `"${name} 의 ${qtype === "AAAA" ? "IPv6 주소(AAAA)" : "주소"}는?"`;
+    const v6 = isIpv6(server);
+    if (server === this.iface.ip || (v6 && this.v6?.owns(server))) {
       // 내가 곧 DNS 서버: 네트워크로 나가지 않고 바로 묻는다 (루프백)
       const local = this.local;
       if (!local || !local.config.enabled) {
@@ -108,16 +147,20 @@ export class DnsResolver {
         this.fail(id, "내 DNS 서버 서비스 꺼짐", ctx);
         return;
       }
-      ctx.trace("dns.query.sent", "app", `DNS 질의: "${name} 의 주소는?" → 내 DNS 서버 서비스 (루프백)`, { id, name, server });
-      const q: DnsMessage = { kind: "dns", id, op: "query", name };
-      const pkt: Ipv4Packet = { kind: "ipv4", src: this.iface.ip, dst: server, ttl: 64, payload: { kind: "udp", srcPort: this.port, dstPort: DNS_PORT, payload: q } };
-      local.handle(pkt, this.port, q, -1, ctx, emit);
+      ctx.trace("dns.query.sent", "app", `DNS 질의: ${what} → 내 DNS 서버 서비스 (루프백)`, { id, name, server, qtype });
+      const m: DnsMessage = { kind: "dns", id, op: "query", name, ...(qtype === "AAAA" ? { qtype } : {}) };
+      const pkt: IpPacket = v6
+        ? { kind: "ipv6", src: pick.src, dst: server, hopLimit: 64, payload: { kind: "udp", srcPort: this.port, dstPort: DNS_PORT, payload: m } }
+        : { kind: "ipv4", src: pick.src, dst: server, ttl: 64, payload: { kind: "udp", srcPort: this.port, dstPort: DNS_PORT, payload: m } };
+      local.handle(pkt, this.port, m, -1, ctx, emit);
       return;
     }
-    const msg: DnsMessage = { kind: "dns", id, op: "query", name };
-    ctx.trace("dns.query.sent", "app", `DNS 질의: "${name} 의 주소는?" → 서버 ${server}${attempt > 1 ? ` (재시도 ${attempt}/${DNS_MAX_ATTEMPTS})` : ""}`, { id, name, server });
-    const pkt: Ipv4Packet = { kind: "ipv4", src: this.iface.ip!, dst: server, ttl: 64, payload: { kind: "udp", srcPort: this.port, dstPort: DNS_PORT, payload: msg } };
-    this.iface.sendIp(pkt, ctx, emit);
+    const msg: DnsMessage = { kind: "dns", id, op: "query", name, ...(qtype === "AAAA" ? { qtype } : {}) };
+    // 질의 종류(A/AAAA)와 운반하는 IP 버전은 따로다: AAAA 를 IPv4 DNS 서버에 물어도 된다
+    const carry = qtype === "AAAA" && !v6 ? " (IPv6 주소를 IPv4 로 묻는다 — 질의 종류와 운반 버전은 따로)" : qtype === "A" && v6 ? " (IPv4 주소를 IPv6 로 묻는다)" : "";
+    ctx.trace("dns.query.sent", "app", `DNS 질의: ${what} → 서버 ${server}${carry}${attempt > 1 ? ` (재시도 ${attempt}/${DNS_MAX_ATTEMPTS})` : ""}`, { id, name, server, qtype });
+    if (v6) this.v6!.send({ kind: "ipv6", src: pick.src, dst: server, hopLimit: 64, payload: { kind: "udp", srcPort: this.port, dstPort: DNS_PORT, payload: msg } }, ctx, emit);
+    else this.iface.sendIp({ kind: "ipv4", src: pick.src, dst: server, ttl: 64, payload: { kind: "udp", srcPort: this.port, dstPort: DNS_PORT, payload: msg } }, ctx, emit);
   }
 
   handle(msg: DnsMessage, from: Ip, frameId: number, ctx: NodeContext): void {
@@ -129,9 +172,14 @@ export class DnsResolver {
     this.pending.delete(msg.id);
     q.timer.cancel();
     if (msg.answer) {
-      this.cache.set(q.name, { ip: msg.answer, at: ctx.now });
-      ctx.trace("dns.response.received", "app", `DNS 응답: ${q.name} = ${msg.answer} (서버 ${from}) → 캐시에 저장`, { name: q.name, ip: msg.answer }, frameId);
+      this.cache.set(cacheKey(q.name, q.qtype), { ip: msg.answer, at: ctx.now });
+      ctx.trace("dns.response.received", "app", `DNS 응답: ${q.name}${q.qtype === "AAAA" ? " AAAA" : ""} = ${msg.answer} (서버 ${from}) → 캐시에 저장`, { name: q.name, ip: msg.answer, qtype: q.qtype }, frameId);
       q.done(msg.answer);
+      return;
+    }
+    if (msg.rcode === "NODATA") {
+      ctx.trace("dns.response.received", "app", `DNS 응답: ${q.name} 은(는) 있는 이름이지만 ${q.qtype} 레코드가 없음 (NOERROR, 답 0개) — ${q.qtype === "AAAA" ? "IPv6 주소가 없는 이름" : "IPv4 주소가 없는 이름"}`, { name: q.name, qtype: q.qtype, nodata: true }, frameId);
+      q.done(undefined, `${q.qtype} 레코드 없음`, true);
       return;
     }
     ctx.trace("dns.nxdomain", "app", `DNS 응답: ${q.name} 은(는) 없는 이름 (${msg.rcode ?? "NXDOMAIN"}) — 서버 ${from} 가 모르는 이름`, { name: q.name, rcode: msg.rcode }, frameId);
@@ -150,7 +198,7 @@ export class DnsResolver {
       return;
     }
     this.pending.delete(id);
-    ctx.trace("dns.timeout", "app", `DNS timeout: 서버 ${this.iface.dns} 가 ${DNS_MAX_ATTEMPTS}번 물어도 응답 없음 → ${q.name} 해석 실패 (서버 주소·경로 확인)`, { id, name: q.name });
+    ctx.trace("dns.timeout", "app", `DNS timeout: 서버 ${q.server} 가 ${DNS_MAX_ATTEMPTS}번 물어도 응답 없음 → ${q.name} 해석 실패 (서버 주소·경로 확인)`, { id, name: q.name });
     q.done(undefined, "DNS timeout · 응답 없음");
   }
 
@@ -199,6 +247,7 @@ interface PendingUpstream {
   clientPort: number;
   clientId: number;
   name: string;
+  qtype: QType;
   timer: TimerHandle;
 }
 
@@ -215,66 +264,86 @@ export class DnsServer {
     private readonly label = "DNS 서버",
     /** 업스트림 질의를 다른 인터페이스로 내보내야 할 때 (라우터: WAN). 없으면 iface 로 보낸다 */
     private readonly upstreamPath?: { srcIp: () => Ip | undefined; send: (pkt: Ipv4Packet, ctx: NodeContext) => void },
+    /** 이 서버 호스트의 IPv6 (IPv6 로 온 질의에 답하고, IPv6 업스트림에 묻는다) */
+    private readonly v6?: Ipv6Interface,
   ) {}
 
-  lookup(rawName: string, now?: number): Ip | undefined {
+  lookup(rawName: string, now?: number, qtype: QType = "A"): Ip | undefined {
     const name = normalizeName(rawName);
-    const rec = this.config.records.find((r) => normalizeName(r.name) === name)?.ip;
+    const rec = this.config.records.find((r) => normalizeName(r.name) === name && qtypeOf(r.ip) === qtype)?.ip;
     if (rec) return rec;
-    const c = this.cache.get(name);
+    const key = cacheKey(name, qtype);
+    const c = this.cache.get(key);
     if (c && (now === undefined || now - c.at <= DNS_CACHE_TTL)) return c.ip;
-    if (c) this.cache.delete(name);
+    if (c) this.cache.delete(key);
     return undefined;
   }
 
   /** UDP 53 으로 온 메시지 처리 (질의 또는 업스트림 서버의 응답) */
-  handle(pkt: Ipv4Packet, srcPort: number, msg: DnsMessage, frameId: number, ctx: NodeContext, emit: Emit): void {
+  handle(pkt: IpPacket, srcPort: number, msg: DnsMessage, frameId: number, ctx: NodeContext, emit: Emit): void {
     if (msg.op === "response") {
       this.handleUpstreamResponse(pkt, msg, frameId, ctx, emit);
       return;
     }
     const name = normalizeName(msg.name);
-    ctx.trace("dns.query.received", "app", `${this.label}: 질의 수신 "${name}?" (from ${pkt.src})`, { name, from: pkt.src }, frameId);
+    const qtype: QType = msg.qtype ?? "A";
+    const tq = qtype === "AAAA" ? " AAAA" : "";
+    ctx.trace("dns.query.received", "app", `${this.label}: 질의 수신 "${name}${tq}?" (from ${pkt.src})`, { name, from: pkt.src, qtype }, frameId);
     if (!this.config.enabled) {
       ctx.trace("dns.nxdomain", "app", `${this.label} 가 꺼져 있음 → 응답하지 않음`, { name }, frameId);
       return;
     }
-    const ip = this.lookup(name, ctx.now);
+    const answer = (m: Omit<DnsMessage, "kind" | "id" | "op" | "name">): DnsMessage => ({ kind: "dns", id: msg.id, op: "response", name: msg.name, ...(qtype === "AAAA" ? { qtype } : {}), ...m });
+    const ip = this.lookup(name, ctx.now, qtype);
     if (ip) {
-      const fromCache = !this.config.records.some((r) => normalizeName(r.name) === name);
-      ctx.trace("dns.response.sent", "app", `${this.label}: ${name} = ${ip} 응답 (${fromCache ? "업스트림 서버 답 캐시" : "내 레코드"}) → ${pkt.src}`, { name, ip, to: pkt.src });
-      this.respond(pkt.src, srcPort, { kind: "dns", id: msg.id, op: "response", name: msg.name, answer: ip }, ctx, emit);
+      const fromCache = !this.config.records.some((r) => normalizeName(r.name) === name && qtypeOf(r.ip) === qtype);
+      ctx.trace("dns.response.sent", "app", `${this.label}: ${name}${tq} = ${ip} 응답 (${fromCache ? "업스트림 서버 답 캐시" : "내 레코드"}) → ${pkt.src}`, { name, ip, to: pkt.src, qtype });
+      this.respond(pkt.src, srcPort, answer({ answer: ip }), ctx, emit);
+      return;
+    }
+    // 내 레코드에 이름은 있는데 그 종류가 없다: 이 이름의 주인이므로 업스트림에 묻지 않고 "없음(NODATA)"
+    if (this.config.records.some((r) => normalizeName(r.name) === name)) {
+      ctx.trace("dns.response.sent", "app", `${this.label}: ${name} 은(는) 내 레코드에 있지만 ${qtype} 레코드는 없음 → NOERROR, 답 0개 (NODATA) 응답 → ${pkt.src}`, { name, to: pkt.src, qtype, nodata: true });
+      this.respond(pkt.src, srcPort, answer({ rcode: "NODATA" }), ctx, emit);
       return;
     }
     const hops = msg.hops ?? 0;
-    if (this.config.upstream && this.config.upstream !== this.iface.ip && hops >= DNS_MAX_HOPS) {
+    const up = this.config.upstream;
+    const upIsMe = !!up && (up === this.iface.ip || !!this.v6?.owns(up));
+    if (up && !upIsMe && hops >= DNS_MAX_HOPS) {
       ctx.trace("dns.timeout", "app", `${this.label}: ${name} 질의가 서버 ${DNS_MAX_HOPS}대를 넘게 돌았음 → 서버들이 서로를 업스트림으로 가리키는 루프로 보고 SERVFAIL`, { name, hops });
-      this.respond(pkt.src, srcPort, { kind: "dns", id: msg.id, op: "response", name: msg.name, rcode: "SERVFAIL" }, ctx, emit);
+      this.respond(pkt.src, srcPort, answer({ rcode: "SERVFAIL" }), ctx, emit);
       return;
     }
-    if (this.config.upstream && this.config.upstream !== this.iface.ip) {
+    if (up && !upIsMe) {
       const id = ++this.idSeq;
       const timer = ctx.timer(DNS_UPSTREAM_TIMEOUT, DNS_UPSTREAM_TIMER_TAG, { id });
-      this.pendingUpstream.set(id, { clientIp: pkt.src, clientPort: srcPort, clientId: msg.id, name, timer });
-      ctx.trace("dns.forward", "app", `${this.label}: ${name} 은(는) 내 레코드에 없음 → 업스트림 DNS ${this.config.upstream} 에 대신 물어봄 (재귀 질의)`, { name, upstream: this.config.upstream });
-      const src = this.upstreamPath?.srcIp() ?? this.iface.ip;
+      this.pendingUpstream.set(id, { clientIp: pkt.src, clientPort: srcPort, clientId: msg.id, name, qtype, timer });
+      ctx.trace("dns.forward", "app", `${this.label}: ${name}${tq} 은(는) 내 레코드에 없음 → 업스트림 DNS ${up} 에 대신 물어봄 (재귀 질의)`, { name, upstream: up });
+      const up6 = isIpv6(up);
+      const src = up6 ? this.v6?.sourceFor(up) : (this.upstreamPath?.srcIp() ?? this.iface.ip);
       if (!src) {
         ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS 에 물어볼 인터페이스에 주소가 없음 → SERVFAIL`, { name });
         this.pendingUpstream.delete(id);
         timer.cancel();
-        this.respond(pkt.src, srcPort, { kind: "dns", id: msg.id, op: "response", name: msg.name, rcode: "SERVFAIL" }, ctx, emit);
+        this.respond(pkt.src, srcPort, answer({ rcode: "SERVFAIL" }), ctx, emit);
         return;
       }
-      const q: Ipv4Packet = { kind: "ipv4", src, dst: this.config.upstream, ttl: 64, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: DNS_PORT, payload: { kind: "dns", id, op: "query", name, hops: hops + 1 } } };
+      const m: DnsMessage = { kind: "dns", id, op: "query", name, ...(qtype === "AAAA" ? { qtype } : {}), hops: hops + 1 };
+      if (up6) {
+        this.v6!.send({ kind: "ipv6", src, dst: up, hopLimit: 64, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: DNS_PORT, payload: m } }, ctx, emit);
+        return;
+      }
+      const q: Ipv4Packet = { kind: "ipv4", src, dst: up, ttl: 64, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: DNS_PORT, payload: m } };
       if (this.upstreamPath) this.upstreamPath.send(q, ctx);
       else this.iface.sendIp(q, ctx, emit);
       return;
     }
     ctx.trace("dns.nxdomain", "app", `${this.label}: ${name} 은(는) 내 레코드에 없고 업스트림 DNS 도 없음 → NXDOMAIN 응답`, { name });
-    this.respond(pkt.src, srcPort, { kind: "dns", id: msg.id, op: "response", name: msg.name, rcode: "NXDOMAIN" }, ctx, emit);
+    this.respond(pkt.src, srcPort, answer({ rcode: "NXDOMAIN" }), ctx, emit);
   }
 
-  private handleUpstreamResponse(pkt: Ipv4Packet, msg: DnsMessage, frameId: number, ctx: NodeContext, emit: Emit): void {
+  private handleUpstreamResponse(pkt: IpPacket, msg: DnsMessage, frameId: number, ctx: NodeContext, emit: Emit): void {
     const p = this.pendingUpstream.get(msg.id);
     if (!p) {
       ctx.trace("dns.response.received", "app", `${this.label}: 요청한 적 없는 업스트림 DNS 응답 (id ${msg.id}) → 무시`, { id: msg.id }, frameId);
@@ -282,14 +351,17 @@ export class DnsServer {
     }
     this.pendingUpstream.delete(msg.id);
     p.timer.cancel();
+    const tq = p.qtype === "AAAA" ? " AAAA" : "";
     if (msg.answer) {
-      this.cache.set(p.name, { ip: msg.answer, at: ctx.now });
-      ctx.trace("dns.response.received", "app", `${this.label}: 업스트림 DNS ${pkt.src} 의 답 ${p.name} = ${msg.answer} → 캐시`, { name: p.name, ip: msg.answer }, frameId);
-      ctx.trace("dns.response.sent", "app", `${this.label}: ${p.name} = ${msg.answer} 응답 (업스트림 서버 답 전달) → ${p.clientIp}`, { name: p.name, ip: msg.answer, to: p.clientIp });
+      this.cache.set(cacheKey(p.name, p.qtype), { ip: msg.answer, at: ctx.now });
+      ctx.trace("dns.response.received", "app", `${this.label}: 업스트림 DNS ${pkt.src} 의 답 ${p.name}${tq} = ${msg.answer} → 캐시`, { name: p.name, ip: msg.answer }, frameId);
+      ctx.trace("dns.response.sent", "app", `${this.label}: ${p.name}${tq} = ${msg.answer} 응답 (업스트림 서버 답 전달) → ${p.clientIp}`, { name: p.name, ip: msg.answer, to: p.clientIp });
+    } else if (msg.rcode === "NODATA") {
+      ctx.trace("dns.response.received", "app", `${this.label}: 업스트림 DNS 의 답 — ${p.name} 은(는) ${p.qtype} 레코드가 없음 (NODATA) → 클라이언트 ${p.clientIp} 에게 그대로 전달`, { name: p.name, nodata: true }, frameId);
     } else {
       ctx.trace("dns.nxdomain", "app", `${this.label}: 업스트림 DNS 도 ${p.name} 을(를) 모름 (${msg.rcode ?? "NXDOMAIN"}) → 클라이언트 ${p.clientIp} 에게 그대로 전달`, { name: p.name }, frameId);
     }
-    this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, answer: msg.answer, rcode: msg.rcode }, ctx, emit);
+    this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, ...(p.qtype === "AAAA" ? { qtype: p.qtype } : {}), answer: msg.answer, rcode: msg.rcode }, ctx, emit);
   }
 
   onTimeout(data: unknown, ctx: NodeContext, emit: Emit): void {
@@ -298,15 +370,22 @@ export class DnsServer {
     if (!p) return;
     this.pendingUpstream.delete(id);
     ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS ${this.config.upstream} timeout (응답 없음) → 클라이언트에게 SERVFAIL`, { name: p.name });
-    this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, rcode: "SERVFAIL" }, ctx, emit);
+    this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, ...(p.qtype === "AAAA" ? { qtype: p.qtype } : {}), rcode: "SERVFAIL" }, ctx, emit);
   }
 
+  /** 질의가 온 IP 버전으로 답한다 */
   private respond(to: Ip, toPort: number, msg: DnsMessage, ctx: NodeContext, emit: Emit): void {
+    if (isIpv6(to)) {
+      const src = this.v6?.sourceFor(to);
+      if (!src) return;
+      this.v6!.send({ kind: "ipv6", src, dst: to, hopLimit: 64, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } }, ctx, emit);
+      return;
+    }
     const pkt: Ipv4Packet = { kind: "ipv4", src: this.iface.ip!, dst: to, ttl: 64, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } };
     this.iface.sendIp(pkt, ctx, emit);
   }
 
   rows(): string[][] {
-    return [...this.config.records.map((r) => [r.name, r.ip, "레코드"]), ...[...this.cache.entries()].map(([n, e]) => [n, e.ip, `캐시 ${e.at}ms`])];
+    return [...this.config.records.map((r) => [r.name, r.ip, `레코드 ${qtypeOf(r.ip)}`]), ...[...this.cache.entries()].map(([n, e]) => [n, e.ip, `캐시 ${e.at}ms`])];
   }
 }

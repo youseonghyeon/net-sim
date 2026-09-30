@@ -1035,6 +1035,27 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await raRows.nth(1).locator(".toggle").click();
   console.log("after RA on again:", await waitAddr("pc-1", /^2001:db8:1::ff:fe00:1$/));
 }
+// 듀얼 스택: 이름으로 연결하면 AAAA 우선 → IPv6, AAAA 없는 이름은 IPv4. DNS 레코드 칸은 IPv6 주소(AAAA)도 받는다
+{
+  await loadEx("dualstack");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitAddr("laptop-1", /^2001:db8:1::/);
+  await clickDevice("pc-1");
+  for (const [k, name] of ["web.corp", "old.corp"].entries()) {
+    await page.locator(".tcp-row .picker .input").fill(name);
+    await page.keyboard.press("Escape");
+    await page.click(".inspector .btn:has-text('연결')");
+    await page.locator(".inspector .tcp-log li", { hasText: "종료됨" }).nth(k).waitFor({ timeout: 30000 });
+  }
+  console.log("dualstack tcp:", (await page.locator(".inspector .tcp-log li").allTextContents()).map((t) => t.replace(/\s+/g, " ").trim()).join(" | "));
+  await page.screenshot({ path: `${OUT}/66-dualstack-tcp.png` });
+  await clickDevice("dns-1");
+  await goTab("설정");
+  const rec = page.locator(".inspector .record-row");
+  console.log("dns records:", await rec.count(), "| errors:", await page.locator(".inspector .record-error").count());
+  await rec.first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/67-dualstack-dns-records.png` });
+}
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
 {
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");

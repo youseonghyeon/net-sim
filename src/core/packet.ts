@@ -526,9 +526,12 @@ export interface DnsMessage {
   op: "query" | "response";
   /** 질의 이름 (예: example.com) */
   name: string;
+  /** 질의 종류: A = IPv4 주소, AAAA = IPv6 주소. 없으면 A */
+  qtype?: "A" | "AAAA";
   /** 응답: 찾은 주소. 없으면 rcode */
   answer?: Ip;
-  rcode?: "NXDOMAIN" | "SERVFAIL";
+  /** NODATA = 이름은 있지만 그 종류의 레코드가 없음 (실제로는 NOERROR 에 답 0개) */
+  rcode?: "NXDOMAIN" | "SERVFAIL" | "NODATA";
   /** 재귀 질의가 서버를 거친 횟수 (루프 방지) */
   hops?: number;
 }
@@ -593,7 +596,7 @@ export function describeFrame(frame: EthernetFrame): string {
   const d = inner.payload;
   if (d.kind === "esp") return `UDP 4500 (NAT-T) · ${ESP_LABEL(d)}`;
   if (d.kind === "ike") return IKE_LABEL(d);
-  if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}?)` : `DNS 응답 (${d.name} = ${d.answer ?? d.rcode})`;
+  if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}${d.qtype === "AAAA" ? " AAAA" : ""}?)` : `DNS 응답 (${d.name}${d.qtype === "AAAA" ? " AAAA" : ""} = ${d.answer ?? (d.rcode === "NODATA" ? "레코드 없음" : d.rcode)})`;
   if (d.kind === "rip") return d.command === "request" ? "RIP Request (전체 경로 요청)" : `RIP Response (경로 ${d.entries.length}개)`;
   if (d.kind === "vpn") return `VPN 터널 (암호화됨 · 안: ${d.inner.src} → ${d.inner.dst})`;
   return `DHCP ${DHCP_LABEL[d.op]}${d.yiaddr ? ` (${d.yiaddr})` : ""}`;
@@ -613,7 +616,7 @@ function describeIpv6(p: Ipv6Packet): string {
   }
   if (inner.kind === "tcp") return `TCP ${tcpFlags(inner)} seq=${inner.seq} ack=${inner.ack}${inner.len ? ` len=${inner.len}` : ""} (IPv6)`;
   const d = inner.payload;
-  if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}?) (IPv6)` : `DNS 응답 (${d.name} = ${d.answer ?? d.rcode}) (IPv6)`;
+  if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}${d.qtype === "AAAA" ? " AAAA" : ""}?) (IPv6)` : `DNS 응답 (${d.name}${d.qtype === "AAAA" ? " AAAA" : ""} = ${d.answer ?? (d.rcode === "NODATA" ? "레코드 없음" : d.rcode)}) (IPv6)`;
   return `UDP ${inner.srcPort} → ${inner.dstPort} (IPv6)`;
 }
 

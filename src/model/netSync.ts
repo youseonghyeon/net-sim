@@ -295,10 +295,12 @@ export function effectiveHttpProxy(d: Device) {
 export function effectiveDnsServer(d: Device) {
   if (!d.host) return undefined;
   const c = d.host.dnsServer ?? DEFAULT_DNS_SERVER;
+  // IPv4 주소면 A, IPv6 주소면 AAAA 레코드
+  const addr = (s: string | undefined) => validIp(s) ?? validIp6(s);
   return {
     enabled: c.enabled,
-    records: c.records.filter((r) => r.name.trim() && validIp(r.ip)).map((r) => ({ name: r.name.trim().toLowerCase(), ip: r.ip })),
-    upstream: validIp(c.upstream),
+    records: c.records.filter((r) => r.name.trim() && addr(r.ip)).map((r) => ({ name: r.name.trim().toLowerCase(), ip: addr(r.ip)! })),
+    upstream: addr(c.upstream),
   };
 }
 

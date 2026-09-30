@@ -132,7 +132,9 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
   const nameList: { name: string; ip: string }[] = [];
   for (const d of t.devices) {
     const n = net.nodes.get(d.id);
-    if (n instanceof Host && n.dnsServer.config.enabled && src.ip) for (const r of n.dnsServer.config.records) nameList.push({ name: r.name, ip: r.ip });
+    // 이 호스트가 물을 수 있는 DNS 가 있을 때만 (IPv4 DNS, 또는 IPv6 만 있으면 IPv6 DNS). 같은 이름의 A·AAAA 는 하나로
+    const canAsk = !!src.ip || (hasV6 && !!src.v6.effectiveDns);
+    if (n instanceof Host && n.dnsServer.config.enabled && canAsk) for (const r of n.dnsServer.config.records) if (!nameList.some((x) => x.name === r.name)) nameList.push({ name: r.name, ip: r.ip });
   }
   if (hasInternet && src.ip) for (const r of PUBLIC_ZONE) nameList.push({ name: r.name, ip: r.ip });
   for (const r of nameList) {

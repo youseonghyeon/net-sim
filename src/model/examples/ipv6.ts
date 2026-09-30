@@ -69,3 +69,65 @@ export function exampleSlaacTopology(): Topology {
     cables: [cable(pc1, 0, sw1, 0), cable(laptop, 0, sw1, 5), cable(sw1, 3, gw, 1), cable(gw, 2, sw2, 3), cable(sw2, 0, srv, 0)],
   };
 }
+
+/** 듀얼 스택 사무실: 같은 이름에 A·AAAA, AAAA 우선, AAAA 없는 이름은 A 로, IPv6 가 막히면 IPv4 로 (Happy Eyeballs 축소판) */
+export function exampleDualStackTopology(): Topology {
+  const { devices, add } = builder();
+  const pc1 = add("pc", 8, 440);
+  const laptop = add("laptop", 232, 440);
+  const sw1 = add("switch", 120, 280);
+  const gw = add("gateway", 400, 96);
+  const sw2 = add("switch", 680, 280);
+  const dns = add("server", 488, 440, "dns-1");
+  const web = add("server", 680, 440, "web-1");
+  const old = add("server", 872, 440, "old-1");
+  gw.l3 = {
+    interfaces: [
+      { ipMode: "static", ip: "", prefix: 24, gateway: "" },
+      { ipMode: "static", ip: "192.168.1.1", prefix: 24, gateway: "" },
+      { ipMode: "static", ip: "192.168.2.1", prefix: 24, gateway: "" },
+    ],
+    routes: [],
+    ipv6: {
+      enabled: true,
+      interfaces: [
+        { ip: "", prefix: 64 },
+        { ip: "2001:db8:1::1", prefix: 64, ra: true },
+        { ip: "2001:db8:2::1", prefix: 64, ra: true },
+      ],
+      routes: [],
+      raDns: "2001:db8:2::53",
+    },
+    // 켜면 IPv6 웹만 막힌다 → 이름으로 연 연결이 IPv6 로 먼저 시도했다가 IPv4 로 다시 붙는다
+    firewall: { enabled: false, defaultPolicy: "allow", stateful: true, rules: [{ action: "deny", proto: "tcp", direction: "any", src: "", dst: "2001:db8:2::10", dstPort: "80" }] },
+  };
+  const base = { prefix: 24, services: [] as number[], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  // pc-1: IPv4 수동 + IPv6 자동(SLAAC). DNS 는 IPv4 서버를 먼저 쓴다 (AAAA 도 IPv4 로 묻는다)
+  pc1.host = { ...base, ipMode: "static", ip: "192.168.1.10", gateway: "192.168.1.1", dns: "192.168.2.53", ipv6: { enabled: true, mode: "slaac", ip: "", prefix: 64, gateway: "" } };
+  // 노트북: IPv4 없이 IPv6 만 — DNS 는 RA 의 RDNSS(2001:db8:2::53)로 받아 IPv6 로 묻는다
+  laptop.host = { ...base, ipMode: "static", ip: "", gateway: "", ipv6: { enabled: true, mode: "slaac", ip: "", prefix: 64, gateway: "" } };
+  const gwIf2 = linkLocalOf(l3MacOf(gw.mac, 2));
+  dns.host = {
+    ...base,
+    ipMode: "static",
+    ip: "192.168.2.53",
+    gateway: "192.168.2.1",
+    ipv6: { enabled: true, mode: "static", ip: "2001:db8:2::53", prefix: 64, gateway: gwIf2 },
+    dnsServer: {
+      enabled: true,
+      records: [
+        { name: "web.corp", ip: "192.168.2.10" },
+        { name: "web.corp", ip: "2001:db8:2::10" },
+        { name: "old.corp", ip: "192.168.2.20" },
+      ],
+      upstream: "",
+    },
+  };
+  web.host = { ...base, ipMode: "static", ip: "192.168.2.10", gateway: "192.168.2.1", services: [80], ipv6: { enabled: true, mode: "static", ip: "2001:db8:2::10", prefix: 64, gateway: gwIf2 } };
+  // old-1: IPv4 만 (IPv6 꺼짐) — AAAA 레코드도 없다
+  old.host = { ...base, ipMode: "static", ip: "192.168.2.20", gateway: "192.168.2.1", services: [80] };
+  return {
+    devices,
+    cables: [cable(pc1, 0, sw1, 0), cable(laptop, 0, sw1, 5), cable(sw1, 3, gw, 1), cable(gw, 2, sw2, 3), cable(sw2, 0, dns, 0), cable(sw2, 4, web, 0), cable(sw2, 7, old, 0)],
+  };
+}

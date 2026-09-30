@@ -61,7 +61,7 @@ function espLength(e: EspPacket): number {
 function appLength(u: UdpPacket): number {
   const m = u.payload;
   if (m.kind === "dhcp") return 300;
-  if (m.kind === "dns") return 12 + m.name.length + 6 + (m.answer ? 16 : 0);
+  if (m.kind === "dns") return 12 + m.name.length + 6 + (m.answer ? (m.qtype === "AAAA" ? 28 : 16) : 0);
   if (m.kind === "vpn") return 32 + 20 + l4Length(m.inner.payload); // WireGuard 머리 32 + 암호화된 원래 IP 패킷
   if (m.kind === "esp") return espLength(m);
   if (m.kind === "ike") return (u.dstPort === 4500 || u.srcPort === 4500 ? 4 : 0) + (m.exchange === "IKE_SA_INIT" ? 336 : 224); // NAT-T 는 앞에 0 4바이트(Non-ESP 표시)
@@ -163,8 +163,10 @@ function udpText(u: UdpPacket): string {
     return `BOOTP/DHCP, ${fromClient ? "Request" : "Reply"} from ${m.clientMac}, length ${appLength(u)} (DHCP-Message Option 53: ${DHCP_TYPE[m.op][1]})`;
   }
   if (m.kind === "dns") {
-    if (m.op === "query") return `${m.id}+ A? ${m.name}. (${appLength(u)})`;
-    if (m.answer) return `${m.id} 1/0/0 A ${m.answer} (${appLength(u)})`;
+    const qt = m.qtype ?? "A";
+    if (m.op === "query") return `${m.id}+ ${qt}? ${m.name}. (${appLength(u)})`;
+    if (m.answer) return `${m.id} 1/0/0 ${qt} ${m.answer} (${appLength(u)})`;
+    if (m.rcode === "NODATA") return `${m.id} 0/0/0 (${appLength(u)})`;
     return `${m.id} ${m.rcode === "NXDOMAIN" ? "NXDomain" : "ServFail"} 0/0/0 (${appLength(u)})`;
   }
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
@@ -456,9 +458,17 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
     const rows: [string, string][] = [
       ["id", String(m.id)],
       ["QR", m.op === "query" ? "0 (질의)" : "1 (응답)"],
-      ["질문", `${m.name} A`],
+      ["질문", `${m.name} ${m.qtype ?? "A"}${m.qtype === "AAAA" ? " (IPv6 주소)" : ""}`],
     ];
-    if (m.op === "response") rows.push(["응답", m.answer ? `${m.name} A ${m.answer}` : `없음 (rcode ${m.rcode === "NXDOMAIN" ? "3 NXDOMAIN" : "2 SERVFAIL"})`]);
+    if (m.op === "response")
+      rows.push([
+        "응답",
+        m.answer
+          ? `${m.name} ${m.qtype ?? "A"} ${m.answer}`
+          : m.rcode === "NODATA"
+            ? `없음 (rcode 0 NOERROR, 답 0개 — 이름은 있지만 ${m.qtype ?? "A"} 레코드가 없음)`
+            : `없음 (rcode ${m.rcode === "NXDOMAIN" ? "3 NXDOMAIN" : "2 SERVFAIL"})`,
+      ]);
     return [udp, { title: "DNS (앱)", rows }];
   }
   if (m.kind === "vpn" || m.kind === "esp") return [udp];
@@ -608,8 +618,10 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       break;
     case "dns.resolved":
     case "dns.response.received":
-      if (ip && ip.payload.kind === "udp" && ip.payload.payload.kind === "dns" && ip.payload.payload.answer) {
-        out.push({ tool: "dig", line: `${ip.payload.payload.name}.\t\t300\tIN\tA\t${ip.payload.payload.answer}` });
+      {
+        const pk = ip ?? ip6;
+        const d = pk && pk.payload.kind === "udp" && pk.payload.payload.kind === "dns" ? pk.payload.payload : undefined;
+        if (d?.answer) out.push({ tool: "dig", line: `${d.name}.\t\t300\tIN\t${d.qtype ?? "A"}\t${d.answer}` });
       }
       break;
     case "ssh.open": {

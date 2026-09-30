@@ -17,7 +17,7 @@ import {
   wirelessStatus,
 } from "../../model/topology";
 import { Icon } from "../Icons";
-import { Field, Section, Toggle, ip6Error, ipError, validIp } from "./ui";
+import { Field, Section, Toggle, anyIpError, ip6Error, ipError, validIp } from "./ui";
 import { linkLocalOf } from "../../core/addr6";
 import { sim, simVersion } from "../../model/sim";
 import { Host } from "../../core/nodes/host";
@@ -117,6 +117,9 @@ export function Ipv6Section({ d, h }: { d: Device; h: HostSettings }) {
           </Field>
           <Field label="기본 게이트웨이" error={ip6Error(v.gateway, false, true)}>
             <input class="input mono" value={v.gateway} placeholder="라우터 주소 (fe80:: 도 됨)" onInput={(e) => set({ gateway: e.currentTarget.value })} />
+          </Field>
+          <Field label="IPv6 DNS 서버" error={ip6Error(v.dns ?? "", false)}>
+            <input class="input mono" value={v.dns ?? ""} placeholder="IPv4 DNS 가 있으면 그쪽을 먼저 씀" onInput={(e) => set({ dns: e.currentTarget.value })} />
           </Field>
           <p class="note">
             링크 로컬 <span class="mono">{ll}</span> 은 MAC 에서 자동으로 생깁니다(fe80::/64 + EUI-64). 주소를 비우면 링크 로컬만으로 같은 링크의 이웃과 통신합니다. 기본 게이트웨이는 라우터의 글로벌 주소나 링크 로컬 주소 어느 쪽이든 됩니다.
@@ -481,23 +484,23 @@ export function DnsServiceSection({ d, h, staticIp }: { d: Device; h: HostSettin
         <>
           {!staticIp && <p class="note error-note">DNS 서버도 자기 주소가 고정돼 있어야 클라이언트가 찾아옵니다. IP 설정을 수동으로 바꾸세요.</p>}
           <h3 class="sub">레코드 (이름 → 주소)</h3>
-          {ns.records.length === 0 && <p class="note">이 서버가 직접 답할 이름들입니다. 예: web.home → 192.168.0.20</p>}
+          {ns.records.length === 0 && <p class="note">이 서버가 직접 답할 이름들입니다. 예: web.home → 192.168.0.20. IPv6 주소를 넣으면 AAAA 레코드가 됩니다(같은 이름에 A·AAAA 를 둘 다 두면 듀얼 스택).</p>}
           {ns.records.map((r, i) => (
             <div key={i} class="record-row">
               <input class="input mono" value={r.name} placeholder="web.home" onInput={(e) => setRecord(i, { name: e.currentTarget.value })} />
               <span class="muted">→</span>
-              <input class="input mono" value={r.ip} placeholder="192.168.0.20" onInput={(e) => setRecord(i, { ip: e.currentTarget.value })} />
+              <input class="input mono" value={r.ip} placeholder="192.168.0.20 또는 2001:db8::20" title="IPv4 면 A 레코드, IPv6 면 AAAA 레코드" onInput={(e) => setRecord(i, { ip: e.currentTarget.value })} />
               <button class="icon-btn" title="레코드 삭제" onClick={() => setNs({ records: ns.records.filter((_, k) => k !== i) })}>
                 <Icon name="trash" size={15} />
               </button>
-              {(r.name.trim() === "" || ipError(r.ip, true)) && <div class="error record-error">{r.name.trim() === "" ? "이름이 필요합니다" : ipError(r.ip, true)}</div>}
+              {(r.name.trim() === "" || anyIpError(r.ip, true)) && <div class="error record-error">{r.name.trim() === "" ? "이름이 필요합니다" : anyIpError(r.ip, true)}</div>}
             </div>
           ))}
           <button class="btn wide" onClick={() => setNs({ records: [...ns.records, { name: "", ip: "" }] })}>
             <Icon name="plus" size={14} />
             레코드 추가
           </button>
-          <Field label="업스트림 DNS" error={ipError(ns.upstream, false)}>
+          <Field label="업스트림 DNS" error={anyIpError(ns.upstream, false)}>
             <input class="input mono" value={ns.upstream} placeholder="예: 8.8.8.8 (비우면 NXDOMAIN)" onInput={(e) => setNs({ upstream: e.currentTarget.value })} />
           </Field>
           <p class="note">레코드에 없는 이름은 업스트림 DNS 에 대신 물어보고(재귀 질의) 답을 캐시합니다. 인터넷의 8.8.8.8 이나 1.1.1.1 은 google.com, example.com 같은 공개 이름을 압니다.</p>

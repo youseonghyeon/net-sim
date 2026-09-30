@@ -121,6 +121,8 @@ export type TraceKind =
   | "tcp.refused"
   | "tcp.ignore"
   | "tcp.cookie"
+  /** Happy Eyeballs 축소판: IPv6 연결 실패 → IPv4 로 다시 */
+  | "tcp.fallback"
   | "proxy.config"
   | "proxy.use"
   | "proxy.request"

@@ -177,7 +177,7 @@ export class Internet implements SimNode {
     }
     const name = normalizeName(msg.name);
     ctx.trace("dns.query.received", "app", `공인 DNS ${pkt.dst}: 질의 수신 "${name}?" (from ${pkt.src}) — 답은 ${Internet.LATENCY * 2}ms 뒤`, { name, from: pkt.src }, frameId);
-    ctx.timer(Internet.LATENCY * 2, "inet-dns", { server: pkt.dst, to: pkt.src, toPort: srcPort, id: msg.id, name: msg.name });
+    ctx.timer(Internet.LATENCY * 2, "inet-dns", { server: pkt.dst, to: pkt.src, toPort: srcPort, id: msg.id, name: msg.name, qtype: msg.qtype });
   }
 
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
@@ -186,8 +186,15 @@ export class Internet implements SimNode {
       return;
     }
     if (tag === "inet-dns") {
-      const { server, to, toPort, id, name } = data as { server: Ip; to: Ip; toPort: number; id: number; name: string };
+      const { server, to, toPort, id, name, qtype } = data as { server: Ip; to: Ip; toPort: number; id: number; name: string; qtype?: "A" | "AAAA" };
       const rec = PUBLIC_ZONE.find((r) => r.name === normalizeName(name));
+      if (qtype === "AAAA") {
+        // 공개 이름의 IPv6 주소(AAAA)는 아직 없다: 이름은 있으면 NODATA, 없으면 NXDOMAIN
+        const msg: DnsMessage = { kind: "dns", id, op: "response", name, qtype, rcode: rec ? "NODATA" : "NXDOMAIN" };
+        ctx.trace(rec ? "dns.response.sent" : "dns.nxdomain", "app", rec ? `공인 DNS ${server}: ${normalizeName(name)} 의 AAAA(IPv6 주소) 레코드 없음 → NODATA (이름은 있음 — A 로 다시 물으면 된다)` : `공인 DNS ${server}: ${normalizeName(name)} 은(는) 등록되지 않은 이름 → NXDOMAIN`, { name, qtype });
+        this.iface.sendIp({ kind: "ipv4", src: server, dst: to, ttl: 54, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } }, ctx, this.emit(ctx));
+        return;
+      }
       const msg: DnsMessage = rec ? { kind: "dns", id, op: "response", name, answer: rec.ip } : { kind: "dns", id, op: "response", name, rcode: "NXDOMAIN" };
       if (rec) ctx.trace("dns.response.sent", "app", `공인 DNS ${server}: ${normalizeName(name)} = ${rec.ip} 응답 → ${to}`, { name, ip: rec.ip });
       else ctx.trace("dns.nxdomain", "app", `공인 DNS ${server}: ${normalizeName(name)} 은(는) 등록되지 않은 이름 → NXDOMAIN (아는 이름: ${PUBLIC_ZONE.map((r) => r.name).join(", ")})`, { name });

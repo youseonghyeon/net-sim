@@ -19,7 +19,7 @@ import { L3Node } from "../src/core/nodes/l3";
 import { Switch } from "../src/core/nodes/switch";
 import type { EthernetFrame } from "../src/core/packet";
 import type { TraceEvent } from "../src/core/trace";
-import { exampleIpv6BasicsTopology, exampleSlaacTopology } from "../src/model/examples";
+import { exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "../src/model/examples";
 import { l3MacOf } from "../src/model/netSync";
 import { lintTopology } from "../src/model/lint";
 import { headerLayers, practitionerLines, tcpdumpLine } from "../src/model/packetView";
@@ -600,5 +600,70 @@ describe("패킷 상세 (RS/RA)", () => {
     const ev = (kind: string, details: Record<string, unknown>) => ({ seq: 0, time: 0, nodeId: "a", kind, layer: "L3", summary: "", details }) as TraceEvent;
     expect(practitionerLines(ev("slaac.addr", { ip: "2001:db8:1::ff:fe00:a" }), {})[0]!.line).toBe("inet6 2001:db8:1::ff:fe00:a/64 scope global dynamic mngtmpaddr");
     expect(practitionerLines(ev("slaac.router", { router: "fe80::ff:fe11:1" }), {})[0]!.line).toContain("default via fe80::ff:fe11:1 dev eth0 proto ra");
+  });
+});
+
+describe("듀얼 스택 (A·AAAA·Happy Eyeballs)", () => {
+  const conns = (h: Host) => [...h.tcp.conns.values()].filter((c) => c.role === "client");
+  it("설명대로: AAAA 우선, AAAA 없으면 A, IPv6 만 쓰는 노트북은 IPv6 DNS 로, 방화벽을 켜면 IPv4 로 다시", () => {
+    const t = exampleDualStackTopology();
+    expect(lintTopology(t)).toEqual([]);
+    const L = loadTopology(t);
+    const pc = L.host("pc-1");
+    // AAAA 를 IPv4 DNS 서버에 묻고 IPv6 로 연결
+    let tr = L.act({ kind: "tcp-connect", nodeId: pc.id, dst: "web.corp", port: 80 });
+    expect(tr.find((e) => e.nodeId === pc.id && e.kind === "dns.query.sent")?.summary).toContain("IPv6 주소를 IPv4 로 묻는다");
+    expect(conns(pc).at(-1)).toMatchObject({ remoteIp: "2001:db8:2::10", state: "CLOSED", bytesReceived: 3000 });
+    // old.corp: AAAA 없음(NODATA) → A → IPv4
+    tr = L.act({ kind: "tcp-connect", nodeId: pc.id, dst: "old.corp", port: 80 });
+    expect(tr.some((e) => e.nodeId === pc.id && e.kind === "dns.resolved" && e.summary.includes("AAAA 레코드가 없음 → IPv4 주소(A)로 다시"))).toBe(true);
+    expect(conns(pc).at(-1)).toMatchObject({ remoteIp: "192.168.2.20", state: "CLOSED", bytesReceived: 3000 });
+    // 노트북: IPv4 없음 → RDNSS 로 받은 IPv6 DNS 에 IPv6 로 묻는다
+    const lap = L.host("laptop-1");
+    expect(lap.v6.raDnsLearned).toBe("2001:db8:2::53");
+    tr = L.act({ kind: "ping", nodeId: lap.id, dst: "web.corp" });
+    expect(lap.pings.at(-1)).toMatchObject({ status: "ok", resolved: "2001:db8:2::10" });
+    const q = tr.find((e) => e.nodeId === lap.id && e.kind === "dns.query.sent")!;
+    expect(q.summary).toContain("→ 서버 2001:db8:2::53");
+    // old.corp 는 IPv4 뿐이라 IPv6 만 쓰는 노트북은 못 간다
+    L.act({ kind: "ping", nodeId: lap.id, dst: "old.corp" });
+    expect(lap.pings.at(-1)!.status).toBe("failed");
+    // 방화벽 켜기 → IPv6 SYN 이 막혀 timeout → IPv4 로 다시
+    const next = structuredClone(t);
+    next.devices.find((d) => d.name === "gw-1")!.l3!.firewall!.enabled = true;
+    L.apply(next);
+    tr = L.act({ kind: "tcp-connect", nodeId: pc.id, dst: "web.corp", port: 80 });
+    expect(tr.some((e) => e.kind === "fw.deny")).toBe(true);
+    expect(tr.some((e) => e.nodeId === pc.id && e.kind === "tcp.fallback")).toBe(true);
+    const last2 = conns(pc).slice(-2);
+    expect(last2[0]).toMatchObject({ remoteIp: "2001:db8:2::10", state: "FAILED" });
+    expect(last2[1]).toMatchObject({ remoteIp: "192.168.2.10", state: "CLOSED", bytesReceived: 3000 });
+  });
+
+  it("IPv6 글로벌 주소가 없는 호스트는 예전처럼 A 만 묻는다 (AAAA 질의 없음)", () => {
+    const t = exampleDualStackTopology();
+    t.devices.find((d) => d.name === "pc-1")!.host!.ipv6!.enabled = false;
+    const L = loadTopology(t);
+    const tr = L.act({ kind: "ping", nodeId: L.host("pc-1").id, dst: "web.corp" });
+    expect(tr.filter((e) => e.kind === "dns.query.sent").map((e) => e.details?.qtype)).toEqual(["A"]);
+    expect(L.host("pc-1").pings.at(-1)).toMatchObject({ status: "ok", resolved: "192.168.2.10" });
+  });
+
+  it("DNS 서버는 이름이 있는데 그 종류가 없으면 NODATA, 이름이 없으면 NXDOMAIN (AAAA 도 A 도)", () => {
+    const L = loadTopology(exampleDualStackTopology());
+    const pc = L.host("pc-1");
+    L.act({ kind: "ping", nodeId: pc.id, dst: "nobody.corp" });
+    expect(pc.pings.at(-1)).toMatchObject({ status: "failed", reason: "없는 이름" });
+    // 없는 이름이면 A 로 다시 묻지 않는다
+    expect(L.s.net.trace.filter((e) => e.nodeId === pc.id && e.kind === "dns.query.sent" && e.summary.includes("nobody.corp")).length).toBe(1);
+  });
+
+  it("tcpdump·헤더: AAAA 질의·응답·NODATA", () => {
+    const f = (payload: any): EthernetFrame => ({ kind: "ethernet", id: 1, src: PC, dst: SRV, payload: { kind: "ipv4", src: "192.168.1.10", dst: "192.168.2.53", ttl: 64, payload: { kind: "udp", srcPort: 53001, dstPort: 53, payload } } });
+    expect(tcpdumpLine(f({ kind: "dns", id: 7, op: "query", name: "web.corp", qtype: "AAAA" }))).toContain("7+ AAAA? web.corp.");
+    expect(tcpdumpLine(f({ kind: "dns", id: 7, op: "response", name: "web.corp", qtype: "AAAA", answer: "2001:db8:2::10" }))).toContain("7 1/0/0 AAAA 2001:db8:2::10");
+    expect(tcpdumpLine(f({ kind: "dns", id: 7, op: "response", name: "old.corp", qtype: "AAAA", rcode: "NODATA" }))).toContain("7 0/0/0");
+    const rows = Object.fromEntries(headerLayers(f({ kind: "dns", id: 7, op: "response", name: "old.corp", qtype: "AAAA", rcode: "NODATA" }))[3]!.rows);
+    expect(rows["응답"]).toContain("NOERROR, 답 0개");
   });
 });

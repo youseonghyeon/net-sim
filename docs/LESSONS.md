@@ -153,6 +153,9 @@
 - 입력 칸 검증은 모델 정리(`effective*`)에서 한다: `type="number"` 칸에는 64.5 가 들어오고, 그 값이 구성 검사 computed 까지 가서 예외를 던지면 화면 전체가 죽는다. 프리픽스·포트 같은 정수는 `Number.isInteger` 까지 본다(호스트는 했고 게이트웨이는 빠졌다 — 같은 칸이 두 곳이면 둘 다).
 - 서로 동시에 NS 를 보낼 때 NA 하나를 잃으면 대기열이 남아 이후 NS 가 막혔다(IPv4 ARP 에도 같은 기존 결함 — 따로 고칠 후보). 배우는 경로가 여럿(NA·NS·RA)이면 어느 경로로 배우든 대기열을 비운다.
 
+## 4n. `git add -A` 가 에이전트 worktree 를 gitlink 로 담는다 (2026-09-30)
+- 리뷰 에이전트를 `isolation: worktree` 로 돌리면 `.claude/worktrees/<id>` 에 저장소가 생기고, 끝난 뒤 변경이 있으면 남는다. 그 상태로 `git add -A` 하면 임베디드 저장소(160000 gitlink)로 커밋·push 된다. `.gitignore` 에 `.claude/worktrees/` 를 넣어 막았고, 필요한 것(재현 테스트)을 옮긴 뒤 `git worktree remove` 로 치운다.
+
 ## 5. 아직 남은 약점
 
 - ~~`src/model/sim.ts` 는 DOM 의존이라 유닛 테스트가 없다~~ → 2026-09-20 에 `netSync.ts`(diff 동기화)·`simClock.ts`(시계)·`status.ts`(문구)로 분리해 유닛 테스트 26개를 붙였다. 예제 토폴로지 3종을 sync → runToIdle → ping 으로 검증하므로 브라우저 없이도 ui-check 의 핵심 흐름을 대신한다. `sim.ts` 에 남은 건 신호·rAF 접착뿐이라 테스트하지 않는다.

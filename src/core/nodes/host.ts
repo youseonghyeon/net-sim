@@ -28,7 +28,7 @@ import { NetInterface } from "./iface";
 import { LB_ALGORITHM_LABEL, LB_MODE_LABEL, LB_STICKY_LABEL, LoadBalancer, type LbConfig } from "./lb";
 import { ForwardProxy, type ProxyConfig } from "./proxy";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
-import { TCP_TIMER_TAG, TcpStack } from "./tcp";
+import { endpoint, TCP_TIMER_TAG, TcpStack, type TcpConn } from "./tcp";
 import { RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
@@ -168,7 +168,7 @@ export class Host implements SimNode {
     this.tcp = new TcpStack({
       send: (pkt, ctx) => this.sendAny(pkt, ctx),
       onRequest: (conn, ctx) => this.lb.onRequest(conn, ctx) || this.proxy.onRequest(conn, ctx),
-      onFinish: (conn, ctx) => void (this.lb.onFinish(conn, ctx) || this.proxy.onFinish(conn, ctx)),
+      onFinish: (conn, ctx) => void (this.lb.onFinish(conn, ctx) || this.proxy.onFinish(conn, ctx) || this.happyEyeballs(conn, ctx)),
     });
     this.lb = new LoadBalancer(this.tcp, () => this.iface.ip);
     if (cfg.lb) this.lb.config = { ...cfg.lb, backends: cfg.lb.backends.map((b) => ({ ...b })) };
@@ -178,8 +178,8 @@ export class Host implements SimNode {
     this.services = [...(cfg.services ?? [])];
     this.syncListening();
     this.dhcpServer = new DhcpServer(cfg.dhcpServer ?? { enabled: false, start: "", end: "" }, this.iface, false);
-    this.dnsServer = new DnsServer(cfg.dnsServer ?? { enabled: false, records: [] }, this.iface);
-    this.resolver = new DnsResolver(this.iface, hashCode(cfg.id));
+    this.dnsServer = new DnsServer(cfg.dnsServer ?? { enabled: false, records: [] }, this.iface, undefined, undefined, this.v6);
+    this.resolver = new DnsResolver(this.iface, hashCode(cfg.id), this.v6);
     this.resolver.local = this.dnsServer;
     this.iface.loopback = (pkt, ctx) => this.loopback(pkt, ctx);
     this.ra = new RaClient(
@@ -202,7 +202,9 @@ export class Host implements SimNode {
 
   /** IPv6 설정 교체. 주소가 바뀌면 IPv6 연결·traceroute 를 정리한다 */
   setIpv6(cfg: Ipv6Settings, ctx: NodeContext): void {
+    const dnsBefore = this.v6.effectiveDns;
     const changed = this.v6.configure(cfg, this.linkUp, ctx, this.emit(ctx));
+    if (this.v6.effectiveDns !== dnsBefore && !this.iface.dns) this.resolver.clear("DNS 설정 변경");
     if (!changed) return;
     this.tcp.abortAll("IPv6 주소 변경", ctx, (c) => isIpv6(c.localIp));
     for (const rec of this.traceroutes) if (rec.status === "running" && isIpv6(rec.resolved ?? rec.dst)) this.failTrace(rec, "IPv6 주소 변경", ctx);
@@ -381,7 +383,7 @@ export class Host implements SimNode {
       this.sendPing6(rec, canonIp6(target)!, ctx);
       return;
     }
-    if (!this.iface.ip) {
+    if (!this.iface.ip && !(looksLikeName(target) && this.hasV6Global())) {
       rec.status = "failed";
       rec.reason = "IP 미설정";
       ctx.trace("ip.no-address", "L3", `ping ${target} 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)`, { dst: target });
@@ -394,8 +396,8 @@ export class Host implements SimNode {
       return;
     }
     if (looksLikeName(target)) {
-      // 이름이면 먼저 DNS 로 주소를 찾고, 그 다음에 ping
-      this.resolver.resolve(target, ctx, this.emit(ctx), (ip, err) => {
+      // 이름이면 먼저 DNS 로 주소를 찾고, 그 다음에 ping (IPv6 주소가 있으면 AAAA 먼저 — 폴백 없음)
+      this.resolveName(target, ctx, (ip, err) => {
         if (!ip) {
           rec.status = "failed";
           rec.reason = err ?? "이름 해석 실패";
@@ -404,7 +406,8 @@ export class Host implements SimNode {
         }
         rec.resolved = ip;
         ctx.trace("dns.resolved", "app", `${target} = ${ip} → 이제 이 주소로 ping`, { name: target, ip });
-        this.sendPing(rec, ip, ctx);
+        if (isIpv6(ip)) this.sendPing6(rec, ip, ctx);
+        else this.sendPing(rec, ip, ctx);
       });
       return;
     }
@@ -477,7 +480,7 @@ export class Host implements SimNode {
       this.startTrace6(rec, canonIp6(target)!, ctx);
       return;
     }
-    if (!this.iface.ip) {
+    if (!this.iface.ip && !(looksLikeName(target) && this.hasV6Global())) {
       this.failTrace(rec, "IP 미설정", ctx, "DHCP 로 받거나 수동 설정 필요");
       return;
     }
@@ -486,7 +489,7 @@ export class Host implements SimNode {
       return;
     }
     if (looksLikeName(target)) {
-      this.resolver.resolve(target, ctx, this.emit(ctx), (ip, err) => {
+      this.resolveName(target, ctx, (ip, err) => {
         if (rec.status !== "running") return; // 기다리는 동안 취소됨
         if (!ip) {
           this.failTrace(rec, err ?? "이름 해석 실패", ctx, "이름을 주소로 바꾸지 못함");
@@ -494,7 +497,8 @@ export class Host implements SimNode {
         }
         rec.resolved = ip;
         ctx.trace("dns.resolved", "app", `${target} = ${ip} → 이제 이 주소로 traceroute`, { name: target, ip });
-        this.startTrace(rec, ip, ctx);
+        if (isIpv6(ip)) this.startTrace6(rec, ip, ctx);
+        else this.startTrace(rec, ip, ctx);
       });
       return;
     }
@@ -691,36 +695,104 @@ export class Host implements SimNode {
       this.connect6(canonIp6(target)!, port, ctx);
       return;
     }
-    if (!this.iface.ip) {
+    if (!this.iface.ip && !(looksLikeName(target) && this.hasV6Global())) {
       ctx.trace("ip.no-address", "L3", `${target}:${port} 연결 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)`, { dst: target, port });
       this.tcp.recordFailure("0.0.0.0", target, port, "IP 미설정", ctx);
       return;
     }
     if (!looksLikeName(target) && !isValidIp(target)) {
       ctx.trace("ip.drop", "L3", `${target}:${port} 연결 실패: IP 주소도 이름도 아님`, { dst: target, port });
-      this.tcp.recordFailure(this.iface.ip, target, port, "잘못된 주소", ctx);
+      this.tcp.recordFailure(this.iface.ip ?? "0.0.0.0", target, port, "잘못된 주소", ctx);
       return;
     }
     const proxy = this.proxyFor(target, port);
     if (proxy) {
       // 웹 요청은 대상에 직접 가지 않고 프록시에게 부탁한다. 이름도 풀지 않고 그대로 넘긴다 (프록시가 찾는다)
       ctx.trace("proxy.use", "app", `HTTP 프록시 설정(http_proxy=http://${proxy.server}:${proxy.port}) → ${target}:${port} 에 직접 가지 않고 프록시에게 대신 받아 달라고 부탁${looksLikeName(target) ? " (이름은 프록시가 찾음)" : ""}`, { dst: target, port, proxy: `${proxy.server}:${proxy.port}` });
-      this.tcp.connect(this.iface.ip, proxy.server, proxy.port, ctx, { target: `${target}:${port}` });
+      this.tcp.connect(this.iface.ip!, proxy.server, proxy.port, ctx, { target: `${target}:${port}` });
       return;
     }
     if (looksLikeName(target)) {
-      this.resolver.resolve(target, ctx, this.emit(ctx), (ip, err) => {
+      this.resolveName(target, ctx, (ip, err) => {
         if (!ip) {
           ctx.trace("tcp.failed", "L4", `${target}:${port} 연결 실패: 이름을 주소로 바꾸지 못함 (${err})`, { dst: target, port });
           this.tcp.recordFailure(this.iface.ip ?? "0.0.0.0", target, port, err ?? "이름 해석 실패", ctx);
           return;
         }
         ctx.trace("dns.resolved", "app", `${target} = ${ip} → 이 주소의 ${port} 포트로 연결`, { name: target, ip });
+        if (isIpv6(ip)) {
+          const src = this.v6.sourceFor(ip);
+          if (!src) return;
+          // IPv6 로 먼저 시도하고, 연결이 안 되면 같은 이름의 IPv4 주소로 다시 (Happy Eyeballs 축소판)
+          const conn = this.tcp.connect(src, ip, port, ctx, { site: target });
+          if (this.iface.ip && conn.state === "SYN_SENT") this.fallbacks.set(conn.id, { name: target, port });
+          return;
+        }
         if (this.iface.ip) this.tcp.connect(this.iface.ip, ip, port, ctx, { site: target }); // 쿠키는 적은 이름 기준 (브라우저처럼)
       });
       return;
     }
-    this.tcp.connect(this.iface.ip, target, port, ctx);
+    this.tcp.connect(this.iface.ip!, target, port, ctx);
+  }
+
+  /** 이 호스트가 IPv6 글로벌 주소를 쓸 수 있는지 (이름을 AAAA 로 먼저 물을지) */
+  private hasV6Global(): boolean {
+    return this.v6.enabled && this.v6.globals.length > 0;
+  }
+
+  /**
+   * 이름 → 주소 (getaddrinfo 흉내): IPv6 글로벌 주소가 있으면 AAAA 먼저 (RFC 6724 기본 정책: IPv6 우선), AAAA 레코드가 없거나
+   * 묻지 못하면 IPv4 주소가 있을 때 A 로 다시. 없는 이름(NXDOMAIN)이면 A 도 없으니 다시 묻지 않는다.
+   * IPv6 글로벌 주소가 없으면 예전처럼 A 만 (쓸 수 없는 주소 종류는 묻지 않는다 — AI_ADDRCONFIG)
+   */
+  private resolveName(name: string, ctx: NodeContext, done: (ip: Ip | undefined, error?: string) => void): void {
+    if (!this.hasV6Global()) {
+      this.resolver.resolve(name, ctx, this.emit(ctx), (ip, err) => done(ip, err));
+      return;
+    }
+    this.resolver.resolve(
+      name,
+      ctx,
+      this.emit(ctx),
+      (ip6, err6, nodata) => {
+        if (ip6) {
+          done(ip6);
+          return;
+        }
+        if (!this.iface.ip || err6 === "없는 이름") {
+          done(undefined, err6);
+          return;
+        }
+        ctx.trace("dns.resolved", "app", `${name}: ${nodata ? "AAAA 레코드가 없음" : `AAAA 를 받지 못함 (${err6})`} → IPv4 주소(A)로 다시 묻는다`, { name, fallback: "A" });
+        this.resolver.resolve(name, ctx, this.emit(ctx), (ip, err) => done(ip, err));
+      },
+      "AAAA",
+    );
+  }
+
+  /** Happy Eyeballs 축소판: 이름으로 연 IPv6 연결이 SYN 단계에서 실패하면(timeout·Unreachable) 같은 이름의 IPv4 주소로 다시 연결 */
+  private readonly fallbacks = new Map<string, { name: string; port: number }>();
+
+  private happyEyeballs(conn: TcpConn, ctx: NodeContext): boolean {
+    const fb = this.fallbacks.get(conn.id);
+    if (!fb) return false;
+    this.fallbacks.delete(conn.id);
+    const handshake = conn.state === "FAILED" && (conn.reason?.startsWith("timeout · SYN") || conn.reason?.includes("Unreachable"));
+    if (!handshake || !this.iface.ip) return true;
+    ctx.trace(
+      "tcp.fallback",
+      "L4",
+      `Happy Eyeballs(축소판): ${endpoint(conn.remoteIp, conn.remotePort)} IPv6 연결 실패 (${conn.reason}) → ${fb.name} 의 IPv4 주소(A)로 다시 연결. 실제 브라우저·curl 은 IPv6 를 250ms 만 기다리고 IPv4 를 함께 시작해 빠른 쪽을 쓴다`,
+      { conn: conn.id, name: fb.name },
+    );
+    this.resolver.resolve(fb.name, ctx, this.emit(ctx), (ip, err) => {
+      if (!ip || !this.iface.ip) {
+        ctx.trace("tcp.failed", "L4", `${fb.name}:${fb.port} IPv4 로도 연결 못 함: ${err ?? "IPv4 주소 없음"}`, { dst: fb.name, port: fb.port });
+        return;
+      }
+      this.tcp.connect(this.iface.ip, ip, fb.port, ctx, { site: fb.name });
+    });
+    return true;
   }
 
   /** IPv6 주소로 TCP 연결 (HTTP 프록시는 IPv4 만 다뤄 거치지 않는다) */
@@ -802,6 +874,17 @@ export class Host implements SimNode {
     }
     if (p.kind === "tcp") {
       this.tcp.handle(pkt, p, ctx);
+      return;
+    }
+    if (p.kind === "udp" && p.payload.kind === "dns" && pkt.dst !== ALL_NODES) {
+      const m = p.payload;
+      if (p.dstPort === this.resolver.port) this.resolver.handle(m, pkt.src, frameId, ctx);
+      else if (p.dstPort === DNS_PORT && (this.dnsServer.config.enabled || m.op === "response")) this.dnsServer.handle(pkt, p.srcPort, m, frameId, ctx, this.emit(ctx));
+      else {
+        ctx.trace("ip.drop", "L4", `DNS 질의를 받았지만 DNS 서버 서비스가 꺼져 있음 → 드롭 (서비스에서 DNS 서버를 켜세요)`, { port: p.dstPort }, frameId);
+        const notice = this.v6.unreachable(pkt, "port", ctx, frameId);
+        if (notice) this.v6.send(notice, ctx, this.emit(ctx));
+      }
       return;
     }
     if (p.kind === "udp") {

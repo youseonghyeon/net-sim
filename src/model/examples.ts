@@ -10,7 +10,7 @@ import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTop
 import { exampleLoadBalancerTopology, exampleProxyTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology } from "./examples/internet";
 import { exampleRoamingTopology } from "./examples/wireless";
-import { exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
+import { exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
 
 export * from "./examples/basic";
 export * from "./examples/parts";
@@ -22,7 +22,7 @@ export * from "./examples/internet";
 export * from "./examples/wireless";
 export * from "./examples/ipv6";
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -203,6 +203,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "IPv6 자동 주소 (SLAAC·RA)",
     blurb: "pc-1·노트북은 IPv6 가 자동(SLAAC)입니다. 링크가 올라가면 RS 를 보내고, gw-1 의 RA 가 알린 2001:db8:1::/64 에 MAC 에서 만든 인터페이스 ID 를 붙여 주소를 스스로 만듭니다 — DHCP 서버가 없습니다. 기본 게이트웨이는 RA 를 보낸 gw-1 의 링크 로컬 주소입니다(표 탭). pc-1 에서 2001:db8:2::10(srv-1)로 ping·TCP 80 을 보내 보세요. gw-1 의 if1 RA 광고를 끄면 거둠 RA(라우터 수명 0)로 주소와 게이트웨이가 사라집니다.",
     build: exampleSlaacTopology,
+  },
+  dualstack: {
+    id: "dualstack",
+    group: "IPv6",
+    label: "듀얼 스택 사무실 (A·AAAA·Happy Eyeballs)",
+    blurb: "pc-1 에서 web.corp 로 TCP 80 연결을 보내 보세요. IPv6 주소가 있어 AAAA 부터 묻고(IPv4 DNS 서버에 — 질의 종류와 운반 버전은 따로) [2001:db8:2::10]:80 으로 붙습니다. old.corp 는 AAAA 가 없어(NODATA) A 로 다시 물어 IPv4 로 갑니다. 노트북은 IPv4 없이 RA 가 알린 DNS(RDNSS)에 IPv6 로 묻습니다. gw-1 의 방화벽을 켜면(IPv6 웹 차단 규칙) web.corp 연결이 IPv6 로 먼저 시도했다가 timeout 뒤 IPv4 로 다시 붙습니다(Happy Eyeballs 축소판).",
+    build: exampleDualStackTopology,
   },
 };
 
