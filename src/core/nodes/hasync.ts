@@ -58,26 +58,34 @@ export class SessionSync {
   }
 
   /** 새 backup 을 봄: 지금까지의 상태를 전부 복사 (후보 알림은 VIP 인터페이스마다 오므로 같은 순간에는 한 번만) */
-  bulk(ctx: NodeContext): void {
+  bulk(ctx: NodeContext, handover = false): void {
     if (!this.syncing() || this.lastBulkAt === ctx.now) return;
     this.lastBulkAt = ctx.now;
     const nat = (this.host.nat()?.values() ?? []).map((e) => ({ proto: e.proto, lanIp: e.lanIp, innerId: e.innerId, publicId: e.publicId }));
-    this.sendSync({ kind: "pfsync", vrid: this.host.ha.config.vrid, nat, flows: this.host.firewall().flowKeys(), bulk: true }, ctx);
+    this.sendSync({ kind: "pfsync", vrid: this.host.ha.config.vrid, nat, flows: this.host.firewall().flowKeys(), bulk: true, ...(handover ? { handover: true } : {}) }, ctx);
   }
 
   private sendSync(msg: PfsyncPacket, ctx: NodeContext): void {
     const i = this.host.syncIface();
     if (i === undefined || (msg.nat.length === 0 && msg.flows.length === 0)) return;
-    ctx.trace("ha.sync", "L3", `세션 동기화 송신 (pfsync${msg.bulk ? ", 전체 복사" : ""}): NAT 매핑 ${msg.nat.length}개, 방화벽 흐름 ${msg.flows.length}개 → backup 이 받아 두면 넘어가도 진행 중인 연결이 이어진다`, { nat: msg.nat.length, flows: msg.flows.length, bulk: msg.bulk === true });
+    ctx.trace(
+      "ha.sync",
+      "L3",
+      msg.handover
+        ? `세션 동기화 송신 (pfsync, 넘겨줌): 둘 다 master 였다가 물러나며 내가 master 인 동안 만든 NAT 매핑 ${msg.nat.length}개, 방화벽 흐름 ${msg.flows.length}개를 되찾는 쪽에 넘김`
+        : `세션 동기화 송신 (pfsync${msg.bulk ? ", 전체 복사" : ""}): NAT 매핑 ${msg.nat.length}개, 방화벽 흐름 ${msg.flows.length}개 → backup 이 받아 두면 넘어가도 진행 중인 연결이 이어진다`,
+      { nat: msg.nat.length, flows: msg.flows.length, bulk: msg.bulk === true, ...(msg.handover ? { handover: true } : {}) },
+    );
     this.host.send(i, { kind: "ipv4", src: this.host.ifaceIp(i)!, dst: PFSYNC_MULTICAST_IP, ttl: 255, payload: msg }, ctx);
   }
 
   /** 받은 세션 동기화: backup 이면 매핑·흐름을 그대로 받아 둔다 */
   receive(port: number, pkt: Ipv4Packet, msg: PfsyncPacket, frameId: number, ctx: NodeContext): void {
     const ha = this.host.ha;
-    if (!ha.config.enabled || !ha.config.sync || msg.vrid !== ha.config.vrid || ha.state === "master") return;
+    // master 는 받지 않는다 — 둘 다 master 였다가 물러나는 쪽이 넘겨준 것(handover)만 받아 이어 간다
+    if (!ha.config.enabled || !ha.config.sync || msg.vrid !== ha.config.vrid || (ha.state === "master" && !msg.handover)) return;
     for (const e of msg.nat) this.host.nat()?.importEntry(e, ctx.now);
     for (const k of msg.flows) this.host.firewall().importFlow(k);
-    ctx.trace("ha.sync", "L3", `[${this.host.ifaceName(port)}] ${pkt.src} 의 세션 동기화 수신${msg.bulk ? " (전체 복사)" : ""}: NAT 매핑 ${msg.nat.length}개, 방화벽 흐름 ${msg.flows.length}개를 받아 둠`, { from: pkt.src, nat: msg.nat.length, flows: msg.flows.length }, frameId);
+    ctx.trace("ha.sync", "L3", `[${this.host.ifaceName(port)}] ${pkt.src} 의 세션 동기화 수신${msg.handover ? " (넘겨받음 — 물러난 쪽이 master 인 동안 만든 세션)" : msg.bulk ? " (전체 복사)" : ""}: NAT 매핑 ${msg.nat.length}개, 방화벽 흐름 ${msg.flows.length}개를 받아 둠`, { from: pkt.src, nat: msg.nat.length, flows: msg.flows.length }, frameId);
   }
 }

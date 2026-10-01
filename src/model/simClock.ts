@@ -39,7 +39,8 @@ export function advanceClock(net: Network, time: number, dtMs: number, speed: nu
         if (++processed > burstLimit) return { time: net.now, changed, burst: true };
         continue;
       }
-      t = next; // 아무것도 안 움직이면 다음 이벤트로 점프
+      // 아무것도 안 움직이면 다음 이벤트로 점프 — 그 사이 배경 타이머가 있으면 거기서 멈춘다 (그 타이머가 보낸 프레임이 화면에 지나가게)
+      t = Math.min(next, net.peekBackgroundTime() ?? Infinity);
     }
     net.step();
     changed = true;

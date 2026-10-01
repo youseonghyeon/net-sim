@@ -494,6 +494,8 @@ export interface PfsyncPacket {
   flows: string[];
   /** 전체 복사 (새 backup 이 들어왔을 때) */
   bulk?: boolean;
+  /** 넘겨줌: 둘 다 master 였다가 물러나는 쪽이 보낸 전체 복사 — 받는 쪽은 master 여도 받는다 */
+  handover?: boolean;
 }
 
 export const PFSYNC_MULTICAST_IP: Ip = "224.0.0.240";

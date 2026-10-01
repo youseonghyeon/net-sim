@@ -60,10 +60,12 @@ export interface HaHost {
   ifaceName(i: number): string;
   ifaceIp(i: number): Ip | undefined;
   linkUp(i: number): boolean;
-  /** 인터페이스 i 로 VRRP 광고 (224.0.0.18 멀티캐스트) */
-  send(i: number, pkt: Ipv4Packet, ctx: NodeContext): void;
+  /** 인터페이스 i 로 VRRP 광고 (224.0.0.18 멀티캐스트). srcMac 이 있으면 그 MAC 을 출발지로 (master 의 광고 = 가상 MAC) */
+  send(i: number, pkt: Ipv4Packet, ctx: NodeContext, srcMac?: Mac): void;
   /** master 가 backup(후보)의 알림을 들음: 세션 동기화면 지금까지의 상태를 전부 복사해 준다 */
   onBackupSeen?(ctx: NodeContext): void;
+  /** 둘 다 master 였다가 더 높은 쪽에 넘김: 내가 master 인 동안 만든 상태를 그쪽에 넘겨준다 (받는 쪽은 master 여도 받는다) */
+  onHandover?(ctx: NodeContext): void;
   /** master 가 되면 VIP·가상 MAC 을 켜고 Gratuitous ARP, 물러나면 끈다 */
   setVip(i: number, vip: { ip: Ip; mac: Mac } | undefined, ctx: NodeContext): void;
   /** master 에서 물러남: 넘겨줄 수 없는 세션(IPsec SA·원격 접속 터널)을 비운다 — 새 master 가 다시 협상한다 */
@@ -250,16 +252,22 @@ export class Ha {
     ctx.trace("ha.backup", "L3", `이중화: master 에서 물러남 (${why}) → 가상 주소를 놓고 우선순위 0 광고 — backup 이 곧 이어받는다`, { why });
     this.host.onResign?.(ctx);
     this.advertise(ctx, 0);
+    // 물러난 순간부터 Master_Down 감시 (RFC 5798: Backup 으로 가면 Master_Down_Timer 를 건다) — 새 master 가 첫 광고 전에 죽어도 되찾게
+    this.watch(ctx);
   }
 
-  /** VIP 인터페이스마다 광고 (링크가 살아 있는 곳만) */
+  /**
+   * VIP 인터페이스마다 광고 (링크가 살아 있는 곳만). master 의 광고는 출발지 MAC 이 가상 MAC (RFC 5798 7.3) —
+   * 스위치가 광고마다 가상 MAC 의 포트를 다시 배워, 둘 다 master 였다가 정리돼도 옛 포트로 새지 않는다
+   */
   private advertise(ctx: NodeContext, priority: number, candidate = false): void {
     const rid = this.rid();
+    const vmac = this.state === "master" && priority > 0 ? virtualMac(this.config.vrid) : undefined;
     for (const i of this.vipIfaces()) {
       const src = this.host.ifaceIp(i);
       if (!src || !this.host.linkUp(i)) continue;
       const msg: VrrpPacket = { kind: "vrrp", vrid: this.config.vrid, priority, vip: this.config.vips[i]!, rid, ...(candidate ? { candidate: true } : {}) };
-      this.host.send(i, { kind: "ipv4", src, dst: VRRP_MULTICAST_IP, ttl: 255, payload: msg }, ctx);
+      this.host.send(i, { kind: "ipv4", src, dst: VRRP_MULTICAST_IP, ttl: 255, payload: msg }, ctx, vmac);
     }
   }
 
@@ -292,10 +300,12 @@ export class Ha {
       }
       if (this.outranks(msg, mine)) {
         ctx.trace("ha.advert", "L3", `[${name}] 더 높은 우선순위 ${msg.priority} 의 ${src} 광고 수신 (나는 ${mine}) → master 를 넘긴다 (preempt)`, { from: src, priority: msg.priority }, frameId);
-        // 넘기기 전에 지금까지의 세션을 새 master(아직 후보) 에게 전부 복사해 준다 — 넘어가도 이어지게
+        // 넘기기 전에 지금까지의 세션을 새 master 에게 전부 복사해 준다 — 넘어가도 이어지게.
+        // 상대가 이미 master(말없이 끊겼다 돌아옴 — 둘 다 master 였음)면 내가 master 인 동안 만든 세션을 넘겨준다
         if (msg.candidate) this.host.onBackupSeen?.(ctx);
-        this.resign(ctx, `더 높은 우선순위의 ${src} 가 있음`);
+        else this.host.onHandover?.(ctx);
         this.masterIp = src;
+        this.resign(ctx, `더 높은 우선순위의 ${src} 가 있음`);
         return;
       }
       ctx.trace("ha.advert", "L3", `[${name}] 낮은 우선순위 ${msg.priority} 의 ${src} 광고 수신 (나는 ${mine}) → 내가 master 임을 광고로 알림`, { from: src, priority: msg.priority }, frameId);

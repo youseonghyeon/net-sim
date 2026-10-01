@@ -189,8 +189,9 @@ export class NetInterface {
   }
 
   /** ARP 없이 특정 MAC 으로 직접 (DHCP 서버가 클라이언트에게 응답할 때) */
-  sendToMac(dstMac: Mac, pkt: Ipv4Packet, ctx: NodeContext, emit: Emit): void {
-    this.transmit(dstMac, pkt, ctx, emit);
+  /** 정해진 MAC 으로 보낸다. srcMac 을 주면 그 MAC 을 출발지로 (VRRP master 의 광고는 가상 MAC — RFC 5798 7.3) */
+  sendToMac(dstMac: Mac, pkt: Ipv4Packet, ctx: NodeContext, emit: Emit, srcMac: Mac = this.mac): void {
+    this.transmit(dstMac, pkt, ctx, emit, srcMac);
   }
 
   private route(dst: Ip, ctx: NodeContext): Ip | undefined {
@@ -207,9 +208,9 @@ export class NetInterface {
     return undefined;
   }
 
-  private transmit(dstMac: Mac, pkt: Ipv4Packet, ctx: NodeContext, emit: Emit): void {
-    const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: this.mac, dst: dstMac, payload: pkt };
-    ctx.trace("frame.send", "L2", `프레임 송신: ${describeFrame(frame)} [${this.mac} → ${dstMac === BROADCAST_MAC ? "브로드캐스트" : dstMac}]`, { src: this.mac, dst: dstMac }, frame.id);
+  private transmit(dstMac: Mac, pkt: Ipv4Packet, ctx: NodeContext, emit: Emit, srcMac: Mac = this.mac): void {
+    const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: srcMac, dst: dstMac, payload: pkt };
+    ctx.trace("frame.send", "L2", `프레임 송신: ${describeFrame(frame)} [${srcMac} → ${dstMac === BROADCAST_MAC ? "브로드캐스트" : dstMac}]`, { src: srcMac, dst: dstMac }, frame.id);
     emit(frame);
   }
 

@@ -228,7 +228,7 @@ export function CablePanel({ c }: { c: Cable }) {
         <button class="btn wide" onClick={() => sim.dropNext(c.id)}>
           다음 패킷 1개 손실시키기
         </button>
-        <p class="note">손실된 패킷은 케이블 중간에서 사라집니다. TCP 는 ACK 가 안 오면 재전송하고, ping 은 timeout 으로 실패합니다. 100% 는 케이블을 뽑은 것과 달리 링크가 살아 있어 양쪽 장비가 고장을 모릅니다(멈춘 장비·한쪽만 끊긴 광케이블 흉내). Shift+클릭으로 케이블을 더 고르면 손실률을 한 번에 바꿀 수 있습니다.</p>
+        <p class="note">손실된 패킷은 케이블 중간에서 사라집니다. TCP 는 ACK 가 안 오면 재전송하고, ping 은 timeout 으로 실패합니다. 100% 는 케이블을 뽑은 것과 달리 링크가 살아 있어 양쪽 장비가 고장을 모릅니다(멈춘 장비나, 링크 표시등은 켜진 채 신호가 통하지 않는 고장 흉내). Shift+클릭으로 케이블을 더 고르면 손실률을 한 번에 바꿀 수 있습니다.</p>
       </Section>
       <Section>
         <button class="btn danger" onClick={() => removeCable(c.id)}>

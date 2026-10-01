@@ -127,7 +127,7 @@ export class L3Node implements SimNode {
     ifaceName: (i) => this.names[i]!,
     ifaceIp: (i) => (this.ifaces[i]?.usable ? this.ifaces[i]!.ip : undefined),
     linkUp: (i) => this.linkUp[i] === true,
-    send: (i, pkt, ctx) => this.ifaces[i]!.sendToMac(VRRP_MULTICAST_MAC, pkt, ctx, this.emit(i, ctx)),
+    send: (i, pkt, ctx, srcMac) => this.ifaces[i]!.sendToMac(VRRP_MULTICAST_MAC, pkt, ctx, this.emit(i, ctx), srcMac),
     setVip: (i, vip, ctx) => {
       const iface = this.ifaces[i];
       if (!iface) return;
@@ -136,6 +136,7 @@ export class L3Node implements SimNode {
       this.rip.kick(ctx); // RIP 넥스트 홉(가상 주소)을 다시 알린다
     },
     onBackupSeen: (ctx) => this.sessionSync.bulk(ctx),
+    onHandover: (ctx) => this.sessionSync.bulk(ctx, true),
     // 세션 동기화는 IPsec SA 를 복사하지 않는다: 물러난 장비가 옛 SA 를 들고 있으면 DPD·ESP 에 엉뚱하게 답하므로 비운다
     onResign: (ctx) => {
       this.vpn.dropSa(ctx, "이중화 master 에서 물러남");
