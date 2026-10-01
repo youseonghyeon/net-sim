@@ -51,7 +51,8 @@ describe("노트북 유선·무선 NIC (유선 우선 자동 전환)", () => {
     expect(lap.mac).toBe(wlanMacOf(eth));
     expect(lap.ip).toBe("192.168.0.101");
     expect(serviceBadgesOf(lap)).toContain("Wi-Fi");
-    expect(tr.some((e) => e.nodeId === x.id("노트북") && e.summary.includes("eth0 링크 다운 → 연결돼 있던 Wi-Fi(wlan0) 로 전환") && e.summary.includes(`MAC 이 ${eth} →`))).toBe(true);
+    expect(tr.some((e) => e.nodeId === x.id("노트북") && e.kind === "link.down" && e.summary === "eth0 링크 다운")).toBe(true);
+    expect(tr.some((e) => e.nodeId === x.id("노트북") && e.summary.includes(`Wi-Fi(wlan0) 로 전환: 다른 NIC 라 MAC 이 ${eth} → ${wlanMacOf(eth)} 로 바뀜 → DHCP 로 주소를 새로 받는다`))).toBe(true);
     // 공유기의 DHCP 임대는 MAC 둘
     expect(x.node<Router>("공유기").dhcpServer.rows().map((r) => r[0]).sort()).toEqual(["192.168.0.100", "192.168.0.101"]);
     x.act({ kind: "ping", nodeId: x.id("노트북"), dst: "192.168.0.20" });
@@ -65,7 +66,8 @@ describe("노트북 유선·무선 NIC (유선 우선 자동 전환)", () => {
     const lap = x.host("노트북");
     expect(lap.activeNic).toBe(0);
     expect(lap.ip).toBe("192.168.0.100");
-    expect(tr.some((e) => e.nodeId === x.id("노트북") && e.summary.includes("유선이 우선이라 Wi-Fi(wlan0) 에서 유선(eth0) 로 전환"))).toBe(true);
+    expect(tr.some((e) => e.nodeId === x.id("노트북") && e.summary.includes("eth0 링크 연결됨 → 유선이 우선이라 Wi-Fi(wlan0) 를 내려놓음"))).toBe(true);
+    expect(tr.some((e) => e.nodeId === x.id("노트북") && e.summary.includes("유선(eth0) 로 전환"))).toBe(true);
     expect(tr.some((e) => e.nodeId === x.id("노트북") && e.kind === "dhcp.request.sent" && e.summary.includes("INIT-REBOOT") && e.summary.includes("192.168.0.100"))).toBe(true);
   });
 
@@ -75,7 +77,7 @@ describe("노트북 유선·무선 NIC (유선 우선 자동 전환)", () => {
     expect(x.lastConn("노트북")).toMatchObject({ state: "ESTABLISHED", ssh: { open: true } });
     x.apply(unplug(x.t));
     expect(x.lastConn("노트북").state).toBe("FAILED");
-    expect(x.lastConn("노트북").reason).toContain("NIC 전환");
+    expect(x.lastConn("노트북").reason).toContain("링크 다운");
   });
 
   it("Wi-Fi 만 (케이블 없음): 처음부터 Wi-Fi 로 붙고 구성 검사도 조용하다", () => {

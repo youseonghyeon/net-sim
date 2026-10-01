@@ -34,7 +34,8 @@ function components(t: Topology): Map<string, number> {
   const union = (a: string, b: string) => parent.set(find(a), find(b));
   for (const d of t.devices) parent.set(d.id, d.id);
   for (const c of t.cables) union(c.a.device, c.b.device);
-  for (const l of wirelessLinks(t)) union(l.client, l.base);
+  // 노트북의 대기 Wi-Fi (유선 사용 중) 는 쓰지 않는 링크라 묶지 않는다
+  for (const l of wirelessLinks(t)) if (!l.standby) union(l.client, l.base);
   const ids = new Map<string, number>();
   const out = new Map<string, number>();
   for (const d of t.devices) {

@@ -773,15 +773,16 @@ export function wirelessLinks(t: Topology): WirelessLink[] {
     const b = baseSsid(d);
     return b !== undefined && b.enabled && b.ssid.trim() !== "";
   });
-  const out: WirelessLink[] = [];
   const taken = new Map<string, Set<number>>();
   for (const b of bases) taken.set(b.id, new Set());
-  for (const c of t.devices) {
-    if (!c.wifi || c.wifi.enabled === false) continue;
+  // 단말마다 가장 가까운 기지부터 정한다
+  const cands: { c: Device; order: number; base: Device; distance: number; clientPort: number; standby: boolean }[] = [];
+  t.devices.forEach((c, order) => {
+    if (!c.wifi || c.wifi.enabled === false) return;
     const ssid = c.wifi.ssid.trim();
-    if (!ssid) continue;
+    if (!ssid) return;
     const clientPort = specOf(c).ports.findIndex((p) => p.radio);
-    if (clientPort < 0) continue;
+    if (clientPort < 0) return;
     const cc = center(c);
     let best: { base: Device; distance: number } | undefined;
     for (const b of bases) {
@@ -791,20 +792,37 @@ export function wirelessLinks(t: Topology): WirelessLink[] {
       if (distance > WIFI_RANGE) continue;
       if (!best || distance < best.distance) best = { base: b, distance };
     }
-    if (!best) continue;
-    const slots = radioSlotPorts(best.base);
-    const table = slotTable.get(best.base.id) ?? new Map<string, number>();
-    slotTable.set(best.base.id, table);
-    const used = taken.get(best.base.id)!;
-    let slot = table.get(c.id);
-    if (slot === undefined || used.has(slot) || !slots.includes(slot)) {
-      slot = slots.find((p) => !used.has(p));
-      if (slot === undefined) continue; // 슬롯 부족
-      table.set(c.id, slot);
-    }
+    if (!best) return;
+    // 노트북 유선에 케이블이 꽂혀 있으면 이 무선 연결은 대기 (유선 우선)
+    const standby = clientPort > 0 && t.cables.some((k) => (k.a.device === c.id && k.a.port !== clientPort) || (k.b.device === c.id && k.b.port !== clientPort));
+    cands.push({ c, order, base: best.base, distance: best.distance, clientPort, standby });
+  });
+  // 슬롯: 먼저 각자 쓰던 슬롯을 지켜 주고(새 단말이 끼어들어도 붙어 있던 단말이 흔들리지 않게), 남은 단말은 빈 슬롯을 받는다 —
+  // 이때 쓰는 연결이 대기 연결(노트북 유선 사용 중)보다 먼저
+  const slotOf = new Map<Device, number>();
+  for (const k of cands) {
+    const slot = slotTable.get(k.base.id)?.get(k.c.id);
+    const used = taken.get(k.base.id)!;
+    if (slot === undefined || used.has(slot) || !radioSlotPorts(k.base).includes(slot)) continue;
     used.add(slot);
-    const wired = clientPort > 0 && t.cables.some((k) => (k.a.device === c.id && k.a.port !== clientPort) || (k.b.device === c.id && k.b.port !== clientPort));
-    out.push({ id: `wl_${c.id}_${best.base.id}_${slot}`, client: c.id, base: best.base.id, slot, distance: Math.round(best.distance), clientPort, ...(wired ? { standby: true } : {}) });
+    slotOf.set(k.c, slot);
+  }
+  for (const k of [...cands].sort((a, b) => Number(a.standby) - Number(b.standby) || a.order - b.order)) {
+    if (slotOf.has(k.c)) continue;
+    const used = taken.get(k.base.id)!;
+    const slot = radioSlotPorts(k.base).find((p) => !used.has(p));
+    if (slot === undefined) continue; // 슬롯 부족
+    used.add(slot);
+    slotOf.set(k.c, slot);
+    const table = slotTable.get(k.base.id) ?? new Map<string, number>();
+    slotTable.set(k.base.id, table);
+    table.set(k.c.id, slot);
+  }
+  const out: WirelessLink[] = [];
+  for (const k of cands) {
+    const slot = slotOf.get(k.c);
+    if (slot === undefined) continue;
+    out.push({ id: `wl_${k.c.id}_${k.base.id}_${slot}`, client: k.c.id, base: k.base.id, slot, distance: Math.round(k.distance), clientPort: k.clientPort, ...(k.standby ? { standby: true } : {}) });
   }
   return out;
 }

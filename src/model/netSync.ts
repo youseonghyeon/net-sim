@@ -159,7 +159,7 @@ export class NetworkSync {
         try {
           if (c.wireless) {
             const baseName = t.devices.find((d) => d.id === c.wireless!.base)?.name ?? c.wireless.base;
-            net.contextFor(c.a.device).trace("wifi.associate", "L1", `무선 연결: ${baseName} 에 붙음 (거리 ${c.wireless.distance}px, 슬롯 ${c.b.port}) → DHCP 시작`, { ...c.wireless });
+            net.contextFor(c.a.device).trace("wifi.associate", "L1", `무선 연결: ${baseName} 에 붙음 (거리 ${c.wireless.distance}px, 슬롯 ${c.b.port}) → ${c.wireless.standby ? "유선을 쓰는 중이라 대기 (주소는 받지 않음)" : "DHCP 시작"}`, { ...c.wireless });
             this.syncedWireless.set(c.id, c.a.device);
           }
           net.connect(c.a.device, c.a.port, c.b.device, c.b.port, c.latency, c.id);

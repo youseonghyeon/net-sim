@@ -35,6 +35,9 @@ import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, NUD_TIMER_TAG, ROUTER_EX
 
 export type IpMode = "dhcp" | "static";
 
+const NIC_SWITCH_TAG = "nic-switch";
+const NIC_LABEL = ["유선(eth0)", "Wi-Fi(wlan0)"];
+
 export interface HostConfig {
   id: string;
   mac: Mac;
@@ -134,6 +137,10 @@ export class Host implements SimNode {
   readonly nics: { name: string; mac: Mac; up: boolean; lease?: Ip }[];
   /** 지금 쓰는 NIC (포트 번호). 링크가 하나도 없으면 undefined */
   activeNic: number | undefined;
+  /** 다른 NIC 로 바꿔 끼기를 기다리는 중 (0ms 타이머 — 같은 순간의 링크 변화를 모두 본 뒤 정한다) */
+  private switching: TimerHandle | undefined;
+  /** 지워지는 중 (onRemove 뒤): 링크가 차례로 끊겨도 다른 NIC 로 넘어가지 않는다 */
+  private removed = false;
   readonly dhcp: DhcpClient;
   readonly dhcpServer: DhcpServer;
   readonly dnsServer: DnsServer;
@@ -223,7 +230,9 @@ export class Host implements SimNode {
       myIp: () => (this.iface.usable && !this.iface.probing ? this.iface.ip : undefined),
       local: (dst: Ip) => !!this.iface.ip && sameSubnet(dst, this.iface.ip, this.iface.prefix),
     };
-    return type === "l2tp" ? new L2tpClient(io, this.mac) : new RaClient(io, this.mac);
+    // 클라이언트 식별은 유선 NIC 의 MAC (노트북이 Wi-Fi 로 넘어가 있어도 같은 기기 — 서버가 같은 가상 주소를 준다)
+    const cid = this.nics[0]!.mac;
+    return type === "l2tp" ? new L2tpClient(io, cid) : new RaClient(io, cid);
   }
 
   setRemoteVpn(cfg: RaClientConfig, ctx: NodeContext): void {
@@ -388,11 +397,13 @@ export class Host implements SimNode {
 
   onRemove(ctx: NodeContext): void {
     if (this.linkUp) this.dhcp.release(ctx, this.emit(ctx));
+    // 지워지는 동안 케이블·무선이 차례로 끊긴다 — 그 사이 다른 NIC 로 넘어가 DHCP 를 보내지 않게
+    this.removed = true;
   }
 
   onLink(port: number, up: boolean, ctx: NodeContext): void {
     const nic = this.nics[port];
-    if (!nic) return;
+    if (!nic || this.removed) return;
     nic.up = up;
     if (this.nics.length === 1) {
       this.activeNic = up ? 0 : undefined;
@@ -401,56 +412,68 @@ export class Host implements SimNode {
       return;
     }
     // 노트북: 유선이 살아 있으면 유선, 아니면 무선
-    const want = this.nics[0]!.up ? 0 : this.nics[1]!.up ? 1 : undefined;
+    const want = this.wantNic();
     const from = this.activeNic;
-    const name = (i: number) => (i === 0 ? "유선(eth0)" : "Wi-Fi(wlan0)");
+    if (this.switching) {
+      // 바꿔 끼기를 기다리는 중 (같은 순간의 다른 변화): 결정은 switchNic 이 한다
+      ctx.trace(up ? "link.up" : "link.down", "L1", `${nic.name} ${up ? "연결됨" : "끊김"}`, { port });
+      return;
+    }
     if (want === from) {
       // 쓰지 않는 쪽만 바뀜 (유선을 쓰는 중에 Wi-Fi 가 붙거나 떨어짐)
       ctx.trace(
         up ? "link.up" : "link.down",
         "L1",
-        up ? `${nic.name} 연결됨 → 지금 쓰는 ${name(from!)} 가 우선이라 대기 (유선이 끊기면 이쪽으로 넘어감)` : `${nic.name} 끊김 (대기 중이던 연결 — 지금 쓰는 ${name(from!)} 는 그대로)`,
+        up ? `${nic.name} 연결됨 → 지금 쓰는 ${NIC_LABEL[from!]} 가 우선이라 대기 (유선이 끊기면 이쪽으로 넘어감)` : `${nic.name} 끊김 (대기 중이던 연결 — 지금 쓰는 ${NIC_LABEL[from!]} 는 그대로)`,
         { port, standby: true },
       );
       return;
     }
     if (from === undefined) {
       this.useNic(want!);
-      this.stackUp(ctx, `${nic.name} 링크 연결됨 → ${name(want!)} 로 통신 (MAC ${this.iface.mac})`);
+      this.stackUp(ctx, `${nic.name} 링크 연결됨 → ${NIC_LABEL[want!]} 로 통신 (MAC ${this.iface.mac})`);
       return;
     }
-    if (want === undefined) {
-      this.stackDown(ctx, "링크 다운", `${nic.name} 링크 다운 (다른 NIC 도 연결돼 있지 않음)`);
-      this.activeNic = undefined;
-      return;
-    }
-    // 바꿔 낌: 쓰던 NIC 의 연결·주소를 내려놓고 다른 NIC(다른 MAC)로 처음부터
+    // 쓰던 NIC 를 내려놓는다 (원인 → 정리). 어느 NIC 로 갈지는 같은 순간의 다른 변화(장치 제거로 둘 다 끊김 등)까지 본 뒤 정한다
+    if (up) ctx.trace("link.up", "L1", `${nic.name} 링크 연결됨 → 유선이 우선이라 ${NIC_LABEL[from]} 를 내려놓음`, { port });
+    else ctx.trace("link.down", "L1", `${nic.name} 링크 다운${want === undefined ? " (다른 NIC 도 연결돼 있지 않음)" : ""}`, { port });
+    this.stackDown(ctx, up ? "NIC 전환" : "링크 다운", null);
+    this.activeNic = undefined;
+    if (want !== undefined) this.switching = ctx.timer(0, NIC_SWITCH_TAG, {});
+  }
+
+  private wantNic(): number | undefined {
+    return this.nics[0]!.up ? 0 : this.nics[1]?.up ? 1 : undefined;
+  }
+
+  /** 바꿔 끼기 (같은 순간의 링크 변화를 모두 본 뒤): 살아 있는 NIC 로 MAC 을 바꿔 주소를 다시 */
+  private switchNic(ctx: NodeContext): void {
+    this.switching = undefined;
+    const want = this.wantNic();
+    if (want === undefined || this.removed) return;
     const oldMac = this.iface.mac;
-    const msg = up
-      ? `${nic.name} 링크 연결됨 → 유선이 우선이라 ${name(from)} 에서 ${name(want)} 로 전환`
-      : `${nic.name} 링크 다운 → 연결돼 있던 ${name(want)} 로 전환`;
-    this.stackDown(ctx, "NIC 전환", null);
     this.useNic(want);
-    ctx.trace(
-      up ? "link.up" : "link.down",
-      "L1",
-      `${msg}: 다른 NIC 라 MAC 이 ${oldMac} → ${this.iface.mac} 로 바뀌어 주소를 새로 받는다 (열려 있던 TCP·VPN 은 끊김)`,
-      { port, from: this.nics[from]!.name, to: this.nics[want]!.name, mac: this.iface.mac },
+    const what =
+      this.ipMode === "dhcp" ? "DHCP 로 주소를 새로 받는다" : this.iface.ip ? `수동 주소 ${this.iface.ip} 를 새 MAC 으로 다시 확인(ARP Probe)해 쓴다` : "수동 주소가 없음";
+    this.stackUp(
+      ctx,
+      oldMac === this.iface.mac
+        ? `${NIC_LABEL[want]} 로 다시 통신 (MAC ${oldMac} 그대로)`
+        : `${NIC_LABEL[want]} 로 전환: 다른 NIC 라 MAC 이 ${oldMac} → ${this.iface.mac} 로 바뀜 → ${what} (열려 있던 TCP·VPN 은 끊김)`,
     );
-    this.stackUp(ctx, null);
   }
 
   /** 노트북: 쓸 NIC 를 바꿔 낌 (링크가 내려간 상태에서) — MAC 과 그 NIC 의 DHCP 기억을 바꾼다 */
   private useNic(i: number): void {
-    const prev = this.activeNic;
-    if (prev !== undefined && prev !== i) this.nics[prev]!.lease = this.dhcp.remembered;
     this.activeNic = i;
     const nic = this.nics[i]!;
-    if (this.iface.mac !== nic.mac) {
-      this.iface.setMac(nic.mac);
-      this.v6.setMac(nic.mac);
-      this.dhcp.remembered = nic.lease;
-    }
+    if (this.iface.mac === nic.mac) return;
+    // 지금 MAC 의 NIC 가 받은 주소를 그 NIC 에 기억해 두고 (둘 다 끊긴 상태를 거쳐도), 바꿔 낄 NIC 의 기억을 꺼낸다
+    const cur = this.nics.find((n) => n.mac === this.iface.mac);
+    if (cur) cur.lease = this.dhcp.remembered;
+    this.iface.setMac(nic.mac);
+    this.v6.setMac(nic.mac);
+    this.dhcp.remembered = nic.lease;
   }
 
   /** 링크가 살아남 (또는 다른 NIC 로 바꿔 낀 뒤): 주소 받기·IPv6·헬스 체크를 시작 */
@@ -1211,6 +1234,9 @@ export class Host implements SimNode {
     switch (tag) {
       case LB_CHECK_TAG:
         this.lb.onTimer(data, ctx);
+        return;
+      case NIC_SWITCH_TAG:
+        this.switchNic(ctx);
         return;
       case DAD_TIMER_TAG:
         this.v6.finishDad(data, ctx, this.emit(ctx));

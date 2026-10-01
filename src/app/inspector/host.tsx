@@ -236,10 +236,10 @@ export function WifiBaseSection({ d }: { d: Device }) {
             <div class="stat-rows">
               {clients.map((l) => (
                 <div key={l.id} class="port-row">
-                  <span class="dot up" />
+                  <span class={`dot${l.standby ? "" : " up"}`} />
                   <span class="mono">슬롯 {l.slot}</span>
                   <span class="peer">
-                    {t.devices.find((x) => x.id === l.client)?.name ?? l.client} <span class="muted">{l.distance}px</span>
+                    {t.devices.find((x) => x.id === l.client)?.name ?? l.client} <span class="muted">{l.distance}px{l.standby ? " · 대기 (유선 사용 중)" : ""}</span>
                   </span>
                 </div>
               ))}
