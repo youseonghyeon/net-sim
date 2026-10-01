@@ -287,6 +287,11 @@ export interface TcpSegment {
   tls?: TlsRecord;
   /** TLS ClientHello 의 SNI (접속할 이름 — 암호화 전이라 중간 장비도 본다) */
   sni?: string;
+  /**
+   * 헬스 체크 연결의 SYN (시뮬레이터 안에서만 쓰는 표시 — 실제 패킷에는 없다). 받은 서버도 그 연결의 재전송을 배경 타이머로 걸어,
+   * 주기 체크가 일반 타이머를 끝없이 이어 시계를 멈추지 못하게 하는 일을 막는다
+   */
+  probe?: boolean;
 }
 
 /** TLS 레코드 종류: 핸드셰이크 세 번(ClientHello → ServerHello·인증서·Finished → Finished) 뒤로는 응용 데이터(암호화) */

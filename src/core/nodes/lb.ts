@@ -156,7 +156,13 @@ export class LoadBalancer {
     const kept = new Set(cfg.backends.map(keyOf));
     for (const k of [...this.downUntil.keys()]) if (!kept.has(k)) this.downUntil.delete(k);
     for (const k of [...this.checkState.keys()]) if (!kept.has(k) || !cfg.healthCheck) this.checkState.delete(k);
-    if (!cfg.enabled || !cfg.healthCheck) this.checkRound = undefined;
+    if (!cfg.enabled || !cfg.healthCheck) {
+      this.checkRound = undefined;
+      // 기다리던 체크 연결도 접는다 (남겨 두면 SYN_SENT 로 영원히 남고, 다시 켰을 때 실패로 센다)
+      const pending = [...this.checking.values()];
+      this.checking.clear();
+      for (const c of pending) this.tcp.abandon(c.conn, "헬스 체크 꺼짐", ctx);
+    }
     for (const [ip, k] of [...this.affinity]) if (!kept.has(k) || cfg.sticky !== "ip") this.affinity.delete(ip);
     for (const f of [...this.flows.values()]) if (cfg.mode !== "l4" || !kept.has(keyOf(f.backend))) this.dropFlow(f);
     ctx.trace(
@@ -518,9 +524,16 @@ export class LoadBalancer {
     for (let k = 0; k < 10000; k++) {
       const p = this.nextNatPort++;
       if (this.nextNatPort > 59999) this.nextNatPort = L4_PORT_START;
-      if (!this.byNatPort.has(p)) return p;
+      // 이 장비의 TCP 연결(헬스 체크 등)이 쓰는 포트도 피한다 — 겹치면 백엔드의 응답이 엉뚱한 쪽으로 간다
+      const tcpBusy = [...this.tcp.conns.values()].some((c) => c.localPort === p && c.state !== "CLOSED" && c.state !== "FAILED");
+      if (!this.byNatPort.has(p) && !tcpBusy) return p;
     }
     return this.nextNatPort;
+  }
+
+  /** 이 포트를 L4 변환 포트로 쓰는 중인지 (TCP 스택이 임시 포트로 고르지 않게) */
+  usesNatPort(port: number): boolean {
+    return this.byNatPort.has(port);
   }
 
   private dropFlow(f: L4Flow): void {

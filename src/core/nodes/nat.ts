@@ -1,6 +1,6 @@
 // NAT 변환 테이블. 라우터(공유기)와 NAT 박스가 공유한다. ICMP 는 id, TCP 는 포트로 구분한다.
 import type { Ip } from "../addr";
-import { icmpErrorLabel, isControl, isIcmpError, type IcmpError, type Ipv4Packet } from "../packet";
+import { icmpErrorLabel, isControl, isIcmpError, type IcmpError, type Ipv4Packet, type TcpSegment } from "../packet";
 import type { NodeContext } from "./node";
 
 export interface NatEntry {
@@ -12,9 +12,18 @@ export interface NatEntry {
   publicId: number;
   createdAt: number;
   lastUsed: number;
+  /** TCP: 안쪽·바깥쪽이 FIN 을 보냈는지, 끝난 시각 (양쪽 FIN 뒤 마지막 ACK, 또는 RST) */
+  finOut?: boolean;
+  finIn?: boolean;
+  closedAt?: number;
 }
 
 export const NAT_ID_START = 40000;
+/**
+ * 끝난 TCP 매핑을 남겨 두는 시간 (늦게 온 재전송을 위해 — TIME_WAIT 흉내, L4 로드밸런서와 같은 2초. 실제 conntrack 은 120초).
+ * 지나면 다음 패킷이 지나갈 때 치운다 (타이머 없음). ICMP·UDP 매핑은 여전히 만료되지 않는다
+ */
+export const NAT_TCP_TIME_WAIT = 2000;
 
 /** 포트 포워딩 규칙: 공인 쪽 TCP 포트로 들어온 연결을 내부 호스트로 */
 export interface PortForward {
@@ -103,6 +112,7 @@ export class NatTable {
     }
     const innerId = p.kind === "icmp" ? p.id : p.srcPort;
     const key = `${proto}:${pkt.src}:${innerId}`;
+    this.expire(ctx.now);
     let natKey = this.byInner.get(key);
     if (natKey === undefined) {
       const publicId = this.allocPublicId(proto);
@@ -113,6 +123,7 @@ export class NatTable {
     }
     const entry = this.entries.get(natKey)!;
     entry.lastUsed = ctx.now;
+    if (p.kind === "tcp") this.noteTcp(entry, p, "out", ctx.now);
     const unit = proto === "icmp" ? "ICMP id" : `${proto.toUpperCase()} 포트`;
     ctx.trace(
       "nat.translate",
@@ -212,6 +223,7 @@ export class NatTable {
       return undefined;
     }
     entry.lastUsed = ctx.now;
+    if (p.kind === "tcp") this.noteTcp(entry, p, "in", ctx.now);
     ctx.trace(
       "nat.restore",
       "L3",
@@ -220,6 +232,32 @@ export class NatTable {
       frameId,
     );
     return { ...pkt, dst: entry.lanIp, payload: p.kind === "icmp" ? { ...p, id: entry.innerId } : { ...p, dstPort: entry.innerId } };
+  }
+
+  /** TCP 매핑의 끝을 본다: 양쪽 FIN 뒤 마지막 ACK, 또는 RST 면 끝난 것으로 표시 (새 SYN 이면 다시 시작) */
+  private noteTcp(e: NatEntry, seg: TcpSegment, dir: "in" | "out", now: number): void {
+    if (seg.syn && !seg.ackFlag) {
+      delete e.finOut;
+      delete e.finIn;
+      delete e.closedAt;
+      return;
+    }
+    if (e.closedAt !== undefined) return;
+    if (seg.rst) e.closedAt = now;
+    else if (seg.fin) {
+      if (dir === "out") e.finOut = true;
+      else e.finIn = true;
+    } else if (e.finOut && e.finIn && seg.ackFlag && seg.len === 0) e.closedAt = now;
+  }
+
+  /** 끝난 지 TIME_WAIT 가 지난 TCP 매핑을 치운다 (닫힌 연결의 매핑이 끝없이 쌓이지 않게) */
+  private expire(now: number): void {
+    for (const [natKey, e] of [...this.entries]) {
+      if (e.closedAt === undefined || now - e.closedAt < NAT_TCP_TIME_WAIT) continue;
+      this.entries.delete(natKey);
+      const innerKey = `${e.proto}:${e.lanIp}:${e.innerId}`;
+      if (this.byInner.get(innerKey) === natKey) this.byInner.delete(innerKey);
+    }
   }
 
   rows(publicIp: Ip | undefined): string[][] {

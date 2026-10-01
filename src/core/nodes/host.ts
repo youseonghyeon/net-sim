@@ -178,6 +178,7 @@ export class Host implements SimNode {
       onRelay: (conn, seg, ctx) => this.proxy.onRelay(conn, seg, ctx),
     });
     this.lb = new LoadBalancer(this.tcp, () => this.iface.ip);
+    this.tcp.reservedPort = (p) => this.lb.usesNatPort(p);
     if (cfg.lb) this.lb.config = { ...cfg.lb, backends: cfg.lb.backends.map((b) => ({ ...b })) };
     this.proxy = new ForwardProxy(this.tcp, () => this.iface.ip, (name, ctx, done) => this.resolver.resolve(name, ctx, this.emit(ctx), done));
     if (cfg.proxy) this.proxy.config = { ...cfg.proxy, deny: [...cfg.proxy.deny] };

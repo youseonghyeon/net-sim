@@ -262,7 +262,7 @@ export function DiagSection({ d }: { d: Device }) {
         </button>
       </div>
       {(() => {
-        const clients = [...node.tcp.conns.values()].filter((c) => c.role === "client");
+        const clients = [...node.tcp.conns.values()].filter((c) => c.role === "client" && !c.probe);
         // 열린 SSH 세션은 오래됐어도 항상 보인다 (연결 해제 버튼)
         const open = clients.filter((c) => c.ssh && c.state !== "CLOSED" && c.state !== "FAILED");
         const conns = [...open, ...clients.filter((c) => !open.includes(c)).slice(-3).reverse()];

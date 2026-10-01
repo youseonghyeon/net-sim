@@ -172,7 +172,7 @@ export function probeTargets(t: Topology, fromId: string, mode: "ping" | "tcp", 
         net.scheduleAction(net.now, { kind: "tcp-connect", nodeId: fromId, dst: c.value, port });
         net.runToIdle(20_000);
         // 내가 연 연결 (내가 프록시·로드밸런서이기도 하면 중계 연결이 뒤에 생긴다)
-        const conn = [...src.tcp.conns.values()].filter((x) => x.role === "client" && x.via === undefined && !x.relay).at(-1);
+        const conn = [...src.tcp.conns.values()].filter((x) => x.role === "client" && x.via === undefined && !x.relay && !x.probe).at(-1);
         const httpError = /^HTTP [45]/.test(conn?.status ?? "");
         ok = conn?.state === "CLOSED" && conn.bytesReceived > 0 && !httpError;
         reason = httpError ? `${conn!.status} (${conn!.target ? "프록시" : "로드밸런서 뒤 백엔드 문제"})` : conn?.reason;

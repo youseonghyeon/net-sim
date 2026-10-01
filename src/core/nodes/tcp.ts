@@ -215,6 +215,8 @@ export class TcpStack {
   /** 쿠키 저장소 (브라우저): 사이트(사용자가 적은 호스트 — 이름 또는 주소, 포트는 보지 않음) → 받은 Set-Cookie. 끝 클라이언트만 쓴다 */
   readonly cookies = new Map<string, string>();
   private nextPort = EPHEMERAL_START;
+  /** 이 포트는 TCP 임시 포트로 쓰지 않는다 (같은 장비의 L4 로드밸런서가 변환 포트로 쓰는 중) */
+  reservedPort?: (port: number) => boolean;
 
   constructor(
     private readonly host: TcpHost,
@@ -222,11 +224,23 @@ export class TcpStack {
     private readonly responseSegments = 3,
   ) {}
 
+  /** 임시 포트: 49152~65535 를 돌며 쓰는 중인 포트(끝나지 않은 연결)와 예약된 포트를 건너뛴다 */
+  private allocPort(): number {
+    const span = 65536 - EPHEMERAL_START;
+    for (let k = 0; k < span; k++) {
+      const p = this.nextPort;
+      this.nextPort = p >= 65535 ? EPHEMERAL_START : p + 1;
+      const busy = [...this.conns.values()].some((c) => c.localPort === p && c.state !== "CLOSED" && c.state !== "FAILED");
+      if (!busy && !this.reservedPort?.(p)) return p;
+    }
+    return this.nextPort;
+  }
+
   // ---------- 클라이언트 ----------
 
   connect(localIp: Ip, remoteIp: Ip, remotePort: number, ctx: NodeContext, opts: ConnectOptions = {}): TcpConn {
     const { via, target, onCreated, method, relay, probe } = opts;
-    const localPort = this.nextPort++;
+    const localPort = this.allocPort();
     // 쿠키는 끝 클라이언트(브라우저)만: 중계 연결(via 가 있는 로드밸런서·프록시)은 저장소를 쓰지 않는다
     const site = via === undefined ? siteOf(remoteIp, target, opts.site) : undefined;
     const cookie = opts.cookie ?? (site !== undefined ? this.cookies.get(site) : undefined);
@@ -261,7 +275,7 @@ export class TcpStack {
     this.prune();
     onCreated?.(conn);
     ctx.trace("tcp.connect", "L4", `TCP 연결 시작: ${endpoint(localIp, localPort)} → ${endpoint(remoteIp, remotePort)} (초기 seq ${conn.iss})${probe ? " — 헬스 체크 (연결되는지만 보고 닫음)" : ""}`, { conn: conn.id });
-    this.transmit(conn, { syn: true }, ctx, `SYN 전송: "연결하자" seq=${conn.iss}`, "tcp.syn.sent");
+    this.transmit(conn, { syn: true, ...(probe ? { probe: true } : {}) }, ctx, `SYN 전송: "연결하자" seq=${conn.iss}`, "tcp.syn.sent");
     return conn;
   }
 
@@ -415,7 +429,7 @@ export class TcpStack {
 
   /** IP 가 없는 등 시작조차 못 한 연결을 기록에 남긴다 (인스펙터 표시용) */
   recordFailure(localIp: Ip, remoteIp: Ip, remotePort: number, reason: string, ctx: NodeContext): void {
-    const localPort = this.nextPort++;
+    const localPort = this.allocPort();
     this.conns.set(connKey(localIp, localPort, remoteIp, remotePort), {
       id: connKey(localIp, localPort, remoteIp, remotePort),
       role: "client",
@@ -473,6 +487,7 @@ export class TcpStack {
       finReceived: false,
       createdAt: ctx.now,
       ...(this.tlsPorts.has(seg.dstPort) ? { tls: { done: false, sent: 0 } } : {}),
+      ...(seg.probe ? { probe: true } : {}),
     };
     this.conns.set(conn.id, conn);
     this.prune();
@@ -843,7 +858,8 @@ export class TcpStack {
       conn.bytesSent += seg.len;
       // 헬스 체크의 SYN 은 재전송하지 않는다 (응답이 없으면 다음 체크 때 timeout 으로 본다)
       if (!(conn.probe && seg.syn)) {
-        const timer = ctx.timer(TCP_RTO, TCP_TIMER_TAG, { conn: conn.id, seq: seg.seq });
+        // 헬스 체크 연결의 재전송은 배경 타이머 (주기 체크가 시계를 멈추지 못하게 하지 않도록)
+        const timer = ctx.timer(TCP_RTO, TCP_TIMER_TAG, { conn: conn.id, seq: seg.seq }, conn.probe === true);
         conn.unacked.push({ seg, retries: 0, timer });
       }
     }
@@ -915,7 +931,7 @@ export class TcpStack {
     conn.retransmits += 1;
     ctx.trace("tcp.retransmit", "L4", `${TCP_RTO}ms 안에 ACK 없음 → ${tcpFlags(u.seg)} seq=${seq} 재전송 (${u.retries}/${TCP_MAX_RETRIES})`, { conn: conn.id, seq, retry: u.retries });
     this.host.send(this.packet(conn.localIp, conn.remoteIp, u.seg), ctx);
-    u.timer = ctx.timer(TCP_RTO * u.retries * 2, TCP_TIMER_TAG, { conn: conn.id, seq });
+    u.timer = ctx.timer(TCP_RTO * u.retries * 2, TCP_TIMER_TAG, { conn: conn.id, seq }, conn.probe === true);
   }
 
   private cancelAll(conn: TcpConn): void {
@@ -940,7 +956,9 @@ export class TcpStack {
   }
 
   rows(): string[][] {
+    // 내가 보낸 헬스 체크 연결은 뺀다 (로드밸런서 백엔드 표가 체크 결과를 보여 준다)
     return [...this.conns.values()]
+      .filter((c) => !(c.probe && c.role === "client"))
       .slice(-6)
       .reverse()
       .map((c) => [

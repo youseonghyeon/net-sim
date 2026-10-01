@@ -303,6 +303,7 @@ export class Vpn {
       // 양쪽이 동시에 협상을 시작하면 두 끝의 SPI 가 엇갈린 채 둘 다 up 이 된다(사이트 간 ESP 는 상대당 SA 하나라 SPI 를 보지 않는다) —
       // 그래서 SA 의 상대 주소에서 온 것도 이 터널로 본다
       if (this.sa.state === "up" && (m.spi === this.sa.spi || outer.src === this.sa.peer?.ip)) {
+        this.lastRx = ctx.now; // 상대가 보낸 DPD 요청도 살아 있다는 증거 (strongSwan 은 받은 IKE 메시지를 모두 활동으로 센다)
         ctx.trace("vpn.dpd", "L4", `IPsec DPD: ${outer.src} 의 빈 INFORMATIONAL 요청 → 이 상대와 맺은 터널이 있음 → 빈 응답으로 살아 있다고 알림`, { from: outer.src, dpd: "reply" }, frameId);
         this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "INFORMATIONAL", response: true, spi: m.spi, dpd: true }, ctx, frameId);
       } else {
