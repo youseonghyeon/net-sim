@@ -5,10 +5,12 @@ import {
   DEFAULT_FIREWALL_SETTINGS,
   DEFAULT_ROUTER_DNS,
   DEFAULT_ROUTER_IPV6,
+  DEFAULT_ROUTER_VPN_SERVER,
   DEFAULT_WAN,
   type Device,
   type RouterIpv6Settings,
   type RouterSettings,
+  type RouterVpnServerSettings,
   type WanSettings,
 } from "../../model/topology";
 import { Router } from "../../core/nodes/router";
@@ -16,6 +18,7 @@ import { DHCP6_STATE_LABEL } from "../../core/nodes/dhcp6";
 import { sim, simVersion } from "../../model/sim";
 import { WifiBaseSection } from "./host";
 import { FirewallSection, ForwardSection } from "./rules";
+import { Icon } from "../Icons";
 import { Field, Section, Toggle, ipError, validIp } from "./ui";
 
 /** LAN 주소/서브넷이 바뀔 때, 기존 범위가 옛 서브넷 안에 있었다면 호스트 부분을 유지한 채 새 서브넷으로 옮긴다 */
@@ -95,6 +98,7 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
       <WifiBaseSection d={d} />
       <RouterDnsSection d={d} r={r} />
       <RouterIpv6Section d={d} r={r} />
+      <RouterVpnSection d={d} r={r} />
       <ForwardSection rules={r.forwards ?? []} onChange={(forwards) => set({ forwards })} lanHint="예: 공인 :80 → 192.168.0.20:80 (LAN 의 웹 서버)." />
       <FirewallSection value={r.firewall ?? DEFAULT_FIREWALL_SETTINGS} onChange={(firewall) => set({ firewall })} uplinkName="WAN" />
     </>
@@ -139,6 +143,82 @@ export function RouterIpv6Section({ d, r }: { d: Device; r: RouterSettings }) {
               ? "바깥에서 먼저 시작한 IPv6 연결은 막고, 안에서 시작한 통신의 응답만 들입니다. IPv4 는 NAT 가 바깥에서의 접속을 가로막지만 IPv6 는 주소가 공인이라 이 방화벽이 그 역할을 합니다."
               : "꺼져 있으면 NAT 가 없으니 바깥에서 집 안 장치의 IPv6 주소로 바로 들어옵니다 (포트 포워딩 없이). 위의 방화벽 규칙은 IPv6 에도 걸립니다."}
           </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** 공유기 VPN 서버 (ipTIME 식 L2TP/IPsec): 켜기 + 사전 공유 키 + 할당 IP 범위 + 계정 */
+export function RouterVpnSection({ d, r }: { d: Device; r: RouterSettings }) {
+  void simVersion.value;
+  const v = r.vpnServer ?? { ...DEFAULT_ROUTER_VPN_SERVER, enabled: false };
+  const set = (patch: Partial<RouterVpnServerSettings>) =>
+    updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, vpnServer: { ...(x.router!.vpnServer ?? { ...DEFAULT_ROUTER_VPN_SERVER, enabled: false }), ...patch } } }));
+  const setUser = (i: number, patch: Partial<{ name: string; password: string }>) => set({ users: v.users.map((u, k) => (k === i ? { ...u, ...patch } : u)) });
+  const userError = (i: number): string | undefined => {
+    const name = v.users[i]!.name.trim();
+    if (name === "") return "사용자 이름이 필요합니다. 비워 두면 이 줄은 쓰지 않습니다.";
+    if (v.users.findIndex((u) => u.name.trim() === name) !== i) return `${name} 가 이미 위에 있습니다. 같은 이름은 첫 줄만 씁니다.`;
+    return undefined;
+  };
+  const poolError = (ip: string): string | undefined => {
+    const e = ipError(ip, true);
+    if (e) return e;
+    if (validIp(r.lanIp) && !sameSubnet(ip, r.lanIp, r.lanPrefix)) return `LAN 대역(${r.lanIp}/${r.lanPrefix}) 안의 주소여야 합니다. 접속한 기기가 집 LAN 의 한 기기가 되기 때문입니다.`;
+    return undefined;
+  };
+  const node = sim.node(d.id);
+  const connected = node instanceof Router ? node.vpnServer.connected : [];
+  return (
+    <Section title="VPN 서버">
+      <label class="toggle-row">
+        <span>
+          {v.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">L2TP/IPsec · UDP 500·4500·1701</span>
+        </span>
+        <Toggle on={v.enabled} onToggle={() => set({ enabled: !v.enabled })} />
+      </label>
+      {!v.enabled && <p class="note">켜면 밖에 있는 노트북·스마트폰이 이 공유기에 VPN 으로 붙어 집 LAN 의 한 기기가 됩니다 (ipTIME 의 "VPN 서버 설정"). 사전 공유 키로 IPsec 통로를 만들고, 그 안에서 계정을 확인한 뒤 아래 할당 IP 를 하나 줍니다.</p>}
+      {v.enabled && (
+        <>
+          {connected.length > 0 && (
+            <div class="stat-rows">
+              {connected.map((c) => (
+                <div key={c.vip} class="stat-row">
+                  <span>{c.user}</span>
+                  <b class="mono">{c.vip}</b>
+                </div>
+              ))}
+            </div>
+          )}
+          <Field label="사전 공유 키" error={v.psk ? undefined : "비어 있습니다. 접속할 기기와 같은 키를 넣으세요."}>
+            <input class="input mono" value={v.psk} placeholder="접속할 기기와 같은 문자열" onInput={(e) => set({ psk: e.currentTarget.value })} />
+          </Field>
+          <Field label="할당 IP 시작" error={poolError(v.poolStart)}>
+            <input class="input mono" value={v.poolStart} placeholder="192.168.0.50" onInput={(e) => set({ poolStart: e.currentTarget.value })} />
+          </Field>
+          <Field label="할당 IP 끝" error={poolError(v.poolEnd)}>
+            <input class="input mono" value={v.poolEnd} placeholder="192.168.0.59" onInput={(e) => set({ poolEnd: e.currentTarget.value })} />
+          </Field>
+          <p class="note">LAN 대역 안에서 DHCP 범위({r.dhcp.start} ~ {r.dhcp.end})와 겹치지 않는 주소를 씁니다. 공유기가 이 주소들의 ARP 에 대신 답해(프록시 ARP) 집 장치들은 VPN 기기를 LAN 기기로 봅니다.</p>
+          <h3 class="sub">계정</h3>
+          {v.users.length === 0 && <p class="note error-note">계정이 없으면 아무도 접속할 수 없습니다. L2TP/IPsec 은 사전 공유 키 뒤에 계정(PPP CHAP)을 꼭 확인합니다.</p>}
+          {v.users.map((u, i) => (
+            <div key={i} class="record-row">
+              <input class="input mono" value={u.name} placeholder="사용자 이름" onInput={(e) => setUser(i, { name: e.currentTarget.value })} />
+              <span class="muted">:</span>
+              <input class="input mono" value={u.password} placeholder="비밀번호" onInput={(e) => setUser(i, { password: e.currentTarget.value })} />
+              <button class="icon-btn" title="계정 삭제" onClick={() => set({ users: v.users.filter((_, k) => k !== i) })}>
+                <Icon name="trash" size={15} />
+              </button>
+              {userError(i) && <div class="error record-error">{userError(i)}</div>}
+            </div>
+          ))}
+          <button class="btn wide" onClick={() => set({ users: [...v.users, { name: "", password: "" }] })}>
+            <Icon name="plus" size={14} />
+            계정 추가
+          </button>
+          <p class="note">접속한 기기의 트래픽은 모두 집으로 옵니다(full tunnel). 인터넷도 이 공유기의 NAT 로 나가므로 밖에서도 집 공인 주소로 보입니다. 공유기 WAN 주소가 바뀌면 접속할 주소도 바뀌어, 실제로는 DDNS 이름(xxx.iptime.org)으로 접속합니다.</p>
         </>
       )}
     </Section>

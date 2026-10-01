@@ -456,3 +456,48 @@ export function exampleRemoteVpnTopology(): Topology {
   ];
   return t;
 }
+
+/**
+ * ipTIME 공유기 VPN (L2TP/IPsec): 출장지 호텔의 노트북이 집 공유기의 VPN 서버에 붙어 집 LAN 의 한 기기가 된다.
+ * - 회사 VPN(재택근무 예제)은 전용 장비가 사내 대역만 터널로 받지만(split tunnel), 집 공유기 VPN 은 공유기에 내장돼 있고
+ *   노트북이 집 LAN 주소(할당 IP 192.168.0.50~)를 받아 모든 트래픽이 집으로 간다(full tunnel) — 해외에서도 집 공인 주소(한국 IP)로 인터넷에 나간다
+ * - IPsec(사전 공유 키)이 바깥 통로를 암호화하고, 그 안의 L2TP·PPP 가 계정 확인·주소 할당을 한다. 호텔 공유기 NAT 뒤라 UDP 4500 (NAT-T)
+ * - 집 공유기 WAN 은 수동 공인 주소 (실제 가정은 주소가 바뀌어 DDNS 이름 xxx.iptime.org 로 접속한다)
+ */
+export function exampleIptimeVpnTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -296, "internet-1");
+  const isp = add("switch", 344, -168, "통신사 구간");
+  // 출장지: 호텔 공유기(WAN 은 통신사 DHCP, 손님 LAN 10.10.0.0/24) + 출장 노트북
+  const hotel = add("router", 120, -24, "호텔 공유기");
+  hotel.router = { ...hotel.router!, lanIp: "10.10.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "10.10.0.100", end: "10.10.0.199" } };
+  const laptop = add("laptop", 120, 152, "출장 노트북");
+  // Windows 의 "L2TP/IPsec 및 미리 공유한 키" — 서버 주소·사전 공유 키·계정
+  laptop.host = {
+    ipMode: "dhcp",
+    ip: "",
+    prefix: 24,
+    gateway: "",
+    services: [],
+    dhcpServer: { ...DEFAULT_DHCP_SERVER },
+    ra: { enabled: true, type: "l2tp", server: "203.0.113.20", psk: "home-psk", user: "me", password: "my-pass" },
+  };
+  // 집: ipTIME 공유기(VPN 서버 켬) + NAS
+  const home = add("router", 568, -24, "집 ipTIME");
+  home.router = {
+    ...home.router!,
+    wan: { ipMode: "static", ip: "203.0.113.20", prefix: 24, gateway: "203.0.113.1" },
+    // 할당 IP 는 DHCP 범위(100~199) 밖의 LAN 주소
+    vpnServer: { enabled: true, psk: "home-psk", poolStart: "192.168.0.50", poolEnd: "192.168.0.59", users: [{ name: "me", password: "my-pass" }] },
+  };
+  const nas = add("server", 568, 152, "집 NAS");
+  nas.host = { ipMode: "static", ip: "192.168.0.20", prefix: 24, gateway: "192.168.0.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, hotel, 0), cable(isp, 6, home, 0), cable(hotel, 1, laptop, 0), cable(home, 1, nas, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    // 공유기 위로 서비스 배지가 세 줄 쌓이므로 위쪽 여백을 넉넉히 (이름표가 배지에 겹치지 않게)
+    { id: newId("zone"), label: "출장지 호텔 10.10.0.0/24", tint: "green", ...zoneAround(t, [hotel.id, laptop.id], 56)! },
+    { id: newId("zone"), label: "집 192.168.0.0/24 · VPN 할당 .50~.59", tint: "blue", ...zoneAround(t, [home.id, nas.id], 56)! },
+  ];
+  return t;
+}

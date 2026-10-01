@@ -319,6 +319,8 @@ export interface RaClientSettings {
   password?: string;
   /** 주기 DPD (없으면 꺼짐) */
   dpd?: boolean;
+  /** VPN 종류: 없으면 회사 VPN 장비(IKEv2), "l2tp" 면 공유기 VPN 서버(L2TP/IPsec) */
+  type?: "l2tp";
 }
 
 export interface HaSettings {
@@ -427,6 +429,22 @@ function normalizeRaClient(r: Partial<RaClientSettings>): RaClientSettings {
     psk: str(r.psk, ""),
     ...(user !== undefined ? { user, password: accountText(r.password) ?? "" } : {}),
     ...(r.dpd === true ? { dpd: true } : {}),
+    ...(r.type === "l2tp" ? { type: "l2tp" as const } : {}),
+  };
+}
+
+/** 불러온 JSON 의 공유기 VPN 서버 설정 정리 (계정 칸은 원격 접속 서버와 같은 규칙) */
+function normalizeRouterVpn(r: Partial<RouterVpnServerSettings>): RouterVpnServerSettings {
+  const str = (v: unknown, d: string) => (typeof v === "string" ? v : d);
+  const users = Array.isArray(r.users) ? (r.users as unknown[]) : r.users !== null && typeof r.users === "object" ? [r.users as unknown] : [];
+  return {
+    enabled: r.enabled === true,
+    psk: str(r.psk, ""),
+    poolStart: str(r.poolStart, DEFAULT_ROUTER_VPN_SERVER.poolStart),
+    poolEnd: str(r.poolEnd, DEFAULT_ROUTER_VPN_SERVER.poolEnd),
+    users: users
+      .filter((u): u is { name: unknown; password?: unknown } => !!u && typeof u === "object" && accountText((u as { name?: unknown }).name) !== undefined)
+      .map((u) => ({ name: accountText(u.name)!, password: accountText(u.password) ?? "" })),
   };
 }
 
@@ -532,7 +550,21 @@ export interface RouterSettings {
   wifi?: WifiBaseSettings;
   /** IPv6. 없으면 꺼짐. 켜면 ISP 에게 DHCPv6-PD 로 프리픽스를 받아 LAN 에 RA 로 알린다 */
   ipv6?: RouterIpv6Settings;
+  /** VPN 서버 (ipTIME 식 L2TP/IPsec). 없으면 꺼짐 */
+  vpnServer?: RouterVpnServerSettings;
 }
+
+/** 공유기 VPN 서버 (L2TP/IPsec): ipTIME 설정 화면의 세 칸 — 사전 공유 키, 계정, 할당 IP */
+export interface RouterVpnServerSettings {
+  enabled: boolean;
+  psk: string;
+  /** 할당 IP 범위: 공유기 LAN 대역에서 DHCP 가 쓰지 않는 주소 */
+  poolStart: string;
+  poolEnd: string;
+  users: { name: string; password: string }[];
+}
+
+export const DEFAULT_ROUTER_VPN_SERVER: RouterVpnServerSettings = { enabled: true, psk: "", poolStart: "192.168.0.50", poolEnd: "192.168.0.59", users: [] };
 
 export interface RouterIpv6Settings {
   enabled: boolean;
@@ -1062,6 +1094,7 @@ export function normalizeTopology(t: Topology): Topology {
           wan: r.wan ?? { ...DEFAULT_WAN },
           ...(r.firewall ? { firewall: { ...DEFAULT_FIREWALL_SETTINGS, ...r.firewall, rules: r.firewall.rules ?? [] } } : {}),
           ...(r.ipv6 ? { ipv6: { enabled: (r.ipv6 as Partial<RouterIpv6Settings>).enabled === true, inboundBlock: (r.ipv6 as Partial<RouterIpv6Settings>).inboundBlock !== false } } : {}),
+          ...(r.vpnServer ? { vpnServer: normalizeRouterVpn(r.vpnServer) } : {}),
         };
       }
     }

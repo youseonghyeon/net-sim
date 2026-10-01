@@ -93,6 +93,8 @@ export class DnsResolver {
 
   /** DNS 서버가 내 주소일 때 질의를 직접 넘길 상대 (호스트가 DNS 서버 서비스를 켠 경우) */
   local: DnsServer | undefined;
+  /** VPN 이 알려 준 DNS (연결된 동안 IPv4 DNS 보다 먼저 — L2TP/IPsec 의 IPCP DNS) */
+  vpnDns: (() => Ip | undefined) | undefined;
 
   constructor(
     private readonly iface: NetInterface,
@@ -105,12 +107,13 @@ export class DnsResolver {
   }
 
   get server(): Ip | undefined {
-    return this.pick()?.server ?? this.iface.dns ?? this.v6?.effectiveDns;
+    return this.pick()?.server ?? this.vpnDns?.() ?? this.iface.dns ?? this.v6?.effectiveDns;
   }
 
   /** 물어볼 DNS 서버와 내 출발지: IPv4 DNS 가 있고 내 IPv4 주소가 있으면 그쪽, 아니면 IPv6 DNS */
   private pick(): { server: Ip; src: Ip } | undefined {
-    if (this.iface.dns && this.iface.ip) return { server: this.iface.dns, src: this.iface.ip };
+    const d4 = this.vpnDns?.() ?? this.iface.dns;
+    if (d4 && this.iface.ip) return { server: d4, src: this.iface.ip };
     const d6 = this.v6?.effectiveDns;
     const src6 = d6 ? this.v6!.sourceFor(d6) : undefined;
     if (d6 && src6) return { server: d6, src: src6 };

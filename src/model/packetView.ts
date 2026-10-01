@@ -3,7 +3,7 @@
 // - headerLayers: 이더넷 → ARP/IPv4 → ICMP/TCP/UDP → DHCP/DNS/RIP 필드를 실제 번호(타입·코드·옵션)와 함께
 // - practitionerLines: 장치가 내린 판단을 실무 명령의 출력(시스코 debug, iptables LOG, dhclient, ping, curl …)으로
 // 시뮬레이터에 없는 필드(체크섬, 윈도우 크기, IP ID 등)는 넣지 않고, 길이는 근사값이다.
-import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, TcpSegment, UdpPacket } from "../core/packet";
+import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, L2tpPacket, TcpSegment, UdpPacket } from "../core/packet";
 import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE } from "../core/packet";
 import { scopeLabel6 } from "../core/addr6";
 import type { TraceEvent } from "../core/trace";
@@ -66,7 +66,15 @@ function appLength(u: UdpPacket): number {
   if (m.kind === "esp") return espLength(m);
   if (m.kind === "ike") return (u.dstPort === 4500 || u.srcPort === 4500 ? 4 : 0) + (m.exchange === "IKE_SA_INIT" ? 336 : 224); // NAT-T 는 앞에 0 4바이트(Non-ESP 표시)
   if (m.kind === "dhcp6") return 4 + 14 + (m.serverId ? 14 : 0) + 16 + (m.prefix ? 29 : 0); // 머리 + Client ID + Server ID + IA_PD (+ IAPREFIX)
+  if (m.kind === "l2tp") return 12 + pppLength(m.ppp); // L2TP 머리 + PPP
   return 4 + m.entries.length * 20; // RIP
+}
+
+/** PPP 길이 (근사): 제어는 짧게, IP 를 실었으면 그 IP 패킷 */
+function pppLength(p: L2tpPacket["ppp"]): number {
+  if (!p) return 20; // 제어 메시지의 AVP
+  if (p.proto === "ip") return 4 + 20 + l4Length(p.packet.payload);
+  return 4 + (p.proto === "chap" ? 49 : 10);
 }
 
 // ---------- tcpdump 한 줄 ----------
@@ -158,7 +166,13 @@ function udpText(u: UdpPacket): string {
   // tcpdump 는 터널 안을 풀지 못한다 — 암호화되어 있으므로 그냥 UDP 로 보인다
   if (m.kind === "vpn") return `UDP, length ${appLength(u)}`;
   if (m.kind === "esp") return `UDP-encap: ${espText(m)}, length ${appLength(u)}`;
-  if (m.kind === "ike") return `${u.dstPort === 4500 || u.srcPort === 4500 ? "NONESP-encap: " : ""}isakmp: ${m.exchange === "IKE_SA_INIT" ? "parent_sa ikev2_init" : m.exchange === "IKE_AUTH" ? "child_sa  ikev2_auth" : "child_sa  inf2"}[${m.response ? "R" : "I"}]`;
+  if (m.kind === "ike") {
+    const encap = u.dstPort === 4500 || u.srcPort === 4500 ? "NONESP-encap: " : "";
+    // IKEv1 (L2TP/IPsec): Main Mode = phase 1 Identity Protection, Quick Mode = phase 2
+    if (m.exchange === "MAIN_MODE") return `${encap}isakmp: phase 1 ${m.response ? "R" : "I"} ident`;
+    if (m.exchange === "QUICK_MODE") return `${encap}isakmp: phase 2/others ${m.response ? "R" : "I"} oakley-quick-mode`;
+    return `${encap}isakmp: ${m.exchange === "IKE_SA_INIT" ? "parent_sa ikev2_init" : m.exchange === "IKE_AUTH" ? "child_sa  ikev2_auth" : "child_sa  inf2"}[${m.response ? "R" : "I"}]`;
+  }
   if (m.kind === "dhcp") {
     const fromClient = m.op === "discover" || m.op === "request" || m.op === "release";
     return `BOOTP/DHCP, ${fromClient ? "Request" : "Reply"} from ${m.clientMac}, length ${appLength(u)} (DHCP-Message Option 53: ${DHCP_TYPE[m.op][1]})`;
@@ -171,6 +185,8 @@ function udpText(u: UdpPacket): string {
     return `${m.id} ${m.rcode === "NXDOMAIN" ? "NXDomain" : "ServFail"} 0/0/0 (${appLength(u)})`;
   }
   if (m.kind === "dhcp6") return `dhcp6 ${m.type}`;
+  // L2TP 는 ESP 안에 있어 실제 선에서는 보이지 않는다 (복호화한 쪽에서 볼 때의 표기)
+  if (m.kind === "l2tp") return `l2tp:[${m.control ? "TLS" : "LS"}](${m.tunnelId}/${m.sessionId})${m.control ? ` *MSGTYPE(${m.control})` : m.ppp ? ` {${m.ppp.proto === "ip" ? "IP" : `${m.ppp.proto.toUpperCase()} ${m.ppp.code}`}}` : ""}`;
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
 }
 
@@ -371,7 +387,10 @@ function espLayer(e: EspPacket, natT: boolean): HeaderLayer {
 
 function ikeLayer(m: IkeMessage): HeaderLayer {
   const rows: [string, string][] = [
-    ["교환", `${m.exchange === "IKE_SA_INIT" ? "34 (IKE_SA_INIT)" : m.exchange === "IKE_AUTH" ? "35 (IKE_AUTH)" : "37 (INFORMATIONAL)"} ${m.response ? "응답" : "요청"}`],
+    [
+      "교환",
+      `${m.exchange === "IKE_SA_INIT" ? "34 (IKE_SA_INIT)" : m.exchange === "IKE_AUTH" ? "35 (IKE_AUTH)" : m.exchange === "MAIN_MODE" ? `2 (Identity Protection = Main Mode — ${m.auth !== undefined || (m.response && m.error) ? "ID·HASH: PSK 인증" : "SA·KE·NAT-D"})` : m.exchange === "QUICK_MODE" ? "32 (Quick Mode)" : "37 (INFORMATIONAL)"} ${m.response ? "응답" : "요청"}`,
+    ],
     ["SPI", `0x${m.spi.toString(16).padStart(8, "0")}`],
   ];
   if (m.natSrc) rows.push(["NAT_DETECTION_SOURCE_IP", `${m.natSrc} (실제로는 해시)`]);
@@ -389,7 +408,8 @@ function ikeLayer(m: IkeMessage): HeaderLayer {
   if (m.routes?.length) rows.push(["사내 대역 (CP INTERNAL_IP4_SUBNET)", m.routes.map((r) => `${r.dest}/${r.prefix}`).join(", ")]);
   if (m.dpd && !m.error) rows.push(["DPD", "페이로드 없는 빈 INFORMATIONAL — 상대가 살아 있고 이 SA 를 아는지 확인 (응답도 빈 INFORMATIONAL)"]);
   if (m.exchange === "INFORMATIONAL" && !m.error && !m.dpd) rows.push(["Delete", "터널을 내린다 (연결 해제)"]);
-  return { title: "IKEv2 (앱)", rows };
+  if (m.exchange === "QUICK_MODE") rows.push(["보호할 것", "UDP 1701 (L2TP) — ESP 전송 모드 (두 장치 사이의 L2TP 만 암호화)"]);
+  return { title: m.exchange === "MAIN_MODE" || m.exchange === "QUICK_MODE" ? "IKEv1 (앱 — L2TP/IPsec)" : "IKEv2 (앱)", rows };
 }
 
 function icmpLayer(p: IcmpPacket): HeaderLayer {
@@ -509,6 +529,7 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
     rows.push(["옵션 25 IA_PD", m.prefix ? `옵션 26 IAPREFIX ${m.prefix.prefix}/${m.prefix.length} — ${what}` : m.status ? `옵션 13 Status ${m.status} (위임할 프리픽스 없음)` : "프리픽스를 위임해 달라는 요청 (IAPREFIX 없음)"]);
     return [udp, { title: "DHCPv6 (앱)", rows }];
   }
+  if (m.kind === "l2tp") return [udp, ...l2tpLayers(m)];
   return [
     udp,
     {
@@ -520,6 +541,46 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
       ],
     },
   ];
+}
+
+/** L2TP 와 그 위의 PPP (데이터면 PPP 안의 IP 까지) — L2TP/IPsec 의 안쪽 겹 */
+function l2tpLayers(l: L2tpPacket): HeaderLayer[] {
+  const CONTROL: Record<NonNullable<L2tpPacket["control"]>, string> = {
+    SCCRQ: "1 SCCRQ (터널 열기 요청)",
+    SCCRP: "2 SCCRP (터널 열기 응답)",
+    ICRQ: "10 ICRQ (세션 열기 요청)",
+    ICRP: "11 ICRP (세션 열기 응답)",
+    CDN: "14 CDN (세션 끊기)",
+    StopCCN: "4 StopCCN (터널 끊기)",
+  };
+  const l2tp: HeaderLayer = {
+    title: "L2TP (UDP 1701)",
+    rows: [
+      ["종류", l.control ? "제어 메시지" : "데이터 (PPP 를 실음)"],
+      ["터널 / 세션 번호", `${l.tunnelId} / ${l.sessionId}`],
+      ...(l.control ? [["메시지", CONTROL[l.control]] as [string, string]] : []),
+    ],
+  };
+  const p = l.ppp;
+  if (!p) return [l2tp];
+  if (p.proto === "ip") return [l2tp, { title: "PPP", rows: [["프로토콜", "0x0021 (IPv4) — 이 아래가 원래 IP 패킷"]] }, ...ipLayers(p.packet, true)];
+  const rows: [string, string][] =
+    p.proto === "lcp"
+      ? [["프로토콜", "0xc021 (LCP)"], ["코드", "1 (Configure-Request) — 링크 설정 (축소: 곧바로 인증으로)"]]
+      : p.proto === "chap"
+        ? [
+            ["프로토콜", "0xc223 (CHAP — MS-CHAPv2)"],
+            ["코드", { challenge: "1 (Challenge)", response: "2 (Response)", success: "3 (Success)", failure: "4 (Failure)" }[p.code]],
+            ...(p.user ? [["사용자 이름", p.user] as [string, string]] : []),
+            ...(p.code === "response" ? [["응답 값", "비밀번호로 만든 값 (비밀번호 자체는 보내지 않는다)"] as [string, string]] : []),
+          ]
+        : [
+            ["프로토콜", "0x8021 (IPCP)"],
+            ["코드", { "configure-request": "1 (Configure-Request)", "configure-ack": "2 (Configure-Ack)", "configure-nak": "3 (Configure-Nak)" }[p.code]],
+            ["IP 주소", p.ip ?? "0.0.0.0 (주소를 달라는 뜻)"],
+            ...(p.dns ? [["DNS (옵션 129)", p.dns] as [string, string]] : []),
+          ];
+  return [l2tp, { title: "PPP", rows }];
 }
 
 /** conntrack -E 의 새 흐름 한 줄: 원래 방향 + [UNREPLIED] + 돌아올 방향(NAT 가 바꾼 주소) */
@@ -564,7 +625,10 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
   const ip = f && f.payload.kind === "ipv4" ? f.payload : undefined;
   const ip6 = f && f.payload.kind === "ipv6" ? f.payload : undefined;
   const len = ip ? 20 + l4Length(ip.payload) : ip6 ? 40 + l6Length(ip6.payload) : 0;
-  switch (ev.kind) {
+  // 공유기 VPN (L2TP/IPsec): IKEv2 원격 접속의 strongSwan 줄 대신 IKEv1 charon·xl2tpd·pppd 줄
+  const l2tp = ev.kind.startsWith("vpn.") && (detail(ev, "l2tp") !== undefined || detail(ev, "ppp") !== undefined);
+  if (l2tp) l2tpLines(ev, ip, out);
+  else switch (ev.kind) {
     case "ip.forward":
       if (ip) out.push({ tool: "시스코 debug ip packet", line: `IP: s=${ip.src}, d=${ip.dst} (${detail(ev, "out") ?? "?"}), len ${len}, forward` });
       if (ip6) out.push({ tool: "시스코 debug ipv6 packet", line: `IPV6: source ${ip6.src}\n      dest ${ip6.dst} (${detail(ev, "out") ?? "?"})\n      traffic class 0, flow 0x0, len ${len}, prot ${IP6_NEXT_HEADER[ip6.payload.kind].num}, hops ${ip6.hopLimit}, forwarding` });
@@ -792,4 +856,57 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
     out.push({ tool: `tcpdump (${deviceName(ev.nodeId)} 이 내보낸 쪽)`, line: tcpdumpLine(frames.sent) });
   }
   return out;
+}
+
+/**
+ * 공유기 VPN (L2TP/IPsec) 트레이스의 실무 로그: 리눅스로 같은 서버·클라이언트를 만들면 쓰는 strongSwan(IKEv1)·xl2tpd·pppd 의 줄.
+ * 서버 쪽 트레이스는 요약이 "VPN 서버" 로 시작한다
+ */
+function l2tpLines(ev: TraceEvent, ip: Ipv4Packet | undefined, out: PractitionerLine[]): void {
+  const server = ev.summary.startsWith("VPN 서버");
+  const from = detail(ev, "from") ?? ip?.src ?? "?";
+  const charon = (line: string) => out.push({ tool: "strongSwan (charon, IKEv1)", line });
+  const xl2tpd = (line: string) => out.push({ tool: "xl2tpd", line: `xl2tpd[1234]: ${line}` });
+  const pppd = (line: string) => out.push({ tool: "pppd", line: `pppd[2345]: ${line}` });
+  const ctl = detail(ev, "l2tp");
+  const ppp = detail(ev, "ppp");
+  switch (ev.kind) {
+    case "vpn.ike":
+      if (detail(ev, "retransmit") !== undefined) {
+        if (detail(ev, "step") !== undefined) charon(`11[IKE] sending retransmit ${detail(ev, "retransmit")} of request message ID 0, seq 1`);
+      } else if (ctl === "SCCRQ") xl2tpd(`Connection established to ${from}, 1701.  Local: 1, Remote: 1 (ref=0/0).  LNS session is 'default'`);
+      else if (ctl === "ICRQ") xl2tpd(`Call established with ${from}, PID: 2345, Local: 1, Remote: 1, Serial: 1`);
+      else if (ctl === "SCCRP") xl2tpd(`Connection established to ${ip?.src ?? "?"}, 1701.  Local: 1, Remote: 1 (ref=0/0).`);
+      else if (ctl === "ICRP") xl2tpd(`Call established with ${ip?.src ?? "?"}, Local: 1, Remote: 1, Serial: 1`);
+      else if (!server && detail(ev, "spi") !== undefined) charon(`07[IKE] initiating Main Mode IKE_SA L2TP-PSK[1] to ${detail(ev, "peer") ?? "?"}`);
+      else if (server && detail(ev, "nat") !== undefined) {
+        charon(`05[IKE] ${from} is initiating a Main Mode IKE_SA`);
+        if (detail(ev, "nat") === "true") charon(`05[IKE] remote host is behind NAT`);
+      } else if (server && detail(ev, "spi") !== undefined) charon(`07[IKE] CHILD_SA L2TP-PSK{1} established with SPIs ${Number(detail(ev, "spi")).toString(16).padStart(8, "0")}_i … and TS ${ip?.dst ?? "?"}/32[udp/l2f] === ${from}/32[udp/l2f]`);
+      else if (ev.summary.includes("사전 공유 키 확인")) charon(`06[IKE] IKE_SA L2TP-PSK[1] established between ${ip?.dst ?? "?"}[${ip?.dst ?? "?"}]...${from}[${from}]`);
+      else if (ev.summary.includes("IPsec SA 수립")) charon(`07[IKE] CHILD_SA L2TP-PSK{1} established … and TS ${ip?.dst ?? "?"}/32[udp/l2f] === ${from}/32[udp/l2f]`);
+      else if (detail(ev, "natT") === "true") charon(`08[IKE] local host is behind NAT, sending keep alives`);
+      break;
+    case "vpn.eap":
+      if (server && ppp === "challenge") pppd(`sent [CHAP Challenge id=0x1 <…>, name = "l2tpd"]`);
+      else if (!server && ppp === "response") {
+        pppd(`rcvd [CHAP Challenge id=0x1 <…>, name = "l2tpd"]`);
+        pppd(`sent [CHAP Response id=0x1 <…>, name = "${detail(ev, "user") ?? "?"}"]`);
+      } else if (server && ppp === "success") pppd(`MSCHAP-v2 peer authentication succeeded for ${detail(ev, "user") ?? "?"}`);
+      else if (!server && ppp === "success") pppd(`CHAP authentication succeeded`);
+      break;
+    case "vpn.up":
+      if (server) pppd(`remote IP address ${detail(ev, "vip") ?? "?"}`);
+      else pppd(`local  IP address ${detail(ev, "vip") ?? "?"}`);
+      break;
+    case "vpn.drop":
+      if (ppp === "failure") pppd(`Peer ${detail(ev, "user") ?? "?"} failed MSCHAP-v2 authentication`);
+      else if (ev.summary.includes("CHAP Failure")) pppd(`MS-CHAP authentication failed: E=691 Authentication failure`);
+      else if (ev.summary.includes("사전 공유 키가 다름 → AUTHENTICATION-FAILED")) charon(`06[IKE] invalid HASH_V1 payload length, decryption failed?`);
+      else if (ev.summary.includes("재전송") && ev.summary.includes("timeout")) {
+        if (ev.summary.includes("IKE")) charon(`11[IKE] giving up after 2 retransmits`);
+        else xl2tpd(`Maximum retries exceeded for tunnel 1.  Closing.`);
+      } else if (ctl === "StopCCN" || ctl === "CDN") xl2tpd(`control_finish: Connection closed to ${from}, port 1701 (Goodbye!), Local: 1, Remote: 1`);
+      break;
+  }
 }

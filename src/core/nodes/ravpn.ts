@@ -39,6 +39,8 @@ export interface RaClientConfig {
   password?: string;
   /** 주기 DPD: 서버에게서 10초 동안 받은 것이 없으면 DPD (배경 타이머) */
   dpd?: boolean;
+  /** VPN 종류: 회사 VPN 장비(IKEv2, 없으면 이것) 또는 공유기 VPN 서버(L2TP/IPsec — ipTIME 식, nodes/l2tp.ts) */
+  type?: "ikev2" | "l2tp";
 }
 
 export const DEFAULT_RA_CLIENT: RaClientConfig = { enabled: false, psk: "" };

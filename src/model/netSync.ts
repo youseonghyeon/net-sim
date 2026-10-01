@@ -257,7 +257,14 @@ export function effectiveRaClient(d: Device): RaClientConfig | undefined {
   if (!r) return undefined;
   const server = validIp(r.server);
   const user = r.user?.trim();
-  return { enabled: r.enabled === true, ...(server ? { server } : {}), psk: r.psk, ...(user ? { user, password: r.password ?? "" } : {}), ...(r.dpd === true ? { dpd: true } : {}) };
+  return {
+    enabled: r.enabled === true,
+    ...(server ? { server } : {}),
+    psk: r.psk,
+    ...(user ? { user, password: r.password ?? "" } : {}),
+    ...(r.dpd === true && r.type !== "l2tp" ? { dpd: true } : {}),
+    ...(r.type === "l2tp" ? { type: "l2tp" as const } : {}),
+  };
 }
 
 /** 로드밸런서 설정: 주소·포트가 올바른 백엔드만 */
@@ -349,6 +356,14 @@ export function effectiveRouter(d: Device, current?: Router) {
     firewall: effectiveFirewall(r.firewall),
     wifi: { ...(r.wifi ?? DEFAULT_ROUTER_WIFI), ssid: (r.wifi ?? DEFAULT_ROUTER_WIFI).ssid.trim() || "home" },
     ipv6: { enabled: r.ipv6?.enabled === true, inboundBlock: r.ipv6?.inboundBlock !== false },
+    vpnServer: {
+      enabled: r.vpnServer?.enabled === true,
+      psk: r.vpnServer?.psk ?? "",
+      poolStart: validIp(r.vpnServer?.poolStart) ?? "",
+      poolEnd: validIp(r.vpnServer?.poolEnd) ?? "",
+      // 이름이 빈 계정은 뺀다 (편집 중인 줄). 같은 이름이 여럿이면 앞의 것만
+      users: (r.vpnServer?.users ?? []).map((u) => ({ name: u.name.trim(), password: u.password })).filter((u, i, all) => u.name !== "" && all.findIndex((x) => x.name === u.name) === i),
+    },
   };
 }
 

@@ -152,6 +152,16 @@ export function remoteAccessRules({ t, m, add }: LintContext): void {
     if (!c?.enabled) continue;
     const server = validIp(c.server);
     if (!server) continue;
+    if (c.type === "l2tp") {
+      l2tpClientRules(d, server, t.devices, add);
+      continue;
+    }
+    // IKEv2 클라이언트가 공유기 VPN 서버(L2TP/IPsec)를 가리킴
+    const router = t.devices.find((x) => x !== d && routerWanIp(x) === server);
+    if (router?.router?.vpnServer?.enabled) {
+      add({ deviceId: d.id, severity: "error", code: "ra.type-mismatch", message: `${router.name} 는 공유기 VPN 서버(L2TP/IPsec)인데 이 클라이언트는 IKEv2 로 접속 → 공유기가 IKEv2 에 답하지 않아 접속 실패`, fix: `${d.name} 의 VPN → 종류를 L2TP/IPsec 으로`, related: [router.id] });
+      continue;
+    }
     // 이중화 쌍이면 가상 주소를 가진 장비가 둘 — 모두 봐야 넘어가도 접속된다.
     // 서버가 NAT 뒤면: 공인 주소의 장비(엣지 NAT)가 원격 접속을 켜지 않고 UDP 500 을 안쪽으로 포워딩할 때 그 안쪽 장비가 진짜 서버
     // (사이트 간 규칙과 같게). 포워딩 대상이 이 토폴로지에 없으면 판단하지 않는다 (오탐 금지)
@@ -193,5 +203,76 @@ export function remoteAccessRules({ t, m, add }: LintContext): void {
         }
       }
     }
+  }
+}
+
+/** 공유기의 수동 WAN 주소 (자동이면 모름 — 판단하지 않는다) */
+function routerWanIp(x: Device): string | undefined {
+  return x.router?.wan?.ipMode === "static" ? validIp(x.router.wan.ip) : undefined;
+}
+
+// 규칙 20b: 공유기 VPN 서버 (L2TP/IPsec) — 할당 IP 범위, 계정
+export function routerVpnRules({ t, add }: LintContext): void {
+  for (const d of t.devices) {
+    const v = d.router?.vpnServer;
+    if (!v?.enabled) continue;
+    const r = d.router!;
+    const a = validIp(v.poolStart);
+    const b = validIp(v.poolEnd);
+    const lan = subnetOf(validIp(r.lanIp), r.lanPrefix);
+    if (!a || !b || ipInt(a)! > ipInt(b)!) {
+      add({ deviceId: d.id, severity: "error", code: "router.vpn-pool", message: `VPN 서버의 할당 IP 범위(${v.poolStart || "?"} ~ ${v.poolEnd || "?"})가 올바르지 않음 → 접속한 기기에게 줄 주소가 없어 실패 (IPCP Nak)`, fix: `${d.name} → VPN 서버 → 할당 IP 를 시작 ≤ 끝 인 LAN 주소 두 개로 (예: 192.168.0.50 ~ 192.168.0.59)` });
+    } else if (lan && (!contains(lan, a) || !contains(lan, b))) {
+      add({ deviceId: d.id, severity: "error", code: "router.vpn-pool", message: `VPN 서버의 할당 IP 범위(${v.poolStart} ~ ${v.poolEnd})가 LAN 대역 ${fmtSubnet(lan)} 밖 → 집 장치들이 LAN 기기로 보지 못해 그 주소는 주지 않음`, fix: `${d.name} → VPN 서버 → 할당 IP 를 LAN 대역 안에서 DHCP 범위 밖으로` });
+    } else {
+      const lanIp = validIp(r.lanIp);
+      const da = validIp(r.dhcp.start);
+      const db = validIp(r.dhcp.end);
+      const inPool = (ip: string) => ipInt(ip)! >= ipInt(a)! && ipInt(ip)! <= ipInt(b)!;
+      if (lanIp && inPool(lanIp)) {
+        add({ deviceId: d.id, severity: "error", code: "router.vpn-pool", message: `VPN 서버의 할당 IP 범위(${v.poolStart} ~ ${v.poolEnd})에 공유기 자신의 LAN 주소 ${lanIp} 가 들어 있음 → 그 주소를 받은 기기와 공유기가 충돌`, fix: `${d.name} → VPN 서버 → 할당 IP 에서 ${lanIp} 를 빼기` });
+      } else if (r.dhcp.enabled && da && db && ipInt(da)! <= ipInt(b)! && ipInt(a)! <= ipInt(db)!) {
+        add({ deviceId: d.id, severity: "warn", code: "router.vpn-pool", message: `VPN 서버의 할당 IP 범위(${v.poolStart} ~ ${v.poolEnd})가 DHCP 범위(${r.dhcp.start} ~ ${r.dhcp.end})와 겹침 → 같은 주소가 VPN 기기와 LAN 기기에 함께 생길 수 있음`, fix: `${d.name} → VPN 서버 → 할당 IP 를 DHCP 범위 밖으로 (예: 192.168.0.50 ~ 192.168.0.59)` });
+      }
+    }
+    if (v.users.filter((u) => u.name.trim() !== "").length === 0) {
+      add({ deviceId: d.id, severity: "warn", code: "router.vpn-no-users", message: "VPN 서버에 계정이 없음 → 아무도 접속할 수 없음 (L2TP/IPsec 은 사전 공유 키 뒤에 계정 인증을 꼭 거친다)", fix: `${d.name} → VPN 서버 → 계정 추가` });
+    }
+  }
+}
+
+/** L2TP/IPsec 클라이언트가 가리키는 공유기: 켜짐·종류·사전 공유 키·계정 */
+function l2tpClientRules(d: Device, server: string, devices: Device[], add: LintContext["add"]): void {
+  const c = d.host!.ra!;
+  const ikev2 = devices.find((x) => x !== d && x.l3?.ra?.enabled && x.l3.interfaces.some((i) => i.ipMode === "static" && validIp(i.ip) === server));
+  if (ikev2) {
+    add({ deviceId: d.id, severity: "error", code: "ra.type-mismatch", message: `${ikev2.name} 는 회사 원격 접속 VPN(IKEv2) 서버인데 이 클라이언트는 L2TP/IPsec 으로 접속 → 서버가 IKEv1 에 답하지 않아 접속 실패`, fix: `${d.name} 의 VPN → 종류를 IKEv2 로`, related: [ikev2.id] });
+    return;
+  }
+  const srv = devices.find((x) => x !== d && routerWanIp(x) === server);
+  if (!srv) return;
+  const v = srv.router!.vpnServer;
+  if (!v?.enabled) {
+    add({ deviceId: d.id, severity: "warn", code: "ra.server-off", message: `${srv.name} (${server}) 에 VPN 서버(L2TP/IPsec)가 꺼져 있음 → IKE 에 답이 없어 접속 실패`, fix: `${srv.name} → VPN 서버 켜기`, related: [srv.id] });
+    return;
+  }
+  if (v.psk !== c.psk) {
+    add({ deviceId: d.id, severity: "error", code: "ra.psk-mismatch", message: `사전 공유 키가 ${srv.name} 의 VPN 서버와 다름 → IPsec 인증 실패 (AUTHENTICATION-FAILED)`, fix: `${d.name} 의 VPN → 사전 공유 키를 ${srv.name} 와 같게`, related: [srv.id] });
+    return;
+  }
+  const users = v.users.filter((u) => u.name.trim() !== "");
+  const name = c.user?.trim();
+  const account = name ? users.find((u) => u.name.trim() === name) : undefined;
+  if (!name) {
+    add({ deviceId: d.id, severity: "error", code: "ra.no-account", message: `L2TP/IPsec 은 계정 인증(PPP CHAP)을 꼭 거치는데 이 클라이언트에 계정이 없음 → 접속 실패`, fix: `${d.name} 의 VPN → 사용자 이름·비밀번호 (${srv.name} VPN 서버의 계정)`, related: [srv.id] });
+  } else if (!account || account.password !== (c.password ?? "")) {
+    add({
+      deviceId: d.id,
+      severity: "error",
+      code: "ra.account-mismatch",
+      message: `${!account ? `계정 ${name} 가 ${srv.name} VPN 서버에 없음` : `계정 ${name} 의 비밀번호가 ${srv.name} VPN 서버와 다름`} → 계정 인증 실패 (CHAP Failure)`,
+      fix: !account ? `${srv.name} → VPN 서버 → 계정에 ${name} 추가, 또는 ${d.name} 의 사용자 이름을 등록된 것으로` : `${d.name} 의 VPN → 비밀번호를 ${srv.name} 계정과 같게`,
+      related: [srv.id],
+    });
   }
 }

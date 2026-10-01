@@ -60,7 +60,7 @@
 기본 축(서브넷·DHCP·ARP·NAT·TCP·라우팅)을 다 익힌 뒤 "추가 학습" 용으로 넣기로 했다. 범위가 크니 착수 전에 따로 계획을 세운다.
 
 - ✅ **IPv6** (2026-09-30, 계획·결정은 아래 "IPv6 계획"): 주소 체계, NDP·DAD, SLAAC(RA·RDNSS), 듀얼 스택(AAAA·Happy Eyeballs 축소판), 공유기 DHCPv6-PD·NAT 없는 라우팅·인바운드 기본 차단, 예제 4종. 남은 것: DHCPv6 주소 할당(stateful), NAT64/DNS64, RIPng, IPv6 위의 VPN·이중화·로드밸런서·프록시, 게이트웨이·NAT 박스의 PD 클라이언트, DHCPv6 stateful 등 위 목록 (NUD·주기 RA·라우터 수명은 2026-09-30 추가 — 배경 타이머, 기본 꺼짐)
-- ✅ **VPN** (2026-09-29): 사이트 간, WireGuard 식(UDP 51820 캡슐화, AllowedIPs, 엔드포인트 로밍) + IPsec(IKEv2·ESP·NAT-T·PSK), 예제 "망분리 사무실 + NCP". 원격 접속 VPN(노트북 → 회사, 가상 주소·split tunnel) 2026-09-29 추가, 예제 "재택근무 원격 접속 VPN". 원격 접속 사용자 계정 인증(EAP)·DPD(사용자가 누르는 상대 확인) 2026-09-29 추가. 주기 DPD(배경 타이머, 기본 꺼짐) 2026-09-30 추가. 남은 것: 인증서 인증
+- ✅ **VPN** (2026-09-29): 사이트 간, WireGuard 식(UDP 51820 캡슐화, AllowedIPs, 엔드포인트 로밍) + IPsec(IKEv2·ESP·NAT-T·PSK), 예제 "망분리 사무실 + NCP". 원격 접속 VPN(노트북 → 회사, 가상 주소·split tunnel) 2026-09-29 추가, 예제 "재택근무 원격 접속 VPN". 원격 접속 사용자 계정 인증(EAP)·DPD(사용자가 누르는 상대 확인) 2026-09-29 추가. 주기 DPD(배경 타이머, 기본 꺼짐) 2026-09-30 추가. 공유기 VPN 서버(ipTIME 식 L2TP/IPsec — IKEv1 Main/Quick Mode·L2TP·PPP CHAP·IPCP, 프록시 ARP, full tunnel) 2026-10-01 추가, 예제 "ipTIME 공유기 VPN (L2TP/IPsec)". 남은 것: 인증서 인증
 - ✅ **로드밸런서** (2026-09-29): 공용 모듈 `nodes/lb.ts` + 서버 토글 + 전용 장비. 리버스 프록시(L7)·라운드 로빈/최소 연결·패시브 헬스 체크. L4 모드(주소 변환, LVS FULLNAT 식)·세션 고정(출발지 IP·쿠키) 2026-09-29 추가. 액티브 헬스 체크(배경 타이머, 기본 꺼짐) 2026-09-30 추가
 - ✅ **포워드 프록시** (2026-09-29): Squid 식 서비스 토글 + 클라이언트 http_proxy 설정, 대신 이름 해석·차단 목록(403)·실패 503, 예제 "포워드 프록시 (프록시로만 나가는 사무실)". HTTPS CONNECT 터널(TLS 1.3 축소판·SNI·서버 HTTPS 토글·L7 TLS 종료) 2026-09-30 추가. 남은 것: PAC·예외 목록, TLS 가로채기(SSL 복호화)
 - ✅ **STP (스패닝 트리)** (2026-09-29): 루트 선출·대체 포트 차단·링크 끊기면 우회, 트리거 BPDU + Message Age, 예제 "스위치 이중화 (STP)"

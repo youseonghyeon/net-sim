@@ -976,6 +976,34 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("설정");
   console.log("remote periodic dpd: up before", stillUp, "| after:", (await raSec.locator(".note.error-note").first().innerText().catch(() => "?")).slice(0, 50));
 }
+// ipTIME 공유기 VPN (L2TP/IPsec): 출장 노트북이 집 공유기에 붙고(배지) 집 NAS 로 TCP 80, 공유기 VPN 서버 섹션·표
+{
+  await loadEx("iptime");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "출장 노트북" && /VPN 연결됨/.test(el.textContent ?? "")), null, { timeout: 30000 });
+  console.log("iptime vpn badge: yes");
+  await clickDevice("출장 노트북");
+  await goTab("진단");
+  await page.fill(".tcp-row .input:not(.port)", "192.168.0.20");
+  await page.keyboard.press("Escape");
+  await page.fill(".tcp-row .input.port", "80");
+  await page.click(".tcp-row .btn");
+  await page.waitForFunction(() => /종료됨|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 60000 });
+  console.log("iptime nas:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
+  await goTab("설정");
+  const lapSec = page.locator(".inspector section", { has: page.locator("h3", { hasText: "원격 접속 VPN" }) });
+  console.log("iptime type:", await lapSec.locator(".segmented button.on").innerText(), "| one line:", (await lapSec.locator(".segmented button.on").boundingBox()).height < 40, "| dpd hidden:", (await lapSec.locator("button:has-text('상대 확인 (DPD)')").count()) === 0, "| status:", (await lapSec.locator(".note").first().innerText()).slice(0, 40));
+  await lapSec.screenshot({ path: `${OUT}/58-iptime-client.png` });
+  await clickDevice("집 ipTIME");
+  await goTab("설정");
+  const vpnSec = page.locator(".inspector section", { has: page.locator("h3", { hasText: "VPN 서버" }) });
+  console.log("iptime server: accounts", await vpnSec.locator(".record-row").count(), "| connected:", (await vpnSec.locator(".stat-row").first().innerText()).replace(/\s+/g, " "));
+  await vpnSec.screenshot({ path: `${OUT}/59-iptime-server.png` });
+  console.log("iptime badge:", await device("집 ipTIME").locator(".badge", { hasText: "VPN 서버 1" }).count());
+  await goTab("표");
+  console.log("iptime table:", (await page.locator(".inspector").innerText()).includes("VPN 접속") ? "yes" : "NO");
+  await page.screenshot({ path: `${OUT}/60-iptime.png` });
+}
 // 로드밸런서 L4 모드: lb-1 을 L4 로 바꾸고 pc-1 → 192.168.0.20:80 연결
 {
   await loadEx("lb");

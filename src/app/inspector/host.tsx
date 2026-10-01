@@ -544,32 +544,49 @@ export function DnsServiceSection({ d, h, staticIp }: { d: Device; h: HostSettin
   );
 }
 
-/** 원격 접속 VPN 클라이언트: 켜기 + 회사 VPN 장비 공인 주소 + PSK + 연결 상태 */
+/** 원격 접속 VPN 클라이언트: 켜기 + 종류(회사 IKEv2 / 공유기 L2TP/IPsec) + 서버 공인 주소 + PSK + 계정 + 연결 상태 */
 export function RemoteVpnSection({ d, h }: { d: Device; h: HostSettings }) {
   void simVersion.value;
   const ra = h.ra ?? { enabled: false, server: "", psk: "" };
   const set = (patch: Partial<typeof ra>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ra: { ...(x.host!.ra ?? { enabled: false, server: "", psk: "" }), ...patch } } }));
   const node = sim.node(d.id);
   const status = node instanceof Host ? node.ra.summary() : undefined;
+  const l2tp = ra.type === "l2tp";
   return (
     <Section title="원격 접속 VPN">
       <label class="toggle-row">
         <span>
-          {ra.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">IPsec</span>
+          {ra.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">{l2tp ? "공유기 VPN" : "회사 VPN"}</span>
         </span>
         <Toggle on={ra.enabled} onToggle={() => set({ enabled: !ra.enabled })} />
       </label>
-      {!ra.enabled && <p class="note">켜면 회사 VPN 장비에 IPsec 으로 붙어 가상 주소를 받고, 회사가 알려 준 사내 대역으로 가는 패킷만 터널로 보냅니다(나머지는 평소처럼). 재택근무 노트북이 회사 내부 서버에 접속하는 방식입니다.</p>}
+      <Field label="종류">
+        <div class="segmented" role="radiogroup">
+          <button class={!l2tp ? "on" : ""} onClick={() => set({ type: undefined })} title="회사 VPN 장비에 IKEv2 로 — 사내 대역만 터널로 (split tunnel)">
+            IKEv2
+          </button>
+          <button class={l2tp ? "on" : ""} onClick={() => set({ type: "l2tp", dpd: undefined })} title="집 공유기(ipTIME 등)의 VPN 서버에 L2TP/IPsec 으로 — 모든 트래픽을 집으로 (full tunnel)">
+            L2TP/IPsec
+          </button>
+        </div>
+      </Field>
+      {!ra.enabled && (
+        <p class="note">
+          {l2tp
+            ? "켜면 집 공유기의 VPN 서버에 붙어 집 LAN 주소를 하나 받고, 모든 트래픽을 집으로 보냅니다(full tunnel). Windows 의 \"L2TP/IPsec 및 미리 공유한 키\" 와 같습니다."
+            : "켜면 회사 VPN 장비에 IPsec 으로 붙어 가상 주소를 받고, 회사가 알려 준 사내 대역으로 가는 패킷만 터널로 보냅니다(나머지는 평소처럼). 재택근무 노트북이 회사 내부 서버에 접속하는 방식입니다."}
+        </p>
+      )}
       {ra.enabled && (
         <>
           <Field label="VPN 서버 (공인 주소)" error={ipError(ra.server, true)}>
-            <input class="input mono" value={ra.server} placeholder="203.0.113.11" onInput={(e) => set({ server: e.currentTarget.value })} />
+            <input class="input mono" value={ra.server} placeholder={l2tp ? "203.0.113.20" : "203.0.113.11"} onInput={(e) => set({ server: e.currentTarget.value })} />
           </Field>
           <Field label="사전 공유 키 (PSK)" error={ra.psk ? undefined : "비어 있습니다. 서버와 같은 키를 넣으세요."}>
             <input class="input mono" value={ra.psk} placeholder="서버와 같은 문자열" onInput={(e) => set({ psk: e.currentTarget.value })} />
           </Field>
-          <Field label="사용자 이름 (EAP)">
-            <input class="input mono" value={ra.user ?? ""} placeholder="서버가 계정을 요구할 때 (예: kim)" onInput={(e) => set({ user: e.currentTarget.value })} />
+          <Field label={l2tp ? "사용자 이름" : "사용자 이름 (EAP)"} error={l2tp && !ra.user?.trim() ? "L2TP/IPsec 은 계정이 꼭 필요합니다. 공유기 VPN 서버에 등록한 이름을 넣으세요." : undefined}>
+            <input class="input mono" value={ra.user ?? ""} placeholder={l2tp ? "공유기 VPN 서버의 계정 (예: me)" : "서버가 계정을 요구할 때 (예: kim)"} onInput={(e) => set({ user: e.currentTarget.value })} />
           </Field>
           <Field label="비밀번호">
             <input class="input mono" value={ra.password ?? ""} placeholder="서버 계정과 같은 문자열" onInput={(e) => set({ password: e.currentTarget.value })} />
@@ -581,20 +598,26 @@ export function RemoteVpnSection({ d, h }: { d: Device; h: HostSettings }) {
               다시 연결
             </button>
           )}
-          {node instanceof Host && (
+          {!l2tp && node instanceof Host && (
             <button class="btn wide" disabled={node.ra.state !== "up" || node.ra.dpdWaiting} onClick={() => sim.act({ kind: "vpn-dpd", nodeId: d.id })} title="빈 INFORMATIONAL 을 보내 서버가 살아 있고 이 터널을 아는지 확인합니다">
               <Icon name="send" size={14} />
               상대 확인 (DPD)
             </button>
           )}
-          <label class="toggle-row">
-            <span>
-              주기 DPD <span class="mono muted">10초 · 조용할 때</span>
-              <small class="muted">서버가 말없이 사라지면 끊김으로 알림</small>
-            </span>
-            <Toggle on={ra.dpd === true} onToggle={() => set({ dpd: !ra.dpd })} />
-          </label>
-          <p class="note">계정이 없는 서버면 사용자 이름은 비워 두세요. "상대 확인 (DPD)" 은 연결된 동안 누를 수 있고, 서버가 응답하지 않으면 1초씩 두 번 다시 보낸 뒤 터널을 지우고 끊김으로 바뀝니다. 주기 DPD 를 켜면 서버에게서 10초 동안 받은 것이 없을 때 저절로 보냅니다(시간이 흐를 때만).</p>
+          {!l2tp && (
+            <label class="toggle-row">
+              <span>
+                주기 DPD <span class="mono muted">10초 · 조용할 때</span>
+                <small class="muted">서버가 말없이 사라지면 끊김으로 알림</small>
+              </span>
+              <Toggle on={ra.dpd === true} onToggle={() => set({ dpd: !ra.dpd })} />
+            </label>
+          )}
+          <p class="note">
+            {l2tp
+              ? "IPsec(사전 공유 키)으로 통로를 맺고(공유기 NAT 뒤면 UDP 4500), 그 안에서 L2TP·PPP 로 계정을 확인받아 집 LAN 주소를 받습니다. 연결되면 집 공유기가 알려 준 DNS 로 묻고, 인터넷도 집을 거쳐 나갑니다. 출장지 LAN 과 집 LAN 대역이 같으면 집 장치가 \"같은 서브넷\" 으로 보여 터널로 가지 않습니다."
+              : "계정이 없는 서버면 사용자 이름은 비워 두세요. \"상대 확인 (DPD)\" 은 연결된 동안 누를 수 있고, 서버가 응답하지 않으면 1초씩 두 번 다시 보낸 뒤 터널을 지우고 끊김으로 바뀝니다. 주기 DPD 를 켜면 서버에게서 10초 동안 받은 것이 없을 때 저절로 보냅니다(시간이 흐를 때만)."}
+          </p>
         </>
       )}
     </Section>

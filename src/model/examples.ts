@@ -8,7 +8,7 @@ import { exampleTwoGatewaysTopology, exampleTwoHomesTopology, exampleBackboneTop
 import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
 import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleLoadBalancerTopology, exampleProxyTopology } from "./examples/services";
-import { exampleInternetTopology, examplePublishTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology } from "./examples/internet";
+import { exampleInternetTopology, examplePublishTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology } from "./examples/internet";
 import { exampleRoamingTopology } from "./examples/wireless";
 import { exampleDualStackHomeTopology, exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
 
@@ -22,7 +22,7 @@ export * from "./examples/internet";
 export * from "./examples/wireless";
 export * from "./examples/ipv6";
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6";
+export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -182,6 +182,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "재택근무 원격 접속 VPN",
     blurb: "재택 노트북이 켜지면서 회사 VPN 방화벽에 IPsec 으로 붙어 PSK 와 사용자 계정(kim, EAP)을 확인받고 가상 주소 10.99.0.x 를 받습니다(표 탭). 노트북에서 사내 서버 10.50.10.20 으로 SSH(22) 접속해 보세요 — 사내 대역만 터널로 가고, 8.8.8.8 은 평소처럼 집 공유기로 나갑니다.",
     build: exampleRemoteVpnTopology,
+  },
+  iptime: {
+    id: "iptime",
+    group: "인터넷",
+    label: "ipTIME 공유기 VPN (L2TP/IPsec)",
+    blurb: "출장 노트북이 켜지면서 집 ipTIME 의 VPN 서버에 붙습니다: IPsec(사전 공유 키)으로 바깥 통로를 암호화하고(호텔 NAT 뒤라 UDP 4500), 그 안에서 L2TP·PPP 로 계정(me)을 확인받아 집 LAN 주소 192.168.0.50 을 받습니다. 노트북에서 집 NAS 192.168.0.20 으로 TCP 80 을 보내 보세요 — 공유기가 그 주소의 ARP 에 대신 답해 NAS 는 LAN 기기로 봅니다. 8.8.8.8 로 ping 하면 재택근무 예제(사내 대역만 터널)와 달리 모든 트래픽이 집을 거쳐 집 공인 주소로 나갑니다(해외에서도 한국 IP).",
+    build: exampleIptimeVpnTopology,
   },
   roaming: {
     id: "roaming",

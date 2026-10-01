@@ -29,6 +29,7 @@ import { LB_ALGORITHM_LABEL, LB_CHECK_TAG, LB_MODE_LABEL, LB_STICKY_LABEL, LoadB
 import { ForwardProxy, type ProxyConfig } from "./proxy";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { endpoint, HTTPS_PORT, TCP_TIMER_TAG, TcpStack, type TcpConn } from "./tcp";
+import { L2tpClient } from "./l2tp";
 import { RA_DPD_TAG, RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, NUD_TIMER_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
@@ -132,8 +133,8 @@ export class Host implements SimNode {
   readonly lb: LoadBalancer;
   readonly proxy: ForwardProxy;
   httpProxy: HttpProxySetting | undefined;
-  /** 원격 접속 VPN 클라이언트 */
-  readonly ra: RaClient;
+  /** 원격 접속 VPN 클라이언트: 회사 VPN 장비(IKEv2) 또는 공유기 VPN 서버(L2TP/IPsec) — 설정의 종류에 따라 바꿔 낀다 */
+  ra: RaClient | L2tpClient;
   /** IPv6 (IPv4 인터페이스와 나란히, 같은 MAC) */
   readonly v6: Ipv6Interface;
   /** 웹 등 직접 응답하는 TCP 포트. 실제로 듣는 포트는 여기에 LB 포트를 더한 것 */
@@ -190,21 +191,32 @@ export class Host implements SimNode {
     this.resolver = new DnsResolver(this.iface, hashCode(cfg.id), this.v6);
     this.resolver.local = this.dnsServer;
     this.iface.loopback = (pkt, ctx) => this.loopback(pkt, ctx);
-    this.ra = new RaClient(
-      {
-        source: () => this.iface.ip,
-        send: (outer, ctx) => this.iface.sendIp(outer, ctx, this.emit(ctx)),
-        myIp: () => (this.iface.usable && !this.iface.probing ? this.iface.ip : undefined),
-        local: (dst) => !!this.iface.ip && sameSubnet(dst, this.iface.ip, this.iface.prefix),
-      },
-      cfg.mac,
-    );
+    this.ra = this.makeVpnClient(cfg.ra?.type);
     if (cfg.ra) this.ra.config = { ...cfg.ra };
-    // 사내 대역으로 가는 패킷은 원격 접속 터널로 (연결돼 있을 때만)
+    // 사내 대역으로 가는 패킷은 원격 접속 터널로 (연결돼 있을 때만. L2TP/IPsec 은 모두)
     this.iface.outbound = (pkt, ctx) => this.ra.intercept(pkt, ctx);
+    // L2TP/IPsec 이 연결돼 있으면 집 공유기가 알려 준 DNS(IPCP)로 묻는다
+    this.resolver.vpnDns = () => (this.ra instanceof L2tpClient && this.ra.state === "up" ? this.ra.dns : undefined);
+  }
+
+  private makeVpnClient(type: RaClientConfig["type"]): RaClient | L2tpClient {
+    const io = {
+      source: () => this.iface.ip,
+      send: (outer: Ipv4Packet, ctx: NodeContext) => this.iface.sendIp(outer, ctx, this.emit(ctx)),
+      myIp: () => (this.iface.usable && !this.iface.probing ? this.iface.ip : undefined),
+      local: (dst: Ip) => !!this.iface.ip && sameSubnet(dst, this.iface.ip, this.iface.prefix),
+    };
+    return type === "l2tp" ? new L2tpClient(io, this.mac) : new RaClient(io, this.mac);
   }
 
   setRemoteVpn(cfg: RaClientConfig, ctx: NodeContext): void {
+    const want = cfg.type === "l2tp" ? "l2tp" : "ikev2";
+    const have = this.ra instanceof L2tpClient ? "l2tp" : "ikev2";
+    if (want !== have) {
+      // VPN 종류가 바뀜: 붙어 있던 연결을 끊고(서버에 알림) 다른 클라이언트로 바꿔 낀다
+      if (this.ra.state === "up") this.ra.disconnect(ctx, "VPN 종류가 바뀜");
+      this.ra = this.makeVpnClient(want);
+    }
     this.ra.setConfig(cfg, ctx);
   }
 
@@ -1221,7 +1233,7 @@ export class Host implements SimNode {
             ] as [string, string][])
           : []),
         ["TCP 서비스", this.tcp.listening.size ? [...this.tcp.listening].map((p) => `포트 ${p}`).join(", ") : "없음"],
-        ...(this.ra.config.enabled ? [["원격 접속 VPN", this.ra.summary()!] as [string, string]] : []),
+        ...(this.ra.config.enabled ? [[this.ra instanceof L2tpClient ? "VPN (L2TP/IPsec)" : "원격 접속 VPN", this.ra.summary()!] as [string, string]] : []),
         ...(this.dhcpServer.config.enabled
           ? [["DHCP 서버", `켜짐 · ${this.dhcpServer.config.start} ~ ${this.dhcpServer.config.end}`] as [string, string]]
           : []),

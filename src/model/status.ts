@@ -134,6 +134,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.firewall.config.enabled) out.push("방화벽");
     if (node.wifi.enabled) out.push(`Wi-Fi ${node.wifi.ssid}`);
     if (node.ipv6Enabled) out.push("IPv6");
+    if (node.vpnServer.config.enabled) out.push(`VPN 서버 ${node.vpnServer.connected.length}`);
   } else if (node instanceof L3Node) {
     if (node.relays.some(Boolean)) out.push("DHCP 릴레이");
     if (node.rip.config.enabled) out.push("RIP");

@@ -10,6 +10,7 @@ import {
   isControl,
   isNdp,
   type DhcpMessage,
+  type EspPacket,
   type EthernetFrame,
   type IcmpPacket,
   type Ipv4Packet,
@@ -20,6 +21,7 @@ import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RA_PERIODIC_TAG, ROUTER_
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_UPSTREAM_TIMER_TAG, DnsServer, type DnsServerConfig } from "./dns";
 import { Firewall, type FirewallConfig } from "./firewall";
+import { L2tpServer, type L2tpServerConfig } from "./l2tp";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
 import { NAT_ID_START, NatTable, type PortForward } from "./nat";
@@ -52,6 +54,8 @@ export interface RouterConfig {
   forwards?: PortForward[];
   /** IPv6 (없으면 꺼짐): WAN 은 ISP 의 RA·DHCPv6-PD 로, LAN 에는 위임받은 /64 를 RA 로 */
   ipv6?: RouterIpv6Config;
+  /** VPN 서버 (ipTIME 식 L2TP/IPsec, 없으면 꺼짐) */
+  vpnServer?: L2tpServerConfig;
 }
 
 export interface RouterIpv6Config {
@@ -102,6 +106,8 @@ export class Router implements SimNode {
   readonly inbound6: Firewall;
   /** LAN 쪽 IPv6 를 시작했는지 (LAN 은 내부 브리지라 첫 포트가 붙을 때 링크 로컬 DAD) */
   private lan6Started = false;
+  /** VPN 서버 (L2TP/IPsec): 붙은 노트북에게 LAN 주소를 주고, 그 주소의 ARP 에 대신 답해(프록시 ARP) 터널로 넘긴다 */
+  readonly vpnServer: L2tpServer;
 
   constructor(cfg: RouterConfig) {
     this.id = cfg.id;
@@ -143,6 +149,16 @@ export class Router implements SimNode {
       this.lan6, // LAN 호스트가 IPv6(RA 의 RDNSS = 공유기 LAN 주소)로 물어도 답한다
     );
     if (cfg.forwards) this.nat.setForwards(cfg.forwards);
+    this.vpnServer = new L2tpServer({
+      // 공유기 자신이 만든 바깥 패킷이라 NAT·방화벽을 거치지 않는다
+      send: (outer, ctx) => this.wan.sendIp(outer, ctx, this.emitWan(ctx)),
+      dns: () => (this.dnsForwarder.config.enabled ? this.lan.ip : undefined),
+      lan: () => (this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined),
+    });
+    if (cfg.vpnServer) this.vpnServer.config = { ...cfg.vpnServer, users: cfg.vpnServer.users.map((u) => ({ ...u })) };
+    this.lan.proxyArp = (ip) => this.vpnServer.owns(ip);
+    // LAN 으로 내보내려는 패킷의 목적지가 VPN 클라이언트면 LAN 대신 터널로 (DNS 포워더·ping 응답·NAT 역변환한 인터넷 응답)
+    this.lan.outbound = (pkt, ctx) => !!this.wan.ip && this.vpnServer.owns(pkt.dst) && this.vpnServer.sendTo(pkt, this.wan.ip, ctx);
   }
 
   /** 위임받은 프리픽스가 생기거나 사라짐: LAN 에 그 첫 /64 를 주소로 두고 RA 로 알린다 (사라지면 거둠 RA) */
@@ -228,10 +244,22 @@ export class Router implements SimNode {
   // ---------- 설정 변경 ----------
 
   configure(
-    cfg: { lanIp: Ip; lanPrefix: number; dhcp: DhcpServerConfig; wan: WanConfig; dns?: DnsServerConfig; forwards?: PortForward[]; firewall?: FirewallConfig; wifi?: { enabled: boolean; ssid: string }; ipv6?: RouterIpv6Config },
+    cfg: {
+      lanIp: Ip;
+      lanPrefix: number;
+      dhcp: DhcpServerConfig;
+      wan: WanConfig;
+      dns?: DnsServerConfig;
+      forwards?: PortForward[];
+      firewall?: FirewallConfig;
+      wifi?: { enabled: boolean; ssid: string };
+      ipv6?: RouterIpv6Config;
+      vpnServer?: L2tpServerConfig;
+    },
     ctx: NodeContext,
   ): void {
     if (cfg.firewall) this.firewall.setConfig(cfg.firewall, ctx, "");
+    if (cfg.vpnServer) this.vpnServer.setConfig(cfg.vpnServer, ctx);
     if (cfg.ipv6) this.setIpv6(cfg.ipv6, ctx);
     if (cfg.wifi && (cfg.wifi.enabled !== this.wifi.enabled || cfg.wifi.ssid !== this.wifi.ssid)) {
       this.wifi = { ...cfg.wifi };
@@ -297,6 +325,7 @@ export class Router implements SimNode {
   }
 
   onRemove(ctx: NodeContext): void {
+    this.vpnServer.clear();
     if (this.ipv6Enabled) {
       if (this.wanLinkUp) this.pd.release(ctx, this.emitWan(ctx));
       this.lan6.shutdown(ctx, this.emitLan(ctx));
@@ -316,6 +345,7 @@ export class Router implements SimNode {
       }
       ctx.trace("link.down", "L1", `wan 포트 링크 다운`, { port });
       this.wan6.linkDown();
+      this.vpnServer.clear(); // 공인 주소를 잃으면 VPN 접속도 끝 (노트북은 다시 연결해야 한다)
       // ISP 와 끊기면 위임도 끝: LAN 에서 그 프리픽스를 거둔다 (다시 이어지면 새로 요청)
       this.pd.stop(ctx, this.emitWan(ctx));
       this.wan.clearPending();
@@ -603,6 +633,17 @@ export class Router implements SimNode {
       ctx.trace("ip.drop", "L3", `[wan] 목적지 ${pkt.dst} 는 내 공인 주소(${this.wan.ip ?? "없음"}) 아님 → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
+    // VPN 서버 (L2TP/IPsec): IKE (UDP 500·4500) 와 내 SA 의 ESP 는 공유기 자신이 받는다 (포트 포워딩보다 먼저 — ipTIME 도 VPN 서버를 켜면 그 포트를 쓴다)
+    if (this.vpnServer.config.enabled) {
+      const p0 = pkt.payload;
+      if (p0.kind === "udp" && p0.payload.kind === "ike" && this.vpnServer.handleIke(pkt, p0.srcPort, p0.dstPort, p0.payload, ctx, frameId)) return;
+      const esp: EspPacket | undefined = p0.kind === "esp" ? p0 : p0.kind === "udp" && p0.payload.kind === "esp" ? p0.payload : undefined;
+      if (esp) {
+        const inner = this.vpnServer.receive(pkt, p0.kind === "udp" ? p0.srcPort : undefined, esp, ctx, frameId);
+        if (inner) this.routeFromVpn(inner, frameId, ctx);
+        if (inner !== undefined) return;
+      }
+    }
     // UDP 포트 포워딩 규칙이 있는 포트(예: 53 → 안쪽 DNS 서버)는 내가 받지 않고 아래 NAT 역변환으로 안에 넘긴다
     const udpForwarded = pkt.payload.kind === "udp" && this.nat.forwards.some((r) => r.proto === "udp" && r.publicPort === (pkt.payload as { dstPort: number }).dstPort);
     if (!udpForwarded && pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dns" && pkt.payload.dstPort === DNS_PORT) {
@@ -624,12 +665,73 @@ export class Router implements SimNode {
     const restored = this.nat.restore(pkt, this.wan.ip, ctx, frameId);
     if (!restored) return;
     if (!this.firewall.check(restored, "in", ctx, frameId)) return;
+    if (this.vpnServer.owns(restored.dst)) {
+      this.toVpnClient(restored, frameId, ctx); // VPN 으로 붙은 노트북의 인터넷 응답
+      return;
+    }
     const inner: Ipv4Packet = { ...restored, ttl: pkt.ttl - 1 };
     ctx.trace("ip.forward", "L3", `라우팅: ${inner.dst} 는 LAN 안 → LAN 인터페이스로 전달 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: inner.dst }, frameId);
     this.lan.sendIp(inner, ctx, this.emitLan(ctx));
   }
 
+  /** VPN 클라이언트(노트북)가 터널로 보낸 패킷: 공유기 자신·집 LAN·다른 VPN 클라이언트·인터넷 (LAN 호스트가 보낸 것처럼) */
+  private routeFromVpn(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    const emit = this.emitLan(ctx);
+    if (pkt.dst === this.lan.ip || pkt.dst === this.wan.ip) {
+      const p = pkt.payload;
+      if (p.kind === "udp" && p.payload.kind === "dns" && p.dstPort === DNS_PORT && pkt.dst === this.lan.ip) {
+        if (this.dnsForwarder.config.enabled) this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frameId, ctx, emit);
+        else ctx.trace("dns.nxdomain", "app", `DNS 포워더가 꺼져 있음 → VPN 클라이언트의 질의에 응답하지 않음`, {}, frameId);
+        return;
+      }
+      if (p.kind === "icmp") {
+        this.handleIcmp(pkt, p, frameId, ctx, this.lan, emit, pkt.dst);
+        return;
+      }
+      ctx.trace("ip.drop", "L4", `공유기 자신에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frameId);
+      return;
+    }
+    if (pkt.dst === "255.255.255.255" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
+      ctx.trace("ip.drop", "L3", `VPN 클라이언트의 브로드캐스트/멀티캐스트 ${pkt.dst} → 집 LAN 으로 넘기지 않음 (L2TP 는 IP 만 나른다)`, { dst: pkt.dst }, frameId);
+      return;
+    }
+    if (this.vpnServer.owns(pkt.dst)) {
+      this.toVpnClient(pkt, frameId, ctx);
+      return;
+    }
+    if (this.lan.ip && sameSubnet(pkt.dst, this.lan.ip, this.lan.prefix)) {
+      if (pkt.ttl <= 1) {
+        const notice = this.lan.timeExceeded(pkt, ctx, frameId);
+        if (notice) this.lan.sendIp(notice, ctx, emit);
+        return;
+      }
+      const inner: Ipv4Packet = { ...pkt, ttl: pkt.ttl - 1 };
+      ctx.trace("ip.forward", "L3", `라우팅: VPN 클라이언트 ${pkt.src} → ${pkt.dst} 는 집 LAN 안 → LAN 인터페이스로 전달 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: pkt.dst }, frameId);
+      this.lan.sendIp(inner, ctx, emit);
+      return;
+    }
+    // 인터넷: 집 LAN 기기처럼 방화벽·NAT 를 거쳐 공유기 공인 주소로 나간다 (full tunnel — 해외에서도 집 IP)
+    this.forwardToWan(pkt, frameId, ctx);
+  }
+
+  /** 목적지가 VPN 클라이언트: TTL 을 줄여 그 클라이언트의 터널로 (LAN 기기·인터넷 응답·다른 VPN 클라이언트에서) */
+  private toVpnClient(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    if (pkt.ttl <= 1) {
+      const notice = this.lan.timeExceeded(pkt, ctx, frameId);
+      if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
+      return;
+    }
+    const inner: Ipv4Packet = { ...pkt, ttl: pkt.ttl - 1 };
+    ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 VPN 으로 붙은 기기 → 그 터널로 전달 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: pkt.dst, vpn: true }, frameId);
+    if (this.wan.ip) this.vpnServer.sendTo(inner, this.wan.ip, ctx, frameId);
+  }
+
   private forwardToWan(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    // LAN 기기가 VPN 클라이언트에게 (프록시 ARP 로 공유기 MAC 에 보냄)
+    if (this.vpnServer.owns(pkt.dst)) {
+      this.toVpnClient(pkt, frameId, ctx);
+      return;
+    }
     if (sameSubnet(pkt.dst, this.lan.ip!, this.lan.prefix)) {
       ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 는 LAN 안의 주소 → 라우터를 거칠 필요가 없음 (호스트끼리 직접 통신) → 드롭`, { dst: pkt.dst }, frameId);
       return;
@@ -749,11 +851,15 @@ export class Router implements SimNode {
               ["IPv6 인바운드 기본 차단", this.inbound6.config.enabled ? "켜짐 (Stateful — 안에서 시작한 통신의 응답만)" : "꺼짐 (바깥에서 바로 들어옴)"],
             ] as [string, string][])
           : []),
+        ...(this.vpnServer.config.enabled
+          ? ([["VPN 서버", `켜짐 (L2TP/IPsec) · 할당 IP ${this.vpnServer.config.poolStart} ~ ${this.vpnServer.config.poolEnd} · ${this.vpnServer.clientsLabel()}`]] as [string, string][])
+          : []),
       ],
       tables: [
         { title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
         ...(this.dnsForwarder.cache.size > 0 ? [{ title: "DNS 캐시", columns: ["이름", "IP", "출처"], rows: this.dnsForwarder.rows() }] : []),
         { title: "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(this.wan.ip) },
+        ...(this.vpnServer.config.enabled ? [{ title: "VPN 접속", columns: ["사용자", "할당 IP", "접속 주소", "방식"], rows: this.vpnServer.rows() }] : []),
         { title: "포트 포워딩", columns: ["공인 포트", "내부"], rows: this.nat.forwardRows(this.wan.ip) },
         ...(this.firewall.config.enabled ? [{ title: "방화벽 규칙", columns: ["#", "규칙"], rows: this.firewall.rows() }] : []),
         {

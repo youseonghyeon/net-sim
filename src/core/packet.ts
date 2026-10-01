@@ -404,8 +404,33 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket;
 }
+
+export const L2TP_PORT = 1701;
+
+/**
+ * L2TP (UDP 1701): 공유기 VPN(ipTIME 식 L2TP/IPsec)의 안쪽 겹. IPsec(ESP 전송 모드)이 이 UDP 1701 을 암호화해 감싸고,
+ * L2TP 는 그 안에 PPP 를 실어 나른다 — PPP 가 계정 확인(CHAP)과 주소 할당(IPCP)을 하고, 그 뒤로는 IP 패킷을 싣는다.
+ * control: 터널(SCCRQ/SCCRP)·세션(ICRQ/ICRP) 열기와 끊기(CDN·StopCCN). 실제 3단계 핸드셰이크(…CN)는 줄였다
+ */
+export interface L2tpPacket {
+  kind: "l2tp";
+  /** 터널·세션 번호 (0 = 아직 없음) */
+  tunnelId: number;
+  sessionId: number;
+  control?: "SCCRQ" | "SCCRP" | "ICRQ" | "ICRP" | "CDN" | "StopCCN";
+  ppp?: PppFrame;
+}
+
+/** PPP: L2TP 세션 위에서 링크 설정(LCP)·인증(CHAP)·주소(IPCP) 뒤 IP 를 싣는다 */
+export type PppFrame =
+  | { proto: "lcp"; code: "configure-request" }
+  /** CHAP (MS-CHAPv2 축소판): 서버의 challenge → 클라이언트의 response(사용자·비밀번호로 만든 값) → success / failure */
+  | { proto: "chap"; code: "challenge" | "response" | "success" | "failure"; user?: string; secret?: string }
+  /** IPCP: 클라이언트가 주소를 요청(0.0.0.0) → 서버가 줄 주소·DNS 로 Ack (주소가 없으면 Nak) */
+  | { proto: "ipcp"; code: "configure-request" | "configure-ack" | "configure-nak"; ip?: Ip; dns?: Ip }
+  | { proto: "ip"; packet: Ipv4Packet };
 
 /**
  * VPN 터널 데이터 (WireGuard 식): 원래 IP 패킷을 암호화해 UDP 51820 안에 싣는다.
@@ -429,6 +454,8 @@ export interface EspPacket {
   spi: number;
   seq: number;
   inner: Ipv4Packet;
+  /** 전송 모드 (L2TP/IPsec): 두 끝 사이의 UDP 1701 만 보호한다 — inner 는 같은 두 장치 사이의 원래 패킷 */
+  transport?: boolean;
 }
 
 /**
@@ -438,8 +465,12 @@ export interface EspPacket {
  */
 export interface IkeMessage {
   kind: "ike";
-  /** INFORMATIONAL: 원격 접속 클라이언트가 연결을 끊을 때 (Delete), DPD (빈 INFORMATIONAL), INVALID_SPI 알림 */
-  exchange: "IKE_SA_INIT" | "IKE_AUTH" | "INFORMATIONAL";
+  /**
+   * INFORMATIONAL: 원격 접속 클라이언트가 연결을 끊을 때 (Delete), DPD (빈 INFORMATIONAL), INVALID_SPI 알림.
+   * MAIN_MODE·QUICK_MODE: IKEv1 (L2TP/IPsec) — Main Mode 로 NAT 감지·PSK 인증(실제 6개 메시지를 두 번의 요청·응답으로 줄임),
+   * Quick Mode 로 UDP 1701 을 보호할 ESP SA (전송 모드)
+   */
+  exchange: "IKE_SA_INIT" | "IKE_AUTH" | "INFORMATIONAL" | "MAIN_MODE" | "QUICK_MODE";
   response: boolean;
   /** 이 협상의 번호 (시작한 쪽이 정함) */
   spi: number;
@@ -468,6 +499,8 @@ export interface IkeMessage {
   eapSecret?: string;
   /** 빈 INFORMATIONAL (DPD, Dead Peer Detection): 상대가 살아 있고 이 SA 를 아는지 확인. Delete 가 아니다 */
   dpd?: boolean;
+  /** L2TP/IPsec (IKEv1) 협상 — 공유기 VPN 서버 */
+  l2tp?: boolean;
 }
 
 /**
@@ -611,7 +644,23 @@ export function bridgeIdLabel(b: BridgeId): string {
   return `${b.prio}.${b.mac}`;
 }
 
-const ESP_LABEL = (e: EspPacket) => `ESP SPI 0x${e.spi.toString(16).padStart(8, "0")} seq=${e.seq} (암호화됨 · 안: ${e.inner.src} → ${e.inner.dst})`;
+const ESP_LABEL = (e: EspPacket) =>
+  `ESP SPI 0x${e.spi.toString(16).padStart(8, "0")} seq=${e.seq} (암호화됨 · ${e.transport ? `전송 모드 · 안: UDP 1701 L2TP${l2tpInnerLabel(e.inner)}` : `안: ${e.inner.src} → ${e.inner.dst}`})`;
+
+/** ESP 전송 모드 안의 L2TP 를 짧게 (로그용) */
+function l2tpInnerLabel(inner: Ipv4Packet): string {
+  const u = inner.payload;
+  return u.kind === "udp" && u.payload.kind === "l2tp" ? l2tpPartLabel(u.payload) : "";
+}
+
+/** L2TP 한 개를 짧게: 제어 메시지·PPP 단계, 데이터면 PPP 안의 IP */
+export function l2tpPartLabel(l: L2tpPacket): string {
+  if (l.control) return ` ${l.control}`;
+  const p = l.ppp;
+  if (!p) return "";
+  if (p.proto === "ip") return ` · PPP · ${p.packet.src} → ${p.packet.dst}`;
+  return ` · PPP ${p.proto.toUpperCase()} ${p.code}`;
+}
 const IKE_LABEL = (m: IkeMessage) =>
   `IKE ${m.exchange} ${m.response ? (m.error ? `응답 (${m.error})` : "응답") : "요청"}${m.ra ? " · 원격 접속" : ""}${m.eap ? ` · EAP ${m.eap === "request" ? "요청" : m.eap === "response" ? "응답" : m.eap === "success" ? "성공" : "실패"}` : ""}${m.dpd ? " · DPD" : ""}`;
 
@@ -641,6 +690,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (d.kind === "rip") return d.command === "request" ? "RIP Request (전체 경로 요청)" : `RIP Response (경로 ${d.entries.length}개)`;
   if (d.kind === "vpn") return `VPN 터널 (암호화됨 · 안: ${d.inner.src} → ${d.inner.dst})`;
   if (d.kind === "dhcp6") return dhcp6Label(d);
+  if (d.kind === "l2tp") return `L2TP${l2tpPartLabel(d)}`;
   return `DHCP ${DHCP_LABEL[d.op]}${d.yiaddr ? ` (${d.yiaddr})` : ""}`;
 }
 
@@ -696,11 +746,17 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.kind === "pfsync") return "세션 동기화";
   if (inner.kind === "vrrp") return inner.priority === 0 ? "VRRP 물러남" : `VRRP ${inner.priority}`;
   if (inner.kind === "esp" || inner.payload.kind === "esp") return "ESP 터널";
-  if (inner.payload.kind === "ike") return inner.payload.dpd ? "DPD" : inner.payload.eap ? "EAP 인증" : inner.payload.exchange === "IKE_SA_INIT" ? "IKE 협상" : inner.payload.exchange === "IKE_AUTH" ? "IKE 인증" : "IKE 알림";
+  if (inner.payload.kind === "ike") {
+    const m = inner.payload;
+    if (m.exchange === "MAIN_MODE") return m.auth !== undefined || m.response && m.error ? "IKE 인증 (Main Mode)" : "IKE 협상 (Main Mode)";
+    if (m.exchange === "QUICK_MODE") return "IKE Quick Mode";
+    return m.dpd ? "DPD" : m.eap ? "EAP 인증" : m.exchange === "IKE_SA_INIT" ? "IKE 협상" : m.exchange === "IKE_AUTH" ? "IKE 인증" : "IKE 알림";
+  }
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";
   if (inner.payload.kind === "dhcp6") return `DHCPv6 ${DHCP6_LABEL[inner.payload.type]}`;
+  if (inner.payload.kind === "l2tp") return "L2TP";
   return `DHCP ${DHCP_LABEL[inner.payload.op]}`;
 }
 

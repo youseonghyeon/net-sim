@@ -13,7 +13,7 @@ import { lbRules } from "./lint/lb";
 import { relayRouteRule, returnRouteRule, uplinkDefaultRule } from "./lint/routing";
 import { analyze } from "./lint/segments";
 import { forwardClosedRule, httpProxyRule, proxyPortClashRule, routerDnsRule } from "./lint/services";
-import { remoteAccessRules, siteVpnRules } from "./lint/vpn";
+import { remoteAccessRules, routerVpnRules, siteVpnRules } from "./lint/vpn";
 
 export type { LintIssue } from "./lint/context";
 
@@ -47,6 +47,7 @@ const RULES: ((ctx: LintContext) => void)[] = [
   haRules, // 18
   loopStpRule, // 19
   remoteAccessRules, // 20
+  routerVpnRules, // 20b
   httpProxyRule, // 21
   proxyPortClashRule, // 21b
   ipv6Rules, // 22 (IPv6)

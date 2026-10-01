@@ -53,6 +53,8 @@ export class NetInterface {
   outbound: ((pkt: Ipv4Packet, ctx: NodeContext) => boolean) | undefined;
   /** 이중화(HA) master 일 때만: 이 인터페이스가 함께 쓰는 가상 주소·가상 MAC (ARP 응답·수신을 이것으로도 한다) */
   vip: { ip: Ip; mac: Mac } | undefined;
+  /** 프록시 ARP: 이 주소들의 ARP 요청에 내 MAC 으로 대신 답한다 (공유기 VPN 서버가 VPN 클라이언트의 LAN 주소를) */
+  proxyArp: ((ip: Ip) => boolean) | undefined;
   private readonly arpTimers = new Map<Ip, TimerHandle>();
 
   constructor(mac: Mac, cfg: { ip?: Ip; prefix?: number; gateway?: Ip; dns?: Ip } = {}) {
@@ -296,7 +298,8 @@ export class NetInterface {
     }
     // 가상 주소(HA master)로 온 요청도 내 것
     const asVip = this.vip !== undefined && arp.targetIp === this.vip.ip && arp.senderIp !== this.vip.ip;
-    const isTarget = (arp.targetIp === this.ip && !this.conflict?.refused) || asVip;
+    const asProxy = !asVip && arp.targetIp !== this.ip && arp.senderIp !== arp.targetIp && this.proxyArp?.(arp.targetIp) === true;
+    const isTarget = (arp.targetIp === this.ip && !this.conflict?.refused) || asVip || asProxy;
 
     // 주소 충돌: 다른 MAC 이 내 주소를 보낸이로 쓴다(요청·응답·Gratuitous ARP 모두). Probe 중이면 같은 주소를 동시에 Probe 한 것도 충돌
     if (arp.senderMac !== this.mac) {
@@ -362,10 +365,16 @@ export class NetInterface {
         ctx.trace("frame.drop", "L2", `${arp.targetIp} 는 내 IP(${this.ip}) 아님 → 응답 안 함`, { targetIp: arp.targetIp }, frameId);
         return;
       }
-      const me = asVip ? this.vip! : { ip: this.ip, mac: this.mac };
+      const me = asVip ? this.vip! : asProxy ? { ip: arp.targetIp, mac: this.mac } : { ip: this.ip, mac: this.mac };
       const reply: ArpPacket = { kind: "arp", op: "reply", senderMac: me.mac, senderIp: me.ip, targetMac: arp.senderMac, targetIp: arp.senderIp };
       const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: me.mac, dst: arp.senderMac, payload: reply };
-      ctx.trace("arp.reply.sent", "L2", `ARP 응답 송신: "${me.ip} 는 ${me.mac}"${asVip ? " (이중화 가상 주소 — master 인 내가 답함)" : ""} → ${arp.senderMac} 에게 유니캐스트`, { to: arp.senderMac }, frame.id);
+      ctx.trace(
+        "arp.reply.sent",
+        "L2",
+        `ARP 응답 송신: "${me.ip} 는 ${me.mac}"${asVip ? " (이중화 가상 주소 — master 인 내가 답함)" : asProxy ? ` (프록시 ARP — ${me.ip} 는 VPN 으로 붙은 기기라 공유기가 대신 답하고 받은 것을 터널로 넘김)` : ""} → ${arp.senderMac} 에게 유니캐스트`,
+        { to: arp.senderMac, ...(asProxy ? { proxy: true } : {}) },
+        frame.id,
+      );
       emit(frame);
       return;
     }
