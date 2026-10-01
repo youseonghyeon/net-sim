@@ -156,9 +156,9 @@ export function remoteAccessRules({ t, m, add }: LintContext): void {
       l2tpClientRules(d, server, t.devices, add);
       continue;
     }
-    // IKEv2 클라이언트가 공유기 VPN 서버(L2TP/IPsec)를 가리킴
+    // IKEv2 클라이언트가 공유기 VPN 서버(L2TP/IPsec)를 가리킴 — 공유기가 UDP 500 을 안쪽으로 포워딩하면 IKEv2 는 그쪽이 받는다 (공유기는 L2TP 의 IKE 만 가로챔)
     const router = t.devices.find((x) => x !== d && routerWanIp(x) === server);
-    if (router?.router?.vpnServer?.enabled) {
+    if (router?.router?.vpnServer?.enabled && !udpForward(router, IKE_PORT)) {
       add({ deviceId: d.id, severity: "error", code: "ra.type-mismatch", message: `${router.name} 는 공유기 VPN 서버(L2TP/IPsec)인데 이 클라이언트는 IKEv2 로 접속 → 공유기가 IKEv2 에 답하지 않아 접속 실패`, fix: `${d.name} 의 VPN → 종류를 L2TP/IPsec 으로`, related: [router.id] });
       continue;
     }
@@ -211,8 +211,13 @@ function routerWanIp(x: Device): string | undefined {
   return x.router?.wan?.ipMode === "static" ? validIp(x.router.wan.ip) : undefined;
 }
 
+/** 공유기의 UDP 포워딩 규칙 (그 공인 포트) */
+function udpForward(x: Device, port: number) {
+  return x.router?.forwards?.find((f) => f.proto === "udp" && f.publicPort === port);
+}
+
 // 규칙 20b: 공유기 VPN 서버 (L2TP/IPsec) — 할당 IP 범위, 계정
-export function routerVpnRules({ t, add }: LintContext): void {
+export function routerVpnRules({ t, m, add }: LintContext): void {
   for (const d of t.devices) {
     const v = d.router?.vpnServer;
     if (!v?.enabled) continue;
@@ -229,6 +234,12 @@ export function routerVpnRules({ t, add }: LintContext): void {
       const da = validIp(r.dhcp.start);
       const db = validIp(r.dhcp.end);
       const inPool = (ip: string) => ipInt(ip)! >= ipInt(a)! && ipInt(ip)! <= ipInt(b)!;
+      // 같은 LAN(케이블로 이어진 세그먼트)의 장치가 할당 IP 안의 주소를 고정으로 씀
+      const lanKey = m.allGws.find((g) => g.device === d && g.gwKind === "router")?.key;
+      const taken = (lanKey ? (m.membersOf(lanKey)?.addrs ?? []) : []).filter((x) => x.device !== d && inPool(x.ip));
+      if (taken.length > 0) {
+        add({ deviceId: d.id, severity: "warn", code: "router.vpn-pool", message: `VPN 서버의 할당 IP 범위(${v.poolStart} ~ ${v.poolEnd})의 ${taken.map((x) => `${x.ip}(${x.device.name})`).join(", ")} 를 LAN 장치가 고정으로 씀 → 그 주소를 받은 VPN 기기와 충돌 (집 장치의 패킷이 VPN 기기가 아니라 그 장치로 감)`, fix: `${d.name} → VPN 서버 → 할당 IP 를 쓰지 않는 주소로, 또는 그 장치의 주소를 바꾸기`, related: taken.map((x) => x.device.id) });
+      }
       if (lanIp && inPool(lanIp)) {
         add({ deviceId: d.id, severity: "error", code: "router.vpn-pool", message: `VPN 서버의 할당 IP 범위(${v.poolStart} ~ ${v.poolEnd})에 공유기 자신의 LAN 주소 ${lanIp} 가 들어 있음 → 그 주소를 받은 기기와 공유기가 충돌`, fix: `${d.name} → VPN 서버 → 할당 IP 에서 ${lanIp} 를 빼기` });
       } else if (r.dhcp.enabled && da && db && ipInt(da)! <= ipInt(b)! && ipInt(a)! <= ipInt(db)!) {
@@ -249,7 +260,14 @@ function l2tpClientRules(d: Device, server: string, devices: Device[], add: Lint
     add({ deviceId: d.id, severity: "error", code: "ra.type-mismatch", message: `${ikev2.name} 는 회사 원격 접속 VPN(IKEv2) 서버인데 이 클라이언트는 L2TP/IPsec 으로 접속 → 서버가 IKEv1 에 답하지 않아 접속 실패`, fix: `${d.name} 의 VPN → 종류를 IKEv2 로`, related: [ikev2.id] });
     return;
   }
-  const srv = devices.find((x) => x !== d && routerWanIp(x) === server);
+  let srv = devices.find((x) => x !== d && routerWanIp(x) === server);
+  // 공유기 뒤 공유기: 앞 공유기가 VPN 서버를 켜지 않고 UDP 500 을 안쪽으로 포워딩하면 그 대상(수동 WAN 주소의 공유기)이 서버. 대상을 모르면 침묵
+  for (let hop = 0; srv && !srv.router?.vpnServer?.enabled && hop < 4; hop++) {
+    const fwd = udpForward(srv, IKE_PORT);
+    if (!fwd) break;
+    const lan = validIp(fwd.lanIp);
+    srv = lan ? devices.find((x) => x !== d && routerWanIp(x) === lan) : undefined;
+  }
   if (!srv) return;
   const v = srv.router!.vpnServer;
   if (!v?.enabled) {

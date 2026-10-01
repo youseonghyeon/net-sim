@@ -1014,6 +1014,15 @@ export class Host implements SimNode {
         return;
       }
     }
+    // VPN 을 끈 직후·종류를 바꾼 직후 늦게 온 IKE·ESP: 지금 VPN 클라이언트가 받지 않은 것은 조용히 버린다 —
+    // 호스트로 넘기면 "UDP 포트를 듣는 프로그램 없음" + ICMP Port Unreachable 이 서버로 샌다 (OS 의 IPsec 서비스는 VPN 을 꺼도 500·4500 을 쥐고 있다)
+    if (pkt.dst === this.iface.ip) {
+      const p = pkt.payload;
+      if (p.kind === "esp" || (p.kind === "udp" && (p.payload.kind === "ike" || p.payload.kind === "esp"))) {
+        ctx.trace("vpn.drop", "L3", `${p.kind === "udp" && p.payload.kind === "ike" ? `IKE ${p.payload.exchange}` : "ESP"} 수신 (from ${pkt.src}) → 지금 VPN 연결의 것이 아님 (끊었거나 종류를 바꾼 뒤 늦게 온 패킷) → 무시`, { from: pkt.src, late: true }, frameId);
+        return;
+      }
+    }
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
       const m = udp.payload;

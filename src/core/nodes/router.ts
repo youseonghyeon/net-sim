@@ -154,6 +154,7 @@ export class Router implements SimNode {
       send: (outer, ctx) => this.wan.sendIp(outer, ctx, this.emitWan(ctx)),
       dns: () => (this.dnsForwarder.config.enabled ? this.lan.ip : undefined),
       lan: () => (this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined),
+      wanIp: () => this.wan.ip,
     });
     if (cfg.vpnServer) this.vpnServer.config = { ...cfg.vpnServer, users: cfg.vpnServer.users.map((u) => ({ ...u })) };
     this.lan.proxyArp = (ip) => this.vpnServer.owns(ip);
@@ -345,7 +346,9 @@ export class Router implements SimNode {
       }
       ctx.trace("link.down", "L1", `wan 포트 링크 다운`, { port });
       this.wan6.linkDown();
-      this.vpnServer.clear(); // 공인 주소를 잃으면 VPN 접속도 끝 (노트북은 다시 연결해야 한다)
+      // 자동(DHCP) WAN 은 공인 주소를 잃으니 VPN 연결도 끝 — 노트북이 다음에 보내면 INVALID-SPI 로 알려 다시 접속시킨다.
+      // 수동 WAN 은 주소가 그대로라 잠깐 끊겼다 이어져도 연결을 유지한다 (실제 IPsec SA 도 링크 깜빡임에 지워지지 않는다)
+      if (this.wanMode === "dhcp") this.vpnServer.clear();
       // ISP 와 끊기면 위임도 끝: LAN 에서 그 프리픽스를 거둔다 (다시 이어지면 새로 요청)
       this.pd.stop(ctx, this.emitWan(ctx));
       this.wan.clearPending();
@@ -643,7 +646,7 @@ export class Router implements SimNode {
         if (inner) this.routeFromVpn(inner, frameId, ctx);
         if (inner !== undefined) return;
       }
-    }
+    } else if (this.vpnServerHint(pkt, frameId, ctx)) return;
     // UDP 포트 포워딩 규칙이 있는 포트(예: 53 → 안쪽 DNS 서버)는 내가 받지 않고 아래 NAT 역변환으로 안에 넘긴다
     const udpForwarded = pkt.payload.kind === "udp" && this.nat.forwards.some((r) => r.proto === "udp" && r.publicPort === (pkt.payload as { dstPort: number }).dstPort);
     if (!udpForwarded && pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dns" && pkt.payload.dstPort === DNS_PORT) {
@@ -672,6 +675,18 @@ export class Router implements SimNode {
     const inner: Ipv4Packet = { ...restored, ttl: pkt.ttl - 1 };
     ctx.trace("ip.forward", "L3", `라우팅: ${inner.dst} 는 LAN 안 → LAN 인터페이스로 전달 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: inner.dst }, frameId);
     this.lan.sendIp(inner, ctx, this.emitLan(ctx));
+  }
+
+  /**
+   * VPN 서버가 꺼져 있는데 L2TP/IPsec 협상(IKE 요청)이 옴 (그 포트의 UDP 포워딩 규칙이 없을 때): "포트 포워딩 규칙을 추가하라" 대신 VPN 서버가 꺼졌다고 알린다
+   */
+  private vpnServerHint(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): boolean {
+    // IKE 요청만 본다: ESP 는 방향을 알 수 없다 (이 공유기 뒤 노트북이 받는 응답 ESP 는 NAT 역변환으로 넘겨야 한다)
+    const p = pkt.payload;
+    if (p.kind !== "udp" || p.payload.kind !== "ike" || p.payload.l2tp !== true || p.payload.response) return false;
+    if (this.nat.forwards.some((r) => r.proto === "udp" && r.publicPort === p.dstPort)) return false;
+    ctx.trace("ip.drop", "L4", `L2TP/IPsec VPN 협상 요청 (IKE, from ${pkt.src}) → 이 공유기의 VPN 서버가 꺼져 있어 받지 않음, 드롭 (설정의 "VPN 서버" 를 켜세요)`, { from: pkt.src }, frameId);
+    return true;
   }
 
   /** VPN 클라이언트(노트북)가 터널로 보낸 패킷: 공유기 자신·집 LAN·다른 VPN 클라이언트·인터넷 (LAN 호스트가 보낸 것처럼) */
@@ -730,6 +745,10 @@ export class Router implements SimNode {
     // LAN 기기가 VPN 클라이언트에게 (프록시 ARP 로 공유기 MAC 에 보냄)
     if (this.vpnServer.owns(pkt.dst)) {
       this.toVpnClient(pkt, frameId, ctx);
+      return;
+    }
+    if (this.vpnServer.inPool(pkt.dst)) {
+      ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 는 VPN 할당 IP 인데 지금 그 주소로 붙어 있는 VPN 기기가 없음 (끊긴 기기에 대신 답했던 프록시 ARP 가 보낸 쪽 캐시에 남음) → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
     if (sameSubnet(pkt.dst, this.lan.ip!, this.lan.prefix)) {
@@ -801,6 +820,12 @@ export class Router implements SimNode {
     if (tag === "arp-timeout") {
       // 바깥에서 들어와(포트 포워딩·NAT 역변환) LAN 호스트로 가려던 패킷의 주인이 없음 → 바깥의 보낸 이에게 Host Unreachable
       for (const pkt of this.lan.onArpTimeout(data, ctx)) {
+        if (this.vpnServer.owns(pkt.src)) {
+          // VPN 기기가 보낸 것: 통지는 LAN 주소에서 그 기기로 (lan.outbound 가 터널에 싣는다)
+          const notice = this.lan.unreachable(pkt, "host", ctx);
+          if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
+          continue;
+        }
         if (!this.wan.ip || sameSubnet(pkt.src, this.lan.ip!, this.lan.prefix)) continue;
         const notice = this.lan.unreachable(pkt, "host", ctx);
         const out = notice ? this.nat.translate(notice, this.wan.ip, ctx) : undefined;

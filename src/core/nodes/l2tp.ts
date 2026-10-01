@@ -9,8 +9,8 @@
 //   - 노트북은 공유기 LAN 대역의 주소를 받는다 (예: 192.168.0.50) — 공유기가 그 주소의 ARP 에 대신 답해(프록시 ARP) 집 장치들이 LAN 안의 기기처럼 본다
 //   - 모든 트래픽이 집으로 간다 (full tunnel — Windows·iOS 의 기본값) → 해외에서도 집 공유기의 공인 주소(한국 IP)로 인터넷에 나간다
 // 재협상·LCP 협상·L2TP 의 신뢰성 있는 제어 채널(Ns/Nr)·Hello 는 생략. DPD 는 없다 (L2TP/IPsec 은 보통 쓰지 않음)
-import { intToIp, ipToInt, sameSubnet, type Ip } from "../addr";
-import { IKE_PORT, L2TP_PORT, NAT_T_PORT, l2tpPartLabel, type EspPacket, type IkeMessage, type Ipv4Packet, type L2tpPacket } from "../packet";
+import { intToIp, ipToInt, prefixToMask, type Ip } from "../addr";
+import { IKE_PORT, L2TP_PORT, NAT_T_PORT, l2tpPartLabel, type EspPacket, type IkeMessage, type Ipv4Packet, type L2tpPacket, type PppFrame } from "../packet";
 import { IKE_RETRANSMITS, IKE_TIMEOUT, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
 import type { NodeContext } from "./node";
 import { RA_TIMER_TAG, type RaClientConfig, type RaClientState, type RaIo } from "./ravpn";
@@ -36,6 +36,8 @@ export interface L2tpServerHost {
   dns(): Ip | undefined;
   /** 공유기 LAN 대역 (할당 주소가 그 안이어야 집 장치들이 LAN 기기처럼 본다) */
   lan(): { ip: Ip; prefix: number } | undefined;
+  /** 공유기 WAN 주소 (서버가 먼저 보내는 알림 — 설정 변경으로 끊을 때의 StopCCN) */
+  wanIp(): Ip | undefined;
 }
 
 /** 붙어 있는(또는 붙는 중인) 클라이언트 하나: ESP SA 와 그 위의 L2TP 터널·세션·PPP 상태 */
@@ -51,6 +53,8 @@ interface ServerSa {
   user?: string;
   /** IPCP 로 준 주소 */
   vip?: Ip;
+  /** 거절로 끝남 (CHAP Failure·IPCP Nak): 표에서 빠지고, 같은 요청이 다시 오면(거절이 사라짐) 이 거절을 다시 보낸다 */
+  failed?: PppFrame;
 }
 
 const CONTROL_LABEL: Record<NonNullable<L2tpPacket["control"]>, string> = {
@@ -94,6 +98,8 @@ export class L2tpServer {
       if (cfg.enabled) ctx.trace("vpn.config", "sys", `VPN 서버 계정 변경: ${cfg.users.map((u) => u.name).join(", ") || "없음 (아무도 접속할 수 없음)"} — 붙어 있는 세션은 끊지 않음`, { users: cfg.users.map((u) => u.name) });
       return;
     }
+    // 붙어 있던(L2TP 터널까지 연) 클라이언트에게 끊는다고 알린다 (실제는 xl2tpd·charon 재시작) — 말없이 지우면 노트북은 계속 "연결됨"
+    this.hangUpAll(cfg.enabled ? "VPN 서버 설정이 바뀜" : "VPN 서버를 끔", ctx);
     this.config = { ...cfg, users: cfg.users.map((u) => ({ ...u })) };
     this.sas.clear();
     this.byVip.clear();
@@ -108,6 +114,14 @@ export class L2tpServer {
         : "VPN 서버 꺼짐",
       { enabled: cfg.enabled, poolStart: cfg.poolStart, poolEnd: cfg.poolEnd, users: cfg.users.map((u) => u.name) },
     );
+  }
+
+  private hangUpAll(why: string, ctx: NodeContext): void {
+    const me = this.host.wanIp();
+    const open = [...this.sas.values()].filter((s) => s.tunnelId !== undefined && !s.failed);
+    if (!me || open.length === 0) return;
+    ctx.trace("vpn.drop", "L4", `VPN 서버: ${why} → L2TP 터널을 연 ${open.length}개 연결에 터널 끊기(StopCCN)를 보내고 세션을 비움 (노트북은 끊김으로 바뀌어 다시 연결해야 함)`, { l2tp: "StopCCN", count: open.length });
+    for (const s of open) this.sendL2tp(s, me, { kind: "l2tp", tunnelId: s.tunnelId!, sessionId: s.sessionId ?? 0, control: "StopCCN" }, ctx);
   }
 
   /** PPP 까지 끝나 주소를 받은 클라이언트 */
@@ -142,11 +156,21 @@ export class L2tpServer {
     } catch {
       return undefined;
     }
+    // LAN 대역 밖은 줄 수 없다 (집 장치가 LAN 기기로 보지 못함) — 범위를 LAN 의 호스트 주소(네트워크·브로드캐스트 주소 제외)로 좁힌다.
+    // 한 칸씩 건너뛰며 훑으면 시작을 잘못 넣었을 때(10.0.0.1 ~ 192.168.0.59) 수십억 번 돈다
     const lan = this.host.lan();
-    for (let n = a; n <= b; n++) {
+    let lo = a;
+    let hi = b;
+    if (lan) {
+      const mask = prefixToMask(lan.prefix);
+      const net = (ipToInt(lan.ip) & mask) >>> 0;
+      const bcast = (net | ~mask) >>> 0;
+      lo = Math.max(a, net + 1);
+      hi = Math.min(b, bcast - 1);
+    }
+    for (let n = lo; n <= hi; n++) {
       const ip = intToIp(n);
-      if (lan && !sameSubnet(ip, lan.ip, lan.prefix)) continue; // LAN 대역 밖은 줄 수 없다 (집 장치가 LAN 기기로 보지 못함)
-      if (used.has(ip) || [...this.leases.entries()].some(([k, v]) => v === ip && k !== cid)) continue;
+      if (ip === lan?.ip || used.has(ip) || [...this.leases.entries()].some(([k, v]) => v === ip && k !== cid)) continue;
       return ip;
     }
     // 빈 주소가 없으면 지금 붙어 있지 않은 클라이언트의 지난 임대를 넘긴다
@@ -168,9 +192,10 @@ export class L2tpServer {
     const me = outer.dst;
     const key = `${outer.src}:${m.spi}`;
     if (m.exchange === "MAIN_MODE" && m.auth === undefined) {
-      const { nat } = natAtResponder(m, outer.src, me);
+      const { nat, remoteNat, localNat } = natAtResponder(m, outer.src, me);
       this.mm.set(key, nat);
-      ctx.trace("vpn.ike", "L4", `VPN 서버: ${outer.src} 의 IKE Main Mode (암호 방식·키 교환·NAT 감지) → 응답. NAT ${nat ? "있음 (클라이언트가 공유기 뒤 — 이후 UDP 4500, NAT-T)" : "없음"}`, { from: outer.src, nat, l2tp: true }, frameId);
+      const where = remoteNat && localNat ? "클라이언트와 이 공유기 모두 NAT 뒤" : remoteNat ? "클라이언트가 공유기 뒤" : "이 공유기 앞에 NAT — 공유기 뒤 공유기";
+      ctx.trace("vpn.ike", "L4", `VPN 서버: ${outer.src} 의 IKE Main Mode (암호 방식·키 교환·NAT 감지) → 응답. NAT ${nat ? `있음 (${where} — 이후 UDP 4500, NAT-T)` : "없음"}`, { from: outer.src, nat, remoteNat, localNat, l2tp: true }, frameId);
       this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "MAIN_MODE", response: true, spi: m.spi, nat, natSrc: me, natDst: outer.src, l2tp: true }, ctx, frameId);
       return true;
     }
@@ -182,7 +207,7 @@ export class L2tpServer {
         return true;
       }
       if ((m.auth ?? "") !== this.config.psk) {
-        this.mm.delete(key);
+        // 협상 기록은 남겨 둔다: 이 거절이 사라져 같은 인증이 다시 오면 같은 거절을 다시 보내야 노트북이 이유("사전 공유 키가 다름")를 안다
         ctx.trace("vpn.drop", "L4", `VPN 서버: ${outer.src} 의 IPsec 인증 실패 — 사전 공유 키가 다름 → AUTHENTICATION-FAILED`, { from: outer.src, l2tp: true }, frameId);
         this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "MAIN_MODE", response: true, spi: m.spi, error: "AUTHENTICATION_FAILED", l2tp: true }, ctx, frameId);
         return true;
@@ -240,10 +265,19 @@ export class L2tpServer {
   receive(outer: Ipv4Packet, srcPort: number | undefined, esp: EspPacket, ctx: NodeContext, frameId?: number): Ipv4Packet | null | undefined {
     if (!this.config.enabled) return undefined;
     const s = this.sas.get(esp.spi);
-    if (!s) return undefined;
+    if (!s) return this.orphan(outer, srcPort, esp, ctx, frameId);
     // 클라이언트 쪽 NAT 매핑이 바뀌었으면 그쪽으로 답한다
     s.peer = { ip: outer.src, port: s.natT ? (srcPort ?? s.peer.port) : s.peer.port };
     const u = esp.inner.payload;
+    if (s.failed) {
+      // 거절한 요청이 다시 옴 (거절이 사라짐): 같은 거절을 다시 — 그래야 노트북이 timeout 이 아니라 진짜 이유로 끝난다
+      const p0 = u.kind === "udp" && u.payload.kind === "l2tp" ? u.payload.ppp : undefined;
+      if (p0 && (p0.proto === "chap" || p0.proto === "ipcp")) {
+        ctx.trace("vpn.drop", "L4", `VPN 서버: 이미 거절한 ${p0.proto === "chap" ? "계정 인증 (CHAP)" : "주소 요청 (IPCP)"} 이 다시 옴 (지난 거절이 사라진 것) → 같은 거절을 다시 보냄`, { from: outer.src, resent: true }, frameId);
+        this.sendL2tp(s, outer.dst, { kind: "l2tp", tunnelId: s.tunnelId ?? 0, sessionId: s.sessionId ?? 0, ppp: s.failed }, ctx, frameId);
+      }
+      return null;
+    }
     if (u.kind !== "udp" || u.payload.kind !== "l2tp" || u.dstPort !== L2TP_PORT) {
       ctx.trace("vpn.drop", "L3", `VPN 서버: ESP 안이 L2TP(UDP 1701)가 아님 → 드롭 (이 SA 는 L2TP 만 보호한다)`, { from: outer.src }, frameId);
       return null;
@@ -281,8 +315,9 @@ export class L2tpServer {
       const u2 = this.config.users.find((x) => x.name === p.user);
       if (!u2 || u2.password !== (p.secret ?? "")) {
         const why = !p.user ? "사용자 이름이 비어 있음" : !u2 ? `계정 ${p.user} 가 목록에 없음` : `${p.user} 의 비밀번호가 다름`;
-        ctx.trace("vpn.drop", "L4", `VPN 서버: ${outer.src} 의 PPP 계정 인증 실패 (CHAP) — ${why} → CHAP Failure`, { from: outer.src, user: p.user, ppp: "failure" }, frameId);
-        reply({ proto: "chap", code: "failure" });
+        ctx.trace("vpn.drop", "L4", `VPN 서버: ${outer.src} 의 PPP 계정 인증 실패 (CHAP) — ${why} → CHAP Failure, 이 연결을 닫음`, { from: outer.src, user: p.user, ppp: "failure" }, frameId);
+        s.failed = { proto: "chap", code: "failure" };
+        reply(s.failed);
         return null;
       }
       s.user = u2.name;
@@ -298,8 +333,9 @@ export class L2tpServer {
       // 이미 준 주소가 있으면(응답이 사라져 다시 옴) 같은 것을
       const vip = s.vip ?? this.allocate(s.cid);
       if (!vip) {
-        ctx.trace("vpn.drop", "L4", `VPN 서버: 할당 IP ${this.config.poolStart} ~ ${this.config.poolEnd} 에 줄 주소가 없음 (다 찼거나 LAN 대역 밖) → IPCP Nak`, { from: outer.src }, frameId);
-        reply({ proto: "ipcp", code: "configure-nak" });
+        ctx.trace("vpn.drop", "L4", `VPN 서버: 할당 IP ${this.config.poolStart} ~ ${this.config.poolEnd} 에 줄 주소가 없음 (다 찼거나 LAN 대역 밖) → IPCP Nak, 이 연결을 닫음`, { from: outer.src }, frameId);
+        s.failed = { proto: "ipcp", code: "configure-nak" };
+        reply(s.failed);
         return null;
       }
       if (!s.vip) {
@@ -310,7 +346,7 @@ export class L2tpServer {
         ctx.trace(
           "vpn.up",
           "L4",
-          `VPN 접속 수립 (L2TP/IPsec): ${s.user} 에게 집 LAN 주소 ${vip} 를 줌 (IPCP) → 공유기가 ${vip} 의 ARP 에 대신 답해(프록시 ARP) 집 장치들이 LAN 안의 기기처럼 보고, 이 기기의 인터넷도 집 공유기를 거쳐 나간다`,
+          `VPN 서버: 접속 수립 (L2TP/IPsec) — ${s.user} 에게 집 LAN 주소 ${vip} 를 줌 (IPCP) → 공유기가 ${vip} 의 ARP 에 대신 답해(프록시 ARP) 집 장치들이 LAN 안의 기기처럼 보고, 이 기기의 인터넷도 집 공유기를 거쳐 나간다`,
           { peer: outer.src, vip, user: s.user, natT: s.natT, l2tp: true },
           frameId,
         );
@@ -346,8 +382,21 @@ export class L2tpServer {
     return true;
   }
 
+  /**
+   * 내 SA 가 아닌 ESP: 안이 L2TP 면 공유기가 잊은 연결(설정 변경·WAN 주소를 잃음)이다 → INVALID-SPI 로 알려 노트북이 다시 접속하게.
+   * 말없이 버리면 노트북은 계속 "연결됨" 인 채 모든 트래픽을 잃는다. L2TP 가 아니면(공유기 뒤 IKEv2 서버로 포워딩할 ESP) undefined
+   */
+  private orphan(outer: Ipv4Packet, srcPort: number | undefined, esp: EspPacket, ctx: NodeContext, frameId?: number): null | undefined {
+    const u = esp.inner.payload;
+    if (!esp.transport || u.kind !== "udp" || u.payload.kind !== "l2tp") return undefined;
+    ctx.trace("vpn.drop", "L4", `VPN 서버: 모르는 연결(SPI 0x${hex(esp.spi)})의 L2TP/IPsec 패킷 (from ${outer.src}) — 공유기가 그 연결을 잊음(설정 변경·WAN 주소를 잃음) → INVALID-SPI 로 알림 (노트북이 다시 접속)`, { from: outer.src, l2tp: true, invalid: true }, frameId);
+    const port = srcPort !== undefined ? NAT_T_PORT : IKE_PORT;
+    this.sendIke(outer.dst, outer.src, port, srcPort ?? IKE_PORT, { kind: "ike", exchange: "INFORMATIONAL", response: true, spi: esp.spi, error: "INVALID_SPI", l2tp: true }, ctx, frameId);
+    return null;
+  }
+
   rows(): string[][] {
-    return [...this.sas.values()].map((s) => [s.user ?? "-", s.vip ?? (s.user ? "주소 대기" : "인증 대기"), `${s.peer.ip}${s.natT ? `:${s.peer.port}` : ""}`, s.natT ? "NAT-T" : "ESP"]);
+    return [...this.sas.values()].filter((s) => !s.failed).map((s) => [s.user ?? "-", s.vip ?? (s.user ? "주소 대기" : "인증 대기"), `${s.peer.ip}${s.natT ? `:${s.peer.port}` : ""}`, s.natT ? "NAT-T" : "ESP"]);
   }
 
   /** 요약: 접속 수와 "kim 192.168.0.50" */
@@ -437,14 +486,14 @@ export class L2tpClient {
     this.ike.request(me, server, port, msg, ctx);
   }
 
-  private fail(why: string, ctx: NodeContext, frameId?: number): void {
+  private fail(why: string, ctx: NodeContext, frameId?: number, label = "VPN 접속 실패"): void {
     this.state = "failed";
     this.reason = why;
     this.ike.clear();
     this.last = undefined;
     this.vip = undefined;
     this.dns = undefined;
-    ctx.trace("vpn.drop", "L4", `VPN 접속 실패 (L2TP/IPsec): ${why}`, { l2tp: true }, frameId);
+    ctx.trace("vpn.drop", "L4", `${label} (L2TP/IPsec): ${why}`, { l2tp: true }, frameId);
   }
 
   onTimer(data: unknown, ctx: NodeContext): void {
@@ -479,13 +528,20 @@ export class L2tpClient {
       ctx.trace("vpn.ike", "L4", `VPN (L2TP/IPsec): 지난 협상(SPI 0x${hex(m.spi)})의 늦게 온 응답 → 무시`, { from: outer.src, late: true }, frameId);
       return true;
     }
+    if (m.exchange === "INFORMATIONAL" && m.error === "INVALID_SPI") {
+      if (this.state !== "up") return true;
+      ctx.trace("vpn.ike", "L4", `VPN (L2TP/IPsec): 공유기가 이 연결을 모른다고 알림 (INVALID-SPI — 공유기 설정 변경·WAN 주소를 잃음 등) → 다시 접속`, { from: outer.src, l2tp: true, invalid: true }, frameId);
+      this.reset("off");
+      this.connect(ctx);
+      return true;
+    }
     const me = outer.dst;
     if (m.exchange === "MAIN_MODE" && this.phase === "mm1") {
-      const { localNat, natT } = natAtInitiator(m, outer.src, me);
+      const { localNat, remoteNat, natT } = natAtInitiator(m, outer.src, me);
       this.sa = { ...this.sa, natT };
       this.state = "auth";
       this.phase = "mm2";
-      ctx.trace("vpn.ike", "L4", `VPN (L2TP/IPsec): Main Mode 응답 (NAT ${natT ? `${localNat ? "내 앞(호텔·카페 공유기)" : "서버 앞"}에 있음 → 여기부터 UDP 4500` : "없음"}) → 사전 공유 키로 만든 인증 값을 보냄`, { from: outer.src, natT, l2tp: true }, frameId);
+      ctx.trace("vpn.ike", "L4", `VPN (L2TP/IPsec): Main Mode 응답 (NAT ${natT ? `${localNat ? "내 앞(호텔·카페 공유기)" : "서버 앞"}에 있음 → 여기부터 UDP 4500` : "없음"}) → 사전 공유 키로 만든 인증 값을 보냄`, { from: outer.src, natT, localNat, remoteNat, l2tp: true }, frameId);
       this.request({ kind: "ike", exchange: "MAIN_MODE", response: false, spi: this.sa.spi, auth: this.config.psk, l2tp: true, cid: this.cid }, natT ? NAT_T_PORT : IKE_PORT, ctx);
       return true;
     }
@@ -554,7 +610,8 @@ export class L2tpClient {
       return null;
     }
     if (l.control === "CDN" || l.control === "StopCCN") {
-      this.lost(ctx, `서버가 연결을 끊음 (${CONTROL_LABEL[l.control]})`);
+      // 공유기가 먼저 끊음 (설정 변경·VPN 서버 끔): 실패로 두고 "다시 연결" 을 기다린다 (Windows 도 끊김으로 남는다)
+      this.fail(`공유기가 연결을 끊음 (${CONTROL_LABEL[l.control]}) — 공유기 VPN 서버의 설정이 바뀌었거나 꺼짐. 확인한 뒤 "다시 연결"`, ctx, frameId, "VPN 끊김");
       return null;
     }
     const p = l.ppp;
@@ -669,7 +726,7 @@ export class L2tpClient {
     if (!this.config.enabled) return undefined;
     if (this.state === "up") return `연결됨 (L2TP/IPsec) · 집 LAN 주소 ${this.vip} · 모든 트래픽을 집으로 (full tunnel)`;
     if (this.state === "init" || this.state === "auth") return `연결 중 (${PHASE_LABEL[this.phase]})`;
-    if (this.state === "failed") return `실패 · ${this.reason ?? ""}`;
+    if (this.state === "failed") return `${this.reason?.startsWith("공유기가 연결을 끊음") ? "끊김" : "실패"} · ${this.reason ?? ""}`;
     return "대기 (주소를 받으면 접속)";
   }
 }

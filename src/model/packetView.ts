@@ -333,7 +333,7 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
   });
   if (l4.kind === "icmp") layers.push(icmpLayer(l4));
   else if (l4.kind === "tcp") layers.push(...tcpLayers(l4));
-  else if (l4.kind === "esp") layers.push(espLayer(l4, false), ...ipLayers(l4.inner, true));
+  else if (l4.kind === "esp") layers.push(espLayer(l4, false), ...espInner(l4));
   else if (l4.kind === "pfsync")
     layers.push({
       title: "세션 동기화 (pfsync)",
@@ -356,7 +356,7 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
     });
   else {
     layers.push(...udpLayers(l4));
-    if (l4.payload.kind === "esp") layers.push(espLayer(l4.payload, true), ...ipLayers(l4.payload.inner, true));
+    if (l4.payload.kind === "esp") layers.push(espLayer(l4.payload, true), ...espInner(l4.payload));
     if (l4.payload.kind === "vpn") {
       const inner = l4.payload.inner;
       layers.push({
@@ -379,10 +379,23 @@ function espLayer(e: EspPacket, natT: boolean): HeaderLayer {
     rows: [
       ["SPI", `0x${e.spi.toString(16).padStart(8, "0")} (이 터널의 번호)`],
       ["순서 번호", `${e.seq} (재전송 공격 방지)`],
-      ["안쪽", "암호화됨 — 인터넷 위의 장비는 아래 원래 패킷을 볼 수 없다"],
-      ["원래 패킷 (복호화하면)", `${e.inner.src} → ${e.inner.dst}`],
+      ...(e.transport
+        ? ([
+            ["모드", "전송 모드 — 바깥 IP 헤더를 그대로 두고 그 뒤(UDP 1701 L2TP)만 암호화. 안쪽 IP 헤더가 따로 없다"],
+            ["안쪽", "암호화됨 — 인터넷 위의 장비는 아래 L2TP·PPP 를 볼 수 없다"],
+          ] as [string, string][])
+        : ([
+            ["안쪽", "암호화됨 — 인터넷 위의 장비는 아래 원래 패킷을 볼 수 없다"],
+            ["원래 패킷 (복호화하면)", `${e.inner.src} → ${e.inner.dst}`],
+          ] as [string, string][])),
     ],
   };
+}
+
+/** ESP 의 안쪽: 터널 모드는 원래 IP 패킷 통째, 전송 모드(L2TP/IPsec)는 IP 헤더 없이 그 뒤(UDP 1701)부터 */
+function espInner(e: EspPacket): HeaderLayer[] {
+  if (e.transport && e.inner.payload.kind === "udp") return udpLayers(e.inner.payload).map((l) => ({ ...l, title: `ESP 안 · ${l.title}` }));
+  return ipLayers(e.inner, true);
 }
 
 function ikeLayer(m: IkeMessage): HeaderLayer {
@@ -881,11 +894,15 @@ function l2tpLines(ev: TraceEvent, ip: Ipv4Packet | undefined, out: Practitioner
       else if (!server && detail(ev, "spi") !== undefined) charon(`07[IKE] initiating Main Mode IKE_SA L2TP-PSK[1] to ${detail(ev, "peer") ?? "?"}`);
       else if (server && detail(ev, "nat") !== undefined) {
         charon(`05[IKE] ${from} is initiating a Main Mode IKE_SA`);
-        if (detail(ev, "nat") === "true") charon(`05[IKE] remote host is behind NAT`);
+        if (detail(ev, "localNat") === "true") charon(`05[IKE] local host is behind NAT, sending keep alives`);
+        if (detail(ev, "remoteNat") === "true") charon(`05[IKE] remote host is behind NAT`);
       } else if (server && detail(ev, "spi") !== undefined) charon(`07[IKE] CHILD_SA L2TP-PSK{1} established with SPIs ${Number(detail(ev, "spi")).toString(16).padStart(8, "0")}_i … and TS ${ip?.dst ?? "?"}/32[udp/l2f] === ${from}/32[udp/l2f]`);
       else if (ev.summary.includes("사전 공유 키 확인")) charon(`06[IKE] IKE_SA L2TP-PSK[1] established between ${ip?.dst ?? "?"}[${ip?.dst ?? "?"}]...${from}[${from}]`);
       else if (ev.summary.includes("IPsec SA 수립")) charon(`07[IKE] CHILD_SA L2TP-PSK{1} established … and TS ${ip?.dst ?? "?"}/32[udp/l2f] === ${from}/32[udp/l2f]`);
-      else if (detail(ev, "natT") === "true") charon(`08[IKE] local host is behind NAT, sending keep alives`);
+      else if (detail(ev, "natT") === "true") {
+        if (detail(ev, "localNat") === "true") charon(`08[IKE] local host is behind NAT, sending keep alives`);
+        if (detail(ev, "remoteNat") === "true") charon(`08[IKE] remote host is behind NAT`);
+      }
       break;
     case "vpn.eap":
       if (server && ppp === "challenge") pppd(`sent [CHAP Challenge id=0x1 <…>, name = "l2tpd"]`);
