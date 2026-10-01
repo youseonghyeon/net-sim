@@ -201,7 +201,10 @@ export function analyze(t: Topology): Model {
   // 투명 방화벽(IP 없는 브리지)은 L2 로는 전선과 같다: 양쪽 케이블을 하나로 접어 방화벽 너머의 장치끼리 직접 잇는다
   const rawLinks = [
     ...t.cables.map((c) => ({ a: c.a, b: c.b })),
-    ...wirelessLinks(t).map((l) => ({ a: { device: l.client, port: 0 }, b: { device: l.base, port: l.slot } })),
+    // 단말 쪽은 호스트 끝점(포트 0)으로 본다. 노트북의 대기 중 Wi-Fi(유선이 꽂힘)는 쓰지 않으므로 뺀다
+    ...wirelessLinks(t)
+      .filter((l) => !l.standby)
+      .map((l) => ({ a: { device: l.client, port: 0 }, b: { device: l.base, port: l.slot } })),
   ];
   const links: { a: PortRef; b: PortRef }[] = [];
   const isFw = (id: string) => byId.get(id)?.kind === "firewall";

@@ -175,7 +175,7 @@ function DevicePanel({ d }: { d: Device }) {
             )}
           </section>
           {issues.length > 0 && <LintSection issues={issues} withNames={false} />}
-          {d.wifi && <WifiClientSection d={d} />}
+          {(d.wifi || d.kind === "laptop") && <WifiClientSection d={d} />}
           {spec.ports.some((p) => !p.radio) && (
             <Section title="포트">
               {spec.ports.map((p, i) => {

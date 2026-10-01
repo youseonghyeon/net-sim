@@ -444,7 +444,7 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
             {wl.map((l) => {
               const seg = wirelessSegment(l, byId);
               if (!seg) return null;
-              return <line key={l.id} class="wifi-link" x1={seg.a.x} y1={seg.a.y} x2={seg.b.x} y2={seg.b.y} />;
+              return <line key={l.id} class={`wifi-link${l.standby ? " standby" : ""}`} x1={seg.a.x} y1={seg.a.y} x2={seg.b.x} y2={seg.b.y} />;
             })}
           </g>
           <g class="devices">

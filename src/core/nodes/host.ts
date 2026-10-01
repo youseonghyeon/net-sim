@@ -60,6 +60,8 @@ export interface HostConfig {
   ra?: RaClientConfig;
   /** IPv6 (없으면 꺼짐) */
   ipv6?: Ipv6Settings;
+  /** 노트북: 무선 NIC(wlan0, 포트 1)의 MAC. 있으면 유선(eth0, 포트 0)과 NIC 가 둘 — 유선이 살아 있으면 유선, 아니면 무선을 쓴다 */
+  wlanMac?: Mac;
 }
 
 export interface HttpProxySetting {
@@ -121,9 +123,17 @@ export class Host implements SimNode {
   static readonly TRACEROUTE_KEEP = 5;
 
   readonly type = "host" as const;
-  readonly portCount = 1;
+  readonly portCount: number;
   readonly id: string;
   readonly iface: NetInterface;
+  /**
+   * NIC (포트 번호 순). 노트북은 유선 eth0·무선 wlan0 둘이지만 IP 스택은 하나라 한 번에 하나만 쓴다:
+   * 유선이 살아 있으면 유선(실제 OS 의 인터페이스 메트릭처럼 유선 우선), 아니면 무선. 바꿔 끼우면 MAC 이 바뀌어 주소를 새로 받는다.
+   * lease = 그 NIC 로 마지막에 받은 DHCP 주소 (다시 그 NIC 로 돌아오면 INIT-REBOOT 로 확인)
+   */
+  readonly nics: { name: string; mac: Mac; up: boolean; lease?: Ip }[];
+  /** 지금 쓰는 NIC (포트 번호). 링크가 하나도 없으면 undefined */
+  activeNic: number | undefined;
   readonly dhcp: DhcpClient;
   readonly dhcpServer: DhcpServer;
   readonly dnsServer: DnsServer;
@@ -154,10 +164,17 @@ export class Host implements SimNode {
   private readonly trId: number;
   private trSeq = 0;
   private activeTrace: ActiveTrace | undefined;
-  private readonly emit = (ctx: NodeContext) => (f: EthernetFrame) => ctx.send(0, f);
+  private readonly emit = (ctx: NodeContext) => (f: EthernetFrame) => ctx.send(this.activeNic ?? 0, f);
 
   constructor(cfg: HostConfig) {
     this.id = cfg.id;
+    this.nics = cfg.wlanMac
+      ? [
+          { name: "eth0", mac: cfg.mac, up: false },
+          { name: "wlan0", mac: cfg.wlanMac, up: false },
+        ]
+      : [{ name: "eth0", mac: cfg.mac, up: false }];
+    this.portCount = this.nics.length;
     this.ipMode = cfg.ipMode ?? (cfg.ip ? "static" : "dhcp");
     this.iface = new NetInterface(cfg.mac, this.ipMode === "static" ? { ip: cfg.ip, prefix: cfg.prefix, gateway: cfg.gateway, dns: cfg.dns } : { prefix: cfg.prefix });
     this.icmpId = 0x1000 + (Math.abs(hashCode(cfg.id)) % 0x1000);
@@ -373,28 +390,94 @@ export class Host implements SimNode {
     if (this.linkUp) this.dhcp.release(ctx, this.emit(ctx));
   }
 
-  onLink(_port: number, up: boolean, ctx: NodeContext): void {
-    this.linkUp = up;
-    if (up) {
-      ctx.trace("link.up", "L1", `링크 연결됨`);
-      if (this.ipMode === "dhcp") this.dhcp.start(ctx, this.emit(ctx));
-      else if (this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
-      this.v6.linkUp(ctx, this.emit(ctx));
-      this.lb.ensureChecks(ctx); // 액티브 헬스 체크 (켜져 있으면)
+  onLink(port: number, up: boolean, ctx: NodeContext): void {
+    const nic = this.nics[port];
+    if (!nic) return;
+    nic.up = up;
+    if (this.nics.length === 1) {
+      this.activeNic = up ? 0 : undefined;
+      if (up) this.stackUp(ctx, "링크 연결됨");
+      else this.stackDown(ctx, "링크 다운", "링크 다운");
       return;
     }
-    ctx.trace("link.down", "L1", `링크 다운`);
+    // 노트북: 유선이 살아 있으면 유선, 아니면 무선
+    const want = this.nics[0]!.up ? 0 : this.nics[1]!.up ? 1 : undefined;
+    const from = this.activeNic;
+    const name = (i: number) => (i === 0 ? "유선(eth0)" : "Wi-Fi(wlan0)");
+    if (want === from) {
+      // 쓰지 않는 쪽만 바뀜 (유선을 쓰는 중에 Wi-Fi 가 붙거나 떨어짐)
+      ctx.trace(
+        up ? "link.up" : "link.down",
+        "L1",
+        up ? `${nic.name} 연결됨 → 지금 쓰는 ${name(from!)} 가 우선이라 대기 (유선이 끊기면 이쪽으로 넘어감)` : `${nic.name} 끊김 (대기 중이던 연결 — 지금 쓰는 ${name(from!)} 는 그대로)`,
+        { port, standby: true },
+      );
+      return;
+    }
+    if (from === undefined) {
+      this.useNic(want!);
+      this.stackUp(ctx, `${nic.name} 링크 연결됨 → ${name(want!)} 로 통신 (MAC ${this.iface.mac})`);
+      return;
+    }
+    if (want === undefined) {
+      this.stackDown(ctx, "링크 다운", `${nic.name} 링크 다운 (다른 NIC 도 연결돼 있지 않음)`);
+      this.activeNic = undefined;
+      return;
+    }
+    // 바꿔 낌: 쓰던 NIC 의 연결·주소를 내려놓고 다른 NIC(다른 MAC)로 처음부터
+    const oldMac = this.iface.mac;
+    const msg = up
+      ? `${nic.name} 링크 연결됨 → 유선이 우선이라 ${name(from)} 에서 ${name(want)} 로 전환`
+      : `${nic.name} 링크 다운 → 연결돼 있던 ${name(want)} 로 전환`;
+    this.stackDown(ctx, "NIC 전환", null);
+    this.useNic(want);
+    ctx.trace(
+      up ? "link.up" : "link.down",
+      "L1",
+      `${msg}: 다른 NIC 라 MAC 이 ${oldMac} → ${this.iface.mac} 로 바뀌어 주소를 새로 받는다 (열려 있던 TCP·VPN 은 끊김)`,
+      { port, from: this.nics[from]!.name, to: this.nics[want]!.name, mac: this.iface.mac },
+    );
+    this.stackUp(ctx, null);
+  }
+
+  /** 노트북: 쓸 NIC 를 바꿔 낌 (링크가 내려간 상태에서) — MAC 과 그 NIC 의 DHCP 기억을 바꾼다 */
+  private useNic(i: number): void {
+    const prev = this.activeNic;
+    if (prev !== undefined && prev !== i) this.nics[prev]!.lease = this.dhcp.remembered;
+    this.activeNic = i;
+    const nic = this.nics[i]!;
+    if (this.iface.mac !== nic.mac) {
+      this.iface.setMac(nic.mac);
+      this.v6.setMac(nic.mac);
+      this.dhcp.remembered = nic.lease;
+    }
+  }
+
+  /** 링크가 살아남 (또는 다른 NIC 로 바꿔 낀 뒤): 주소 받기·IPv6·헬스 체크를 시작 */
+  private stackUp(ctx: NodeContext, msg: string | null): void {
+    this.linkUp = true;
+    if (msg) ctx.trace("link.up", "L1", msg);
+    if (this.ipMode === "dhcp") this.dhcp.start(ctx, this.emit(ctx));
+    else if (this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
+    this.v6.linkUp(ctx, this.emit(ctx));
+    this.lb.ensureChecks(ctx); // 액티브 헬스 체크 (켜져 있으면)
+  }
+
+  /** 링크가 내려감 (또는 다른 NIC 로 바꿔 끼기 전): 연결·대기열을 정리하고 DHCP 주소를 내려놓는다 */
+  private stackDown(ctx: NodeContext, why: string, msg: string | null): void {
+    this.linkUp = false;
+    if (msg) ctx.trace("link.down", "L1", msg);
     this.v6.linkDown();
-    this.ra.lost(ctx, "링크 다운");
+    this.ra.lost(ctx, why);
     this.iface.clearPending();
-    this.tcp.abortAll("링크 다운", ctx);
-    this.cancelTraceroute("링크 다운", ctx);
-    this.resolver.clear("링크 다운");
+    this.tcp.abortAll(why, ctx);
+    this.cancelTraceroute(why, ctx);
+    this.resolver.clear(why);
     if (this.ipMode === "dhcp") {
       const had = this.iface.ip;
       this.iface.clearAddress();
       this.dhcp.stop();
-      if (had) ctx.trace("dhcp.release", "app", `링크 다운으로 임대 주소 ${had} 해제 → IP 미설정`, { ip: had });
+      if (had) ctx.trace("dhcp.release", "app", `${why}으로 임대 주소 ${had} 해제 → IP 미설정`, { ip: had });
     }
   }
 
@@ -904,8 +987,10 @@ export class Host implements SimNode {
 
   // ---------- 수신 ----------
 
-  receive(_port: number, frame: EthernetFrame, ctx: NodeContext): void {
+  receive(port: number, frame: EthernetFrame, ctx: NodeContext): void {
     this.clock = ctx.now;
+    // 노트북의 쉬고 있는 NIC (유선을 쓰는 중에 붙어 있는 Wi-Fi 등) 로 온 프레임은 IP 스택에 올리지 않는다
+    if (port !== (this.activeNic ?? port)) return;
     if (frame.vlan !== undefined) {
       ctx.trace("vlan.drop", "L2", `VLAN ${frame.vlan} 태그가 달린 프레임 → 호스트는 태그를 이해하지 못해 드롭 (스위치 포트를 액세스로 바꾸세요)`, { vlan: frame.vlan }, frame.id);
       return;
@@ -1231,7 +1316,7 @@ export class Host implements SimNode {
         ["IP", i.ip ? `${i.ip}/${i.prefix}` : "없음"],
         ["게이트웨이", i.gateway ?? "없음"],
         ["DNS", i.dns ?? "없음"],
-        ["링크", this.linkUp ? "연결됨" : "끊김"],
+        ["링크", this.nics.length > 1 ? this.nics.map((n, k) => `${n.name} ${k === this.activeNic ? "사용 중" : n.up ? "대기" : "끊김"}`).join(" · ") : this.linkUp ? "연결됨" : "끊김"],
         ["IP 설정", this.ipMode === "dhcp" ? `자동 (DHCP: ${DHCP_STATE_LABEL[this.dhcp.state]})` : "수동"],
         ...(this.v6.enabled
           ? ([

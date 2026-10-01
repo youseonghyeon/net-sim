@@ -30,7 +30,7 @@ export class NetInterface {
   /** 충돌을 방어(Gratuitous ARP)한 뒤 이 시간 안의 충돌은 기록만 한다 — 두 장비가 서로 방어하며 폭주하지 않게 */
   static readonly DEFEND_INTERVAL = 10_000;
 
-  readonly mac: Mac;
+  mac: Mac;
   ip: Ip | undefined;
   prefix: number;
   gateway: Ip | undefined;
@@ -63,6 +63,14 @@ export class NetInterface {
     this.prefix = cfg.prefix ?? 24;
     this.gateway = cfg.gateway;
     this.dns = cfg.dns;
+  }
+
+  /** 다른 NIC 로 바꿔 낌 (노트북 유선 ↔ 무선): MAC 이 바뀌므로 이웃이 알던 것·대기열·충돌 상태는 버린다. 링크가 내려간 상태에서만 부른다 */
+  setMac(mac: Mac): void {
+    this.mac = mac;
+    this.arpCache.clear();
+    this.clearPending();
+    this.resetConflict();
   }
 
   configure(ip: Ip | undefined, prefix: number, gateway: Ip | undefined, dns?: Ip): void {

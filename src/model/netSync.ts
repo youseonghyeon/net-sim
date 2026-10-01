@@ -87,7 +87,7 @@ export class NetworkSync {
     const wl = wirelessLinks(t);
     const links: { id: string; a: { device: string; port: number }; b: { device: string; port: number }; loss?: number; latency: number; wireless?: WirelessLink }[] = [
       ...t.cables.map((c) => ({ ...c, latency: CABLE_LATENCY })),
-      ...wl.map((l) => ({ id: l.id, a: { device: l.client, port: 0 }, b: { device: l.base, port: l.slot }, latency: WIFI_LATENCY, wireless: l })),
+      ...wl.map((l) => ({ id: l.id, a: { device: l.client, port: l.clientPort }, b: { device: l.base, port: l.slot }, latency: WIFI_LATENCY, wireless: l })),
     ];
     const cableIds = new Set(links.map((c) => c.id));
     for (const id of [...this.syncedCables.keys()]) {
@@ -367,6 +367,11 @@ export function effectiveRouter(d: Device, current?: Router) {
   };
 }
 
+/** 노트북 무선 NIC(wlan0) MAC: 유선 MAC 의 4번째 옥텟을 02 로 (다른 NIC 라 MAC 이 다르다 — Wi-Fi 로 넘어가면 DHCP 서버는 다른 기기로 본다) */
+export function wlanMacOf(mac: string): string {
+  return mac.replace(/^02:00:00:00/, "02:00:00:02");
+}
+
 /** 라우터 WAN 인터페이스 MAC: LAN MAC 의 4번째 옥텟을 01 로 */
 function wanMacOf(mac: string): string {
   return mac.replace(/^02:00:00:00/, "02:00:00:01");
@@ -502,7 +507,7 @@ export function makeNode(d: Device): SimNode {
       ipv6: cfg.ipv6,
     });
   }
-  return new Host({ id: d.id, mac: d.mac, ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d), lb: effectiveLb(d), proxy: effectiveProxy(d), httpProxy: effectiveHttpProxy(d), ipv6: effectiveHost6(d) });
+  return new Host({ id: d.id, mac: d.mac, ...(d.kind === "laptop" ? { wlanMac: wlanMacOf(d.mac) } : {}), ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d), lb: effectiveLb(d), proxy: effectiveProxy(d), httpProxy: effectiveHttpProxy(d), ipv6: effectiveHost6(d) });
 }
 
 export function applyConfig(net: Network, d: Device): void {

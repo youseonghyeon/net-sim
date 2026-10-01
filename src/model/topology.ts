@@ -30,7 +30,8 @@ const lanPorts = (n: number, side: PortSide, prefix = "eth", from = 0): PortSpec
 
 export const DEVICE_SPECS: Record<DeviceKind, DeviceSpec> = {
   pc: { kind: "pc", label: "PC", role: "host", width: 64, height: 64, ports: [{ name: "eth0", side: "top" }], namePrefix: "pc" },
-  laptop: { kind: "laptop", label: "노트북", role: "host", width: 64, height: 64, ports: [{ name: "eth0", side: "top" }], namePrefix: "laptop" },
+  // 노트북: 유선 eth0 + 무선 wlan0 (무선은 Wi-Fi 를 켰을 때만). 둘 다 붙어 있으면 유선을 쓴다
+  laptop: { kind: "laptop", label: "노트북", role: "host", width: 64, height: 64, ports: [{ name: "eth0", side: "top" }, { name: "wlan0", side: "top", radio: true }], namePrefix: "laptop" },
   phone: { kind: "phone", label: "스마트폰", role: "host", width: 44, height: 64, ports: [{ name: "wlan0", side: "top", radio: true }], namePrefix: "phone" },
   server: { kind: "server", label: "서버", role: "host", width: 64, height: 64, ports: [{ name: "eth0", side: "top" }], namePrefix: "srv" },
   // 로드밸런서 전용 장비: 호스트처럼 주소 하나를 갖고(VIP) 뒤 서버들에 요청을 나눈다. 서버의 LB 서비스 토글과 같은 모듈(core/nodes/lb.ts)
@@ -584,6 +585,8 @@ export interface WifiBaseSettings {
 /** 무선 단말의 설정 */
 export interface WifiClientSettings {
   ssid: string;
+  /** false = Wi-Fi 꺼짐 (노트북의 Wi-Fi 토글, SSID 는 기억). 스마트폰은 늘 켜짐 */
+  enabled?: boolean;
 }
 export const DEFAULT_WIFI_BASE: WifiBaseSettings = { enabled: true, ssid: "home" };
 export const DEFAULT_ROUTER_WIFI: WifiBaseSettings = { enabled: false, ssid: "home" };
@@ -740,6 +743,10 @@ export interface WirelessLink {
   /** 기지의 무선 슬롯 포트 번호 */
   slot: number;
   distance: number;
+  /** 단말의 무선 포트 번호 (스마트폰 0, 노트북 1 — 노트북의 0 은 유선 eth0) */
+  clientPort: number;
+  /** 노트북의 유선에 케이블이 꽂혀 있어 이 무선 연결은 대기 중 (유선 우선 — 케이블을 빼면 이쪽으로 넘어감) */
+  standby?: boolean;
 }
 
 /** 기지별 슬롯 할당. 단말이 떨어졌다 다시 붙어도 같은 슬롯을 주어 다른 단말이 흔들리지 않게 한다 */
@@ -770,9 +777,11 @@ export function wirelessLinks(t: Topology): WirelessLink[] {
   const taken = new Map<string, Set<number>>();
   for (const b of bases) taken.set(b.id, new Set());
   for (const c of t.devices) {
-    if (!c.wifi) continue;
+    if (!c.wifi || c.wifi.enabled === false) continue;
     const ssid = c.wifi.ssid.trim();
     if (!ssid) continue;
+    const clientPort = specOf(c).ports.findIndex((p) => p.radio);
+    if (clientPort < 0) continue;
     const cc = center(c);
     let best: { base: Device; distance: number } | undefined;
     for (const b of bases) {
@@ -794,7 +803,8 @@ export function wirelessLinks(t: Topology): WirelessLink[] {
       table.set(c.id, slot);
     }
     used.add(slot);
-    out.push({ id: `wl_${c.id}_${best.base.id}_${slot}`, client: c.id, base: best.base.id, slot, distance: Math.round(best.distance) });
+    const wired = clientPort > 0 && t.cables.some((k) => (k.a.device === c.id && k.a.port !== clientPort) || (k.b.device === c.id && k.b.port !== clientPort));
+    out.push({ id: `wl_${c.id}_${best.base.id}_${slot}`, client: c.id, base: best.base.id, slot, distance: Math.round(best.distance), clientPort, ...(wired ? { standby: true } : {}) });
   }
   return out;
 }
@@ -803,6 +813,7 @@ export function wirelessLinks(t: Topology): WirelessLink[] {
 export function wirelessStatus(t: Topology, client: Device): { linked?: WirelessLink; reason?: string } {
   const link = wirelessLinks(t).find((l) => l.client === client.id);
   if (link) return { linked: link };
+  if (client.wifi?.enabled === false) return { reason: "Wi-Fi 가 꺼져 있습니다" };
   const ssid = client.wifi?.ssid.trim() ?? "";
   if (!ssid) return { reason: "연결할 SSID 를 입력하세요" };
   const same = t.devices.filter((d) => baseSsid(d)?.ssid.trim() === ssid);
@@ -1064,6 +1075,12 @@ export function normalizeTopology(t: Topology): Topology {
       fixed.switch = { ...fixed.switch, stp: { enabled: st.enabled === true, priority: prio } };
     }
     if (fixed.kind === "phone" && !fixed.wifi) fixed.wifi = { ssid: "home" };
+    // 무선 단말 설정은 스마트폰·노트북만 (손으로 고친 JSON 의 ssid·enabled 를 타입대로)
+    if (fixed.wifi) {
+      const w = fixed.wifi as Partial<WifiClientSettings>;
+      fixed.wifi = fixed.kind === "phone" || fixed.kind === "laptop" ? { ssid: typeof w.ssid === "string" ? w.ssid : "", ...(w.enabled === false && fixed.kind === "laptop" ? { enabled: false } : {}) } : undefined;
+      if (!fixed.wifi) delete fixed.wifi;
+    }
     if (spec.role === "l3") {
       const def = defaultL3(fixed.kind);
       if (!fixed.l3) fixed.l3 = def;

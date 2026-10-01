@@ -1004,6 +1004,40 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("iptime table:", (await page.locator(".inspector").innerText()).includes("VPN 접속") ? "yes" : "NO");
   await page.screenshot({ path: `${OUT}/60-iptime.png` });
 }
+// 노트북 유선·무선 NIC: 호텔 공유기 Wi-Fi 를 켜고 노트북 Wi-Fi 를 켠 뒤 케이블을 빼면 Wi-Fi 로 넘어가 VPN 이 다시 붙는다
+{
+  await clickDevice("호텔 공유기");
+  await goTab("설정");
+  await page.locator(".inspector section", { has: page.locator("h3", { hasText: "무선 (Wi-Fi)" }) }).locator(".toggle-row .toggle").first().click();
+  await clickDevice("출장 노트북");
+  await goTab("개요"); // 무선 단말 설정은 스마트폰처럼 개요 탭에
+  const wifiSec = page.locator(".inspector section", { has: page.locator("h3", { hasText: /^Wi-Fi$/ }) });
+  await wifiSec.locator(".toggle-row .toggle").first().click();
+  await page.waitForFunction(() => /유선을 쓰는 동안 대기/.test(document.querySelector(".inspector")?.textContent ?? ""), null, { timeout: 10000 });
+  console.log("laptop wifi standby:", (await wifiSec.locator(".note").first().innerText()).slice(0, 24), "| standby line:", await page.locator(".wifi-link.standby").count());
+  await wifiSec.screenshot({ path: `${OUT}/61-laptop-wifi-standby.png` });
+  const lapCable = await page.evaluate(() => {
+    const t = JSON.parse(localStorage.getItem("net-sim.topology.v1"));
+    const lap = t.devices.find((d) => d.name === "출장 노트북").id;
+    return t.cables.find((c) => c.a.device === lap || c.b.device === lap).id;
+  });
+  const mid = await page.evaluate((cid) => {
+    const p = document.querySelector(`[data-cable="${cid}"] .hit`);
+    const pt = p.getPointAtLength(p.getTotalLength() / 2);
+    const m = p.getScreenCTM();
+    return { x: pt.x * m.a + pt.y * m.c + m.e, y: pt.x * m.b + pt.y * m.d + m.f };
+  }, lapCable);
+  await page.mouse.click(mid.x, mid.y);
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("Delete");
+  await page.waitForFunction(
+    () => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "출장 노트북" && /Wi-Fi/.test(el.textContent ?? "") && /VPN 연결됨/.test(el.textContent ?? "")),
+    null,
+    { timeout: 30000 },
+  );
+  console.log("laptop failover: Wi-Fi + VPN 연결됨 | standby lines:", await page.locator(".wifi-link.standby").count(), "| active lines:", await page.locator(".wifi-link:not(.standby)").count());
+  await page.screenshot({ path: `${OUT}/62-laptop-wifi-failover.png` });
+}
 // 로드밸런서 L4 모드: lb-1 을 L4 로 바꾸고 pc-1 → 192.168.0.20:80 연결
 {
   await loadEx("lb");

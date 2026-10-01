@@ -106,8 +106,8 @@ export class Ipv6Interface {
   static readonly MAX_UNICAST_SOLICIT = 3;
   static readonly PREFIX_VALID = 86400;
 
-  readonly mac: Mac;
-  readonly linkLocal: Ip;
+  mac: Mac;
+  linkLocal: Ip;
   enabled = false;
   addrs: Addr6[] = [];
   gateway: Ip | undefined;
@@ -397,6 +397,20 @@ export class Ipv6Interface {
     for (const t of this.nsTimers.values()) t.cancel();
     this.nsTimers.clear();
     this.pending.clear();
+  }
+
+  /**
+   * 다른 NIC 로 바꿔 낌 (노트북 유선 ↔ 무선): 링크 로컬은 MAC 에서 나오므로 새로 만든다 (수동 주소는 그대로, 다음 linkUp 에서 모두 DAD).
+   * 링크가 내려간 상태(linkDown 뒤)에서만 부른다
+   */
+  setMac(mac: Mac): void {
+    if (mac === this.mac) return;
+    const old = this.linkLocal;
+    this.mac = mac;
+    this.linkLocal = linkLocalOf(mac);
+    for (const a of this.addrs) if (a.ip === old && a.origin === "link-local") a.ip = this.linkLocal;
+    this.neighbors.clear();
+    this.clearPending();
   }
 
   /** 링크가 살아남: 모든 주소를 다시 DAD (링크 로컬이 끝나면 호스트는 RS, 라우터는 RA) */

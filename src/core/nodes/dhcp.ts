@@ -66,6 +66,14 @@ export class DhcpClient {
     this.sendDiscover(ctx, emit);
   }
 
+  /** 전에 받은 주소 (INIT-REBOOT 로 확인할 것). 노트북은 NIC(유선·무선)마다 따로 기억해 바꿔 낀다 */
+  get remembered(): Ip | undefined {
+    return this.last;
+  }
+  set remembered(ip: Ip | undefined) {
+    this.last = ip;
+  }
+
   /** 전에 받은 주소를 잊고 Discover 부터 */
   private restart(ctx: NodeContext, emit: Emit): void {
     this.last = undefined;

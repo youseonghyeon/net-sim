@@ -127,6 +127,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.proxy.config.enabled) out.push("프록시");
     if (node.ra.config.enabled) out.push(node.ra.state === "up" ? "VPN 연결됨" : "VPN");
     if (node.v6.enabled) out.push("IPv6");
+    if (node.nics.length > 1 && node.activeNic === 1) out.push("Wi-Fi");
   } else if (node instanceof Router) {
     if (node.dhcp.enabled) out.push("DHCP");
     if (node.dnsForwarder.config.enabled) out.push("DNS");

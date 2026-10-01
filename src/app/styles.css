@@ -718,6 +718,11 @@ select.btn.example {
   stroke-linecap: round;
   pointer-events: none;
 }
+/* 노트북이 유선을 쓰는 동안 붙어만 있는 Wi-Fi */
+.wifi-link.standby {
+  stroke: var(--ink-3);
+  stroke-opacity: 0.5;
+}
 
 /* 케이블 */
 .cable .hit {

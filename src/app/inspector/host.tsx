@@ -161,23 +161,49 @@ function Ipv6ModeSwitch({ mode, onChange }: { mode: Ipv6HostSettings["mode"]; on
   );
 }
 
-/** 무선 단말: 어느 SSID 에 붙을지 + 현재 상태 */
+/** 무선 단말: 어느 SSID 에 붙을지 + 현재 상태. 노트북은 Wi-Fi 켜기/끄기와 지금 쓰는 NIC(유선 우선)도 */
 export function WifiClientSection({ d }: { d: Device }) {
+  void simVersion.value;
   const t = topology.value;
-  const st = wirelessStatus(t, d);
-  const baseName = st.linked ? (t.devices.find((x) => x.id === st.linked!.base)?.name ?? st.linked.base) : undefined;
+  const laptop = d.kind === "laptop";
+  const on = !!d.wifi && d.wifi.enabled !== false;
+  const st = on ? wirelessStatus(t, d) : undefined;
+  const baseName = st?.linked ? (t.devices.find((x) => x.id === st.linked!.base)?.name ?? st.linked.base) : undefined;
+  const node = sim.node(d.id);
+  const active = laptop && node instanceof Host && node.nics.length > 1 ? node.activeNic : undefined;
+  const setWifi = (patch: { ssid?: string; enabled?: boolean }) =>
+    updateDevice(d.id, (x) => {
+      const next = { ssid: x.wifi?.ssid ?? "home", ...(x.wifi?.enabled === false ? { enabled: false } : {}), ...patch };
+      if (next.enabled !== false) delete next.enabled;
+      return { ...x, wifi: next };
+    });
   return (
-    <Section title="무선">
-      <Field label="SSID">
-        <input class="input mono" value={d.wifi?.ssid ?? ""} placeholder="연결할 네트워크 이름" onInput={(e) => updateDevice(d.id, (x) => ({ ...x, wifi: { ssid: e.currentTarget.value } }))} />
-      </Field>
-      {st.linked ? (
-        <p class="note ok-note">
-          {baseName} 에 연결됨 · 거리 {st.linked.distance}px (범위 {WIFI_RANGE}px). 단말을 끌어서 멀어지면 끊깁니다.
-        </p>
-      ) : (
-        <p class="note error-note">{st.reason}</p>
+    <Section title={laptop ? "Wi-Fi" : "무선"}>
+      {laptop && (
+        <label class="toggle-row">
+          <span>
+            {on ? "켜짐" : "꺼짐"} <span class="mono muted">wlan0</span>
+          </span>
+          <Toggle on={on} onToggle={() => setWifi({ enabled: !on })} />
+        </label>
       )}
+      {laptop && (
+        <p class="note">
+          {active === 0 ? "지금 유선(eth0)으로 통신합니다." : active === 1 ? "지금 Wi-Fi(wlan0)로 통신합니다." : "연결된 NIC 가 없습니다."} 유선 케이블이 꽂혀 있으면 유선을 쓰고(유선 우선), 빼면 Wi-Fi 로 넘어갑니다. NIC 마다 MAC 이 달라 넘어갈 때마다 주소를 새로 받습니다.
+        </p>
+      )}
+      {on && (
+        <Field label="SSID">
+          <input class="input mono" value={d.wifi?.ssid ?? ""} placeholder="연결할 네트워크 이름" onInput={(e) => setWifi({ ssid: e.currentTarget.value })} />
+        </Field>
+      )}
+      {st?.linked ? (
+        <p class="note ok-note">
+          {baseName} 에 연결됨 · 거리 {st.linked.distance}px (범위 {WIFI_RANGE}px){st.linked.standby ? " · 유선을 쓰는 동안 대기" : ""}. 단말을 끌어서 멀어지면 끊깁니다.
+        </p>
+      ) : st ? (
+        <p class="note error-note">{st.reason}</p>
+      ) : null}
     </Section>
   );
 }
