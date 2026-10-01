@@ -22,7 +22,7 @@ import {
 } from "../packet";
 import { DhcpServer } from "./dhcp";
 import { normalizeName, PUBLIC_ZONE, PUBLIC_ZONE6 } from "./dns";
-import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG } from "./ipv6";
+import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RA_PERIODIC_TAG } from "./ipv6";
 import { NetInterface, type Emit } from "./iface";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { TCP_TIMER_TAG, TcpStack } from "./tcp";
@@ -402,6 +402,11 @@ export class Internet implements SimNode {
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
     if (tag === "arp-timeout") {
       this.iface.onArpTimeout(data, ctx);
+      return;
+    }
+    if (tag === RA_PERIODIC_TAG) {
+      // ISP 링크의 RA 다시 알림 (RS 에 한 번 답한 뒤부터 600초마다 — 공유기 WAN 이 라우터 수명을 넘기지 않게)
+      this.v6.onRaTick(data, ctx, this.emit(ctx));
       return;
     }
     if (tag === DAD_TIMER_TAG) {

@@ -50,16 +50,29 @@ const routerA = (t: Topology) => linkLocalOf(l3MacOf(gwA(t).mac, 1));
 const routerB = (t: Topology) => linkLocalOf(l3MacOf(t.devices.find((d) => d.name === "gw-b")!.mac, 1));
 
 describe("IPv6 라우터가 말없이 사라질 때", () => {
-  it("둘 다 꺼져 있으면(기본) 호스트는 죽은 라우터를 계속 쓴다", () => {
+  it("둘 다 꺼져 있으면(기본): 이웃 캐시가 살아 있는 동안은 죽은 라우터로 계속 보내고, 다시 물을 때(NS 실패) 다른 라우터로 (RFC 4861 6.3.6)", () => {
     const t = twoRouters();
     expect(lintTopology(t)).toEqual([]);
     const l = loadTopology(t);
+    const pc = l.id("pc-1");
     expect(l.host("pc-1").v6.defaultRouter).toBe(routerA(t));
+    l.act({ kind: "ping", nodeId: pc, dst: TARGET });
     silenceA(l);
-    l.s.net.runUntil(l.s.net.now + 60_000);
-    l.act({ kind: "ping", nodeId: l.id("pc-1"), dst: TARGET });
+    // 캐시에 A 가 있는 동안은 모른다 (NUD 가 꺼져 있으면 확인하지 않음)
+    l.act({ kind: "ping", nodeId: pc, dst: TARGET });
     expect(l.host("pc-1").pings.at(-1)!.status).toBe("failed");
     expect(l.host("pc-1").v6.defaultRouter).toBe(routerA(t));
+    // 60초가 지나 다시 물으면(NS) 답이 없어 A 를 뒤로 미루고, 다음 ping 은 B 로
+    l.s.net.runUntil(l.s.net.now + 61_000);
+    const results: string[] = [];
+    for (let k = 0; k < 2; k++) {
+      l.act({ kind: "ping", nodeId: pc, dst: TARGET });
+      results.push(l.host("pc-1").pings.at(-1)!.status);
+    }
+    expect(results).toEqual(["failed", "ok"]);
+    expect(l.host("pc-1").v6.defaultRouter).toBe(routerB(t));
+    // A 는 지우지 않고 뒤로 (되살아나면 다시 쓴다)
+    expect([...l.host("pc-1").v6.routers.keys()]).toEqual([routerB(t), routerA(t)]);
   });
 
   it("주기 RA: RA 가 라우터 수명(30초) 동안 오지 않으면 그 라우터를 빼고 다른 라우터로", () => {

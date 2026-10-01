@@ -570,7 +570,7 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       if (ip6) out.push({ tool: "시스코 debug ipv6 packet", line: `IPV6: source ${ip6.src}\n      dest ${ip6.dst} (${detail(ev, "out") ?? "?"})\n      traffic class 0, flow 0x0, len ${len}, prot ${IP6_NEXT_HEADER[ip6.payload.kind].num}, hops ${ip6.hopLimit}, forwarding` });
       break;
     case "ndp.cache.update":
-      if (detail(ev, "ip") && detail(ev, "mac")) out.push({ tool: "리눅스 ip -6 neigh", line: `${detail(ev, "ip")} dev eth0 lladdr ${detail(ev, "mac")} REACHABLE` });
+      if (detail(ev, "ip") && detail(ev, "mac")) out.push({ tool: "리눅스 ip -6 neigh", line: `${detail(ev, "ip")} dev eth0 lladdr ${detail(ev, "mac")} ${detail(ev, "state") ?? "REACHABLE"}` });
       break;
     case "ndp.nud":
       // NUD 상태가 바뀐 줄: ip -6 neigh 의 상태 칸 그대로
@@ -580,7 +580,7 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       if (detail(ev, "ip") && !detail(ev, "removed") && !detail(ev, "kept")) out.push({ tool: "리눅스 ip -6 addr", line: `inet6 ${detail(ev, "ip")}/64 scope global dynamic` });
       break;
     case "slaac.router":
-      if (detail(ev, "router") && !detail(ev, "removed")) out.push({ tool: "리눅스 ip -6 route", line: `default via ${detail(ev, "router")} dev eth0 proto ra metric 1024 expires 1799sec hoplimit 64 pref medium` });
+      if (detail(ev, "router") && !detail(ev, "removed") && !detail(ev, "suspect")) out.push({ tool: "리눅스 ip -6 route", line: `default via ${detail(ev, "router")} dev eth0 proto ra metric 1024 expires ${Number(detail(ev, "lifetime") ?? 1800) - 1}sec hoplimit 64 pref medium` });
       break;
     case "ndp.timeout":
       if (detail(ev, "nud") === "failed") out.push({ tool: "리눅스 ip -6 neigh", line: `${detail(ev, "ip") ?? "?"} dev eth0  FAILED` });

@@ -143,7 +143,7 @@ function NudToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
         </span>
         <Toggle on={on} onToggle={onToggle} />
       </label>
-      {on && <p class="note">이웃을 확인(요청한 NA)한 지 30초가 지나면 STALE, 그 이웃에게 보낼 때 5초 기다렸다 유니캐스트 NS 로 직접 확인합니다(<span class="mono">ip -6 neigh</span> 의 DELAY·PROBE). 3번에 답이 없으면 지우고, 라우터였다면 기본 게이트웨이에서 빼 다음 라우터로 넘어갑니다. 끄면 60초 지난 항목을 다시 묻기만 합니다.</p>}
+      {on && <p class="note">이웃을 확인(요청한 NA)한 지 30초가 지나면 STALE, 그 이웃에게 보낼 때 5초 기다렸다 유니캐스트 NS 로 직접 확인합니다(<span class="mono">ip -6 neigh</span> 의 DELAY·PROBE). 3번에 답이 없으면 지우고, 라우터였다면 기본 게이트웨이 후보에서 뒤로 미뤄 다음 라우터로 넘어갑니다. 끄면 60초 지난 항목을 다시 물을 때(NS)만 알아챕니다.</p>}
     </>
   );
 }
