@@ -33,6 +33,15 @@ import type { NodeContext, TimerHandle } from "./node";
 export const NDP_TIMEOUT_TAG = "ndp-timeout";
 export const DAD_TIMER_TAG = "ndp-dad";
 export const RS_TIMER_TAG = "ndp-rs";
+/** NUD: DELAY 가 끝나거나 PROBE 의 NS 에 답이 없을 때 */
+export const NUD_TIMER_TAG = "ndp-nud";
+/** 라우터: 주기 RA (배경 타이머) */
+export const RA_PERIODIC_TAG = "ndp-ra-periodic";
+/** 호스트: RA 의 라우터 수명이 다함 (배경 타이머) */
+export const ROUTER_EXPIRY_TAG = "ndp-router-expiry";
+
+/** NUD 상태 (RFC 4861 7.3.2). INCOMPLETE 는 대기열(pending)로, 지운 항목은 캐시에서 빠진다 */
+export type NudState = "REACHABLE" | "STALE" | "DELAY" | "PROBE";
 
 export interface Addr6 {
   ip: Ip;
@@ -48,6 +57,9 @@ export interface Neighbor {
   learnedAt: number;
   /** NA 의 R 플래그: 이 이웃은 라우터 */
   router: boolean;
+  /** NUD 를 켠 인터페이스만: 지금 상태와 PROBE 에서 보낸 NS 수 (learnedAt = 마지막으로 도달을 확인한 때) */
+  state?: NudState;
+  probes?: number;
 }
 
 export interface Ipv6Settings {
@@ -62,6 +74,10 @@ export interface Ipv6Settings {
   ra?: boolean;
   /** 라우터: RA 의 RDNSS 옵션으로 알릴 DNS 서버 */
   raDns?: Ip;
+  /** 라우터: 주기 RA (10초마다, 라우터 수명 30초 — 배경 타이머). 끄면 변화가 있을 때만 (수명 1800초) */
+  raPeriodic?: boolean;
+  /** 호스트: NUD (이웃 도달 확인 — REACHABLE 30초 → STALE → 쓸 때 DELAY 5초 → 유니캐스트 NS 3번) */
+  nud?: boolean;
 }
 
 const STATE_LABEL: Record<Addr6["state"], string> = { tentative: "DAD 중", preferred: "사용 중", duplicate: "중복 · 사용 안 함" };
@@ -77,8 +93,15 @@ export class Ipv6Interface {
   /** RS 재전송 간격과 횟수 (RFC 4861 RTR_SOLICITATION_INTERVAL 4초, MAX_RTR_SOLICITATIONS 3) */
   static readonly RS_INTERVAL = 4000;
   static readonly RS_MAX = 3;
-  /** RA 의 라우터 수명(초) — 표시용. 시계 구조상 수명이 다해 사라지지는 않고, 거둘 때 0 을 보낸다 */
+  /** RA 의 라우터 수명(초): 호스트는 이만큼 RA 가 없으면 그 라우터를 뺀다 (배경 타이머라 시간이 흐를 때만) */
   static readonly ROUTER_LIFETIME = 1800;
+  /** 주기 RA: 간격과 그때 알리는 라우터 수명 (radvd: AdvDefaultLifetime = 3 × MaxRtrAdvInterval) */
+  static readonly RA_INTERVAL = 10_000;
+  static readonly RA_PERIODIC_LIFETIME = 30;
+  /** NUD (RFC 4861): 확인 뒤 REACHABLE 로 보는 시간, STALE 을 쓴 뒤 직접 묻기 전 기다리는 시간, 유니캐스트 NS 횟수 */
+  static readonly REACHABLE_TIME = 30_000;
+  static readonly DELAY_FIRST_PROBE = 5_000;
+  static readonly MAX_UNICAST_SOLICIT = 3;
   static readonly PREFIX_VALID = 86400;
 
   readonly mac: Mac;
@@ -95,8 +118,16 @@ export class Ipv6Interface {
   private readonly dadTimers = new Map<Ip, TimerHandle>();
   /** 호스트 SLAAC: RA 로 주소·기본 게이트웨이를 받는다 */
   slaac = false;
-  /** RA 로 배운 기본 게이트웨이 후보 (라우터의 링크 로컬 주소, 먼저 배운 것이 먼저) */
-  readonly routers = new Map<Ip, { learnedAt: number }>();
+  /** RA 로 배운 기본 게이트웨이 후보 (라우터의 링크 로컬 주소, 먼저 배운 것이 먼저). token = 지금 유효한 수명 타이머 */
+  readonly routers = new Map<Ip, { learnedAt: number; lifetime: number; token: number }>();
+  private routerToken = 0;
+  /** 호스트: NUD 를 쓰는지 */
+  nud = false;
+  private readonly nudTimers = new Map<Ip, TimerHandle>();
+  /** 라우터: 주기 RA 를 보내는지, 지금 유효한 주기 타이머 번호 */
+  raPeriodic = false;
+  private raTick: number | undefined;
+  private raToken = 0;
   /** RA 의 RDNSS 옵션으로 받은 DNS 서버 */
   raDnsLearned: Ip | undefined;
   /** 그 DNS 를 알려 준 라우터 (그 라우터가 거두거나 DNS 없이 다시 알리면 지운다) */
@@ -153,6 +184,8 @@ export class Ipv6Interface {
     this.slaac = cfg.slaac === true && !this.router;
     this.raOn = cfg.ra === true && this.router;
     this.raDns = cfg.raDns;
+    this.raPeriodic = cfg.raPeriodic === true && this.router;
+    this.nud = cfg.nud === true && !this.router;
   }
 
   /** SLAAC 호스트가 아직 RA 를 기다리는 중 (RS 를 보내고 답을 기다림) */
@@ -241,6 +274,13 @@ export class Ipv6Interface {
       if (cfg.gateway || !cfg.slaac) ctx.trace("ip.config", "sys", cfg.gateway ? `${this.tag}IPv6 기본 게이트웨이: ${cfg.gateway}${isLinkLocal6(cfg.gateway) ? " (라우터의 링크 로컬 주소 — IPv6 에서 흔한 방식)" : ""}` : `${this.tag}IPv6 기본 게이트웨이 없음`, { gateway: cfg.gateway });
     }
     if (cfg.dns !== this.dns) this.dns = cfg.dns;
+    // 호스트 NUD 켜기·끄기 (끄면 상태를 지우고 예전처럼 60초 지나면 다시 묻는다)
+    const nud = cfg.nud === true && !this.router;
+    if (nud !== this.nud) {
+      this.nud = nud;
+      ctx.trace("ip.config", "sys", nud ? `${this.tag}NUD 켜짐: 이웃을 확인한 지 ${Ipv6Interface.REACHABLE_TIME / 1000}초가 지나면 STALE, 그 이웃에게 보낼 때 ${Ipv6Interface.DELAY_FIRST_PROBE / 1000}초 기다렸다 유니캐스트 NS 로 직접 확인 — 답이 없으면 지우고, 라우터면 기본 게이트웨이에서도 뺀다` : `${this.tag}NUD 꺼짐`, { nud });
+      this.clearNud();
+    }
     // 호스트 SLAAC 켜기·끄기
     const slaac = cfg.slaac === true && !this.router;
     if (slaac !== this.slaac) {
@@ -261,7 +301,15 @@ export class Ipv6Interface {
       this.raOn = raOn;
       this.raDns = cfg.raDns;
       const ready = linkUp && this.owns(this.linkLocal);
-      if (ready && raOn && this.raKey() !== this.advertisedKey) this.sendRa(ctx, emit);
+      // 주기 RA 켜기·끄기: 알리는 라우터 수명이 바뀌므로 곧바로 새 RA (그 RA 가 다음 주기를 건다)
+      const periodic = cfg.raPeriodic === true;
+      const periodicChanged = periodic !== this.raPeriodic;
+      if (periodicChanged) {
+        this.raPeriodic = periodic;
+        this.raTick = undefined;
+        if (raOn) ctx.trace("ip.config", "sys", periodic ? `${this.tag}주기 RA 켜짐: ${Ipv6Interface.RA_INTERVAL / 1000}초마다 RA, 라우터 수명 ${Ipv6Interface.RA_PERIODIC_LIFETIME}초 — 이 라우터가 말없이 사라지면 호스트가 수명이 다해 뺀다 (시간이 흐를 때만 돈다)` : `${this.tag}주기 RA 꺼짐: 변화가 있을 때만 RA (라우터 수명 ${Ipv6Interface.ROUTER_LIFETIME}초)`, { raPeriodic: periodic });
+      }
+      if (ready && raOn && (periodicChanged || this.raKey() !== this.advertisedKey)) this.sendRa(ctx, emit);
       else if (ready && !raOn && wasOn) this.sendRa(ctx, emit, true);
       if (!raOn) {
         this.advertised = [];
@@ -277,8 +325,19 @@ export class Ipv6Interface {
     this.dadTimers.delete(a.ip);
   }
 
+  /** NUD 상태·타이머를 지운다 (끄거나 이웃 캐시를 비울 때) */
+  private clearNud(): void {
+    for (const t of this.nudTimers.values()) t.cancel();
+    this.nudTimers.clear();
+    for (const n of this.neighbors.values()) {
+      delete n.state;
+      delete n.probes;
+    }
+  }
+
   /** 대기열·타이머·이웃 캐시를 비운다 */
   private reset(): void {
+    this.clearNud();
     this.clearPending();
     for (const t of this.dadTimers.values()) t.cancel();
     this.dadTimers.clear();
@@ -441,6 +500,13 @@ export class Ipv6Interface {
     const nextHop = nextHopOverride ?? this.route(pkt.dst, ctx);
     if (!nextHop) return;
     const entry = this.neighbors.get(nextHop);
+    if (entry && this.nud) {
+      // NUD: 캐시가 있으면 상태와 상관없이 보낸다. 오래된(STALE) 항목은 보내면서 확인을 시작한다
+      this.nudUse(nextHop, entry, ctx);
+      ctx.trace("ndp.cache.hit", "L3", `${this.tag}이웃 캐시 적중: ${nextHop} → ${entry.mac} (${entry.state})`, { ip: nextHop, mac: entry.mac, state: entry.state });
+      this.transmit(entry.mac, pkt, ctx, emit);
+      return;
+    }
     if (entry && ctx.now - entry.learnedAt <= Ipv6Interface.NEIGHBOR_TTL) {
       ctx.trace("ndp.cache.hit", "L3", `${this.tag}이웃 캐시 적중: ${nextHop} → ${entry.mac}`, { ip: nextHop, mac: entry.mac });
       this.transmit(entry.mac, pkt, ctx, emit);
@@ -603,7 +669,7 @@ export class Ipv6Interface {
     const waiting = this.pending.has(msg.target);
     if (!msg.tll || (!known && !waiting)) return; // 모르는 이웃의 요청하지 않은 NA 로는 캐시를 만들지 않는다 (RFC 4861)
     if (known && known.mac !== msg.tll && !msg.override) return;
-    this.learn(msg.target, msg.tll, msg.router, "NA 에서 학습", frame.id, ctx);
+    this.learn(msg.target, msg.tll, msg.router, "NA 에서 학습", frame.id, ctx, msg.solicited);
     this.flushPending(msg.target, ctx, emit);
   }
 
@@ -667,7 +733,7 @@ export class Ipv6Interface {
       curHopLimit: Ipv6Interface.HOP_LIMIT,
       managed: false,
       other: false,
-      routerLifetime: final ? 0 : Ipv6Interface.ROUTER_LIFETIME,
+      routerLifetime: final ? 0 : this.raPeriodic ? Ipv6Interface.RA_PERIODIC_LIFETIME : Ipv6Interface.ROUTER_LIFETIME,
       prefixes: [...current, ...withdrawn],
       ...(!final && this.raDns ? { rdnss: [this.raDns] } : {}),
       sll: this.mac,
@@ -682,12 +748,94 @@ export class Ipv6Interface {
       "L3",
       final
         ? `${this.tag}RA 거둠 (모든 노드 ff02::1): 라우터 수명 0 — 나(${this.linkLocal})를 기본 게이트웨이에서 빼고${withdrawn.length ? ` 프리픽스 ${withdrawn.map((p) => `${p.prefix}/${p.length}`).join(", ")} 로 만든 주소를 지우라` : ""}`
-        : `${this.tag}RA 멀티캐스트 (모든 노드 ff02::1): "나(${this.linkLocal})는 이 링크의 라우터${prefixText ? `, 프리픽스 ${prefixText} 로 주소를 만드세요(SLAAC)` : this.addrs.some((a) => a.origin === "manual" && a.state === "duplicate") ? " (알릴 프리픽스 없음 — 이 인터페이스 주소가 중복이라 뺌)" : " (알릴 프리픽스 없음 — 이 인터페이스에 주소가 없음)"}${this.raDns ? `, DNS 는 ${this.raDns}` : ""}"${withdrawn.length ? ` · 빠진 프리픽스 ${withdrawn.map((p) => `${p.prefix}/${p.length}`).join(", ")} 는 유효 수명 0 으로 거둠` : ""}`,
+        : `${this.tag}${this.raPeriodic ? "주기 " : ""}RA 멀티캐스트 (모든 노드 ff02::1): "나(${this.linkLocal})는 이 링크의 라우터${this.raPeriodic ? ` (라우터 수명 ${Ipv6Interface.RA_PERIODIC_LIFETIME}초)` : ""}${prefixText ? `, 프리픽스 ${prefixText} 로 주소를 만드세요(SLAAC)` : this.addrs.some((a) => a.origin === "manual" && a.state === "duplicate") ? " (알릴 프리픽스 없음 — 이 인터페이스 주소가 중복이라 뺌)" : " (알릴 프리픽스 없음 — 이 인터페이스에 주소가 없음)"}${this.raDns ? `, DNS 는 ${this.raDns}` : ""}"${withdrawn.length ? ` · 빠진 프리픽스 ${withdrawn.map((p) => `${p.prefix}/${p.length}`).join(", ")} 는 유효 수명 0 으로 거둠` : ""}`,
       { prefixes: current.map((p) => `${p.prefix}/${p.length}`), final },
       frame.id,
     );
     void frameId;
     emit(frame);
+    // 주기 RA: 다음 차례 (배경 타이머 — 시간이 흐를 때만)
+    this.raTick = undefined;
+    if (!final && this.raPeriodic && this.raOn) {
+      this.raTick = ++this.raToken;
+      ctx.timer(Ipv6Interface.RA_INTERVAL, RA_PERIODIC_TAG, { mac: this.mac, tick: this.raTick }, true);
+    }
+  }
+
+  /** 라우터: 주기 RA 차례. 처리했으면 true (다른 인터페이스의 타이머면 false) */
+  onRaTick(data: unknown, ctx: NodeContext, emit: Emit): boolean {
+    const { mac, tick } = data as { mac: Mac; tick: number };
+    if (mac !== this.mac) return false;
+    if (tick !== this.raTick) return true;
+    this.raTick = undefined;
+    if (!this.enabled || !this.raOn || !this.raPeriodic || !this.up || !this.owns(this.linkLocal)) return true;
+    this.sendRa(ctx, emit);
+    return true;
+  }
+
+  /** 호스트: RA 로 배운 라우터의 수명이 다함 (그동안 RA 가 없었음). 처리했으면 true */
+  onRouterExpiry(data: unknown, ctx: NodeContext): boolean {
+    const { mac, router, token } = data as { mac: Mac; router: Ip; token: number };
+    if (mac !== this.mac) return false;
+    const r = this.routers.get(router);
+    if (!r || r.token !== token) return true; // 그 뒤 RA 로 수명이 다시 시작됐거나 이미 뺐다
+    this.routers.delete(router);
+    ctx.trace(
+      "slaac.router",
+      "L3",
+      `${this.tag}라우터 ${router} 의 RA 가 라우터 수명(${r.lifetime}초) 동안 오지 않음 → 기본 게이트웨이에서 뺌${this.routers.size ? ` (남은 라우터 ${[...this.routers.keys()].join(", ")} 로)` : " (남은 라우터 없음 — 다른 네트워크로 못 나감)"}`,
+      { router, removed: true, expired: true },
+    );
+    return true;
+  }
+
+  /** NUD: 이웃을 쓰려 함 — 확인한 지 오래면 STALE, STALE 을 쓰면 DELAY 로 (5초 뒤 직접 확인) */
+  private nudUse(ip: Ip, entry: Neighbor, ctx: NodeContext): void {
+    if ((entry.state ?? "REACHABLE") === "REACHABLE" && ctx.now - entry.learnedAt > Ipv6Interface.REACHABLE_TIME) entry.state = "STALE";
+    entry.state ??= "REACHABLE";
+    if (entry.state !== "STALE") return;
+    entry.state = "DELAY";
+    ctx.trace(
+      "ndp.nud",
+      "L3",
+      `${this.tag}이웃 ${ip} 는 STALE (마지막 확인 ${Math.round((ctx.now - entry.learnedAt) / 1000)}초 전) → 캐시의 ${entry.mac} 로 보내고 DELAY: ${Ipv6Interface.DELAY_FIRST_PROBE / 1000}초 안에 확인이 없으면 직접 물어본다 (NUD)`,
+      { ip, state: "DELAY", mac: entry.mac, ...(entry.router ? { router: true } : {}) },
+    );
+    this.nudTimers.get(ip)?.cancel();
+    this.nudTimers.set(ip, ctx.timer(Ipv6Interface.DELAY_FIRST_PROBE, NUD_TIMER_TAG, { mac: this.mac, ip }));
+  }
+
+  /** NUD 타이머: DELAY 가 끝나면 PROBE(유니캐스트 NS), 답 없이 3번이면 지운다 (라우터면 기본 게이트웨이에서도). 처리했으면 true */
+  onNudTimer(data: unknown, ctx: NodeContext, emit: Emit): boolean {
+    const { mac, ip } = data as { mac: Mac; ip: Ip };
+    if (mac !== this.mac) return false;
+    this.nudTimers.delete(ip);
+    const e = this.neighbors.get(ip);
+    if (!e || (e.state !== "DELAY" && e.state !== "PROBE")) return true; // 그사이 확인됐다
+    if (e.state === "DELAY") {
+      e.state = "PROBE";
+      e.probes = 0;
+    }
+    if ((e.probes ?? 0) < Ipv6Interface.MAX_UNICAST_SOLICIT) {
+      e.probes = (e.probes ?? 0) + 1;
+      const src = this.sourceFor(ip) ?? this.linkLocal;
+      const pkt: Ipv6Packet = { kind: "ipv6", src, dst: ip, hopLimit: 255, payload: { kind: "icmp6", type: "ns", target: ip, sll: this.mac } };
+      const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: this.mac, dst: e.mac, payload: pkt };
+      ctx.trace("ndp.ns.sent", "L3", `${this.tag}NUD PROBE ${e.probes}/${Ipv6Interface.MAX_UNICAST_SOLICIT}: ${ip} 에게 유니캐스트 NS — "아직 ${e.mac} 에 있나요?"`, { target: ip, probe: e.probes, state: "PROBE" }, frame.id);
+      emit(frame);
+      this.nudTimers.set(ip, ctx.timer(Ipv6Interface.NS_TIMEOUT, NUD_TIMER_TAG, { mac: this.mac, ip }));
+      return true;
+    }
+    this.neighbors.delete(ip);
+    const wasRouter = this.routers.delete(ip);
+    ctx.trace(
+      "ndp.timeout",
+      "L3",
+      `${this.tag}NUD 실패: ${ip} 가 유니캐스트 NS ${Ipv6Interface.MAX_UNICAST_SOLICIT}번에 답하지 않음 → 도달 불가로 보고 이웃 캐시에서 지움${wasRouter ? ` — 라우터라 기본 게이트웨이에서도 뺌${this.routers.size ? ` (다음 라우터 ${[...this.routers.keys()][0]} 로)` : " (남은 라우터 없음)"}` : ""}`,
+      { ip, nud: "failed", ...(wasRouter ? { router: true } : {}) },
+    );
+    if (wasRouter) ctx.trace("slaac.router", "L3", `${this.tag}기본 게이트웨이 후보에서 ${ip} 를 뺌 (NUD 실패)${this.routers.size ? ` → 이제 ${[...this.routers.keys()][0]}` : ""}`, { router: ip, removed: true, nud: true });
+    return true;
   }
 
   /** 장치를 지울 때: RA 를 보내던 인터페이스는 거둠 RA (호스트가 옛 게이트웨이·주소를 들고 있지 않게) */
@@ -732,8 +880,12 @@ export class Ipv6Interface {
       this.flushPending(from, ctx, emit);
     }
     if (ra.routerLifetime > 0) {
-      if (!this.routers.has(from)) {
-        this.routers.set(from, { learnedAt: ctx.now });
+      const known = this.routers.get(from);
+      // 수명을 다시 잰다 (배경 타이머 — RA 가 이만큼 오지 않으면 뺀다). Map 의 순서는 그대로라 기본 게이트웨이는 바뀌지 않는다
+      const token = ++this.routerToken;
+      this.routers.set(from, { learnedAt: known?.learnedAt ?? ctx.now, lifetime: ra.routerLifetime, token });
+      ctx.timer(ra.routerLifetime * 1000, ROUTER_EXPIRY_TAG, { mac: this.mac, router: from, token }, true);
+      if (!known) {
         const first = this.routers.size === 1 && !this.gateway;
         ctx.trace("slaac.router", "L3", `${this.tag}기본 게이트웨이${first ? "" : " 후보"}: ${from} — RA 를 보낸 라우터의 링크 로컬 주소 (라우터 수명 ${ra.routerLifetime}초)`, { router: from }, frame.id);
       }
@@ -794,10 +946,26 @@ export class Ipv6Interface {
     }
   }
 
-  private learn(ip: Ip, mac: Mac, router: boolean, how: string, frameId: number, ctx: NodeContext): void {
+  /**
+   * 이웃 캐시에 넣는다. confirmed = 요청한 NA (도달 확인). NUD 를 켰으면 RFC 4861 7.3.3 대로:
+   * 확인이면 REACHABLE, 새 항목·MAC 이 바뀐 항목은 STALE, 같은 MAC 의 알림(NS·RA·요청하지 않은 NA)은 상태를 그대로 둔다
+   */
+  private learn(ip: Ip, mac: Mac, router: boolean, how: string, frameId: number, ctx: NodeContext, confirmed = false): void {
     if (ip === UNSPECIFIED6) return;
     const known = this.neighbors.get(ip);
-    this.neighbors.set(ip, { mac, learnedAt: ctx.now, router: router || (known?.router ?? false) });
+    const isRouter = router || (known?.router ?? false);
+    if (!this.nud) this.neighbors.set(ip, { mac, learnedAt: ctx.now, router: isRouter });
+    else {
+      const changed = !known || known.mac !== mac;
+      const state: NudState = confirmed ? "REACHABLE" : changed ? "STALE" : (known!.state ?? "STALE");
+      const was = known?.state;
+      this.neighbors.set(ip, { mac, learnedAt: confirmed || changed ? ctx.now : known!.learnedAt, router: isRouter, state, probes: 0 });
+      if (confirmed || changed) {
+        this.nudTimers.get(ip)?.cancel();
+        this.nudTimers.delete(ip);
+      }
+      if (confirmed && (was === "DELAY" || was === "PROBE" || was === "STALE")) ctx.trace("ndp.nud", "L3", `${this.tag}이웃 ${ip} 도달 확인 (요청한 NA) → ${was} 에서 REACHABLE (${Ipv6Interface.REACHABLE_TIME / 1000}초)`, { ip, state: "REACHABLE", mac, ...(isRouter ? { router: true } : {}) }, frameId);
+    }
     if (!known || known.mac !== mac) ctx.trace("ndp.cache.update", "L3", `${this.tag}이웃 캐시 ${known ? "갱신" : "추가"}: ${ip} → ${mac} (${how})`, { ip, mac }, frameId);
   }
 
@@ -873,7 +1041,11 @@ export class Ipv6Interface {
     return this.addrs.map((a) => [`${a.ip}/${a.prefix}`, ORIGIN_LABEL[a.origin], STATE_LABEL[a.state]]);
   }
 
-  neighborRows(): string[][] {
-    return [...this.neighbors.entries()].map(([ip, n]) => [ip, n.mac, `${n.learnedAt}ms${n.router ? " · 라우터" : ""}`]);
+  neighborRows(now?: number): string[][] {
+    return [...this.neighbors.entries()].map(([ip, n]) => {
+      // NUD: REACHABLE 시간이 지났으면 STALE 로 보인다 (쓰기 전까지는 그대로 둔다)
+      const state = n.state === "REACHABLE" && now !== undefined && now - n.learnedAt > Ipv6Interface.REACHABLE_TIME ? "STALE" : n.state;
+      return [ip, n.mac, `${n.learnedAt}ms${n.router ? " · 라우터" : ""}${state ? ` · ${state}` : ""}`];
+    });
   }
 }

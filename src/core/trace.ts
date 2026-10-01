@@ -27,6 +27,8 @@ export type TraceKind =
   | "ndp.na.sent"
   | "ndp.na.received"
   | "ndp.cache.hit"
+  /** NUD (이웃 도달 확인): STALE → DELAY → PROBE → REACHABLE (실패는 ndp.timeout) */
+  | "ndp.nud"
   | "ndp.cache.miss"
   | "ndp.cache.update"
   | "ndp.timeout"

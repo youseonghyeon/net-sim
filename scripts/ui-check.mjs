@@ -1150,6 +1150,41 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   const focused = await page.evaluate(() => document.activeElement?.getAttribute("role"));
   await page.keyboard.press("Meta+z");
   console.log("undo with toggle focused (" + focused + "):", await waitAddr("pc-1", /^2001:db8:1::ff:fe00:1$/));
+  // 주기 RA (gw-1) + NUD (pc-1): gw-1 의 LAN 케이블을 손실 100%(말없이 사라짐) → "+10초" 를 넉넉히 → pc-1 의 IPv6 게이트웨이가 없어진다
+  await clickDevice("gw-1");
+  await goTab("설정");
+  await page.locator(".inspector .toggle-row", { hasText: "주기 RA" }).locator(".toggle").click();
+  await page.locator(".inspector .toggle-row", { hasText: "주기 RA" }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/65b-slaac-periodic-ra.png` });
+  await clickDevice("pc-1");
+  await goTab("설정");
+  await page.locator(".inspector .toggle-row", { hasText: "NUD" }).locator(".toggle").click();
+  const gwOf = async () => {
+    await clickDevice("pc-1");
+    await goTab("표");
+    return (await page.locator(".inspector .stat-row", { hasText: "IPv6 게이트웨이" }).locator("b").textContent())?.trim();
+  };
+  const lanCable = await page.evaluate(() => {
+    const t = JSON.parse(localStorage.getItem("net-sim.topology.v1"));
+    const gw = t.devices.find((d) => d.name === "gw-1").id;
+    const sw = t.devices.find((d) => d.name === "sw-1").id;
+    return t.cables.find((c) => [c.a.device, c.b.device].includes(gw) && [c.a.device, c.b.device].includes(sw)).id;
+  });
+  const lanMid = await page.evaluate((cid) => {
+    const p = document.querySelector(`[data-cable="${cid}"] .hit`);
+    const pt = p.getPointAtLength(p.getTotalLength() / 2);
+    const m = p.getScreenCTM();
+    return { x: pt.x * m.a + pt.y * m.c + m.e, y: pt.x * m.b + pt.y * m.d + m.f };
+  }, lanCable);
+  await page.mouse.click(lanMid.x, lanMid.y);
+  await page.locator(".inspector .field", { hasText: "손실률" }).locator("select").selectOption("100");
+  await page.evaluate(() => document.activeElement?.blur());
+  const gwBefore = await gwOf();
+  for (let k = 0; k < 4; k++) await page.click(".transport .ff");
+  await page.waitForFunction(() => [...document.querySelectorAll(".inspector .stat-row")].some((r) => /IPv6 게이트웨이/.test(r.textContent ?? "") && /없음/.test(r.textContent ?? "")), null, { timeout: 20000 }).catch(() => {});
+  const gwAfter = await gwOf();
+  console.log("slaac periodic ra: gateway before", gwBefore, "| after +40s", gwAfter);
+  if (!/없음/.test(gwAfter ?? "")) errors.push(`slaac periodic ra: 라우터가 말없이 사라지고 40초가 지났는데 pc-1 의 IPv6 게이트웨이가 ${gwAfter} — 라우터 수명(30초)이 다하면 빼야 함 / src/core/nodes/ipv6.ts onRouterExpiry`);
 }
 // 듀얼 스택: 이름으로 연결하면 AAAA 우선 → IPv6, AAAA 없는 이름은 IPv4. DNS 레코드 칸은 IPv6 주소(AAAA)도 받는다
 {

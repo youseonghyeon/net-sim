@@ -30,7 +30,7 @@ import { ForwardProxy, type ProxyConfig } from "./proxy";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { endpoint, HTTPS_PORT, TCP_TIMER_TAG, TcpStack, type TcpConn } from "./tcp";
 import { RA_DPD_TAG, RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
-import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
+import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, NUD_TIMER_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
 export type IpMode = "dhcp" | "static";
 
@@ -1111,6 +1111,12 @@ export class Host implements SimNode {
       case RS_TIMER_TAG:
         this.v6.onRsTimer(data, ctx, this.emit(ctx));
         return;
+      case NUD_TIMER_TAG:
+        this.v6.onNudTimer(data, ctx, this.emit(ctx));
+        return;
+      case ROUTER_EXPIRY_TAG:
+        this.v6.onRouterExpiry(data, ctx);
+        return;
       case NDP_TIMEOUT_TAG: {
         const { ip: nextHop } = data as { ip: Ip };
         for (const pkt of this.v6.onNsTimeout(data, ctx)) {
@@ -1239,7 +1245,7 @@ export class Host implements SimNode {
         ...(this.v6.enabled
           ? [
               { title: "IPv6 주소", columns: ["주소", "출처", "상태"], rows: this.v6.addrRows() },
-              { title: "이웃 캐시 (NDP)", columns: ["IPv6", "MAC", "학습 시각"], rows: this.v6.neighborRows() },
+              { title: "이웃 캐시 (NDP)", columns: ["IPv6", "MAC", "학습 시각"], rows: this.v6.neighborRows(this.clock) },
             ]
           : []),
       ],

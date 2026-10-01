@@ -16,7 +16,7 @@ import {
   type Ipv6Packet,
 } from "../packet";
 import { DHCP6_STATE_LABEL, DHCP6_TIMER_TAG, Dhcp6PdClient } from "./dhcp6";
-import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RS_TIMER_TAG } from "./ipv6";
+import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG } from "./ipv6";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_UPSTREAM_TIMER_TAG, DnsServer, type DnsServerConfig } from "./dns";
 import { Firewall, type FirewallConfig } from "./firewall";
@@ -672,6 +672,10 @@ export class Router implements SimNode {
     }
     if (tag === RS_TIMER_TAG) {
       this.wan6.onRsTimer(data, ctx, this.emitWan(ctx));
+      return;
+    }
+    if (tag === ROUTER_EXPIRY_TAG) {
+      this.wan6.onRouterExpiry(data, ctx);
       return;
     }
     if (tag === DHCP6_TIMER_TAG) {

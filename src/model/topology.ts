@@ -200,6 +200,8 @@ export interface Ipv6HostSettings {
   /** IPv6 기본 게이트웨이 (라우터의 글로벌 또는 링크 로컬 주소) */
   gateway: string;
   dns?: string;
+  /** NUD (이웃 도달 확인, 없으면 꺼짐 — 60초 지나면 다시 묻기만) */
+  nud?: boolean;
 }
 
 export const DEFAULT_IPV6_HOST: Ipv6HostSettings = { enabled: true, mode: "slaac", ip: "", prefix: 64, gateway: "" };
@@ -213,6 +215,8 @@ export interface Ipv6L3Settings {
   routes: StaticRouteSettings[];
   /** RA 의 RDNSS 옵션으로 알릴 DNS 서버 (비우면 없음) */
   raDns?: string;
+  /** 주기 RA (10초, 라우터 수명 30초. 없으면 꺼짐) */
+  raPeriodic?: boolean;
 }
 
 export interface LbSettings {
@@ -336,7 +340,7 @@ const text = (v: unknown) => (typeof v === "string" ? v : "");
 
 /** 불러온 JSON 의 호스트 IPv6 설정 정리 */
 function normalizeIpv6Host(v: Partial<Ipv6HostSettings>): Ipv6HostSettings {
-  return { enabled: v.enabled === true, mode: v.mode === "slaac" ? "slaac" : "static", ip: text(v.ip), prefix: prefix6(v.prefix, 64), gateway: text(v.gateway), ...(typeof v.dns === "string" ? { dns: v.dns } : {}) };
+  return { enabled: v.enabled === true, mode: v.mode === "slaac" ? "slaac" : "static", ip: text(v.ip), prefix: prefix6(v.prefix, 64), gateway: text(v.gateway), ...(typeof v.dns === "string" ? { dns: v.dns } : {}), ...(v.nud === true ? { nud: true } : {}) };
 }
 
 /** 불러온 JSON 의 게이트웨이 IPv6 설정 정리 */
@@ -350,6 +354,7 @@ function normalizeIpv6L3(v: Partial<Ipv6L3Settings>): Ipv6L3Settings {
       return { ip: text(o.ip), prefix: prefix6(o.prefix, 64), ...(o.ra === true ? { ra: true } : {}) };
     }),
     ...(typeof v.raDns === "string" ? { raDns: v.raDns } : {}),
+    ...(v.raPeriodic === true ? { raPeriodic: true } : {}),
     routes: routes
       .filter((r): r is { dest: string; prefix: number; via: string } => !!r && typeof r === "object" && typeof (r as { dest?: unknown }).dest === "string")
       .map((r) => ({ dest: r.dest, prefix: prefix6(r.prefix, 64, 0), via: text(r.via) })),

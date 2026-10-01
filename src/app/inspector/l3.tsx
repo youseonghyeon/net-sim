@@ -189,6 +189,16 @@ export function Ipv6L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
               <input class="input mono" value={v6.raDns ?? ""} placeholder="비우면 알리지 않음" onInput={(e) => set({ raDns: e.currentTarget.value })} />
             </Field>
           )}
+          {anyRa && (
+            <label class="toggle-row">
+              <span>
+                주기 RA <span class="mono muted">10초 · 라우터 수명 30초</span>
+                <small class="muted">이 라우터가 말없이 사라지면 호스트가 뺌</small>
+              </span>
+              <Toggle on={v6.raPeriodic === true} onToggle={() => set({ raPeriodic: !v6.raPeriodic })} />
+            </label>
+          )}
+          {anyRa && v6.raPeriodic === true && <p class="note">10초마다 RA 를 보내고 라우터 수명을 30초로 알립니다(radvd: 수명 = 간격 × 3). RA 가 30초 동안 오지 않으면 호스트가 이 라우터를 기본 게이트웨이에서 빼고, 같은 링크의 다른 라우터로 넘어갑니다. 끄면 변화가 있을 때만 RA(수명 1800초)라, 말없이 사라진 라우터를 호스트가 30분 동안 모릅니다. RA 는 시간이 흐를 때만 돕니다(위의 "+10초").</p>}
           <h3 class="sub">IPv6 스태틱 라우팅</h3>
           {v6.routes.length === 0 && <p class="note">연결된 프리픽스 밖으로 보낼 경로를 추가합니다. 디폴트 라우트는 목적지 :: / 0 입니다.</p>}
           {v6.routes.map((r, i) => (

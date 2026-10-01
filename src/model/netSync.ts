@@ -209,12 +209,13 @@ function validIp6(s: string | undefined): string | undefined {
 export function effectiveHost6(d: Device): Ipv6Settings {
   const v = d.host?.ipv6;
   if (!v?.enabled) return { enabled: false, addrs: [] };
-  if (v.mode === "slaac") return { enabled: true, addrs: [], slaac: true };
+  const nud = v.nud === true ? { nud: true } : {};
+  if (v.mode === "slaac") return { enabled: true, addrs: [], slaac: true, ...nud };
   const ip = validIp6(v.ip);
   const prefix = Number.isInteger(v.prefix) && v.prefix >= 1 && v.prefix <= 128 ? v.prefix : 64;
   const gateway = validIp6(v.gateway);
   const dns = validIp6(v.dns);
-  return { enabled: true, addrs: ip && !isLinkLocal6(ip) ? [{ ip, prefix }] : [], ...(gateway ? { gateway } : {}), ...(dns ? { dns } : {}) };
+  return { enabled: true, addrs: ip && !isLinkLocal6(ip) ? [{ ip, prefix }] : [], ...(gateway ? { gateway } : {}), ...(dns ? { dns } : {}), ...nud };
 }
 
 /** 게이트웨이의 IPv6 설정: 인터페이스별 주소, 넥스트 홉이 올바른 스태틱 라우팅 */
@@ -231,6 +232,7 @@ export function effectiveL3v6(d: Device, count: number) {
       return ip && !isLinkLocal6(ip) ? { ip, prefix: Number.isInteger(c!.prefix) && c!.prefix >= 1 && c!.prefix <= 128 ? c!.prefix : 64, ...ra } : ra;
     }),
     ...(raDns ? { raDns } : {}),
+    ...(v.raPeriodic === true ? { raPeriodic: true } : {}),
     routes: v.routes
       .map((r) => ({ dest: validIp6(r.dest), prefix: r.prefix, via: validIp6(r.via) }))
       .filter((r): r is { dest: string; prefix: number; via: string } => !!r.dest && !!r.via && !isLinkLocal6(r.via) && Number.isInteger(r.prefix) && r.prefix >= 0 && r.prefix <= 128),

@@ -96,6 +96,7 @@ export function Ipv6Section({ d, h }: { d: Device; h: HostSettings }) {
           <p class="note">
             라우터 광고(RA)가 알린 /64 프리픽스에 MAC 에서 만든 인터페이스 ID 를 붙여 주소를 스스로 만들고(SLAAC), RA 를 보낸 라우터의 링크 로컬 주소를 기본 게이트웨이로 씁니다. DNS 는 RA 의 RDNSS 옵션으로 받습니다. 링크 로컬 <span class="mono">{ll}</span>
           </p>
+          <NudToggle on={v.nud === true} onToggle={() => set({ nud: !v.nud })} />
         </>
       ) : (
         <>
@@ -124,9 +125,26 @@ export function Ipv6Section({ d, h }: { d: Device; h: HostSettings }) {
           <p class="note">
             링크 로컬 <span class="mono">{ll}</span> 은 MAC 에서 자동으로 생깁니다(fe80::/64 + EUI-64). 주소를 비우면 링크 로컬만으로 같은 링크의 이웃과 통신합니다. 기본 게이트웨이는 라우터의 글로벌 주소나 링크 로컬 주소 어느 쪽이든 됩니다.
           </p>
+          <NudToggle on={v.nud === true} onToggle={() => set({ nud: !v.nud })} />
         </>
       )}
     </Section>
+  );
+}
+
+/** NUD (이웃 도달 확인) 켜기 */
+function NudToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <>
+      <label class="toggle-row">
+        <span>
+          NUD <span class="mono muted">REACHABLE 30초 · DELAY 5초 · PROBE 3번</span>
+          <small class="muted">말없이 사라진 이웃·라우터를 알아챔</small>
+        </span>
+        <Toggle on={on} onToggle={onToggle} />
+      </label>
+      {on && <p class="note">이웃을 확인(요청한 NA)한 지 30초가 지나면 STALE, 그 이웃에게 보낼 때 5초 기다렸다 유니캐스트 NS 로 직접 확인합니다(<span class="mono">ip -6 neigh</span> 의 DELAY·PROBE). 3번에 답이 없으면 지우고, 라우터였다면 기본 게이트웨이에서 빼 다음 라우터로 넘어갑니다. 끄면 60초 지난 항목을 다시 묻기만 합니다.</p>}
+    </>
   );
 }
 

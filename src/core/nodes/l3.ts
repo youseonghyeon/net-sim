@@ -31,7 +31,7 @@ import { IKE_TIMER_TAG, VPN_DPD_TAG, VPN_MODE_LABEL, Vpn, type VpnConfig } from 
 import { RaServer, type RaServerConfig } from "./ravpn";
 import { TunnelEnds } from "./l3tunnel";
 import { HA_SYNC_TAG, SessionSync } from "./hasync";
-import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG } from "./ipv6";
+import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RA_PERIODIC_TAG } from "./ipv6";
 
 
 export interface L3IfaceConfig {
@@ -87,6 +87,8 @@ export interface L3Ipv6Config {
   routes: StaticRoute[];
   /** RA 의 RDNSS 로 알릴 DNS 서버 */
   raDns?: Ip;
+  /** 주기 RA (10초, 라우터 수명 30초 — 배경 타이머) */
+  raPeriodic?: boolean;
 }
 
 interface Route6 {
@@ -219,7 +221,7 @@ export class L3Node implements SimNode {
       this.ipv6Enabled = true;
       this.v6.forEach((v, i) => {
         const c = cfg.ipv6!.interfaces[i];
-        v.init({ enabled: true, addrs: c?.ip ? [{ ip: c.ip, prefix: c.prefix ?? 64 }] : [], ra: c?.ra === true, raDns: cfg.ipv6!.raDns });
+        v.init({ enabled: true, addrs: c?.ip ? [{ ip: c.ip, prefix: c.prefix ?? 64 }] : [], ra: c?.ra === true, raDns: cfg.ipv6!.raDns, raPeriodic: cfg.ipv6!.raPeriodic === true });
       });
       this.routes6 = [...cfg.ipv6.routes];
     }
@@ -258,7 +260,7 @@ export class L3Node implements SimNode {
     this.ipv6Enabled = cfg.enabled;
     this.v6.forEach((v, i) => {
       const c = cfg.interfaces[i];
-      v.configure({ enabled: cfg.enabled, addrs: c?.ip ? [{ ip: c.ip, prefix: c.prefix ?? 64 }] : [], ra: c?.ra === true, raDns: cfg.raDns }, this.linkUp[i] === true, ctx, this.emit(i, ctx));
+      v.configure({ enabled: cfg.enabled, addrs: c?.ip ? [{ ip: c.ip, prefix: c.prefix ?? 64 }] : [], ra: c?.ra === true, raDns: cfg.raDns, raPeriodic: cfg.raPeriodic === true }, this.linkUp[i] === true, ctx, this.emit(i, ctx));
     });
     const routes = cfg.enabled ? cfg.routes : [];
     const key = (r: StaticRoute) => `${r.dest}/${r.prefix} via ${r.via}`;
@@ -972,6 +974,10 @@ export class L3Node implements SimNode {
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
     if (tag === DAD_TIMER_TAG) {
       for (let i = 0; i < this.v6.length; i++) if (this.v6[i]!.finishDad(data, ctx, this.emit(i, ctx))) break;
+      return;
+    }
+    if (tag === RA_PERIODIC_TAG) {
+      for (let i = 0; i < this.v6.length; i++) if (this.v6[i]!.onRaTick(data, ctx, this.emit(i, ctx))) break;
       return;
     }
     if (tag === NDP_TIMEOUT_TAG) {
