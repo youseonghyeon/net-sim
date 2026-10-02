@@ -1290,6 +1290,10 @@ select.btn.example {
   grid-column: 1 / -1;
   margin-top: 0;
 }
+/* 포트 공개: 첫 칸이 받는 주소(0.0.0.0·127.0.0.1)라 넓게 */
+.fwd-row.pub-row {
+  grid-template-columns: 112px auto minmax(0, 1fr) auto 64px 30px;
+}
 .fw-rule {
   padding: 6px 0 8px;
   border-bottom: 1px solid var(--line);

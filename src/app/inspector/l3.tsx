@@ -14,7 +14,9 @@ import {
   type IfaceSettings,
   type Ipv6L3Settings,
   type L3Settings,
+  type PublishSettings,
   type SubIfaceSettings,
+  natOn,
   vlanColor,
 } from "../../model/topology";
 import { Icon } from "../Icons";
@@ -108,7 +110,8 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
       <VpnSection d={d} l3={l3} />
       <RaServerSection d={d} l3={l3} />
       <HaSection d={d} l3={l3} />
-      {isNat && (
+      {d.kind === "gateway" && <GatewayNatSection d={d} l3={l3} />}
+      {natOn(d) && (
         <ForwardSection
           rules={l3.forwards ?? []}
           onChange={(forwards) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), forwards } }))}
@@ -120,7 +123,74 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
         onChange={(firewall) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), firewall } }))}
         uplinkName={isNat ? "outside" : "if0"}
       />
+      <PublishSection d={d} l3={l3} />
     </>
+  );
+}
+
+/** 게이트웨이의 NAT (MASQUERADE): 켜면 if0 이 바깥 — 라우터가 아닌 컴퓨터(도커 호스트·맥)가 안쪽 네트워크를 자기 주소로 내보낼 때 */
+function GatewayNatSection({ d, l3 }: { d: Device; l3: L3Settings }) {
+  const on = l3.nat?.enabled === true;
+  const set = (enabled: boolean) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), nat: { enabled } } }));
+  return (
+    <Section title="NAT (MASQUERADE)">
+      <label class="toggle-row">
+        <span>
+          {on ? "켜짐" : "꺼짐"} <span class="mono muted">바깥 = if0</span>
+        </span>
+        <Toggle on={on} onToggle={() => set(!on)} />
+      </label>
+      <p class="note">
+        {on
+          ? "안쪽(if1·if2)에서 if0 으로 나가는 패킷의 출발지를 if0 주소로 바꿉니다. 바깥에서 안쪽 주소로 바로 오는 것은 막히고, 들이려면 포트 포워딩이나 포트 공개를 씁니다. 위쪽 라우터에 안쪽 대역으로 돌아오는 경로가 없어도 됩니다."
+          : "켜면 이 게이트웨이가 NAT 박스처럼 안쪽 대역을 if0 주소 하나로 내보냅니다 (iptables MASQUERADE — 도커 호스트, 가상 머신을 돌리는 컴퓨터)."}
+      </p>
+    </Section>
+  );
+}
+
+/** 포트 공개 (docker run -p 식): 이 장비의 주소(bind)로 온 TCP 를 안쪽 대상으로. 출발지는 이 장비 주소로 바뀐다 (docker-proxy) */
+function PublishSection({ d, l3 }: { d: Device; l3: L3Settings }) {
+  void simVersion.value;
+  const rules = l3.publish ?? [];
+  const onChange = (publish: PublishSettings[]) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), publish } }));
+  const setRule = (i: number, patch: Partial<PublishSettings>) => onChange(rules.map((r, k) => (k === i ? { ...r, ...patch } : r)));
+  const port = (v: string, fallback: number) => Math.min(65535, Math.max(1, Number(v) || fallback));
+  // 받을 주소 선택지: 모든 주소 + 이 장비의 수동 주소들 (예: 127.0.0.1 = lo)
+  const mine = l3.interfaces.map((f) => (f.ipMode === "static" && validIp(f.ip) ? f.ip : "")).filter((x) => x !== "");
+  return (
+    <Section id="publish-edit" title="포트 공개 (docker -p)">
+      {rules.length === 0 && (
+        <p class="note">이 장비의 주소로 온 TCP 연결을 안쪽 대상(컨테이너·VM)으로 넘깁니다. 포트 포워딩과 달리 어느 인터페이스로 와도(같은 장비 안 lo 포함) 받고, 대상은 이 장비가 연 연결로 봅니다(docker-proxy). 받는 주소를 127.0.0.1 로 좁히면 LAN 에서는 못 들어옵니다.</p>
+      )}
+      {rules.map((r, i) => (
+        <div key={i} class="fwd-row pub-row">
+          <select class="input proto mono" value={r.bind} title="받는 주소 (0.0.0.0 = 이 장비의 모든 주소)" onChange={(e) => setRule(i, { bind: e.currentTarget.value })}>
+            <option value="0.0.0.0">0.0.0.0</option>
+            {[...new Set([...mine, ...(r.bind !== "0.0.0.0" ? [r.bind] : [])])].map((ip) => (
+              <option key={ip} value={ip}>
+                {ip}
+              </option>
+            ))}
+          </select>
+          <span class="muted fwd-publabel">:</span>
+          <input class="input mono port fwd-pub" type="number" min={1} max={65535} value={r.port} onInput={(e) => { if (e.currentTarget.value === "") return; setRule(i, { port: port(e.currentTarget.value, 8080) }); }} />
+          <button class="icon-btn" title="규칙 삭제" onClick={() => onChange(rules.filter((_, k) => k !== i))}>
+            <Icon name="trash" size={15} />
+          </button>
+          <span class="muted fwd-arrow">→</span>
+          <input class="input mono fwd-ip" value={r.to} placeholder="172.18.0.2" onInput={(e) => setRule(i, { to: e.currentTarget.value })} />
+          <span class="muted fwd-colon">:</span>
+          <input class="input mono port fwd-lan" type="number" min={1} max={65535} value={r.toPort} onInput={(e) => { if (e.currentTarget.value === "") return; setRule(i, { toPort: port(e.currentTarget.value, 80) }); }} />
+          {ipError(r.to, true) && <div class="error fwd-error">{ipError(r.to, true)}</div>}
+          {rules.findIndex((x) => x.port === r.port && x.bind === r.bind) !== i && <div class="error fwd-error">같은 주소·포트가 위에 있습니다. 첫 줄만 씁니다.</div>}
+        </div>
+      ))}
+      <button class="btn wide" onClick={() => onChange([...rules, { port: 8080, bind: "0.0.0.0", to: "", toPort: 80 }])}>
+        <Icon name="plus" size={14} />
+        규칙 추가
+      </button>
+    </Section>
   );
 }
 

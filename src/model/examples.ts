@@ -3,11 +3,11 @@
 // 새 예제는 알맞은 묶음 파일에 함수를 추가하고 EXAMPLES 에 등록한다 (구성 검사 이슈 0 은 tests/topology.test.ts 가 확인).
 import type { Topology } from "./topology";
 import { exampleStarterTopology, exampleTopology } from "./examples/basic";
-import { examplePartsTopology, exampleDockerTopology } from "./examples/parts";
+import { examplePartsTopology } from "./examples/parts";
 import { exampleTwoGatewaysTopology, exampleBackboneTopology, exampleRipTopology } from "./examples/routing";
 import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
 import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
-import { exampleLoadBalancerTopology, exampleProxyTopology } from "./examples/services";
+import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology } from "./examples/internet";
 import { exampleRoamingTopology } from "./examples/wireless";
 import { exampleDualStackHomeTopology, exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
@@ -137,8 +137,8 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
   docker: {
     id: "docker",
     group: "서비스",
-    label: "도커 호스트를 부품으로 (브리지·MASQUERADE·포트 공개)",
-    blurb: "pc-1 에서 172.18.0.2 로 ping 은 실패하지만(호스트 뒤 사설망), docker-host 의 LAN 주소:8080 으로 TCP 연결은 -p 포워딩으로 web 에 닿습니다. web 에서 db 는 이름으로, google.com 은 MASQUERADE 로 나갑니다.",
+    label: "도커 네트워크 (브리지·내장 DNS·포트 공개)",
+    blurb: "맥에서 Docker Desktop 을 쓸 때의 구조입니다. 컨테이너는 맥 안의 Linux VM(Docker VM)에 있고 맥(macOS)과는 가상 링크(vmnet)로 이어집니다. 맥 터미널에서 127.0.0.1:8080(localhost)으로 TCP 연결을 보내면 macOS 의 포트 공개 → Docker VM 의 포트 공개(docker -p 8080:80) → web 으로 가고, web 은 브리지 게이트웨이(172.18.0.1)가 연 연결로 봅니다. 맥 터미널에서 172.18.0.2 로 ping 하면 실패합니다 — 컨테이너 대역은 VM 안에 있어 맥에는 경로가 없습니다(리눅스에서 도커를 바로 돌리면 됩니다). 집 PC 에서 맥 주소:8080 은 되지만 :5432 는 맥의 127.0.0.1 에만 공개돼 막힙니다. 사용자 정의 브리지(br-app)의 web 은 db 를 이름으로 찾지만(내장 DNS), 기본 브리지(docker0)의 old-app 은 이름으로 못 찾고 다른 브리지로는 아예 못 갑니다(DOCKER-ISOLATION). 컨테이너의 인터넷은 VM → 맥 → 공유기 NAT 를 차례로 거칩니다.",
     build: exampleDockerTopology,
   },
   internet: {

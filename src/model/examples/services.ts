@@ -101,3 +101,94 @@ export function exampleProxyTopology(): Topology {
   t.zones = [{ id: newId("zone"), label: "인터넷으로 나갈 수 있는 유일한 장비", tint: "amber", ...zoneAround(t, [proxy.id], 24)! }];
   return t;
 }
+
+/**
+ * 도커 네트워크 (맥의 Docker Desktop 구조): 컨테이너는 맥 안의 Linux VM 에 있고, 맥과 VM 은 가상 링크(vmnet)로 이어진다.
+ * - macOS = 게이트웨이(if0 집 LAN · if1 lo 127.0.0.1 · if2 vmnet) + NAT, 맥 터미널 = lo 에 붙은 맥 안의 앱 (localhost 로 접속하는 쪽)
+ * - Docker VM = 게이트웨이(if0 vmnet · if1 docker0 · if2 br-app) + NAT(MASQUERADE) + 방화벽(DOCKER-ISOLATION: 브리지끼리 막음)
+ * - 포트 공개는 두 번: macOS 가 맥의 포트를 VM 으로(Docker Desktop 포트 포워딩), VM 이 컨테이너로(docker -p). 둘 다 docker-proxy 식이라 대상은 바로 앞 장비가 연 연결로 본다
+ * - 내장 DNS 는 실제로는 컨테이너마다 127.0.0.11 — 여기서는 br-app 의 서버 하나(172.18.0.11)로 그린다. 기본 브리지(docker0)에는 없다
+ * 리눅스에서 도커를 바로 돌리면 VM 이 없고 macOS 자리의 컴퓨터가 곧 Docker VM 이다 (그래서 리눅스 호스트는 172.18.0.2 로 바로 닿는다)
+ */
+export function exampleDockerTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 552, -336);
+  const rt = add("router", 552, -192, "집 공유기");
+  const pc = add("pc", 96, -24, "집 PC");
+  const mac = add("gateway", 552, 8, "macOS");
+  mac.l3 = {
+    interfaces: [
+      { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" }, // if0: Wi-Fi(집 LAN) — 공유기에서 주소를 받는다
+      { ipMode: "static", ip: "127.0.0.1", prefix: 8, gateway: "" }, // if1: lo — 맥 안의 앱이 localhost 로 오는 곳
+      { ipMode: "static", ip: "192.168.64.1", prefix: 24, gateway: "" }, // if2: vmnet — Docker VM 과 잇는 가상 링크
+    ],
+    routes: [],
+    nat: { enabled: true }, // VM 의 바깥 통신을 맥 주소로 (macOS vmnet 공유 모드)
+    // Docker Desktop 포트 포워딩: 맥의 포트를 VM 의 같은 포트로. -p 127.0.0.1:5432:5432 는 맥의 127.0.0.1 에만
+    publish: [
+      { port: 8080, bind: "0.0.0.0", to: "192.168.64.2", toPort: 8080 },
+      { port: 5432, bind: "127.0.0.1", to: "192.168.64.2", toPort: 5432 },
+    ],
+  };
+  const app = add("pc", 328, 192, "맥 터미널");
+  app.host = { ipMode: "static", ip: "127.0.0.2", prefix: 8, gateway: "127.0.0.1", dns: "192.168.0.1", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const vm = add("gateway", 664, 192, "Docker VM");
+  vm.l3 = {
+    interfaces: [
+      { ipMode: "static", ip: "192.168.64.2", prefix: 24, gateway: "192.168.64.1" }, // if0: eth0 (vmnet 쪽)
+      { ipMode: "static", ip: "172.17.0.1", prefix: 16, gateway: "" }, // if1: docker0 (기본 브리지)
+      { ipMode: "static", ip: "172.18.0.1", prefix: 16, gateway: "" }, // if2: br-app (docker network create app)
+    ],
+    routes: [],
+    nat: { enabled: true }, // 컨테이너 → 바깥은 MASQUERADE
+    // docker run -p 8080:80 web / -p 5432:5432 db
+    publish: [
+      { port: 8080, bind: "0.0.0.0", to: "172.18.0.2", toPort: 80 },
+      { port: 5432, bind: "0.0.0.0", to: "172.18.0.3", toPort: 5432 },
+    ],
+    // DOCKER-ISOLATION: 서로 다른 브리지 네트워크끼리는 같은 호스트여도 막는다
+    firewall: {
+      enabled: true,
+      defaultPolicy: "allow",
+      stateful: true,
+      rules: [
+        { action: "deny", proto: "any", direction: "any", src: "172.17.0.0/16", dst: "172.18.0.0/16", dstPort: "" },
+        { action: "deny", proto: "any", direction: "any", src: "172.18.0.0/16", dst: "172.17.0.0/16", dstPort: "" },
+      ],
+    },
+  };
+  const docker0 = add("switch", 488, 368, "docker0");
+  const brApp = add("switch", 816, 368, "br-app");
+  const container = (d: Device, ip: string, gw: string, dns: string, services: number[]) => {
+    d.host = { ipMode: "static", ip, prefix: 16, gateway: gw, dns, services, dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  };
+  const old = add("server", 536, 536, "old-app");
+  container(old, "172.17.0.2", "172.17.0.1", "8.8.8.8", [80]); // 기본 브리지: 호스트의 DNS 설정을 그대로 받아 이름으로 다른 컨테이너를 못 찾는다
+  const web = add("server", 768, 536, "web");
+  const db = add("server", 864, 536, "db");
+  const dns = add("server", 960, 536, "내장 DNS");
+  container(web, "172.18.0.2", "172.18.0.1", "172.18.0.11", [80]);
+  container(db, "172.18.0.3", "172.18.0.1", "172.18.0.11", [5432]);
+  container(dns, "172.18.0.11", "172.18.0.1", "8.8.8.8", []);
+  // 같은 사용자 정의 네트워크의 컨테이너 이름. 모르는 이름은 호스트가 쓰는 DNS 로 넘긴다
+  dns.host!.dnsServer = { enabled: true, records: [{ name: "web", ip: "172.18.0.2" }, { name: "db", ip: "172.18.0.3" }], upstream: "8.8.8.8" };
+  const cables: Cable[] = [
+    cable(inet, 0, rt, 0),
+    cable(rt, 1, pc, 0),
+    cable(rt, 2, mac, 0),
+    cable(mac, 1, app, 0),
+    cable(mac, 2, vm, 0),
+    cable(vm, 1, docker0, 3),
+    cable(vm, 2, brApp, 3),
+    cable(docker0, 4, old, 0),
+    cable(brApp, 1, web, 0),
+    cable(brApp, 4, db, 0),
+    cable(brApp, 7, dns, 0),
+  ];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "맥북 한 대 안 (if0 Wi-Fi · if1 lo · if2 vmnet)", tint: "blue", ...zoneAround(t, [mac.id, app.id, vm.id, docker0.id, brApp.id, old.id, web.id, db.id, dns.id], 40)! },
+    { id: newId("zone"), label: "Docker VM 안 (Linux)", tint: "green", ...zoneAround(t, [vm.id, docker0.id, brApp.id, old.id, web.id, db.id, dns.id], 16)! },
+  ];
+  return t;
+}

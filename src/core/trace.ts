@@ -5,6 +5,8 @@ export type TraceKind =
   | "link.transmit"
   | "link.unconnected"
   | "link.up"
+  /** 포트 공개 (docker -p 식 FULLNAT) */
+  | "port.publish"
   | "link.down"
   | "link.lost"
   | "frame.send"

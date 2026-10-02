@@ -1,5 +1,5 @@
 // 라우팅 규칙: 업링크 디폴트 라우트, 안쪽 게이트웨이 뒤로 돌아가는 스태틱 라우팅, DHCP 릴레이 대상 경로. 양쪽 다 RIP 면 침묵.
-import { DEVICE_SPECS, type Device } from "../topology";
+import { DEVICE_SPECS, natOn, type Device } from "../topology";
 import { contains, covers, fmtSubnet, subnetOf, validIp, type Subnet } from "./addr";
 import { names, pickGw, ripOn, subnetsBehind, uniqueDevices, type LintContext } from "./context";
 import { portName, validSubifs } from "./segments";
@@ -45,7 +45,8 @@ export function returnRouteRule({ t, m, add }: LintContext): void {
       if (seenSeg.has(seg)) continue;
       seenSeg.add(seg);
       for (const y of m.gwsOf(g.key)) {
-        if (y.device === x || !y.uplink || y.device.kind !== "gateway") continue;
+        // NAT 를 켠 게이트웨이 뒤는 주소가 바뀌어 나오므로 돌아오는 경로가 필요 없다 (NAT 박스와 같다)
+        if (y.device === x || !y.uplink || y.device.kind !== "gateway" || natOn(y.device)) continue;
         if (ripOn(x) && ripOn(y.device)) continue; // 둘 다 RIP 를 켜면 y 뒤의 서브넷은 광고로 배운다
         for (const s of subnetsBehind(y.device, m, new Set([x.id]))) {
           if (routes.some((r) => covers(r.subnet, s.subnet))) continue;

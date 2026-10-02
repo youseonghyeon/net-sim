@@ -201,6 +201,8 @@ function validIp(s: string | undefined): string | undefined {
 }
 
 /** IPv6 주소 칸: 표준 표기로, 틀리면 없음 */
+const validPort = (n: number) => Number.isInteger(n) && n >= 1 && n <= 65535;
+
 function validIp6(s: string | undefined): string | undefined {
   return typeof s === "string" ? canonIp6(s.trim()) : undefined; // 손으로 고친 JSON 의 숫자 값은 없음으로
 }
@@ -429,6 +431,12 @@ export function effectiveL3(d: Device) {
     }),
     routes: (l3.routes ?? []).filter((r) => validIp(r.dest) && validIp(r.via) && r.prefix >= 1 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix, via: r.via })),
     forwards: effectiveForwards(l3.forwards),
+    nat: { enabled: d.kind === "gateway" && l3.nat?.enabled === true },
+    // 포트 공개: 포트·대상이 올바른 것만, bind 는 0.0.0.0 또는 올바른 주소. 같은 (bind, 포트) 는 앞의 것만
+    publish: (l3.publish ?? [])
+      .filter((r) => validPort(r.port) && validPort(r.toPort) && validIp(r.to) && (r.bind === "0.0.0.0" || validIp(r.bind)))
+      .filter((r, i, all) => all.findIndex((x) => x.port === r.port && x.bind === r.bind) === i)
+      .map((r) => ({ port: r.port, bind: r.bind, to: r.to, toPort: r.toPort })),
     firewall: effectiveFirewall(l3.firewall),
     subinterfaces: (l3.subinterfaces ?? [])
       .filter((s) => Number.isInteger(s.vlan) && s.vlan >= 1 && s.vlan <= 4094 && s.port >= 1 && s.port < spec.ports.length && !spec.ports[s.port]!.radio)
@@ -500,6 +508,8 @@ export function makeNode(d: Device): SimNode {
       interfaces: cfg.interfaces.map((c, i) => ({ name: spec.ports[i]!.name, mac: l3MacOf(d.mac, i), ...c })),
       routes: cfg.routes,
       forwards: cfg.forwards,
+      nat: cfg.nat,
+      publish: cfg.publish,
       firewall: cfg.firewall,
       subinterfaces: cfg.subinterfaces,
       rip: cfg.rip,
@@ -526,7 +536,9 @@ export function applyConfig(net: Network, d: Device): void {
     const cfg = effectiveL3(d);
     node.configure(cfg.interfaces, net.contextFor(d.id));
     node.setRoutes(cfg.routes, net.contextFor(d.id));
+    node.setNat(cfg.nat, net.contextFor(d.id)); // 포트 포워딩보다 먼저 (NAT 를 새로 켜면 규칙을 그 테이블에 넣는다)
     node.setForwards(cfg.forwards, net.contextFor(d.id));
+    node.setPublish(cfg.publish, net.contextFor(d.id));
     node.setFirewall(cfg.firewall, net.contextFor(d.id));
     node.setSubinterfaces(cfg.subinterfaces, net.contextFor(d.id));
     node.setRip(cfg.rip, net.contextFor(d.id));

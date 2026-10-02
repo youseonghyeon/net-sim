@@ -1,5 +1,5 @@
 // 규칙 모듈이 함께 쓰는 것: 이슈 타입, 규칙에 넘기는 문맥(토폴로지·세그먼트 모델·add), 문구 도우미, 마무리(합치기·정렬).
-import type { Device, Topology } from "../topology";
+import { natOn, type Device, type Topology } from "../topology";
 import { contains, type Subnet } from "./addr";
 import type { GwIface, Model } from "./segments";
 
@@ -67,7 +67,7 @@ export function subnetsBehind(y: Device, m: Model, visited: Set<string>): { subn
     if (g.device !== y || !g.inside) continue;
     if (g.subnet) out.push({ subnet: g.subnet, owner: y });
     for (const z of m.gwsOf(g.key)) {
-      if (z.device !== y && z.uplink && z.device.kind === "gateway") out.push(...subnetsBehind(z.device, m, visited));
+      if (z.device !== y && z.uplink && z.device.kind === "gateway" && !natOn(z.device)) out.push(...subnetsBehind(z.device, m, visited));
     }
   }
   return out;

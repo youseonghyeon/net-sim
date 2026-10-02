@@ -458,7 +458,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await loadEx("docker");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 });
   const a = await device("web").locator(".tile").boundingBox();
-  const b = await device("embedded-dns").locator(".tile").boundingBox();
+  const b = await device("내장 DNS").locator(".tile").boundingBox();
   await page.mouse.move(a.x - 30, a.y - 30);
   await page.mouse.down();
   await page.mouse.move(b.x + b.width + 30, b.y + b.height + 30, { steps: 6 });
@@ -467,7 +467,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.click("text=영역으로 묶기");
   await page.waitForTimeout(150);
   const zonesBefore = await page.locator("[data-zone]").count();
-  console.log("zones (예제 2 + 새로 1):", zonesBefore, "| panel:", await page.locator(".inspector h2").textContent(), "| members:", (await page.locator(".inspector p").first().textContent()));
+  console.log("zones (예제 3 + 새로 1):", zonesBefore, "| panel:", await page.locator(".inspector h2").textContent(), "| members:", (await page.locator(".inspector p").first().textContent()));
   await page.fill(".inspector .input", "컨테이너들");
   await page.waitForTimeout(100);
   const zone = page.locator("[data-zone].selected");
@@ -476,7 +476,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   const lab = await zone.locator(".zone-label rect").boundingBox();
   await page.mouse.move(lab.x + lab.width / 2, lab.y + lab.height / 2);
   await page.mouse.down();
-  await page.mouse.move(lab.x + lab.width / 2 - 120, lab.y + lab.height / 2, { steps: 6 });
+  await page.mouse.move(lab.x + lab.width / 2 + 120, lab.y + lab.height / 2, { steps: 6 }); // 오른쪽은 빈 곳 (왼쪽은 다른 영역·장치와 겹침)
   await page.mouse.up();
   await page.waitForTimeout(100);
   const after = await device("web").locator(".tile").boundingBox();
@@ -628,8 +628,8 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
 {
   await loadEx("docker");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 });
-  await clickDevice("pc-1");
-  await waitAddr("pc-1", /^192\.168\.0\.\d+\/24$/);
+  await clickDevice("집 PC");
+  await waitAddr("집 PC", /^192\.168\.0\.\d+\/24$/);
   await page.locator(".ping-row .picker .input").first().click();
   await page.waitForTimeout(150);
   const groups = await page.locator(".picker-list h5").allTextContents();
@@ -642,7 +642,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.locator(".ping-row .picker .input").first().fill("google.com");
   await clickDevice("web");
   await page.waitForTimeout(100);
-  await clickDevice("pc-1");
+  await clickDevice("집 PC");
   await page.waitForTimeout(100);
   console.log("remembered ping target:", await page.locator(".ping-row .picker .input").first().inputValue());
 }
@@ -1004,8 +1004,30 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("iptime table:", (await page.locator(".inspector").innerText()).includes("VPN 접속") ? "yes" : "NO");
   await page.screenshot({ path: `${OUT}/60-iptime.png` });
 }
+// 도커 네트워크 (Docker Desktop): macOS 설정의 NAT·포트 공개, 맥 터미널에서 127.0.0.1:8080 (localhost) → web
+{
+  await loadEx("docker");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await clickDevice("macOS");
+  await goTab("설정");
+  const natSec = page.locator(".inspector section", { has: page.locator("h3", { hasText: "NAT (MASQUERADE)" }) });
+  const pubSec = page.locator(".inspector section", { has: page.locator("h3", { hasText: "포트 공개 (docker -p)" }) });
+  console.log("docker mac nat:", (await natSec.locator(".toggle.on").count()) === 1, "| publish rows:", await pubSec.locator(".pub-row").count(), "| bind:", await pubSec.locator(".pub-row select").nth(1).inputValue());
+  await pubSec.screenshot({ path: `${OUT}/63-docker-publish.png` });
+  await clickDevice("맥 터미널");
+  await goTab("진단");
+  await page.fill(".tcp-row .input:not(.port)", "127.0.0.1");
+  await page.keyboard.press("Escape");
+  await page.fill(".tcp-row .input.port", "8080");
+  await page.click(".tcp-row .btn");
+  await page.waitForFunction(() => /종료됨|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 60000 });
+  console.log("docker localhost:8080:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
+  await page.screenshot({ path: `${OUT}/64-docker.png` });
+}
 // 노트북 유선·무선 NIC: 호텔 공유기 Wi-Fi 를 켜고 노트북 Wi-Fi 를 켠 뒤 케이블을 빼면 Wi-Fi 로 넘어가 VPN 이 다시 붙는다
 {
+  await loadEx("iptime");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await clickDevice("호텔 공유기");
   await goTab("설정");
   await page.locator(".inspector section", { has: page.locator("h3", { hasText: "무선 (Wi-Fi)" }) }).locator(".toggle-row .toggle").first().click();

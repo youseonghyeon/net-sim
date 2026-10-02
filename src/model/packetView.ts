@@ -860,6 +860,12 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       out.push({ tool: "Squid access.log", line: `${(ev.time / 1000).toFixed(3)}      0 ${detail(ev, "client") ?? "-"} ${code} ${detail(ev, "bytes") ?? 200} ${connect ? "CONNECT" : "GET"} ${url} - ${hier} ${connect && code.startsWith("TCP_TUNNEL") ? "-" : "text/html"}` });
       break;
     }
+    case "port.publish":
+      // 새로 넘긴 연결: 도커가 -p 마다 띄우는 userland proxy 프로세스 (ps 에 보이는 명령 줄)
+      if (detail(ev, "to") !== undefined && detail(ev, "back") === undefined && detail(ev, "refused") === undefined)
+        out.push({ tool: "ps (docker-proxy)", line: `docker-proxy -proto tcp -host-ip ${detail(ev, "bind") ?? "0.0.0.0"} -host-port ${detail(ev, "port") ?? "?"} -container-ip ${detail(ev, "to")} -container-port ${detail(ev, "toPort") ?? "?"}` });
+      if (detail(ev, "refused") === "true") out.push({ tool: "curl", line: `curl: (7) Failed to connect to ${ip?.dst ?? "?"} port ${detail(ev, "port") ?? "?"}: Connection refused` });
+      break;
     case "lb.relay":
       out.push({ tool: "nginx access.log", line: `${ip?.dst ?? "-"} - - "GET / HTTP/1.1" ${(detail(ev, "status") ?? "HTTP 200").replace("HTTP ", "").split(" ")[0]} ${detail(ev, "bytes") ?? "-"} upstream=${detail(ev, "backend") ?? "?"}` });
       break;

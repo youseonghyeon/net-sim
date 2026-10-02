@@ -1,5 +1,5 @@
 // VPN 규칙: 사이트 간 VPN(WireGuard·IPsec)과 원격 접속 VPN.
-import type { Device } from "../topology";
+import { natOn, type Device } from "../topology";
 import { contains, fmtSubnet, ipInt, overlaps, subnetOf, validIp, type Subnet } from "./addr";
 import type { LintContext } from "./context";
 
@@ -170,7 +170,7 @@ export function remoteAccessRules({ t, m, add }: LintContext): void {
     const srvs = t.devices
       .filter((x) => x !== d && ownsIp(x, server))
       .flatMap((x) => {
-        const fwd = x.kind !== "nat" || x.l3?.ra?.enabled ? undefined : x.l3?.forwards?.find((f) => f.proto === "udp" && f.publicPort === IKE_PORT);
+        const fwd = !natOn(x) || x.l3?.ra?.enabled ? undefined : x.l3?.forwards?.find((f) => f.proto === "udp" && f.publicPort === IKE_PORT);
         const lan = fwd ? validIp(fwd.lanIp) : undefined;
         if (!fwd) return [x];
         const inner = lan ? t.devices.filter((y) => y !== x && y !== d && ownsIp(y, lan)) : [];

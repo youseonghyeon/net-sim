@@ -1,5 +1,5 @@
 // 서비스 규칙: 포트 포워딩 대상이 그 포트를 열지 않음, 공유기 DNS 포워더 꺼짐, HTTP 프록시 설정이 가리키는 곳에 프록시 없음.
-import type { Device } from "../topology";
+import { natOn, type Device } from "../topology";
 import { validIp, validPort } from "./addr";
 import type { LintContext } from "./context";
 
@@ -11,7 +11,7 @@ export function forwardClosedRule({ t, add }: LintContext): void {
     return port === 53 && h.dnsServer?.enabled === true;
   };
   for (const d of t.devices) {
-    const rules = d.router?.forwards ?? (d.kind === "nat" ? d.l3?.forwards : undefined) ?? [];
+    const rules = d.router?.forwards ?? (natOn(d) ? d.l3?.forwards : undefined) ?? [];
     for (const r of rules) {
       const lanIp = validIp(r.lanIp);
       if (!lanIp || !validPort(r.lanPort)) continue;

@@ -297,6 +297,23 @@ export interface L3Settings {
   ra?: RaServerSettings;
   /** IPv6 라우팅. 없으면 꺼짐 */
   ipv6?: Ipv6L3Settings;
+  /** 게이트웨이의 NAT (MASQUERADE, if0 이 바깥). 없으면 꺼짐. NAT 박스는 늘 켜짐 */
+  nat?: { enabled: boolean };
+  /** 포트 공개 (docker run -p 식): 장비 자신의 주소(bind, 0.0.0.0 = 모두)의 port 로 온 TCP 를 to:toPort 로 */
+  publish?: PublishSettings[];
+}
+
+export interface PublishSettings {
+  port: number;
+  /** "0.0.0.0" = 이 장비의 모든 주소, "127.0.0.1" 처럼 하나로 좁힐 수 있다 */
+  bind: string;
+  to: string;
+  toPort: number;
+}
+
+/** 게이트웨이·NAT 박스가 NAT 를 하는지 (NAT 박스, 또는 NAT 를 켠 게이트웨이) */
+export function natOn(d: Device): boolean {
+  return d.kind === "nat" || (d.kind === "gateway" && d.l3?.nat?.enabled === true);
 }
 
 export interface RaServerSettings {
@@ -447,6 +464,15 @@ function normalizeRouterVpn(r: Partial<RouterVpnServerSettings>): RouterVpnServe
       .filter((u): u is { name: unknown; password?: unknown } => !!u && typeof u === "object" && accountText((u as { name?: unknown }).name) !== undefined)
       .map((u) => ({ name: accountText(u.name)!, password: accountText(u.password) ?? "" })),
   };
+}
+
+/** 불러온 JSON 의 포트 공개 규칙 정리 (배열이 아니면 [], 숫자·문자열은 타입대로) */
+function normalizePublish(v: unknown): PublishSettings[] {
+  if (!Array.isArray(v)) return [];
+  const num = (x: unknown, d: number) => (typeof x === "number" && Number.isInteger(x) ? x : typeof x === "string" && /^\d+$/.test(x) ? Number(x) : d);
+  return v
+    .filter((r): r is Record<string, unknown> => !!r && typeof r === "object")
+    .map((r) => ({ port: num(r.port, 0), bind: typeof r.bind === "string" ? r.bind : "0.0.0.0", to: typeof r.to === "string" ? r.to : "", toPort: num(r.toPort, 0) }));
 }
 
 /** 불러온 JSON 의 이중화 설정 정리 */
@@ -1113,6 +1139,8 @@ export function normalizeTopology(t: Topology): Topology {
           ...(fixed.l3.ha ? { ha: normalizeHa(fixed.l3.ha) } : {}),
           ...(fixed.l3.ra ? { ra: normalizeRaServer(fixed.l3.ra) } : {}),
           ...(fixed.l3.ipv6 ? { ipv6: normalizeIpv6L3(fixed.l3.ipv6) } : {}),
+          ...(fixed.l3.nat ? { nat: { enabled: (fixed.l3.nat as { enabled?: unknown }).enabled === true } } : {}),
+          ...(fixed.l3.publish ? { publish: normalizePublish(fixed.l3.publish) } : {}),
         };
       }
     }

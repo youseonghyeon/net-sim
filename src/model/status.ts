@@ -143,6 +143,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.ra.config.enabled) out.push(`원격 VPN ${node.ra.clients.size}`);
     if (node.ha.config.enabled) out.push(node.ha.state === "master" ? "HA master" : "HA backup");
     if (node.nat) out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
+    if (node.publish.rules.length > 0) out.push(`포트 공개 ${node.publish.rules.length}`);
     if (node.firewall.config.enabled) out.push("방화벽");
     if (node.ipv6Enabled) out.push("IPv6");
   } else if (node instanceof Internet) {

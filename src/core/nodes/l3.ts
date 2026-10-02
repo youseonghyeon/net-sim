@@ -24,6 +24,7 @@ import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
 import { Firewall, type FirewallConfig, type FlowDirection } from "./firewall";
 import { NatTable, type PortForward } from "./nat";
+import { PortPublish, type PublishRule } from "./publish";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { Rip, RIP_TIMER_TAG, type RipConfig } from "./rip";
 import { HA_TIMER_TAG, Ha, type HaConfig } from "./ha";
@@ -77,6 +78,10 @@ export interface L3Config {
   vpn?: VpnConfig;
   /** IPv6 라우팅 (없으면 꺼짐) */
   ipv6?: L3Ipv6Config;
+  /** 게이트웨이의 NAT (MASQUERADE): 켜면 if0 이 바깥(outside) — 도커 호스트·맥처럼 라우터가 아닌 컴퓨터가 안쪽 네트워크를 내보낼 때. NAT 박스는 늘 켜짐 */
+  nat?: { enabled: boolean };
+  /** 포트 공개 (docker -p 식, 장비 자신의 어느 주소로 와도) */
+  publish?: PublishRule[];
 }
 
 /** 게이트웨이·NAT 박스의 IPv6: 켜면 물리 인터페이스마다 링크 로컬이 생기고, 인터페이스별 수동 주소와 IPv6 스태틱 라우팅(::/0 = 디폴트 라우트)으로 전달한다 */
@@ -115,8 +120,8 @@ export class L3Node implements SimNode {
   modes: ("static" | "dhcp")[];
   clients: (DhcpClient | undefined)[];
   linkUp: boolean[];
-  readonly nat: NatTable | undefined;
-  readonly outside: number | undefined;
+  nat: NatTable | undefined;
+  outside: number | undefined;
   routes: StaticRoute[];
   /** 인터페이스별 DHCP 릴레이 대상 서버 */
   relays: (Ip | undefined)[];
@@ -144,6 +149,15 @@ export class L3Node implements SimNode {
       this.vpn.dropSa(ctx, "이중화 master 에서 물러남");
       this.ra.dropAll(ctx, "이중화 master 에서 물러남");
     },
+  });
+  /** 포트 공개 (docker -p 식): 내 주소로 온 TCP 를 안쪽 대상으로 (FULLNAT) */
+  readonly publish: PortPublish = new PortPublish({
+    owns: (ip) => this.ownIndex(ip) >= 0,
+    sourceFor: (dst) => {
+      const r = this.route(dst);
+      return r && r.kind !== "vpn" && r.kind !== "ra" ? this.addrOf(r.out) : undefined;
+    },
+    send: (pkt, inPort, frameId, ctx) => this.forward(pkt, inPort, frameId, ctx, pkt, false, true),
   });
   /** 이중화 세션 동기화 (pfsync 식) */
   private readonly sessionSync: SessionSync = new SessionSync({
@@ -210,8 +224,10 @@ export class L3Node implements SimNode {
     this.ifaces = cfg.interfaces.map((i) => new NetInterface(i.mac, i.mode === "static" ? { ip: i.ip, prefix: i.prefix ?? 24, gateway: i.gateway } : {}));
     this.clients = cfg.interfaces.map((i, idx) => (i.mode === "dhcp" ? new DhcpClient(this.ifaces[idx]!, hashCode(cfg.id) + idx * 13, i.name) : undefined));
     this.linkUp = cfg.interfaces.map(() => false);
-    this.outside = cfg.kind === "nat" ? (cfg.outside ?? 0) : undefined;
-    this.nat = cfg.kind === "nat" ? new NatTable() : undefined;
+    const natOn = cfg.kind === "nat" || cfg.nat?.enabled === true;
+    this.outside = cfg.kind === "nat" ? (cfg.outside ?? 0) : natOn ? 0 : undefined;
+    this.nat = natOn ? new NatTable() : undefined;
+    if (cfg.publish) this.publish.rules = cfg.publish.map((r) => ({ ...r }));
     this.routes = [...(cfg.routes ?? [])];
     this.relays = cfg.interfaces.map((i) => i.relay);
     this.meta = cfg.interfaces.map((_, i) => ({ port: i }));
@@ -253,6 +269,29 @@ export class L3Node implements SimNode {
 
   setVpn(cfg: VpnConfig, ctx: NodeContext): void {
     this.vpn.setConfig(cfg, ctx);
+  }
+
+  /** 게이트웨이의 NAT 켜기·끄기 (NAT 박스는 늘 켜짐). 켜면 if0 이 바깥 — 안쪽에서 나가는 것의 출발지를 if0 주소로 바꾼다 */
+  setNat(cfg: { enabled: boolean } | undefined, ctx: NodeContext): void {
+    if (this.type === "nat") return;
+    const on = cfg?.enabled === true;
+    if (on === (this.nat !== undefined)) return;
+    if (on) {
+      this.nat = new NatTable();
+      this.outside = 0;
+      this.nat.onNew = (e, c) => this.sessionSync.queue({ nat: [e], flows: [] }, c);
+      ctx.trace("ip.config", "sys", `NAT 켜짐 (MASQUERADE): ${this.names[0]} 로 나가는 패킷의 출발지를 ${this.names[0]} 주소로 바꾸고, 바깥에서 안쪽 주소로 바로 오는 것은 막음`, { nat: true });
+    } else {
+      const n = this.nat!.entries.size;
+      this.nat = undefined;
+      this.outside = undefined;
+      ctx.trace("ip.config", "sys", `NAT 꺼짐 → 주소를 바꾸지 않고 라우팅만 (NAT 매핑 ${n}개 지움)`, { nat: false });
+    }
+    this.rip.kick(ctx); // NAT outside 는 RIP 에 참여하지 않는다
+  }
+
+  setPublish(rules: PublishRule[], ctx: NodeContext): void {
+    this.publish.setRules(rules, ctx);
   }
 
   /** IPv6 설정 교체: 인터페이스 주소는 바뀐 것만, 스태틱 라우팅은 추가·삭제를 기록 */
@@ -707,6 +746,8 @@ export class L3Node implements SimNode {
       if (this.ha.config.enabled) this.ha.handle(port, pkt.src, pkt.payload, frameId, ctx);
       return;
     }
+    // 포트 공개 (docker -p): 내 주소의 공개 포트로 온 TCP 와 그 응답 — NAT 역변환보다 먼저
+    if (pkt.payload.kind === "tcp" && this.publish.handle(port, pkt, frameId, ctx)) return;
     const mine = this.ownIndex(pkt.dst);
     const fromOutside = this.nat !== undefined && port === this.outside;
     if (fromOutside && mine >= 0 && mine !== this.outside) {
@@ -904,7 +945,8 @@ export class L3Node implements SimNode {
   }
 
   /** @param tunnel VPN 터널에서 풀려 나온 패킷 (바깥에서 왔지만 NAT 하지 않는다. 방화벽은 인바운드로 본다) */
-  private forward(pkt: Ipv4Packet, inPort: number, frameId: number, ctx: NodeContext, received: Ipv4Packet = pkt, tunnel = false): void {
+  /** @param natDone 포트 공개처럼 이미 주소를 바꾼 패킷 — 바깥으로 나가도 NAT 변환을 다시 하지 않는다 */
+  private forward(pkt: Ipv4Packet, inPort: number, frameId: number, ctx: NodeContext, received: Ipv4Packet = pkt, tunnel = false, natDone = false): void {
     if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
       ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 드롭`, { dst: pkt.dst }, frameId);
       return;
@@ -946,7 +988,7 @@ export class L3Node implements SimNode {
     // 터널에서 풀려 들어온 것은 인바운드 (상대 사이트가 연 연결은 인바운드 허용 규칙이 있어야 들어온다)
     if (!this.firewall.check(pkt, tunnel ? "in" : this.flowDirection(inPort, r.out), ctx, frameId)) return;
     let out: Ipv4Packet = { ...pkt, ttl: pkt.ttl - 1 };
-    if (this.nat && r.out === this.outside) {
+    if (this.nat && r.out === this.outside && !natDone) {
       if (inPort === this.outside && !tunnel) {
         ctx.trace("ip.no-route", "L3", `${pkt.dst} 로 가는 안쪽 경로가 없어 바깥으로 되돌아감 → 드롭. 스태틱 라우팅을 추가하세요 (예: ${networkOf(pkt.dst, 24)}/24 via 안쪽 게이트웨이)`, { dst: pkt.dst }, frameId);
         const notice = this.noticeFrom(pkt, inPort, tunnel).unreachable(received, "net", ctx, frameId);
@@ -1076,6 +1118,7 @@ export class L3Node implements SimNode {
       tables.push({ title: "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(publicIp) });
       tables.push({ title: "포트 포워딩", columns: ["공인 포트", "내부"], rows: this.nat.forwardRows(publicIp) });
     }
+    if (this.publish.rules.length) tables.push({ title: "포트 공개 (docker -p)", columns: ["받는 주소:포트", "→ 대상", "연결"], rows: this.publish.rows() });
     this.ifaces.forEach((iface, i) => tables.push({ title: `ARP 캐시 (${this.names[i]})`, columns: ["IP", "MAC", "학습 시각"], rows: iface.arpRows() }));
     if (this.ipv6Enabled) this.v6.forEach((v, i) => tables.push({ title: `이웃 캐시 (${this.names[i]})`, columns: ["IPv6", "MAC", "학습 시각"], rows: v.neighborRows() }));
     return {

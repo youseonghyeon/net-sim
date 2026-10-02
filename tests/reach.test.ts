@@ -17,9 +17,9 @@ describe("진단 자동완성: 닿는 후보", () => {
     expect(groups.indexOf("same")).toBeLessThan(groups.indexOf("name"));
   });
 
-  it("도커 예제: LAN 의 PC 에서 컨테이너 사설 주소는 닿지 않고 이유가 붙는다", () => {
+  it("도커 예제: 맥 터미널에서 컨테이너 사설 주소는 닿지 않고 이유가 붙는다 (VM 안이라 맥에 경로가 없음)", () => {
     const t = EXAMPLES.docker.build();
-    const r = probeTargets(t, byName(t, "pc-1"), "ping");
+    const r = probeTargets(t, byName(t, "맥 터미널"), "ping");
     const web = r.candidates.find((c) => c.value === "172.18.0.2")!;
     expect(web.ok).toBe(false);
     expect(web.group).toBe("routed");
