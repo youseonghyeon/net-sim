@@ -21,6 +21,8 @@ export interface TunnelHost {
   sendOut(i: number, pkt: Ipv4Packet, nextHop: Ip, ctx: NodeContext): void;
   /** 풀린 패킷이 나에게 온 것일 때 (ICMP 만 답한다) */
   deliverLocal(i: number, inner: Ipv4Packet, frameId: number, ctx: NodeContext): void;
+  /** 풀린 TCP 가 내 공개 포트로 온 것이면 포트 공개가 처리 (처리했으면 true) */
+  publishLocal(port: number, inner: Ipv4Packet, frameId: number, ctx: NodeContext): boolean;
   /** 풀린 패킷을 안쪽으로 넘긴다 (NAT 하지 않음, 방화벽은 인바운드) */
   forwardInner(inner: Ipv4Packet, inPort: number, frameId: number, ctx: NodeContext): void;
 }
@@ -148,6 +150,7 @@ export class TunnelEnds {
     const mine = this.host.ownIndex(inner.dst);
     if (mine >= 0) {
       if (inner.payload.kind === "icmp") this.host.deliverLocal(mine, inner, frameId, ctx);
+      else if (inner.payload.kind === "tcp" && this.host.publishLocal(port, inner, frameId, ctx)) return;
       else ctx.trace("ip.drop", "L4", `터널로 온 ${inner.payload.kind.toUpperCase()} 가 나에게 왔지만 듣는 서비스 없음 → 드롭`, {}, frameId);
       return;
     }

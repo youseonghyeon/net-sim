@@ -157,7 +157,7 @@ export class L3Node implements SimNode {
       const r = this.route(dst);
       return r && r.kind !== "vpn" && r.kind !== "ra" ? this.addrOf(r.out) : undefined;
     },
-    send: (pkt, inPort, frameId, ctx) => this.forward(pkt, inPort, frameId, ctx, pkt, false, true),
+    send: (pkt, _inPort, frameId, ctx) => this.sendPublished(pkt, frameId, ctx),
   });
   /** 이중화 세션 동기화 (pfsync 식) */
   private readonly sessionSync: SessionSync = new SessionSync({
@@ -204,6 +204,7 @@ export class L3Node implements SimNode {
     underlay: (dst) => this.underlay(dst),
     sendOut: (i, pkt, nextHop, ctx) => this.ifaces[i]!.sendIp(pkt, ctx, this.emit(i, ctx), nextHop),
     deliverLocal: (i, inner, frameId, ctx) => this.handleIcmp(i, inner, inner.payload as IcmpPacket, frameId, ctx),
+    publishLocal: (port, inner, frameId, ctx) => this.publish.handle(port, inner, frameId, ctx),
     forwardInner: (inner, inPort, frameId, ctx) => this.forward(inner, inPort, frameId, ctx, inner, true),
   });
   /** 인터페이스 i 가 붙은 물리 포트와 VLAN 태그. 물리 인터페이스는 i === port, 서브 인터페이스는 그 뒤에 붙는다 */
@@ -244,7 +245,7 @@ export class L3Node implements SimNode {
     if (this.nat && cfg.forwards) this.nat.setForwards(cfg.forwards);
     this.firewall = new Firewall(cfg.firewall);
     // 이중화 세션 동기화: master 가 새로 만든 매핑·흐름을 backup 에 복사한다
-    if (this.nat) this.nat.onNew = (e, ctx) => this.sessionSync.queue({ nat: [e], flows: [] }, ctx);
+    if (this.nat) this.wireNat(this.nat);
     this.firewall.onFlow = (key, ctx) => this.sessionSync.queue({ nat: [], flows: [key] }, ctx);
     if (cfg.subinterfaces) this.setSubinterfaces(cfg.subinterfaces);
     const self = this; // 객체 리터럴 getter 안의 this 는 그 객체라 별칭으로 잡는다
@@ -277,9 +278,11 @@ export class L3Node implements SimNode {
     const on = cfg?.enabled === true;
     if (on === (this.nat !== undefined)) return;
     if (on) {
+      // if0 은 이제 NAT 바깥이라 RIP 에서 빠진다 — 그 전에 이웃에게 if0 으로 알렸던 경로를 철회한다
+      this.rip.retire(0, ctx);
       this.nat = new NatTable();
       this.outside = 0;
-      this.nat.onNew = (e, c) => this.sessionSync.queue({ nat: [e], flows: [] }, c);
+      this.wireNat(this.nat);
       ctx.trace("ip.config", "sys", `NAT 켜짐 (MASQUERADE): ${this.names[0]} 로 나가는 패킷의 출발지를 ${this.names[0]} 주소로 바꾸고, 바깥에서 안쪽 주소로 바로 오는 것은 막음`, { nat: true });
     } else {
       const n = this.nat!.entries.size;
@@ -292,6 +295,39 @@ export class L3Node implements SimNode {
 
   setPublish(rules: PublishRule[], ctx: NodeContext): void {
     this.publish.setRules(rules, ctx);
+  }
+
+  /** NAT 테이블 고리: 이중화 세션 동기화, 공인 포트로 포트 공개 포트를 고르지 않기 */
+  private wireNat(nat: NatTable): void {
+    nat.onNew = (e, c) => this.sessionSync.queue({ nat: [e], flows: [] }, c);
+    nat.reserved = (port) => this.publish.reserved(port);
+  }
+
+  /**
+   * 포트 공개가 바꾼 패킷을 보낸다: 장비 자신의 프로세스(docker-proxy)가 받고 다시 여는 연결이라 방화벽(지나가는 패킷 검사)·NAT 를 거치지 않는다
+   * (실제 도커가 ufw 규칙을 우회하는 것과 같은 모양). TTL 이 다하면 통지 없이 드롭 — 출발지가 나 자신이라 통지가 나에게 돌아온다
+   */
+  private sendPublished(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    if (pkt.ttl <= 1) {
+      ctx.trace("ip.drop", "L3", `포트 공개: ${pkt.dst} 로 넘기려는 패킷의 TTL 이 다함 → 드롭 (공개 규칙이 서로를 가리키는 순환인지 확인)`, { dst: pkt.dst }, frameId);
+      return;
+    }
+    const out: Ipv4Packet = { ...pkt, ttl: pkt.ttl - 1 };
+    const r = this.route(pkt.dst);
+    if (!r) {
+      ctx.trace("ip.no-route", "L3", `포트 공개: ${pkt.dst} 로 가는 경로가 없음 → 드롭`, { dst: pkt.dst }, frameId);
+      return;
+    }
+    if (r.kind === "ra") {
+      this.ra.sendTo(out, ctx, frameId);
+      return;
+    }
+    if (r.kind === "vpn") {
+      this.tunnels.send(out, ctx, frameId);
+      return;
+    }
+    ctx.trace("ip.forward", "L3", `포트 공개: ${pkt.dst} → ${this.names[r.out]} (넥스트 홉 ${r.nextHop}), TTL ${pkt.ttl} → ${out.ttl}`, { dst: pkt.dst, out: this.names[r.out], kind: r.kind }, frameId);
+    this.ifaces[r.out]!.sendIp(out, ctx, this.emit(r.out, ctx), r.nextHop);
   }
 
   /** IPv6 설정 교체: 인터페이스 주소는 바뀐 것만, 스태틱 라우팅은 추가·삭제를 기록 */

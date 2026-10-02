@@ -68,9 +68,12 @@ export class NatTable {
   }
 
   /** 동적 공인 id 할당. TCP/UDP 포트는 포워딩 규칙의 공인 포트와 겹치지 않게 건너뛴다 */
+  /** 공인 포트로 고르면 안 되는 포트 (같은 장비의 포트 공개가 받는 포트·프록시 포트) */
+  reserved: ((port: number) => boolean) | undefined;
+
   private allocPublicId(proto: NatEntry["proto"]): number {
     let id = this.seq++;
-    while ((proto !== "icmp" && this.forwards.some((r) => r.publicPort === id)) || this.entries.has(`${proto}:${id}`)) id = this.seq++;
+    while ((proto !== "icmp" && (this.forwards.some((r) => r.publicPort === id) || this.reserved?.(id) === true)) || this.entries.has(`${proto}:${id}`)) id = this.seq++;
     return id;
   }
 

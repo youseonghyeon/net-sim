@@ -58,7 +58,7 @@ export function siteVpnRules({ t, m, add }: LintContext): void {
     if (!peerDev) continue; // 상대가 이 토폴로지에 없거나 주소를 DHCP 로 받으면 판단하지 않는다
     // 상대 공인 주소가 VPN 을 안 켠 NAT 박스이고 UDP 51820 을 안쪽으로 포워딩하면, 그 안쪽 장비가 진짜 상대
     const tunnelPort = v.mode === "ipsec" ? IKE_PORT : VPN_PORT;
-    const fwd = vpnOf(peerDev) ? undefined : peerDev.l3?.forwards?.find((f) => f.proto === "udp" && f.publicPort === tunnelPort);
+    const fwd = vpnOf(peerDev) || !natOn(peerDev) ? undefined : peerDev.l3?.forwards?.find((f) => f.proto === "udp" && f.publicPort === tunnelPort);
     if (fwd) {
       const inner = t.devices.find((x) => x.l3 && x.l3.interfaces.some((i) => i.ipMode === "static" && validIp(i.ip) === validIp(fwd.lanIp)));
       // IPsec 상대가 NAT 뒤면 NAT 가 반드시 감지되어 IKE_AUTH·ESP 는 UDP 4500 으로 온다 → 4500 포워딩도 필요

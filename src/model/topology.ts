@@ -471,8 +471,9 @@ function normalizePublish(v: unknown): PublishSettings[] {
   if (!Array.isArray(v)) return [];
   const num = (x: unknown, d: number) => (typeof x === "number" && Number.isInteger(x) ? x : typeof x === "string" && /^\d+$/.test(x) ? Number(x) : d);
   return v
-    .filter((r): r is Record<string, unknown> => !!r && typeof r === "object")
-    .map((r) => ({ port: num(r.port, 0), bind: typeof r.bind === "string" ? r.bind : "0.0.0.0", to: typeof r.to === "string" ? r.to : "", toPort: num(r.toPort, 0) }));
+    // bind 가 문자열이 아니면 버린다 — 0.0.0.0 으로 채우면 손으로 좁혀 둔 공개 범위가 넓어진다
+    .filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && typeof r.bind === "string")
+    .map((r) => ({ port: num(r.port, 0), bind: r.bind as string, to: typeof r.to === "string" ? r.to : "", toPort: num(r.toPort, 0) }));
 }
 
 /** 불러온 JSON 의 이중화 설정 정리 */

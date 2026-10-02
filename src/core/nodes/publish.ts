@@ -41,6 +41,9 @@ interface Flow {
   /** 대상 쪽으로 보낼 때의 내 주소·프록시 포트 */
   src: Ip;
   proxyPort: number;
+  createdAt: number;
+  /** 대상이 SYN·ACK 로 답했다 (맺어짐) — 끝내 답이 없던 흐름은 나중에 치운다 */
+  established?: boolean;
   finClient?: boolean;
   finTarget?: boolean;
   /** 끝난 시각 (양쪽 FIN 뒤 ACK·RST) */
@@ -51,6 +54,8 @@ interface Flow {
 const PROXY_PORT_START = 61000;
 const PROXY_PORT_COUNT = 1000;
 const TIME_WAIT = 2000;
+/** 대상이 끝내 답하지 않은 흐름을 치우는 시간 (클라이언트의 SYN 재전송이 모두 끝난 뒤) */
+const UNANSWERED = 10_000;
 
 export class PortPublish {
   rules: PublishRule[] = [];
@@ -82,6 +87,7 @@ export class PortPublish {
     // 1) 대상이 보낸 응답: 내 주소의 프록시 포트로 온다 → 클라이언트가 접속한 주소·포트에서 보낸 것으로 되돌린다
     const back = this.byProxy.get(seg.dstPort);
     if (back && pkt.dst === back.src && pkt.src === back.to && seg.srcPort === back.toPort) {
+      if (seg.syn && seg.ackFlag) back.established = true;
       this.track(back, seg, false, ctx);
       const out: Ipv4Packet = { ...pkt, src: back.addr, dst: back.client, payload: { ...seg, srcPort: back.port, dstPort: back.clientPort } };
       if (seg.syn)
@@ -91,7 +97,16 @@ export class PortPublish {
     }
     // 2) 공개 포트로 온 연결
     if (!this.host.owns(pkt.dst)) return false;
-    const rule = this.rules.find((r) => r.port === seg.dstPort && (r.bind === "0.0.0.0" || r.bind === pkt.dst));
+    const key = `${pkt.src}:${seg.srcPort}>${pkt.dst}:${seg.dstPort}`;
+    // 진행 중인 흐름은 규칙이 바뀌거나 지워져도 끝까지 잇는다 (새 연결만 규칙을 본다)
+    const going = this.flows.get(key);
+    if (going && !(going.closedAt !== undefined && seg.syn && !seg.ack)) {
+      this.track(going, seg, true, ctx);
+      this.host.send({ ...pkt, src: going.src, dst: going.to, payload: { ...seg, srcPort: going.proxyPort, dstPort: going.toPort } }, inPort, frameId, ctx);
+      return true;
+    }
+    // 그 주소에 바로 묶인 규칙이 0.0.0.0 보다 먼저 (리눅스의 특정 주소 bind 처럼)
+    const rule = this.rules.find((r) => r.port === seg.dstPort && r.bind === pkt.dst) ?? this.rules.find((r) => r.port === seg.dstPort && r.bind === "0.0.0.0");
     if (!rule) {
       const other = this.rules.find((r) => r.port === seg.dstPort);
       if (!other) return false;
@@ -108,10 +123,9 @@ export class PortPublish {
       this.host.send(rst, inPort, frameId, ctx);
       return true;
     }
-    const key = `${pkt.src}:${seg.srcPort}>${pkt.dst}:${seg.dstPort}`;
-    let f = this.flows.get(key);
-    if (f?.closedAt !== undefined && seg.syn && !seg.ack) {
-      this.forget(f);
+    let f = going;
+    if (f) {
+      this.forget(f); // 끝난 연결과 같은 포트로 온 새 SYN — 새 흐름
       f = undefined;
     }
     if (!f) {
@@ -129,7 +143,7 @@ export class PortPublish {
         ctx.trace("ip.drop", "L4", `포트 공개: 프록시 포트가 모두 쓰이는 중 → 드롭`, {}, frameId);
         return true;
       }
-      f = { client: pkt.src, clientPort: seg.srcPort, addr: pkt.dst, port: seg.dstPort, to: rule.to, toPort: rule.toPort, src, proxyPort };
+      f = { client: pkt.src, clientPort: seg.srcPort, addr: pkt.dst, port: seg.dstPort, to: rule.to, toPort: rule.toPort, src, proxyPort, createdAt: ctx.now };
       this.flows.set(key, f);
       this.byProxy.set(proxyPort, f);
       ctx.trace(
@@ -160,9 +174,11 @@ export class PortPublish {
     if (this.byProxy.get(f.proxyPort) === f) this.byProxy.delete(f.proxyPort);
   }
 
-  /** 다음 프록시 포트 (끝난 지 2초 지난 흐름은 치운다) */
+  /** 다음 프록시 포트 (끝난 지 2초 지난 흐름, 대상이 10초 넘게 답하지 않은 흐름은 치운다) */
   private allocate(now: number): number | undefined {
-    for (const f of [...this.flows.values()]) if (f.closedAt !== undefined && now - f.closedAt >= TIME_WAIT) this.forget(f);
+    for (const f of [...this.flows.values()]) {
+      if ((f.closedAt !== undefined && now - f.closedAt >= TIME_WAIT) || (!f.established && now - f.createdAt >= UNANSWERED)) this.forget(f);
+    }
     for (let i = 0; i < PROXY_PORT_COUNT; i++) {
       const p = this.nextPort;
       this.nextPort = PROXY_PORT_START + ((this.nextPort - PROXY_PORT_START + 1) % PROXY_PORT_COUNT);
@@ -171,10 +187,16 @@ export class PortPublish {
     return undefined;
   }
 
+  /** 이 포트를 프록시 포트로 쓰는 중이거나 공개 포트인지 (NAT 가 공인 포트로 고르지 않게) */
+  reserved(port: number): boolean {
+    return this.byProxy.has(port) || this.rules.some((r) => r.port === port);
+  }
+
   /** 표: 공개 규칙과 진행 중인 연결 */
   rows(): string[][] {
     return this.rules.map((r) => {
-      const n = [...this.flows.values()].filter((f) => f.port === r.port && f.to === r.to && f.closedAt === undefined).length;
+      // 맺어진(대상이 답한) 진행 중인 연결만 센다 — 대상이 답하지 않은 시도는 10초 뒤 치운다
+      const n = [...this.flows.values()].filter((f) => f.port === r.port && f.to === r.to && f.established && f.closedAt === undefined).length;
       return [`${r.bind}:${r.port}`, `${r.to}:${r.toPort}`, n ? `연결 ${n}` : "-"];
     });
   }
