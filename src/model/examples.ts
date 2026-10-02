@@ -4,7 +4,7 @@
 import type { Topology } from "./topology";
 import { exampleStarterTopology, exampleTopology } from "./examples/basic";
 import { examplePartsTopology, exampleDockerTopology } from "./examples/parts";
-import { exampleTwoGatewaysTopology, exampleTwoHomesTopology, exampleBackboneTopology, exampleRipTopology } from "./examples/routing";
+import { exampleTwoGatewaysTopology, exampleBackboneTopology, exampleRipTopology } from "./examples/routing";
 import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
 import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleLoadBalancerTopology, exampleProxyTopology } from "./examples/services";
@@ -22,7 +22,7 @@ export * from "./examples/internet";
 export * from "./examples/wireless";
 export * from "./examples/ipv6";
 
-export type ExampleId = "starter" | "router" | "parts" | "homes" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -34,7 +34,7 @@ export interface ExampleSpec {
   build: () => Topology;
 }
 
-// 메뉴 순서 = 학습 순서: 기본 → 기능 단위 → 라우팅 → L2 → 보안 → 인터넷 → 무선 → IPv6. 이름은 짧게, 괄호에는 배우는 것만
+// 메뉴 순서 = 학습 순서: 기본 → 기능 단위 → 라우팅 → L2 → 보안 → 서비스 → 인터넷 → VPN → 무선 → IPv6 → 종합. 이름은 짧게, 괄호에는 배우는 것만
 export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
   starter: {
     id: "starter",
@@ -57,26 +57,12 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     blurb: "공유기를 상자별로 뜯은 구성. 노트북은 게이트웨이 릴레이로 다른 서브넷의 DHCP 서버에서 주소를 받습니다.",
     build: examplePartsTopology,
   },
-  docker: {
-    id: "docker",
-    group: "기능 단위",
-    label: "도커 호스트를 부품으로 (브리지·MASQUERADE·포트 공개)",
-    blurb: "pc-1 에서 172.18.0.2 로 ping 은 실패하지만(호스트 뒤 사설망), docker-host 의 LAN 주소:8080 으로 TCP 연결은 -p 포워딩으로 web 에 닿습니다. web 에서 db 는 이름으로, google.com 은 MASQUERADE 로 나갑니다.",
-    build: exampleDockerTopology,
-  },
   gateways: {
     id: "gateways",
     group: "라우팅",
     label: "게이트웨이 2단 (스태틱 라우팅)",
     blurb: "pc-1 → 192.168.5.10 은 gw-1 이 스태틱 라우팅으로 gw-2 에 바로 넘기고, 인터넷은 NAT 로 올라갑니다. NAT 의 스태틱 라우팅을 지우면 응답이 돌아오지 못합니다.",
     build: exampleTwoGatewaysTopology,
-  },
-  homes: {
-    id: "homes",
-    group: "라우팅",
-    label: "두 집 직접 잇기 (인터넷 없음)",
-    blurb: "pc-1 → 192.168.2.10 은 gw-1 → gw-2 두 홉을 지납니다. \"경로\" 로 홉을 확인하고, gw-1 의 스태틱 라우팅을 지우면 No route 로 실패합니다.",
-    build: exampleTwoHomesTopology,
   },
   backbone: {
     id: "backbone",
@@ -148,6 +134,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     blurb: "공유기 방화벽은 proxy-1 만 인터넷으로 내보냅니다. pc-1 에서 example.com 으로 TCP 연결(80)을 보내면 프록시 설정(http_proxy)에 따라 proxy-1 에게 부탁하고, proxy-1 이 이름을 찾아 대신 받아 옵니다. 같은 요청을 laptop-1 에서 보내면 설정이 없어 직접 나가다 방화벽에 막혀 timeout 입니다. pc-1 에서 8.8.8.8 로 ping 해 보세요 — 프록시는 웹만 대신하므로 막힙니다. naver.com 은 proxy-1 의 차단 목록에 있어 403 을 받습니다. 포트를 443 으로 바꿔 github.com 에 HTTPS 연결을 보내면 CONNECT 로 터널만 열고 TLS 는 github.com 과 직접 합니다 — proxy-1 의 기록에는 이름(CONNECT github.com:443)만 남고 요청·응답 내용은 없습니다. proxy-1 의 표 탭에서 요청 기록(access.log)을 봅니다.",
     build: exampleProxyTopology,
   },
+  docker: {
+    id: "docker",
+    group: "서비스",
+    label: "도커 호스트를 부품으로 (브리지·MASQUERADE·포트 공개)",
+    blurb: "pc-1 에서 172.18.0.2 로 ping 은 실패하지만(호스트 뒤 사설망), docker-host 의 LAN 주소:8080 으로 TCP 연결은 -p 포워딩으로 web 에 닿습니다. web 에서 db 는 이름으로, google.com 은 MASQUERADE 로 나갑니다.",
+    build: exampleDockerTopology,
+  },
   internet: {
     id: "internet",
     group: "인터넷",
@@ -164,28 +157,28 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
   },
   vpn: {
     id: "vpn",
-    group: "인터넷",
+    group: "VPN",
     label: "VPN 으로 두 사무실 잇기 (터널·캡슐화)",
     blurb: "pc-a 에서 192.168.2.10 으로 ping 하면 사설 주소끼리 바로 닿습니다. 통신사 구간을 지나는 패킷을 눌러 보면 바깥은 공인 주소끼리의 UDP 51820 뿐이고, 원래 패킷은 \"터널 안\" 에 암호화돼 있습니다. NAT 박스 한쪽의 VPN 을 끄면 사설 주소는 인터넷으로 나갈 수 없어 실패합니다.",
     build: exampleVpnTopology,
   },
   ncp: {
     id: "ncp",
-    group: "인터넷",
+    group: "VPN",
     label: "망분리 사무실 + NCP (IPsec VPN)",
     blurb: "내부망 PC 1 에서 dev-2(192.168.112.11)로 TCP 22 연결하면, 첫 패킷에 IKE 로 IPsec 터널을 맺은 뒤 ESP 로 NCP 서버에 닿습니다. 외부망 PC 에서는 닿지 않습니다. prod 는 172.21.4.11 입니다.",
     build: exampleNcpVpnTopology,
   },
   remote: {
     id: "remote",
-    group: "인터넷",
+    group: "VPN",
     label: "재택근무 원격 접속 VPN",
     blurb: "재택 노트북이 켜지면서 회사 VPN 방화벽에 IPsec 으로 붙어 PSK 와 사용자 계정(kim, EAP)을 확인받고 가상 주소 10.99.0.x 를 받습니다(표 탭). 노트북에서 사내 서버 10.50.10.20 으로 SSH(22) 접속해 보세요 — 사내 대역만 터널로 가고, 8.8.8.8 은 평소처럼 집 공유기로 나갑니다.",
     build: exampleRemoteVpnTopology,
   },
   iptime: {
     id: "iptime",
-    group: "인터넷",
+    group: "VPN",
     label: "ipTIME 공유기 VPN (L2TP/IPsec)",
     blurb: "출장 노트북이 켜지면서 집 ipTIME 의 VPN 서버에 붙습니다: IPsec(사전 공유 키)으로 바깥 통로를 암호화하고(호텔 NAT 뒤라 UDP 4500), 그 안에서 L2TP·PPP 로 계정(me)을 확인받아 집 LAN 주소 192.168.0.50 을 받습니다. 노트북에서 집 NAS 192.168.0.20 으로 TCP 80 을 보내 보세요 — 공유기가 그 주소의 ARP 에 대신 답해 NAS 는 LAN 기기로 봅니다. 8.8.8.8 로 ping 하면 재택근무 예제(사내 대역만 터널)와 달리 모든 트래픽이 집을 거쳐 집 공인 주소로 나갑니다(해외에서도 한국 IP).",
     build: exampleIptimeVpnTopology,
@@ -193,8 +186,8 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
   roaming: {
     id: "roaming",
     group: "무선",
-    label: "무선 로밍 (AP 두 대)",
-    blurb: "phone-1 을 오른쪽 AP 쪽으로 끌면 가까운 AP 로 갈아탑니다. 주소는 새로 받지 않고, 쓰던 주소를 DHCP Request 로 확인만 하고 그대로 씁니다(INIT-REBOOT).",
+    label: "무선 로밍·노트북 유선/Wi-Fi 전환",
+    blurb: "phone-1 을 오른쪽 AP 쪽으로 끌면 가까운 AP 로 갈아탑니다. 주소는 새로 받지 않고, 쓰던 주소를 DHCP Request 로 확인만 하고 그대로 씁니다(INIT-REBOOT). laptop-1 은 케이블과 Wi-Fi 가 둘 다 있어 유선을 쓰고 Wi-Fi 는 대기(회색 점선)입니다. 케이블을 지우면 Wi-Fi 로 넘어가는데, 무선 NIC 는 MAC 이 달라 공유기가 다른 기기로 보고 다른 주소를 줍니다. 케이블을 되돌리면 유선이 쓰던 주소를 되찾습니다.",
     build: exampleRoamingTopology,
   },
   ipv6: {

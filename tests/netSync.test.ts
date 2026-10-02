@@ -4,6 +4,8 @@ import { L3Node } from "../src/core/nodes/l3";
 import { Router } from "../src/core/nodes/router";
 import { NetworkSync } from "../src/model/netSync";
 import { loadTopology } from "./helpers";
+import { lintTopology } from "../src/model/lint";
+import { twoHomesTopology } from "./fixtures";
 import { createDevice, newId, type Device, type Topology } from "../src/model/topology";
 import { EXAMPLES, exampleTopology, examplePartsTopology, exampleVlanTopology } from "../src/model/examples";
 
@@ -82,8 +84,8 @@ describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트�
     expect(s.net.trace.some((e) => e.kind === "arp.request.sent")).toBe(true);
   });
 
-  it("집 두 곳: 게이트웨이 둘이 if0 로 직접 이어져 스태틱 라우팅으로 오가고, 경로를 지우면 'No route'", () => {
-    const { s, t } = load("homes");
+  it("고정 토폴로지 집 두 곳: 게이트웨이 둘이 if0 로 직접 이어져 스태틱 라우팅으로 오가고, 경로를 지우면 'No route'", () => {
+    const { s, t } = loadTopology(twoHomesTopology());
     expect(ping(s, t, "pc-1", "192.168.1.11")).toMatchObject({ status: "ok" }); // 같은 집
     expect(ping(s, t, "pc-1", "192.168.2.10")).toMatchObject({ status: "ok" }); // 다른 집
     expect(ping(s, t, "pc-4", "192.168.1.10")).toMatchObject({ status: "ok" }); // 반대 방향
@@ -179,11 +181,23 @@ describe("NetworkSync: 나머지 예제도 불러오자마자 학습 포인트�
     expect(s.net.trace.some((e) => e.nodeId === byName(t, "fw-1").id && e.kind === "fw.deny")).toBe(true);
   });
 
+  it("무선 로밍 예제의 노트북: 유선을 쓰다가 케이블을 지우면 Wi-Fi 로 넘어간다", () => {
+    const { s, t } = load("roaming");
+    expect(lintTopology(t)).toEqual([]);
+    const lap = host(s, t, "laptop-1");
+    expect(lap.activeNic).toBe(0);
+    const id = byName(t, "laptop-1").id;
+    s.sync({ ...t, cables: t.cables.filter((c) => c.a.device !== id && c.b.device !== id) });
+    s.net.runToIdle();
+    expect(lap.activeNic).toBe(1);
+    expect(lap.ip).toMatch(/^192\.168\.0\./);
+  });
+
   it("무선 로밍: 왼쪽 AP 에 붙었다가 오른쪽으로 옮기면 갈아탄다", () => {
     const { s, t } = load("roaming");
     const ap1 = byName(t, "ap-1").id;
     const ap2 = byName(t, "ap-2").id;
-    const link = () => [...s.net.links.values()].find((l) => l.id.startsWith("wl_"));
+    const link = () => [...s.net.links.values()].find((l) => l.id.startsWith(`wl_${byName(t, "phone-1").id}_`));
     expect(host(s, t, "phone-1").ip).toMatch(/^192\.168\.0\./);
     expect([link()!.a.node, link()!.b.node]).toContain(ap1);
     const before = host(s, t, "phone-1").ip;

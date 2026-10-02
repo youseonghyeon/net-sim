@@ -7,6 +7,7 @@ import { Router } from "../src/core/nodes/router";
 import type { ActionSpec } from "../src/core/network";
 import { loadTopology } from "./helpers";
 import { EXAMPLES, exampleTopology } from "../src/model/examples";
+import { twoHomesTopology } from "./fixtures";
 import type { Topology } from "../src/model/topology";
 
 /** 이 파일의 act 는 트레이스 대신 걸린 시간(ms)을 돌려준다 */
@@ -22,7 +23,7 @@ function load(t: Topology) {
 
 describe("ICMP Destination Unreachable", () => {
   it("경로 없음: 게이트웨이가 Net Unreachable 을 돌려 ping 은 timeout 전에 실패, traceroute 는 !N 으로 끝난다", () => {
-    const base = EXAMPLES.homes.build();
+    const base = twoHomesTopology();
     const t: Topology = { ...base, devices: base.devices.map((d) => (d.name === "gw-1" ? { ...d, l3: { ...d.l3!, routes: [] } } : d)) };
     const { act, id, host } = load(t);
     act({ kind: "ping", nodeId: id("pc-1"), dst: "192.168.2.10" });
@@ -37,13 +38,13 @@ describe("ICMP Destination Unreachable", () => {
   });
 
   it("없는 주소: 게이트웨이의 ARP 가 실패하면 Host Unreachable", () => {
-    const { act, id, host } = load(EXAMPLES.homes.build());
+    const { act, id, host } = load(twoHomesTopology());
     act({ kind: "ping", nodeId: id("pc-1"), dst: "192.168.2.99" });
     expect(host("pc-1").pings.at(-1)).toMatchObject({ status: "failed", reason: "Destination Host Unreachable (10.0.0.2)" });
   });
 
   it("TCP 연결도 SYN 재전송을 기다리지 않고 바로 실패", () => {
-    const base = EXAMPLES.homes.build();
+    const base = twoHomesTopology();
     const t: Topology = { ...base, devices: base.devices.map((d) => (d.name === "gw-1" ? { ...d, l3: { ...d.l3!, routes: [] } } : d)) };
     const { act, id, host } = load(t);
     const took = act({ kind: "tcp-connect", nodeId: id("pc-1"), dst: "192.168.2.10", port: 80 });
