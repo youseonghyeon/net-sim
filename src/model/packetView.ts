@@ -603,6 +603,8 @@ function p2pLayer(m: P2pMessage, inRelay: boolean): HeaderLayer {
 const P2P_OP_TEXT: Record<P2pMessage["op"], string> = {
   register: "register — 시그널링 서버에 이름 등록 (서버가 본 바깥 주소로 나중에 연락)",
   registered: "registered — 등록됨",
+  unregister: "unregister — 등록 해제 (앱을 끄거나 이름을 바꿈)",
+  busy: "busy — 다른 상대와 연결 중이라 거절",
   offer: "offer — 내 후보 주소들을 상대에게 (시그널링 서버 경유)",
   answer: "answer — 상대의 후보 주소들 (시그널링 서버 경유)",
   relay: "relay — 직접 안 되니 이 TURN 릴레이 주소로 보내 달라",

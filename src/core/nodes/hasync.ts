@@ -46,7 +46,7 @@ export class SessionSync {
       this.pending = { nat: [], flows: [] };
       ctx.timer(0, HA_SYNC_TAG, {});
     }
-    for (const e of add.nat) this.pending.nat.push({ proto: e.proto, lanIp: e.lanIp, innerId: e.innerId, publicId: e.publicId });
+    for (const e of add.nat) this.pending.nat.push({ proto: e.proto, lanIp: e.lanIp, innerId: e.innerId, publicId: e.publicId, ...(e.dest ? { dest: e.dest } : {}) });
     this.pending.flows.push(...add.flows);
   }
 
@@ -61,7 +61,7 @@ export class SessionSync {
   bulk(ctx: NodeContext, handover = false): void {
     if (!this.syncing() || this.lastBulkAt === ctx.now) return;
     this.lastBulkAt = ctx.now;
-    const nat = (this.host.nat()?.values() ?? []).map((e) => ({ proto: e.proto, lanIp: e.lanIp, innerId: e.innerId, publicId: e.publicId }));
+    const nat = (this.host.nat()?.values() ?? []).map((e) => ({ proto: e.proto, lanIp: e.lanIp, innerId: e.innerId, publicId: e.publicId, ...(e.dest ? { dest: e.dest } : {}) }));
     this.sendSync({ kind: "pfsync", vrid: this.host.ha.config.vrid, nat, flows: this.host.firewall().flowKeys(), bulk: true, ...(handover ? { handover: true } : {}) }, ctx);
   }
 

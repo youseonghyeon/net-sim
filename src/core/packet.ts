@@ -442,12 +442,12 @@ export interface P2pCandidate extends Endpoint {
 
 /**
  * P2P 앱 메시지 (UDP 41641 과 시그널링 서버 8443)
- * - register·registered: 시그널링 서버에 이름 등록 / offer·answer·relay: 시그널링 서버를 거쳐 후보 교환
+ * - register·registered·unregister: 시그널링 서버에 이름 등록·해제 / offer·answer·relay·busy: 시그널링 서버를 거쳐 후보 교환·거절
  * - punch·punch-ack: 상대 후보로 직접 보내 NAT 에 구멍을 뚫고 확인 (홀 펀칭)
  */
 export interface P2pMessage {
   kind: "p2p";
-  op: "register" | "registered" | "offer" | "answer" | "relay" | "punch" | "punch-ack" | "error";
+  op: "register" | "registered" | "unregister" | "offer" | "answer" | "relay" | "busy" | "punch" | "punch-ack" | "error";
   from: string;
   to?: string;
   candidates?: P2pCandidate[];
@@ -577,7 +577,7 @@ export interface PfsyncPacket {
   kind: "pfsync";
   vrid: number;
   /** 새 NAT 매핑 (공인 id 까지 그대로 복사) */
-  nat: { proto: "icmp" | "tcp" | "udp"; lanIp: Ip; innerId: number; publicId: number }[];
+  nat: { proto: "icmp" | "tcp" | "udp"; lanIp: Ip; innerId: number; publicId: number; dest?: string }[];
   /** 새 방화벽 흐름 (Stateful 검사의 흐름 키) */
   flows: string[];
   /** 전체 복사 (새 backup 이 들어왔을 때) */
@@ -763,6 +763,8 @@ export function stunLabel(m: StunMessage): string {
 const P2P_OP_LABEL: Record<P2pMessage["op"], string> = {
   register: "등록",
   registered: "등록됨",
+  unregister: "등록 해제",
+  busy: "거절 (busy)",
   offer: "연결 제안 (offer)",
   answer: "연결 응답 (answer)",
   relay: "릴레이 주소 알림",

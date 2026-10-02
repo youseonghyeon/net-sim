@@ -57,6 +57,11 @@ export interface PortForward {
 /** 규칙이 이 프로토콜에 해당하는지 (proto 가 없으면 TCP) */
 const ruleFor = (r: PortForward, proto: string) => (r.proto ?? "tcp") === proto;
 
+/** 안쪽 기준 키: "proto:안쪽 주소:id", symmetric 매핑은 ">상대" 까지 */
+function innerKeyOf(e: Pick<NatEntry, "proto" | "lanIp" | "innerId" | "dest">): string {
+  return `${e.proto}:${e.lanIp}:${e.innerId}${e.dest ? `>${e.dest}` : ""}`;
+}
+
 export class NatTable {
   /** "proto:공인id" → 매핑 */
   readonly entries = new Map<string, NatEntry>();
@@ -72,12 +77,13 @@ export class NatTable {
   type: NatType = "full-cone";
 
   /** 다른 장비(이중화 master)가 만든 매핑을 공인 id 그대로 받아 둔다. 이후 이 장비가 할당할 id 와 겹치지 않게 한다 */
-  importEntry(e: Pick<NatEntry, "proto" | "lanIp" | "innerId" | "publicId">, now: number): void {
+  importEntry(e: Pick<NatEntry, "proto" | "lanIp" | "innerId" | "publicId" | "dest">, now: number): void {
     const natKey = `${e.proto}:${e.publicId}`;
-    const innerKey = `${e.proto}:${e.lanIp}:${e.innerId}`;
+    // symmetric 매핑은 상대까지 키에 넣는다 (같은 안쪽 포트라도 상대마다 따로)
+    const innerKey = innerKeyOf(e);
     // 같은 공인 id 를 다른 내부 호스트가 쓰고 있었으면(갈라졌던 동안 양쪽이 따로 할당) 그 연결을 지우고, 같은 내부 호스트의 옛 매핑도 지운다
     const old = this.entries.get(natKey);
-    if (old) this.byInner.delete(`${old.proto}:${old.lanIp}:${old.innerId}`);
+    if (old) this.byInner.delete(innerKeyOf(old));
     const prevKey = this.byInner.get(innerKey);
     if (prevKey && prevKey !== natKey) this.entries.delete(prevKey);
     this.entries.set(natKey, { ...e, createdAt: now, lastUsed: now });
@@ -179,7 +185,8 @@ export class NatTable {
     const innerId = o.l4.kind === "icmp" ? o.l4.id : o.l4.dstPort;
     // symmetric 은 상대마다 매핑이 따로라 원래 패킷의 상대(바깥 출발지)까지 넣어 찾는다
     const peer = o.l4.kind === "icmp" ? o.src : `${o.src}:${o.l4.srcPort}`;
-    const natKey = this.byInner.get(`${o.l4.kind}:${o.dst}:${innerId}${this.type === "symmetric" ? `>${peer}` : ""}`);
+    // NAT 종류를 바꾼 뒤에도 앞 방식의 매핑이 남아 있을 수 있어 둘 다 찾는다
+    const natKey = this.byInner.get(`${o.l4.kind}:${o.dst}:${innerId}>${peer}`) ?? this.byInner.get(`${o.l4.kind}:${o.dst}:${innerId}`);
     const entry = natKey ? this.entries.get(natKey) : undefined;
     if (entry) {
       original = { ...o, dst: publicIp, l4: o.l4.kind === "icmp" ? { ...o.l4, id: entry.publicId } : { ...o.l4, dstPort: entry.publicId } };
@@ -265,7 +272,7 @@ export class NatTable {
         ? true
         : this.type === "restricted"
           ? entry.peers.has(pkt.src)
-          : this.type === "symmetric"
+          : this.type === "symmetric" && entry.dest
             ? entry.dest === from
             : entry.peers.has(from);
     if (!allowed) {
@@ -312,19 +319,19 @@ export class NatTable {
     for (const [natKey, e] of [...this.entries]) {
       if (e.closedAt === undefined || now - e.closedAt < NAT_TCP_TIME_WAIT) continue;
       this.entries.delete(natKey);
-      const innerKey = `${e.proto}:${e.lanIp}:${e.innerId}${e.dest ? `>${e.dest}` : ""}`;
+      const innerKey = innerKeyOf(e);
       if (this.byInner.get(innerKey) === natKey) this.byInner.delete(innerKey);
     }
   }
 
-  /** NAT 종류 바꾸기: 매핑 방식이 달라지므로 동적 매핑을 비운다 (실제 장비도 설정을 바꾸면 conntrack 을 비운다) */
+  /**
+   * NAT 종류 바꾸기: 새 매핑부터 새 방식으로 만든다. 지금 매핑은 지우지 않는다 — 지우면 안쪽 앱이 서버에 알려 둔 바깥 주소
+   * (P2P 시그널링 등록 등)가 말없이 낡아 바깥에서 오던 연락이 끊긴다. 남은 매핑의 필터링은 새 방식을 따른다. 반환: 남은 매핑 수
+   */
   setType(type: NatType): number {
     if (type === this.type) return 0;
-    const n = this.entries.size;
     this.type = type;
-    this.entries.clear();
-    this.byInner.clear();
-    return n;
+    return this.entries.size;
   }
 
   rows(publicIp: Ip | undefined): string[][] {

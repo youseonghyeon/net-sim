@@ -260,6 +260,7 @@ function FileMenu({
   // 그리기 전에 포커스: 메뉴를 열자마자 친 글자도 검색 칸으로 (useEffect 는 늦어 첫 글자를 놓친다)
   useLayoutEffect(() => {
     if (open.value) search.current?.focus();
+    else query.value = "";
   }, [open.value]);
   const q = query.value.trim().toLowerCase();
   const shown = q ? EXAMPLE_LIST.filter((x) => `${x.group} ${x.label} ${x.blurb}`.toLowerCase().includes(q)) : EXAMPLE_LIST;
@@ -307,7 +308,7 @@ function FileMenu({
                   })}
               </div>
             ))}
-            {shown.length === 0 && <p class="note menu-empty">"{query.value.trim()}" 에 맞는 예제가 없습니다. 장치 이름이나 프로토콜(DHCP·NAT·VPN·IPv6)로 찾아 보세요.</p>}
+            {shown.length === 0 && <p class="note menu-empty">"{query.value.trim()}" 에 맞는 예제가 없습니다. 묶음·제목·설명에 나오는 말(DHCP·NAT·VPN·IPv6 등)로 찾아 보세요.</p>}
           </div>
           <div class="menu-sep" />
           <div class="menu-actions">

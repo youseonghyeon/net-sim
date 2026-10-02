@@ -48,12 +48,18 @@ describe("NAT 종류 (매핑·필터링)", () => {
   it("symmetric: 상대마다 바깥 포트가 바뀌고, 그 상대에게서만 들어온다", () => {
     expect(matrix("symmetric")).toEqual({ sameEndpoint: true, sameIpOtherPort: false, otherIp: false, portKeptForNewPeer: false });
   });
-  it("NAT 종류를 바꾸면 동적 매핑을 지운다 (매핑 방식이 달라짐)", () => {
+  it("NAT 종류를 바꿔도 지금 매핑은 남고(바깥에 알려 둔 주소가 낡지 않게) 필터링은 새 방식을 따른다", () => {
     const nat = new NatTable();
-    nat.translate(udp("192.168.0.10", 5000, "1.1.1.1", 3478), PUB, ctx);
+    const out = nat.translate(udp("192.168.0.10", 5000, "1.1.1.1", 3478), PUB, ctx)!;
+    const port = (out.payload as { srcPort: number }).srcPort;
+    expect(nat.setType("port-restricted")).toBe(1);
     expect(nat.size).toBe(1);
-    expect(nat.setType("symmetric")).toBe(1);
-    expect(nat.size).toBe(0);
+    expect(nat.restore(udp("1.1.1.1", 3478, PUB, port), PUB, ctx)).toBeDefined();
+    expect(nat.restore(udp("1.1.1.1", 9999, PUB, port), PUB, ctx)).toBeUndefined();
+    // symmetric 으로 바꾸면 상대가 없는 옛 매핑은 보낸 적 있는 주소:포트로 거른다
+    nat.setType("symmetric");
+    expect(nat.restore(udp("1.1.1.1", 3478, PUB, port), PUB, ctx)).toBeDefined();
+    expect(nat.restore(udp("3.3.3.3", 3478, PUB, port), PUB, ctx)).toBeUndefined();
   });
 });
 
@@ -163,5 +169,34 @@ describe("헤어핀 NAT (NAT 박스)", () => {
     const srv = x.serverConns("웹 서버");
     expect(srv).toHaveLength(1);
     expect(srv[0]!.remoteIp).toBe("10.10.0.1");
+  });
+});
+
+describe("P2P 등록·거절", () => {
+  it("등록 전에 연결을 누르면 먼저 등록하고 이어서 연결한다 (윗단이 늦게 인터넷에 닿은 경우)", () => {
+    const full = exampleNatTraversalTopology();
+    const ia = full.devices.find((d) => d.name === "집 A 공유기")!.id;
+    const cut = { ...full, cables: full.cables.filter((c) => !(c.b.device === ia && c.b.port === 0) && !(c.a.device === ia && c.a.port === 0)) };
+    const x = loadTopology(cut);
+    expect(peerSummary(x, "민수 PC")).toContain("등록 전");
+    x.apply(full);
+    const tr = x.act({ kind: "p2p-connect", nodeId: x.id("민수 PC"), peer: "hyunwoo" });
+    expect(tr.find((e) => e.kind === "p2p.connect")?.summary).toContain("먼저 등록하고");
+    expect(peerSummary(x, "민수 PC")).toContain("hyunwoo 와 연결됨 (직접");
+  });
+
+  it("다른 상대와 연결된 기기는 새 제안을 busy 로 거절하고, 원래 연결은 그대로다", () => {
+    const x = loadTopology(exampleNatTraversalTopology());
+    x.act({ kind: "p2p-connect", nodeId: x.id("민수 PC"), peer: "hyunwoo" });
+    x.act({ kind: "p2p-connect", nodeId: x.id("지영 노트북"), peer: "hyunwoo" });
+    expect(peerSummary(x, "현우 PC")).toContain("minsu 와 연결됨");
+    expect(peerSummary(x, "지영 노트북")).toContain("hyunwoo 연결 실패 — hyunwoo 가 다른 상대와 연결 중이라 거절함 (busy)");
+  });
+
+  it("인터넷이 없으면 등록 3번 뒤 배경 재시도만 남아 runToIdle 이 끝난다", () => {
+    const full = exampleNatTraversalTopology();
+    const inet = full.devices.find((d) => d.kind === "internet")!.id;
+    const x = loadTopology({ ...full, devices: full.devices.filter((d) => d.id !== inet), cables: full.cables.filter((c) => c.a.device !== inet && c.b.device !== inet) });
+    expect(x.s.net.trace.filter((e) => e.kind === "p2p.failed" && e.summary.includes("10초마다 다시 시도")).length).toBe(3);
   });
 });

@@ -164,7 +164,8 @@ export function SnapshotTable({ t }: { t: SnapshotTableData }) {
 function P2pDiag({ d, node, peer, setPeer }: { d: Device; node: Host; peer: string; setPeer: (v: string) => void }) {
   const names = topology.value.devices
     .filter((x) => x.id !== d.id && x.host?.p2p?.enabled)
-    .map((x) => x.host!.p2p!.name?.trim() || x.name);
+    .map((x) => x.host!.p2p!.name?.trim() || x.name)
+    .filter((n, i, all) => all.indexOf(n) === i);
   const go = () => {
     const name = peer.trim() || names[0];
     if (name) sim.act({ kind: "p2p-connect", nodeId: d.id, peer: name });

@@ -67,11 +67,18 @@ export class PortPublish {
 
   /**
    * @param hairpin 헤어핀 NAT 로 쓸 때 (공유기·NAT 박스: 안에서 내 공인 주소의 포워딩 포트로 온 연결을 안쪽 서버로 되돌림) — 기록 문구만 다르다
+   * @param taken 같은 장비의 다른 FULLNAT(포트 공개 ↔ 헤어핀)이 쓰는 프록시 포트 — 같은 포트를 고르면 두 연결의 응답이 섞인다
    */
   constructor(
     private readonly host: PublishHost,
     private readonly hairpin = false,
+    private readonly taken?: (port: number) => boolean,
   ) {}
+
+  /** 이 포트를 프록시 포트로 쓰는 중인지 */
+  usesProxyPort(port: number): boolean {
+    return this.byProxy.has(port);
+  }
 
   setRules(rules: PublishRule[], ctx: NodeContext): void {
     const key = (rs: PublishRule[]) => rs.map((r) => `${r.bind}:${r.port}>${r.to}:${r.toPort}`).join(",");
@@ -190,7 +197,7 @@ export class PortPublish {
     for (let i = 0; i < PROXY_PORT_COUNT; i++) {
       const p = this.nextPort;
       this.nextPort = PROXY_PORT_START + ((this.nextPort - PROXY_PORT_START + 1) % PROXY_PORT_COUNT);
-      if (!this.byProxy.has(p)) return p;
+      if (!this.byProxy.has(p) && this.taken?.(p) !== true) return p;
     }
     return undefined;
   }

@@ -3,7 +3,8 @@
 //   2. 시그널링: 서로 모르는 두 기기가 시그널링 서버를 거쳐 후보 주소(host·srflx)를 주고받는다 (offer·answer — 실제로는 웹소켓)
 //   3. 홀 펀칭: 양쪽이 상대 후보로 동시에 UDP 를 보낸다. 내가 먼저 보내야 내 NAT 가 그 상대의 답을 들여보낸다
 //      → 안 되면(대개 한쪽이라도 symmetric) 4. TURN: 공인 릴레이 서버를 거쳐 잇는다 (항상 되지만 느리고 서버 비용이 든다)
-// 줄인 것: ICE 의 후보 우선순위·연결 확인(STUN 체크)·TURN 권한(CreatePermission)·keepalive. 한 번에 한 상대만.
+// 줄인 것: ICE 의 후보 우선순위·연결 확인(STUN 체크)·TURN 권한(CreatePermission)·keepalive. 한 번에 한 상대만 (다른 상대와 연결 중이면 새 제안은 busy 로 거절).
+// 요청(STUN·offer·Allocate·relay 알림)은 응답이 없으면 WAIT 마다 2번까지 다시 보낸다 (RFC 5389 재전송 축소판).
 import { sameSubnet, type Ip } from "../addr";
 import { P2P_PORT, SIGNAL_PORT, STUN_PORT, type Endpoint, type Ipv4Packet, type P2pCandidate, type P2pMessage, type StunMessage, type UdpPacket } from "../packet";
 import type { NodeContext, TimerHandle } from "./node";
@@ -16,8 +17,11 @@ export const P2P_TIMER_TAG = "p2p";
 /** 홀 펀칭 재시도 간격·횟수 */
 const PUNCH_INTERVAL = 200;
 const PUNCH_TRIES = 6;
-/** STUN·시그널링·TURN 응답을 기다리는 시간 */
+/** STUN·시그널링·TURN 응답을 기다리는 시간, 다시 보내는 횟수 */
 const WAIT = 1500;
+const RETRIES = 2;
+/** 등록이 3번 실패한 뒤 다시 시도하는 간격 (배경 타이머 — 시간이 흐를 때만, 인터넷이 없어도 시계를 붙잡지 않게) */
+const REG_RETRY = 10_000;
 
 export interface P2pConfig {
   enabled: boolean;
@@ -44,7 +48,11 @@ interface Session {
   nat?: "none" | "cone" | "symmetric";
   mine?: P2pCandidate[];
   theirs?: P2pCandidate[];
+  /** 상대가 짐작한 자기 NAT (none 이면 host 후보가 곧 공인 주소) */
+  theirNat?: "none" | "cone" | "symmetric";
   tries: number;
+  /** 지금 단계의 재전송 횟수 */
+  retries: number;
   via?: "direct" | "relay";
   /** 연결된 상대 주소 (직접이면 상대 NAT 바깥, 릴레이면 TURN 이 본 상대) */
   path?: Endpoint;
@@ -70,6 +78,8 @@ export class P2pAgent {
   /** 시그널링 서버가 본 내 바깥 주소 (등록됨) */
   registered: Endpoint | undefined;
   session: Session | undefined;
+  /** 등록 전에 사용자가 연결을 눌렀다: 등록되면 이어서 이 상대에게 연결 */
+  private pending: string | undefined;
   private txid = 0x5000;
   private token = 0;
 
@@ -77,11 +87,14 @@ export class P2pAgent {
 
   setConfig(cfg: P2pConfig, ctx: NodeContext): void {
     if (cfg.enabled === this.config.enabled && cfg.name === this.config.name) return;
+    // 끄거나 이름을 바꾸면 옛 이름을 시그널링 서버에서 지운다 (남아 있으면 옛 이름으로 온 제안을 받거나, 상대가 응답 없음으로 실패한다)
+    if (this.config.enabled && this.config.name && (this.registered || this.regFor)) this.sendTo({ ip: SIGNAL_SERVER, port: SIGNAL_PORT }, { kind: "p2p", op: "unregister", from: this.config.name }, ctx);
     this.config = { ...cfg };
     this.registered = undefined;
     this.regFor = undefined;
+    this.pending = undefined;
     this.end();
-    ctx.trace("p2p.signal", "app", cfg.enabled ? `P2P 앱 켜짐: 이름 "${cfg.name}" 으로 시그널링 서버에 등록` : "P2P 앱 꺼짐", { enabled: cfg.enabled, name: cfg.name });
+    ctx.trace("p2p.signal", "app", cfg.enabled ? `P2P 앱 켜짐: 이름 "${cfg.name}" 으로 시그널링 서버에 등록` : "P2P 앱 꺼짐 → 시그널링 서버에서 등록 해제", { enabled: cfg.enabled, name: cfg.name });
     this.onAddress(ctx);
   }
 
@@ -100,7 +113,7 @@ export class P2pAgent {
     this.sendRegister(ctx);
   }
 
-  /** 등록 (윗단 공유기가 아직 주소를 못 받았을 수 있어 1.5초마다 3번까지) */
+  /** 등록 (윗단 공유기가 아직 주소를 못 받았을 수 있어 1.5초마다 3번까지, 그 뒤로는 10초마다 배경으로) */
   private sendRegister(ctx: NodeContext): void {
     this.regTries++;
     this.sendTo({ ip: SIGNAL_SERVER, port: SIGNAL_PORT }, { kind: "p2p", op: "register", from: this.config.name }, ctx);
@@ -111,6 +124,7 @@ export class P2pAgent {
   lost(): void {
     this.registered = undefined;
     this.regFor = undefined;
+    this.pending = undefined;
     this.end();
   }
 
@@ -125,6 +139,10 @@ export class P2pAgent {
     this.host.send({ kind: "ipv4", src: me, dst: to.ip, ttl: 64, payload: { kind: "udp", srcPort: P2P_PORT, dstPort: to.port, payload } }, ctx);
   }
 
+  private toSignal(m: P2pMessage, ctx: NodeContext): void {
+    this.sendTo({ ip: SIGNAL_SERVER, port: SIGNAL_PORT }, m, ctx);
+  }
+
   private arm(s: Session, delay: number, step: string, ctx: NodeContext): void {
     s.timer?.cancel();
     s.timer = ctx.timer(delay, P2P_TIMER_TAG, { token: s.token, step });
@@ -137,6 +155,13 @@ export class P2pAgent {
     ctx.trace("p2p.failed", "app", `P2P 연결 실패 (상대 ${s.peer}): ${why}`, { peer: s.peer });
   }
 
+  private newSession(peer: string, role: Session["role"]): Session {
+    this.end();
+    const s: Session = { peer, role, phase: "stun", stunTx: [], stunResults: [], tries: 0, retries: 0, token: ++this.token };
+    this.session = s;
+    return s;
+  }
+
   /** 사용자 동작: 이름이 peer 인 상대와 P2P 연결 */
   connect(peer: string, ctx: NodeContext): void {
     const name = peer.trim();
@@ -144,26 +169,44 @@ export class P2pAgent {
       ctx.trace("p2p.failed", "app", `P2P 연결 못 함: 이 장치의 P2P 앱이 꺼져 있음 (서비스에서 켜세요)`, {});
       return;
     }
-    if (!this.registered) {
-      ctx.trace("p2p.failed", "app", `P2P 연결 못 함: 시그널링 서버에 아직 등록되지 않음 (인터넷에 닿는지, 주소를 받았는지 확인)`, {});
-      return;
-    }
     if (!name || name === this.config.name) {
       ctx.trace("p2p.failed", "app", `P2P 연결 못 함: 상대 이름이 비었거나 나 자신`, {});
       return;
     }
-    this.end();
-    const s: Session = { peer: name, role: "offer", phase: "stun", stunTx: [], stunResults: [], tries: 0, token: ++this.token };
-    this.session = s;
+    if (!this.registered) {
+      const me = this.host.myIp();
+      if (!me) {
+        ctx.trace("p2p.failed", "app", `P2P 연결 못 함: 주소가 없어 시그널링 서버에 등록할 수 없음 (IP 설정·DHCP 를 확인)`, {});
+        return;
+      }
+      // 아직 등록 전 (윗단이 늦게 인터넷에 닿음 등): 지금 다시 등록하고, 되면 이어서 연결한다
+      this.end();
+      this.pending = name;
+      ctx.trace("p2p.connect", "app", `P2P 연결 → ${name}: 아직 시그널링 서버에 등록 전 → 먼저 등록하고, 등록되면 이어서 연결`, { peer: name });
+      this.regFor = me;
+      this.regTries = 0;
+      this.sendRegister(ctx);
+      return;
+    }
+    this.pending = undefined;
+    const s = this.newSession(name, "offer");
     ctx.trace("p2p.connect", "app", `P2P 연결 시작 → ${name}: 먼저 STUN 서버 두 곳에 바깥 주소를 묻는다 (두 답의 포트가 다르면 내 NAT 는 symmetric)`, { peer: name });
     this.startStun(s, ctx);
   }
 
   private startStun(s: Session, ctx: NodeContext): void {
     s.phase = "stun";
+    s.retries = 0;
     s.stunTx = STUN_SERVERS.map(() => ++this.txid);
     s.stunResults = STUN_SERVERS.map(() => undefined);
-    STUN_SERVERS.forEach((ip, i) => this.sendTo({ ip, port: STUN_PORT }, { kind: "stun", op: "binding-request", txid: s.stunTx[i]! }, ctx));
+    this.sendStun(s, ctx);
+  }
+
+  /** 답이 아직 없는 STUN 서버에 Binding 요청 (재전송은 같은 요청 번호) */
+  private sendStun(s: Session, ctx: NodeContext): void {
+    STUN_SERVERS.forEach((ip, i) => {
+      if (!s.stunResults[i]) this.sendTo({ ip, port: STUN_PORT }, { kind: "stun", op: "binding-request", txid: s.stunTx[i]! }, ctx);
+    });
     this.arm(s, WAIT, "stun", ctx);
   }
 
@@ -182,7 +225,7 @@ export class P2pAgent {
     const s = this.session;
     if (m.op === "binding-response") {
       const i = s?.stunTx.indexOf(m.txid) ?? -1;
-      if (!s || s.phase !== "stun" || i < 0 || !m.mapped) {
+      if (!s || s.phase !== "stun" || i < 0 || !m.mapped || s.stunResults[i]) {
         ctx.trace("p2p.stun", "app", `지난 STUN 응답 → 무시`, {}, frameId);
         return true;
       }
@@ -191,15 +234,20 @@ export class P2pAgent {
       if (s.stunResults.every((r) => r)) this.stunDone(s, ctx);
       return true;
     }
-    if (m.op === "allocate-response" && s && s.phase === "turn" && m.relayed) {
+    if (m.op === "allocate-response" && s && s.phase === "turn" && !s.relay && m.relayed) {
       s.relay = m.relayed;
+      s.retries = 0;
       ctx.trace("p2p.relay", "app", `TURN 서버가 릴레이 주소 ${ep(m.relayed)} 를 줌 → 시그널링 서버로 상대에게 "이 주소로 보내라" 를 알림`, { relay: ep(m.relayed) }, frameId);
-      this.sendTo({ ip: SIGNAL_SERVER, port: SIGNAL_PORT }, { kind: "p2p", op: "relay", from: this.config.name, to: s.peer, candidates: [{ type: "relay", ...m.relayed }] }, ctx);
-      this.arm(s, WAIT * 2, "turn", ctx);
+      this.sendRelayNotice(s, ctx);
       return true;
     }
     if (m.op === "data" && m.data && m.peer && from.ip === TURN_SERVER) return this.onPeer(m.peer, m.data, true, ctx, frameId);
     return true;
+  }
+
+  private sendRelayNotice(s: Session, ctx: NodeContext): void {
+    this.toSignal({ kind: "p2p", op: "relay", from: this.config.name, to: s.peer, candidates: [{ type: "relay", ...s.relay! }] }, ctx);
+    this.arm(s, WAIT, "turn", ctx);
   }
 
   /** STUN 두 답이 모임: NAT 종류를 짐작하고 후보를 만든다 */
@@ -218,42 +266,51 @@ export class P2pAgent {
           : `STUN 결과: 두 서버가 본 바깥 포트가 다름 (${a!.port} ≠ ${b!.port}) → 내 NAT 는 symmetric (상대마다 바깥 포트가 바뀌어 상대에게 알려 준 주소가 맞지 않는다 — 홀 펀칭이 어렵다)`,
       { nat: s.nat },
     );
-    const msg: P2pMessage = { kind: "p2p", op: s.role === "offer" ? "offer" : "answer", from: this.config.name, to: s.peer, candidates: s.mine, nat: s.nat };
     ctx.trace("p2p.signal", "app", `시그널링 서버로 ${s.role === "offer" ? "연결 제안(offer)" : "연결 응답(answer)"} → ${s.peer}: 내 후보 ${s.mine.map((c) => `${c.type} ${ep(c)}`).join(", ")}`, { peer: s.peer });
-    this.sendTo({ ip: SIGNAL_SERVER, port: SIGNAL_PORT }, msg, ctx);
+    this.sendCandidates(s, ctx);
     if (s.role === "offer") {
       s.phase = "signal";
-      this.arm(s, WAIT * 2, "signal", ctx);
+      s.retries = 0;
+      this.arm(s, WAIT, "signal", ctx);
     } else this.startPunch(s, ctx);
+  }
+
+  private sendCandidates(s: Session, ctx: NodeContext): void {
+    this.toSignal({ kind: "p2p", op: s.role === "offer" ? "offer" : "answer", from: this.config.name, to: s.peer, candidates: s.mine, nat: s.nat }, ctx);
   }
 
   private onSignal(m: P2pMessage, ctx: NodeContext, frameId: number): boolean {
     if (m.op === "registered") {
       this.registered = m.candidates?.[0] ? { ip: m.candidates[0].ip, port: m.candidates[0].port } : undefined;
       ctx.trace("p2p.signal", "app", `시그널링 서버에 "${this.config.name}" 등록됨 (서버가 본 내 바깥 주소 ${this.registered ? ep(this.registered) : "?"}) — 상대의 연결 제안은 이 주소로 온다`, { registered: this.registered ? ep(this.registered) : undefined }, frameId);
+      const p = this.pending;
+      this.pending = undefined;
+      if (p && this.registered) this.connect(p, ctx);
       return true;
     }
     const s = this.session;
     if (m.op === "error") {
-      if (s && s.peer === m.to) this.fail(s, m.error ?? "시그널링 오류", ctx);
-      else if (s) this.fail(s, m.error ?? "시그널링 오류", ctx);
+      // 서버가 알려 준 오류는 그 상대(m.to)에게 보낸 것에 대한 것 — 이미 버린 시도의 오류로 지금 연결을 끊지 않는다
+      if (s && s.peer === m.to && s.phase !== "connected" && s.phase !== "failed") this.fail(s, m.error ?? "시그널링 오류", ctx);
+      else ctx.trace("p2p.signal", "app", `지금 연결 중이 아닌 상대 ${m.to ?? "?"} 에 대한 시그널링 오류 → 무시`, {}, frameId);
       return true;
     }
-    if (m.op === "offer") {
-      // 상대가 먼저 연결을 제안: 내 후보를 만들어 답하고 홀 펀칭 시작
-      this.end();
-      const ns: Session = { peer: m.from, role: "answer", phase: "stun", stunTx: [], stunResults: [], tries: 0, token: ++this.token, theirs: m.candidates ?? [] };
-      this.session = ns;
-      ctx.trace("p2p.signal", "app", `${m.from} 의 연결 제안(offer) 받음 (상대 후보 ${(m.candidates ?? []).map((c) => `${c.type} ${ep(c)}`).join(", ")}${m.nat === "symmetric" ? ", 상대 NAT 는 symmetric" : ""}) → 내 바깥 주소를 STUN 으로 확인해 답한다`, { peer: m.from }, frameId);
-      this.startStun(ns, ctx);
+    if (m.to && m.to !== this.config.name) {
+      ctx.trace("p2p.signal", "app", `${m.from} 의 ${m.op} 는 "${m.to}" 에게 온 것 (내 이름은 "${this.config.name}") → 무시`, {}, frameId);
       return true;
     }
+    if (m.op === "busy") {
+      if (s && s.peer === m.from && s.role === "offer" && s.phase !== "connected" && s.phase !== "failed") this.fail(s, `${m.from} 가 다른 상대와 연결 중이라 거절함 (busy)`, ctx);
+      return true;
+    }
+    if (m.op === "offer") return this.onOffer(m, ctx, frameId);
     if (!s || s.peer !== m.from) {
       ctx.trace("p2p.signal", "app", `지금 연결 중이 아닌 상대 ${m.from} 의 ${m.op} → 무시`, {}, frameId);
       return true;
     }
     if (m.op === "answer" && s.role === "offer" && s.phase === "signal") {
       s.theirs = m.candidates ?? [];
+      s.theirNat = m.nat;
       ctx.trace("p2p.signal", "app", `${m.from} 의 연결 응답(answer) 받음 (상대 후보 ${s.theirs.map((c) => `${c.type} ${ep(c)}`).join(", ")}${m.nat === "symmetric" ? ", 상대 NAT 는 symmetric" : ""}) → 홀 펀칭 시작`, { peer: m.from }, frameId);
       this.startPunch(s, ctx);
       return true;
@@ -270,6 +327,39 @@ export class P2pAgent {
     return true;
   }
 
+  /** 상대의 연결 제안 */
+  private onOffer(m: P2pMessage, ctx: NodeContext, frameId: number): boolean {
+    const s = this.session;
+    const live = s && s.phase !== "failed";
+    if (live && s.peer === m.from) {
+      // 동시에 서로 제안함(glare): 이름이 앞선 쪽이 제안 역할을 지키고, 다른 쪽이 응답한다 — 둘 다 응답 역할이 되면 아무도 TURN 을 열지 않는다
+      if (s.role === "offer" && (s.phase === "stun" || s.phase === "signal")) {
+        if (this.config.name < m.from) {
+          ctx.trace("p2p.signal", "app", `${m.from} 도 동시에 나에게 제안함 → 이름이 앞선 내가 제안 역할을 지킨다 (상대가 내 제안에 응답)`, { peer: m.from, glare: true }, frameId);
+          return true;
+        }
+        ctx.trace("p2p.signal", "app", `${m.from} 도 동시에 나에게 제안함 → 이름이 앞선 ${m.from} 의 제안에 응답하고 내 제안은 접는다`, { peer: m.from, glare: true }, frameId);
+      } else if (s.role === "answer" && s.phase !== "connected") {
+        // 같은 제안이 다시 옴 (내 응답이 사라져 상대가 다시 보냄): 응답을 다시 보낸다
+        if (s.mine) this.sendCandidates(s, ctx);
+        ctx.trace("p2p.signal", "app", `${m.from} 의 연결 제안을 다시 받음 → ${s.mine ? "응답(answer)을 다시 보냄" : "아직 STUN 중 — 끝나면 응답"}`, { peer: m.from }, frameId);
+        return true;
+      }
+    } else if (live) {
+      // 다른 상대와 연결 중(또는 연결됨): 한 번에 한 상대만 — 거절해야 지금 상대가 말없이 버려지지 않는다
+      ctx.trace("p2p.signal", "app", `${m.from} 의 연결 제안 → 지금 ${s.peer} 와 ${s.phase === "connected" ? "연결돼 있어" : "연결하는 중이라"} 거절 (busy)`, { peer: m.from, busy: s.peer }, frameId);
+      this.toSignal({ kind: "p2p", op: "busy", from: this.config.name, to: m.from }, ctx);
+      return true;
+    }
+    // 상대가 먼저 연결을 제안: 내 후보를 만들어 답하고 홀 펀칭 시작
+    const ns = this.newSession(m.from, "answer");
+    ns.theirs = m.candidates ?? [];
+    ns.theirNat = m.nat;
+    ctx.trace("p2p.signal", "app", `${m.from} 의 연결 제안(offer) 받음 (상대 후보 ${(m.candidates ?? []).map((c) => `${c.type} ${ep(c)}`).join(", ")}${m.nat === "symmetric" ? ", 상대 NAT 는 symmetric" : ""}) → 내 바깥 주소를 STUN 으로 확인해 답한다`, { peer: m.from }, frameId);
+    this.startStun(ns, ctx);
+    return true;
+  }
+
   private startPunch(s: Session, ctx: NodeContext): void {
     s.phase = "punch";
     s.tries = 0;
@@ -278,14 +368,20 @@ export class P2pAgent {
 
   /**
    * 상대 후보로 펀칭 한 번 — PUNCH_INTERVAL 마다 다시. host 후보(상대의 사설 주소)는 같은 NAT 뒤일 때만(바깥 주소가 같음):
-   * 집집마다 같은 사설 대역(192.168.0.x)을 써서, 다른 집의 사설 주소는 내 LAN 의 엉뚱한 기기(나 자신일 수도)를 가리킨다
+   * 집집마다 같은 사설 대역(192.168.0.x)을 써서, 다른 집의 사설 주소는 내 LAN 의 엉뚱한 기기(나 자신일 수도)를 가리킨다.
+   * 상대가 NAT 없이 공인 주소를 쓰면(theirNat none) host 후보가 곧 바깥 주소다
    */
   private punch(s: Session, ctx: NodeContext): void {
     const me = this.host.myIp();
     const mySrflx = s.mine?.find((c) => c.type === "srflx")?.ip;
     const theirSrflx = s.theirs?.find((c) => c.type === "srflx")?.ip;
     const sameNat = mySrflx !== undefined && mySrflx === theirSrflx;
-    const targets = (s.theirs ?? []).filter((c) => c.type !== "host" || (sameNat && c.ip !== me && this.host.local(c.ip)));
+    const targets = (s.theirs ?? []).filter((c) => c.type !== "host" || (c.ip !== me && (s.theirNat === "none" || (sameNat && this.host.local(c.ip)))));
+    if (targets.length === 0) {
+      ctx.trace("p2p.punch", "app", `홀 펀칭: 상대 후보 중 닿을 수 있는 주소가 없음 (사설 주소뿐) → 건너뜀`, { peer: s.peer });
+      this.punchExhausted(s, ctx);
+      return;
+    }
     s.tries++;
     if (s.tries === 1)
       ctx.trace(
@@ -298,10 +394,33 @@ export class P2pAgent {
     this.arm(s, PUNCH_INTERVAL, "punch", ctx);
   }
 
+  /** 펀칭을 다 했는데 상대에게서 아무것도 안 들어옴: 제안한 쪽은 TURN 으로, 응답한 쪽은 릴레이 알림을 기다린다 */
+  private punchExhausted(s: Session, ctx: NodeContext): void {
+    if (s.phase === "turn") {
+      // 릴레이로 보내는 중이었다: 상대가 릴레이로 답할 때까지 기다린다
+      this.arm(s, WAIT * 2, "wait-relay", ctx);
+      return;
+    }
+    if (s.role === "offer") {
+      s.phase = "turn";
+      s.retries = 0;
+      ctx.trace("p2p.relay", "app", `홀 펀칭 ${PUNCH_TRIES}번 동안 상대에게서 아무것도 들어오지 않음 (어느 한쪽 NAT 가 막음 — 대개 symmetric) → TURN 서버 ${TURN_SERVER} 에 릴레이 주소를 요청`, { peer: s.peer });
+      this.sendAllocate(s, ctx);
+    } else {
+      // 응답한 쪽은 상대가 릴레이를 알려 오기를 기다린다
+      this.arm(s, WAIT * 3, "wait-relay", ctx);
+    }
+  }
+
+  private sendAllocate(s: Session, ctx: NodeContext): void {
+    this.sendTo({ ip: TURN_SERVER, port: STUN_PORT }, { kind: "stun", op: "allocate-request", txid: ++this.txid }, ctx);
+    this.arm(s, WAIT, "turn", ctx);
+  }
+
   /** 상대에게서 온 P2P 메시지 (직접, 또는 TURN 이 전해 준 것 — viaTurn) */
   private onPeer(from: Endpoint, m: P2pMessage, viaTurn: boolean, ctx: NodeContext, frameId: number): boolean {
     const s = this.session;
-    if (!s || s.peer !== m.from) {
+    if (!s || s.peer !== m.from || s.phase === "failed") {
       ctx.trace("p2p.punch", "app", `모르는 상대 ${m.from} (${ep(from)}) 의 ${m.op} → 무시`, {}, frameId);
       return true;
     }
@@ -329,39 +448,58 @@ export class P2pAgent {
   }
 
   onTimer(data: unknown, ctx: NodeContext): void {
-    const { token, step, reg } = data as { token: number; step: string; reg?: number };
+    const { token, step, reg, regRetry } = data as { token: number; step: string; reg?: number; regRetry?: boolean };
     if (reg !== undefined) {
-      if (reg !== this.regToken || this.registered || !this.regFor || this.regFor !== this.host.myIp()) return;
-      if (this.regTries < 3) this.sendRegister(ctx);
-      else ctx.trace("p2p.failed", "app", `시그널링 서버 ${SIGNAL_SERVER} 에 등록하지 못함 (응답 없음 3번) — 인터넷에 닿는지 확인`, {});
+      if (reg !== this.regToken || this.registered || !this.regFor || this.regFor !== this.host.myIp() || !this.config.enabled) return;
+      if (regRetry) {
+        // 배경 재시도: 다시 3번
+        this.regTries = 0;
+        this.sendRegister(ctx);
+      } else if (this.regTries < 3) this.sendRegister(ctx);
+      else {
+        ctx.trace("p2p.failed", "app", `시그널링 서버 ${SIGNAL_SERVER} 에 등록하지 못함 (응답 없음 3번) — 인터넷에 닿는지 확인. ${REG_RETRY / 1000}초마다 다시 시도`, {});
+        if (this.pending) {
+          ctx.trace("p2p.failed", "app", `P2P 연결 못 함 (상대 ${this.pending}): 시그널링 서버에 등록되지 않음`, { peer: this.pending });
+          this.pending = undefined;
+        }
+        ctx.timer(REG_RETRY, P2P_TIMER_TAG, { reg: ++this.regToken, regRetry: true }, true);
+      }
       return;
     }
     const s = this.session;
     if (!s || s.token !== token || s.phase === "connected" || s.phase === "failed") return;
     if (step === "stun") {
+      if (s.retries < RETRIES) {
+        s.retries++;
+        this.sendStun(s, ctx);
+        return;
+      }
       const got = s.stunResults.filter(Boolean).length;
-      this.fail(s, `STUN 서버 응답 없음 (${got}/${STUN_SERVERS.length}) — 인터넷에 닿는지 확인`, ctx);
+      this.fail(s, `STUN 서버 응답 없음 (${got}/${STUN_SERVERS.length}, ${RETRIES}번 다시 보냄) — 인터넷에 닿는지 확인`, ctx);
       return;
     }
     if (step === "signal") {
-      this.fail(s, `상대 ${s.peer} 의 응답(answer)이 오지 않음 — 상대의 P2P 앱이 켜져 있고 등록됐는지 확인`, ctx);
+      if (s.retries < RETRIES) {
+        s.retries++;
+        this.sendCandidates(s, ctx);
+        this.arm(s, WAIT, "signal", ctx);
+        return;
+      }
+      this.fail(s, `상대 ${s.peer} 의 응답(answer)이 오지 않음 — 상대의 P2P 앱이 켜져 있고 인터넷에 닿는지 확인`, ctx);
       return;
     }
     if (step === "punch") {
       if (s.tries < PUNCH_TRIES) return this.punch(s, ctx);
-      if (s.role === "offer") {
-        // 직접은 안 됨 → TURN 으로
-        s.phase = "turn";
-        ctx.trace("p2p.relay", "app", `홀 펀칭 ${PUNCH_TRIES}번 동안 상대에게서 아무것도 들어오지 않음 (어느 한쪽 NAT 가 막음 — 대개 symmetric) → TURN 서버 ${TURN_SERVER} 에 릴레이 주소를 요청`, { peer: s.peer });
-        this.sendTo({ ip: TURN_SERVER, port: STUN_PORT }, { kind: "stun", op: "allocate-request", txid: ++this.txid }, ctx);
-        this.arm(s, WAIT, "turn", ctx);
-      } else {
-        // 응답한 쪽은 상대가 릴레이를 알려 오기를 기다린다
-        this.arm(s, WAIT * 3, "wait-relay", ctx);
-      }
+      this.punchExhausted(s, ctx);
       return;
     }
     if (step === "turn") {
+      if (s.retries < RETRIES) {
+        s.retries++;
+        if (s.relay) this.sendRelayNotice(s, ctx);
+        else this.sendAllocate(s, ctx);
+        return;
+      }
       this.fail(s, s.relay ? `TURN 릴레이 주소를 알렸지만 상대가 릴레이로 보내오지 않음` : `TURN 서버 응답 없음`, ctx);
       return;
     }
@@ -372,6 +510,7 @@ export class P2pAgent {
     if (!this.config.enabled) return undefined;
     const s = this.session;
     const reg = this.registered ? `등록됨 (${ep(this.registered)})` : "등록 전";
+    if (this.pending) return `"${this.config.name}" · ${this.pending} — 등록되면 연결 (${reg})`;
     if (!s) return `"${this.config.name}" · ${reg}`;
     if (s.phase === "connected") return `"${this.config.name}" · ${s.peer} 와 연결됨 (${s.via === "relay" ? "TURN 릴레이" : "직접"}, ${s.path ? ep(s.path) : ""})`;
     if (s.phase === "failed") return `"${this.config.name}" · ${s.peer} 연결 실패 — ${s.reason ?? ""}`;

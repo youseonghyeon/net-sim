@@ -342,12 +342,21 @@ export class Internet implements SimNode {
     }
     if (pkt.dst === SIGNAL_SERVER && udp.dstPort === SIGNAL_PORT && m.kind === "p2p") {
       if (m.op === "register") {
+        // 같은 주소(같은 기기의 앱)로 등록돼 있던 다른 이름은 지운다 — 이름을 바꾼 앱의 옛 이름이 남지 않게
+        for (const [name, at] of [...this.signalRegistry]) if (name !== m.from && at.ip === from.ip && at.port === from.port) this.signalRegistry.delete(name);
         this.signalRegistry.set(m.from, from);
         ctx.trace("p2p.signal", "app", `시그널링 서버: "${m.from}" 등록 — 연락할 주소는 ${from.ip}:${from.port} (그 기기의 NAT 바깥)`, { name: m.from, at: `${from.ip}:${from.port}` }, frameId);
         this.serverSend(SIGNAL_SERVER, SIGNAL_PORT, from, { kind: "p2p", op: "registered", from: "signal", candidates: [{ type: "srflx", ...from }] }, ctx);
         return true;
       }
-      if ((m.op === "offer" || m.op === "answer" || m.op === "relay") && m.to) {
+      if (m.op === "unregister") {
+        const had = this.signalRegistry.delete(m.from);
+        ctx.trace("p2p.signal", "app", `시그널링 서버: "${m.from}" 등록 해제${had ? "" : " (등록돼 있지 않았음)"}`, { name: m.from }, frameId);
+        return true;
+      }
+      if ((m.op === "offer" || m.op === "answer" || m.op === "relay" || m.op === "busy") && m.to) {
+        // 보낸 이의 연락 주소를 새로 고친다 (NAT 매핑이 바뀌었어도 지금 보낸 길로 답이 가게)
+        if (this.signalRegistry.has(m.from)) this.signalRegistry.set(m.from, from);
         const to = this.signalRegistry.get(m.to);
         if (!to) {
           ctx.trace("p2p.signal", "app", `시그널링 서버: "${m.to}" 는 등록돼 있지 않음 → ${m.from} 에게 오류`, { to: m.to }, frameId);

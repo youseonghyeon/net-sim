@@ -165,6 +165,8 @@ export class Router implements SimNode {
     );
     if (cfg.forwards) this.nat.setForwards(cfg.forwards);
     if (cfg.natType) this.nat.type = cfg.natType;
+    // 헤어핀 NAT 가 쓰는 프록시 포트는 NAT 공인 포트로 고르지 않는다
+    this.nat.reserved = (port) => this.hairpinNat.usesProxyPort(port);
     this.hairpin = cfg.hairpin === true;
     this.vpnServer = new L2tpServer({
       // 공유기 자신이 만든 바깥 패킷이라 NAT·방화벽을 거치지 않는다
@@ -285,7 +287,7 @@ export class Router implements SimNode {
     if (cfg.natType && cfg.natType !== this.nat.type) {
       const from = this.nat.type;
       const n = this.nat.setType(cfg.natType);
-      ctx.trace("ip.config", "sys", `NAT 종류 변경: ${NAT_TYPE_LABEL[from]} → ${NAT_TYPE_LABEL[cfg.natType]} (매핑 방식이 바뀌어 NAT 매핑 ${n}개를 지움)`, { natType: cfg.natType });
+      ctx.trace("ip.config", "sys", `NAT 종류 변경: ${NAT_TYPE_LABEL[from]} → ${NAT_TYPE_LABEL[cfg.natType]} (지금 매핑 ${n}개는 그대로 두고 새 매핑부터 새 방식, 남은 매핑의 필터링도 새 방식)`, { natType: cfg.natType });
     }
     if (cfg.firewall) this.firewall.setConfig(cfg.firewall, ctx, "");
     if (cfg.vpnServer) this.vpnServer.setConfig(cfg.vpnServer, ctx);
@@ -542,6 +544,9 @@ export class Router implements SimNode {
       this.hairpinNat.rules = rules.map((r) => ({ port: r.publicPort, bind: "0.0.0.0", to: r.lanIp, toPort: r.lanPort }));
       return this.hairpinNat.handle(0, pkt, frameId, ctx);
     }
+    // 꺼져 있어도 켜져 있던 동안 시작한 흐름은 끝까지 잇는다 (새 연결만 설정을 본다)
+    this.hairpinNat.rules = [];
+    if (this.hairpinNat.handle(0, pkt, frameId, ctx)) return true;
     const rule = pkt.dst === this.wan.ip ? rules.find((r) => r.publicPort === seg.dstPort) : undefined;
     if (!rule) return false;
     ctx.trace(

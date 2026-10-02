@@ -140,6 +140,7 @@ export class L3Node implements SimNode {
       send: (pkt, _inPort, frameId, ctx) => this.sendPublished(pkt, frameId, ctx),
     },
     true,
+    (p) => this.publish.usesProxyPort(p),
   );
   routes: StaticRoute[];
   /** 인터페이스별 DHCP 릴레이 대상 서버 */
@@ -170,14 +171,18 @@ export class L3Node implements SimNode {
     },
   });
   /** 포트 공개 (docker -p 식): 내 주소로 온 TCP 를 안쪽 대상으로 (FULLNAT) */
-  readonly publish: PortPublish = new PortPublish({
-    owns: (ip) => this.ownIndex(ip) >= 0,
-    sourceFor: (dst) => {
-      const r = this.route(dst);
-      return r && r.kind !== "vpn" && r.kind !== "ra" ? this.addrOf(r.out) : undefined;
+  readonly publish: PortPublish = new PortPublish(
+    {
+      owns: (ip) => this.ownIndex(ip) >= 0,
+      sourceFor: (dst) => {
+        const r = this.route(dst);
+        return r && r.kind !== "vpn" && r.kind !== "ra" ? this.addrOf(r.out) : undefined;
+      },
+      send: (pkt, _inPort, frameId, ctx) => this.sendPublished(pkt, frameId, ctx),
     },
-    send: (pkt, _inPort, frameId, ctx) => this.sendPublished(pkt, frameId, ctx),
-  });
+    false,
+    (p) => this.hairpinNat.usesProxyPort(p),
+  );
   /** 이중화 세션 동기화 (pfsync 식) */
   private readonly sessionSync: SessionSync = new SessionSync({
     ha: this.ha,
@@ -327,12 +332,18 @@ export class L3Node implements SimNode {
     const seg = pkt.payload;
     if (seg.kind !== "tcp" || !this.nat || this.outside === undefined || port === this.outside) return false;
     const rules = this.nat.forwards.filter((r) => (r.proto ?? "tcp") === "tcp");
-    if (this.hairpin) {
-      this.hairpinNat.rules = rules.map((r) => ({ port: r.publicPort, bind: "0.0.0.0", to: r.lanIp, toPort: r.lanPort }));
-      return this.hairpinNat.handle(port, pkt, frameId, ctx);
-    }
     const outsideIp = this.addrOf(this.outside);
     const rule = pkt.dst === outsideIp ? rules.find((r) => r.publicPort === seg.dstPort) : undefined;
+    if (this.hairpin) {
+      // 헤어핀도 이 장비를 지나 안쪽 서버로 가는 것 — 실제 DNAT 처럼 바뀐 목적지로 방화벽 규칙을 거친다
+      const r = rule ? this.route(rule.lanIp) : undefined;
+      if (rule && r && !this.firewall.check({ ...pkt, dst: rule.lanIp, payload: { ...seg, dstPort: rule.lanPort } }, this.flowDirection(port, r.out), ctx, frameId)) return true;
+      this.hairpinNat.rules = rules.map((x) => ({ port: x.publicPort, bind: "0.0.0.0", to: x.lanIp, toPort: x.lanPort }));
+      return this.hairpinNat.handle(port, pkt, frameId, ctx);
+    }
+    // 꺼져 있어도 켜져 있던 동안 시작한 흐름은 끝까지 잇는다 (새 연결만 설정을 본다)
+    this.hairpinNat.rules = [];
+    if (this.hairpinNat.handle(port, pkt, frameId, ctx)) return true;
     if (!rule) return false;
     ctx.trace(
       "ip.drop",
@@ -349,7 +360,7 @@ export class L3Node implements SimNode {
     const from = this.natType;
     this.natType = type;
     const n = this.nat ? this.nat.setType(type) : 0;
-    ctx.trace("ip.config", "sys", `NAT 종류 변경: ${NAT_TYPE_LABEL[from]} → ${NAT_TYPE_LABEL[type]}${this.nat ? ` (매핑 방식이 바뀌어 NAT 매핑 ${n}개를 지움)` : ""}`, { natType: type });
+    ctx.trace("ip.config", "sys", `NAT 종류 변경: ${NAT_TYPE_LABEL[from]} → ${NAT_TYPE_LABEL[type]}${this.nat ? ` (지금 매핑 ${n}개는 그대로 두고 새 매핑부터 새 방식, 남은 매핑의 필터링도 새 방식)` : ""}`, { natType: type });
   }
 
   setPublish(rules: PublishRule[], ctx: NodeContext): void {
@@ -359,7 +370,7 @@ export class L3Node implements SimNode {
   /** NAT 테이블 고리: 이중화 세션 동기화, 공인 포트로 포트 공개 포트를 고르지 않기 */
   private wireNat(nat: NatTable): void {
     nat.onNew = (e, c) => this.sessionSync.queue({ nat: [e], flows: [] }, c);
-    nat.reserved = (port) => this.publish.reserved(port);
+    nat.reserved = (port) => this.publish.reserved(port) || this.hairpinNat.usesProxyPort(port);
   }
 
   /**

@@ -434,7 +434,8 @@ export function P2pSection({ d, h }: { d: Device; h: HostSettings }) {
       {!p.enabled && <p class="note">켜면 화상 통화 앱처럼 인터넷의 시그널링 서버에 이름으로 등록합니다. 진단 탭에서 상대 이름으로 연결하면 STUN 으로 내 바깥 주소를 알아내고, 홀 펀칭으로 NAT 를 뚫어 직접 잇거나 안 되면 TURN 릴레이를 거칩니다.</p>}
       {p.enabled && (
         <Field label="이름" hint="상대가 연결할 때 쓰는 이름">
-          <input class="input mono" value={p.name ?? ""} placeholder={d.name} onInput={(e) => set({ name: e.currentTarget.value })} />
+          {/* 입력을 마칠 때(Enter·포커스 이동) 적용 — 글자마다 적용하면 칠 때마다 시그널링 서버에 다시 등록한다 */}
+          <input class="input mono" value={p.name ?? ""} placeholder={d.name} onChange={(e) => set({ name: e.currentTarget.value })} />
         </Field>
       )}
     </Section>
