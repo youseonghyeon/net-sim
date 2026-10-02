@@ -22,6 +22,7 @@ import { DEFAULT_LB_SETTINGS, DEFAULT_PROXY_SETTINGS,
   DEFAULT_ROUTER_DNS,
   DEFAULT_ROUTER_WIFI,
   DEFAULT_WAN,
+  natTypeOf,
   DEFAULT_WIFI_BASE,
   DEVICE_SPECS,
   defaultL3,
@@ -108,7 +109,7 @@ export class NetworkSync {
     for (const d of t.devices) {
       const key: SyncedDevice = {
         net: configKey(d),
-        services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d) }),
+        services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d), q: effectiveP2p(d) }),
         v6: d.host ? JSON.stringify(effectiveHost6(d)) : "",
       };
       const prev = this.syncedConfig.get(d.id);
@@ -146,6 +147,7 @@ export class NetworkSync {
             if (proxy) node.setProxy(proxy, net.contextFor(d.id));
             node.setHttpProxy(effectiveHttpProxy(d), net.contextFor(d.id));
             node.setRemoteVpn(effectiveRaClient(d) ?? { enabled: false, psk: "" }, net.contextFor(d.id));
+            node.setP2p(effectiveP2p(d), net.contextFor(d.id));
           }
         }
       }
@@ -253,6 +255,12 @@ export function effectiveHost(d: Device) {
   };
 }
 
+/** P2P 앱: 이름이 비면 장치 이름 */
+export function effectiveP2p(d: Device) {
+  const p = d.host?.p2p;
+  return { enabled: p?.enabled === true, name: p?.name?.trim() || d.name };
+}
+
 /** 원격 접속 VPN 클라이언트 설정 */
 export function effectiveRaClient(d: Device): RaClientConfig | undefined {
   const r = d.host?.ra;
@@ -358,6 +366,8 @@ export function effectiveRouter(d: Device, current?: Router) {
     firewall: effectiveFirewall(r.firewall),
     wifi: { ...(r.wifi ?? DEFAULT_ROUTER_WIFI), ssid: (r.wifi ?? DEFAULT_ROUTER_WIFI).ssid.trim() || "home" },
     ipv6: { enabled: r.ipv6?.enabled === true, inboundBlock: r.ipv6?.inboundBlock !== false },
+    natType: natTypeOf(r.natType) ?? "full-cone",
+    hairpin: r.hairpin === true,
     vpnServer: {
       enabled: r.vpnServer?.enabled === true,
       psk: r.vpnServer?.psk ?? "",
@@ -432,6 +442,8 @@ export function effectiveL3(d: Device) {
     routes: (l3.routes ?? []).filter((r) => validIp(r.dest) && validIp(r.via) && r.prefix >= 1 && r.prefix <= 32).map((r) => ({ dest: r.dest, prefix: r.prefix, via: r.via })),
     forwards: effectiveForwards(l3.forwards),
     nat: { enabled: d.kind === "gateway" && l3.nat?.enabled === true },
+    natType: natTypeOf(l3.natType) ?? "full-cone",
+    hairpin: l3.hairpin === true,
     // 포트 공개: 포트·대상이 올바른 것만, bind 는 0.0.0.0 또는 올바른 주소. 같은 (bind, 포트) 는 앞의 것만
     publish: (l3.publish ?? [])
       .filter((r) => validPort(r.port) && validPort(r.toPort) && validIp(r.to) && (r.bind === "0.0.0.0" || validIp(r.bind)))
@@ -509,6 +521,8 @@ export function makeNode(d: Device): SimNode {
       routes: cfg.routes,
       forwards: cfg.forwards,
       nat: cfg.nat,
+      natType: cfg.natType,
+      hairpin: cfg.hairpin,
       publish: cfg.publish,
       firewall: cfg.firewall,
       subinterfaces: cfg.subinterfaces,
@@ -517,7 +531,7 @@ export function makeNode(d: Device): SimNode {
       ipv6: cfg.ipv6,
     });
   }
-  return new Host({ id: d.id, mac: d.mac, ...(d.kind === "laptop" ? { wlanMac: wlanMacOf(d.mac) } : {}), ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d), lb: effectiveLb(d), proxy: effectiveProxy(d), httpProxy: effectiveHttpProxy(d), ipv6: effectiveHost6(d) });
+  return new Host({ id: d.id, mac: d.mac, ...(d.kind === "laptop" ? { wlanMac: wlanMacOf(d.mac) } : {}), p2p: effectiveP2p(d), ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d), lb: effectiveLb(d), proxy: effectiveProxy(d), httpProxy: effectiveHttpProxy(d), ipv6: effectiveHost6(d) });
 }
 
 export function applyConfig(net: Network, d: Device): void {
@@ -536,6 +550,8 @@ export function applyConfig(net: Network, d: Device): void {
     const cfg = effectiveL3(d);
     node.configure(cfg.interfaces, net.contextFor(d.id));
     node.setRoutes(cfg.routes, net.contextFor(d.id));
+    node.setNatType(cfg.natType, net.contextFor(d.id));
+    node.setHairpin(cfg.hairpin, net.contextFor(d.id));
     node.setNat(cfg.nat, net.contextFor(d.id)); // 포트 포워딩보다 먼저 (NAT 를 새로 켜면 규칙을 그 테이블에 넣는다)
     node.setForwards(cfg.forwards, net.contextFor(d.id));
     node.setPublish(cfg.publish, net.contextFor(d.id));

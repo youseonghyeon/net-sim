@@ -3,7 +3,7 @@
 // - headerLayers: 이더넷 → ARP/IPv4 → ICMP/TCP/UDP → DHCP/DNS/RIP 필드를 실제 번호(타입·코드·옵션)와 함께
 // - practitionerLines: 장치가 내린 판단을 실무 명령의 출력(시스코 debug, iptables LOG, dhclient, ping, curl …)으로
 // 시뮬레이터에 없는 필드(체크섬, 윈도우 크기, IP ID 등)는 넣지 않고, 길이는 근사값이다.
-import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, L2tpPacket, TcpSegment, UdpPacket } from "../core/packet";
+import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, L2tpPacket, P2pMessage, StunMessage, TcpSegment, UdpPacket } from "../core/packet";
 import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE } from "../core/packet";
 import { scopeLabel6 } from "../core/addr6";
 import type { TraceEvent } from "../core/trace";
@@ -67,7 +67,14 @@ function appLength(u: UdpPacket): number {
   if (m.kind === "ike") return (u.dstPort === 4500 || u.srcPort === 4500 ? 4 : 0) + (m.exchange === "IKE_SA_INIT" ? 336 : 224); // NAT-T 는 앞에 0 4바이트(Non-ESP 표시)
   if (m.kind === "dhcp6") return 4 + 14 + (m.serverId ? 14 : 0) + 16 + (m.prefix ? 29 : 0); // 머리 + Client ID + Server ID + IA_PD (+ IAPREFIX)
   if (m.kind === "l2tp") return 12 + pppLength(m.ppp); // L2TP 머리 + PPP
+  if (m.kind === "stun") return 20 + (m.mapped ? 12 : 0) + (m.relayed ? 12 : 0) + (m.peer ? 12 : 0) + (m.data ? 4 + p2pLength(m.data) : 0); // 머리 20 + 속성
+  if (m.kind === "p2p") return p2pLength(m);
   return 4 + m.entries.length * 20; // RIP
+}
+
+/** P2P 앱 메시지 길이 (근사): 머리 + 이름 + 후보 */
+function p2pLength(m: P2pMessage): number {
+  return 8 + m.from.length + (m.to?.length ?? 0) + (m.candidates?.length ?? 0) * 12;
 }
 
 /** PPP 길이 (근사): 제어는 짧게, IP 를 실었으면 그 IP 패킷 */
@@ -187,6 +194,8 @@ function udpText(u: UdpPacket): string {
   if (m.kind === "dhcp6") return `dhcp6 ${m.type}`;
   // L2TP 는 ESP 안에 있어 실제 선에서는 보이지 않는다 (복호화한 쪽에서 볼 때의 표기)
   if (m.kind === "l2tp") return `l2tp:[${m.control ? "TLS" : "LS"}](${m.tunnelId}/${m.sessionId})${m.control ? ` *MSGTYPE(${m.control})` : m.ppp ? ` {${m.ppp.proto === "ip" ? "IP" : `${m.ppp.proto.toUpperCase()} ${m.ppp.code}`}}` : ""}`;
+  // tcpdump 는 STUN·앱 메시지를 풀지 않는다
+  if (m.kind === "stun" || m.kind === "p2p") return `UDP, length ${appLength(u)}`;
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
 }
 
@@ -543,6 +552,8 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
     return [udp, { title: "DHCPv6 (앱)", rows }];
   }
   if (m.kind === "l2tp") return [udp, ...l2tpLayers(m)];
+  if (m.kind === "stun") return [udp, stunLayer(m), ...(m.data ? [p2pLayer(m.data, true)] : [])];
+  if (m.kind === "p2p") return [udp, p2pLayer(m, false)];
   return [
     udp,
     {
@@ -555,6 +566,50 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
     },
   ];
 }
+
+const STUN_TYPE: Record<StunMessage["op"], string> = {
+  "binding-request": "0x0001 Binding Request",
+  "binding-response": "0x0101 Binding Success Response",
+  "allocate-request": "0x0003 Allocate Request (TURN)",
+  "allocate-response": "0x0103 Allocate Success Response (TURN)",
+  send: "0x0016 Send Indication (TURN)",
+  data: "0x0017 Data Indication (TURN)",
+};
+
+function stunLayer(m: StunMessage): HeaderLayer {
+  const ep = (e: { ip: string; port: number }) => `${e.ip}:${e.port}`;
+  const rows: [string, string][] = [
+    ["메시지 종류", STUN_TYPE[m.op]],
+    ["트랜잭션 ID", `0x${m.txid.toString(16).padStart(8, "0")} (요청과 응답의 짝)`],
+  ];
+  if (m.mapped) rows.push(["XOR-MAPPED-ADDRESS", `${ep(m.mapped)} — 서버가 본 요청의 출발지 = NAT 바깥의 내 주소:포트`]);
+  if (m.relayed) rows.push(["XOR-RELAYED-ADDRESS", `${ep(m.relayed)} — 상대에게 알려 줄 릴레이 주소`]);
+  if (m.peer) rows.push(["XOR-PEER-ADDRESS", `${ep(m.peer)} — ${m.op === "send" ? "릴레이가 보낼 상대" : "릴레이에 보낸 상대"}`]);
+  return { title: m.op.startsWith("binding") ? "STUN (앱)" : "TURN (앱)", rows };
+}
+
+function p2pLayer(m: P2pMessage, inRelay: boolean): HeaderLayer {
+  const rows: [string, string][] = [
+    ["종류", P2P_OP_TEXT[m.op]],
+    ["보낸 이", m.from],
+  ];
+  if (m.to) rows.push(["받을 이", m.to]);
+  if (m.candidates?.length) rows.push(["후보 (ICE)", m.candidates.map((c) => `${c.type} ${c.ip}:${c.port}`).join(", ")]);
+  if (m.nat) rows.push(["내 NAT 짐작", m.nat === "symmetric" ? "symmetric (상대마다 바깥 포트가 다름 — 홀 펀칭이 어려움)" : m.nat === "cone" ? "cone (바깥 포트가 상대와 무관)" : "없음 (공인 주소)"]);
+  if (m.error) rows.push(["오류", m.error]);
+  return { title: `${inRelay ? "TURN 안 · " : ""}P2P 앱`, rows };
+}
+
+const P2P_OP_TEXT: Record<P2pMessage["op"], string> = {
+  register: "register — 시그널링 서버에 이름 등록 (서버가 본 바깥 주소로 나중에 연락)",
+  registered: "registered — 등록됨",
+  offer: "offer — 내 후보 주소들을 상대에게 (시그널링 서버 경유)",
+  answer: "answer — 상대의 후보 주소들 (시그널링 서버 경유)",
+  relay: "relay — 직접 안 되니 이 TURN 릴레이 주소로 보내 달라",
+  punch: "punch — 상대 후보로 직접 보내 내 NAT 에 구멍을 뚫는다",
+  "punch-ack": "punch-ack — 구멍으로 들어온 것을 확인",
+  error: "error",
+};
 
 /** L2TP 와 그 위의 PPP (데이터면 PPP 안의 IP 까지) — L2TP/IPsec 의 안쪽 겹 */
 function l2tpLayers(l: L2tpPacket): HeaderLayer[] {

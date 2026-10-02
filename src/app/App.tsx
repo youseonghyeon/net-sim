@@ -1,5 +1,5 @@
 import { useSignal } from "@preact/signals";
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { running, sim, simNotice, simTime, speed, togglePlay } from "../model/sim";
 import {
   canRedo,
@@ -255,7 +255,20 @@ function FileMenu({
     open.value = false;
     f();
   };
-  const groups = [...new Set(EXAMPLE_LIST.map((x) => x.group))];
+  const query = useSignal("");
+  const search = useRef<HTMLInputElement>(null);
+  // 그리기 전에 포커스: 메뉴를 열자마자 친 글자도 검색 칸으로 (useEffect 는 늦어 첫 글자를 놓친다)
+  useLayoutEffect(() => {
+    if (open.value) search.current?.focus();
+  }, [open.value]);
+  const q = query.value.trim().toLowerCase();
+  const shown = q ? EXAMPLE_LIST.filter((x) => `${x.group} ${x.label} ${x.blurb}`.toLowerCase().includes(q)) : EXAMPLE_LIST;
+  const groups = [...new Set(shown.map((x) => x.group))];
+  const pick = (id: ExampleId) => {
+    open.value = false;
+    query.value = "";
+    onExample(id);
+  };
   return (
     <div class="menu-wrap" ref={wrap}>
       <button class={`btn ghost menu-btn${open.value ? " on" : ""}`} onClick={() => (open.value = !open.value)} aria-haspopup="menu" aria-expanded={open.value}>
@@ -263,32 +276,54 @@ function FileMenu({
         <Icon name="chevron" size={14} />
       </button>
       {open.value && (
-        <div class="menu" role="menu">
-          <div class="menu-caption">예제 불러오기</div>
-          {groups.map((g) => (
-            <div key={g} class="menu-group">
-              <div class="menu-group-label">{g}</div>
-              {EXAMPLE_LIST.filter((x) => x.group === g).map((x) => (
-                <button key={x.id} role="menuitem" class="menu-item" data-example={x.id} onClick={act(() => onExample(x.id))}>
-                  {x.label}
-                </button>
-              ))}
-            </div>
-          ))}
+        <div class="menu menu-wide" role="menu">
+          <div class="menu-head">
+            <span class="menu-caption">예제 불러오기 <span class="muted">{EXAMPLE_LIST.length}개 · 위에서 아래, 왼쪽에서 오른쪽이 학습 순서입니다</span></span>
+            <input
+              class="input menu-search"
+              value={query.value}
+              placeholder="예제 찾기 (예: NAT, VPN, DNS)"
+              ref={search}
+              onInput={(e) => (query.value = e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && shown[0]) pick(shown[0].id);
+              }}
+            />
+          </div>
+          <div class="menu-examples">
+            {groups.map((g) => (
+              <div key={g} class="menu-group">
+                <div class="menu-group-label">{g}</div>
+                {shown
+                  .filter((x) => x.group === g)
+                  .map((x) => {
+                    const m = /^(.*?)\s*\((.*)\)$/.exec(x.label);
+                    return (
+                      <button key={x.id} role="menuitem" class="menu-item example-item" data-example={x.id} title={x.blurb} onClick={() => pick(x.id)}>
+                        <span class="example-title">{m ? m[1] : x.label}</span>
+                        {m && <span class="example-sub">{m[2]}</span>}
+                      </button>
+                    );
+                  })}
+              </div>
+            ))}
+            {shown.length === 0 && <p class="note menu-empty">"{query.value.trim()}" 에 맞는 예제가 없습니다. 장치 이름이나 프로토콜(DHCP·NAT·VPN·IPv6)로 찾아 보세요.</p>}
+          </div>
           <div class="menu-sep" />
-          <button role="menuitem" class="menu-item" onClick={act(onDownload)} disabled={!hasDevices}>
-            <Icon name="download" size={15} />
-            JSON 으로 내려받기
-          </button>
-          <button role="menuitem" class="menu-item" onClick={act(onUpload)}>
-            <Icon name="upload" size={15} />
-            JSON 불러오기…
-          </button>
-          <div class="menu-sep" />
-          <button role="menuitem" class="menu-item danger" onClick={act(onClear)} disabled={!hasDevices}>
-            <Icon name="trash" size={15} />
-            비우기
-          </button>
+          <div class="menu-actions">
+            <button role="menuitem" class="menu-item" onClick={act(onDownload)} disabled={!hasDevices}>
+              <Icon name="download" size={15} />
+              JSON 으로 내려받기
+            </button>
+            <button role="menuitem" class="menu-item" onClick={act(onUpload)}>
+              <Icon name="upload" size={15} />
+              JSON 불러오기…
+            </button>
+            <button role="menuitem" class="menu-item danger" onClick={act(onClear)} disabled={!hasDevices}>
+              <Icon name="trash" size={15} />
+              비우기
+            </button>
+          </div>
         </div>
       )}
     </div>

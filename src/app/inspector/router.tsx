@@ -17,7 +17,7 @@ import { Router } from "../../core/nodes/router";
 import { DHCP6_STATE_LABEL } from "../../core/nodes/dhcp6";
 import { sim, simVersion } from "../../model/sim";
 import { WifiBaseSection } from "./host";
-import { FirewallSection, ForwardSection } from "./rules";
+import { FirewallSection, ForwardSection, NatTypeSection } from "./rules";
 import { Icon } from "../Icons";
 import { Field, Section, Toggle, ipError, validIp } from "./ui";
 
@@ -100,6 +100,7 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
       <RouterIpv6Section d={d} r={r} />
       <RouterVpnSection d={d} r={r} />
       <ForwardSection rules={r.forwards ?? []} onChange={(forwards) => set({ forwards })} lanHint="예: 공인 :80 → 192.168.0.20:80 (LAN 의 웹 서버)." />
+      <NatTypeSection natType={r.natType ?? "full-cone"} hairpin={r.hairpin === true} onChange={(patch) => set(patch)} />
       <FirewallSection value={r.firewall ?? DEFAULT_FIREWALL_SETTINGS} onChange={(firewall) => set({ firewall })} uplinkName="WAN" />
     </>
   );

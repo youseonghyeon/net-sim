@@ -65,7 +65,13 @@ export class PortPublish {
   private readonly byProxy = new Map<number, Flow>();
   private nextPort = PROXY_PORT_START;
 
-  constructor(private readonly host: PublishHost) {}
+  /**
+   * @param hairpin 헤어핀 NAT 로 쓸 때 (공유기·NAT 박스: 안에서 내 공인 주소의 포워딩 포트로 온 연결을 안쪽 서버로 되돌림) — 기록 문구만 다르다
+   */
+  constructor(
+    private readonly host: PublishHost,
+    private readonly hairpin = false,
+  ) {}
 
   setRules(rules: PublishRule[], ctx: NodeContext): void {
     const key = (rs: PublishRule[]) => rs.map((r) => `${r.bind}:${r.port}>${r.to}:${r.toPort}`).join(",");
@@ -149,7 +155,9 @@ export class PortPublish {
       ctx.trace(
         "port.publish",
         "L4",
-        `포트 공개 (docker -p ${rule.bind === "0.0.0.0" ? "" : `${rule.bind}:`}${rule.port}:${rule.toPort}): ${pkt.src}:${seg.srcPort} → ${pkt.dst}:${seg.dstPort} 연결을 ${rule.to}:${rule.toPort} 로 넘김 — 출발지는 내 주소 ${src}:${proxyPort} (대상은 이 장비가 연 연결로 본다)`,
+        this.hairpin
+          ? `헤어핀 NAT: 안쪽 ${pkt.src}:${seg.srcPort} 가 내 공인 주소 ${pkt.dst}:${seg.dstPort} 로 접속 → 포트 포워딩 대상 ${rule.to}:${rule.toPort} 로 되돌려 보냄 — 출발지를 내 안쪽 주소 ${src}:${proxyPort} 로 바꿔 응답도 나를 거치게 한다 (바꾸지 않으면 서버가 클라이언트에게 바로 답해 클라이언트가 모르는 응답이 된다)`
+          : `포트 공개 (docker -p ${rule.bind === "0.0.0.0" ? "" : `${rule.bind}:`}${rule.port}:${rule.toPort}): ${pkt.src}:${seg.srcPort} → ${pkt.dst}:${seg.dstPort} 연결을 ${rule.to}:${rule.toPort} 로 넘김 — 출발지는 내 주소 ${src}:${proxyPort} (대상은 이 장비가 연 연결로 본다)`,
         { client: pkt.src, bind: rule.bind, port: rule.port, to: rule.to, toPort: rule.toPort, src, proxyPort },
         frameId,
       );

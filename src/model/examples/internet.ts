@@ -501,3 +501,43 @@ export function exampleIptimeVpnTopology(): Topology {
   ];
   return t;
 }
+
+/**
+ * NAT 종류와 홀 펀칭 (P2P): 화상 통화·게임처럼 NAT 뒤끼리 직접 잇는 방법.
+ * - 집 A·집 B 공유기는 port-restricted cone (가정용 공유기에 흔함): 두 쪽이 동시에 보내면(홀 펀칭) 직접 연결된다
+ * - 지영 노트북은 통신사 CGNAT(symmetric, 100.64.0.0/10) 뒤 — 상대마다 바깥 포트가 바뀌어 STUN 이 알려 준 주소가 맞지 않는다 → TURN 릴레이
+ * - 인터넷 노드가 STUN 서버 두 곳(198.51.100.30·31), 시그널링 서버(198.51.100.40), TURN 릴레이(198.51.100.50)를 흉내 낸다
+ */
+export function exampleNatTraversalTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 520, -456);
+  const isp = add("switch", 520, -320, "통신사 구간");
+  const homeA = add("router", 104, -64, "집 A 공유기");
+  // 집 NAS: 바깥에서 공인 주소:8080 으로 들어오게 포트 포워딩. 안에서 같은 주소로 접속하려면 헤어핀 NAT 가 필요하다
+  homeA.router = { ...homeA.router!, natType: "port-restricted", forwards: [{ publicPort: 8080, lanIp: "192.168.0.20", lanPort: 80 }] };
+  const minsu = add("pc", 40, 120, "민수 PC");
+  minsu.host = { ...minsu.host!, p2p: { enabled: true, name: "minsu" } };
+  const nas = add("server", 248, 120, "집 NAS");
+  nas.host = { ipMode: "static", ip: "192.168.0.20", prefix: 24, gateway: "192.168.0.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const homeB = add("router", 600, -64, "집 B 공유기");
+  homeB.router = { ...homeB.router!, natType: "port-restricted" };
+  const hyunwoo = add("pc", 504, 120, "현우 PC");
+  hyunwoo.host = { ...hyunwoo.host!, p2p: { enabled: true, name: "hyunwoo" } };
+  // 통신사 CGNAT: 고객에게 100.64.x(공유 주소)를 주고 공인 주소 하나로 여러 고객을 내보낸다 — 대개 symmetric
+  const cgnat = add("nat", 1104, -64, "통신사 CGNAT");
+  cgnat.l3 = {
+    interfaces: [iface("203.0.113.30", "203.0.113.1"), { ipMode: "static", ip: "100.64.0.1", prefix: 24, gateway: "" }],
+    routes: [],
+    natType: "symmetric",
+  };
+  const jiyoung = add("laptop", 936, 120, "지영 노트북");
+  jiyoung.host = { ipMode: "static", ip: "100.64.0.10", prefix: 24, gateway: "100.64.0.1", dns: "8.8.8.8", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER }, p2p: { enabled: true, name: "jiyoung" } };
+  const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 0, homeA, 0), cable(isp, 4, homeB, 0), cable(isp, 7, cgnat, 0), cable(homeA, 1, minsu, 0), cable(homeA, 2, nas, 0), cable(homeB, 1, hyunwoo, 0), cable(cgnat, 1, jiyoung, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "집 A · port-restricted cone", tint: "green", ...zoneAround(t, [homeA.id, minsu.id, nas.id], 40)! },
+    { id: newId("zone"), label: "집 B · port-restricted cone", tint: "blue", ...zoneAround(t, [homeB.id, hyunwoo.id], 40)! },
+    { id: newId("zone"), label: "모바일 · CGNAT symmetric", tint: "gray", ...zoneAround(t, [cgnat.id, jiyoung.id], 40)! },
+  ];
+  return t;
+}

@@ -54,7 +54,9 @@ export type ActionSpec =
   /** 열린 TCP 연결을 사용자가 닫는다 (SSH "연결 해제"). conn 은 TcpConn.id */
   | { kind: "tcp-close"; nodeId: string; conn: string }
   /** 인터넷 노드의 "저편 클라이언트" 가 공인 주소 dst:port 로 TCP 연결 (포트 포워딩 시연) */
-  | { kind: "inet-connect"; nodeId: string; dst: Ip; port: number };
+  | { kind: "inet-connect"; nodeId: string; dst: Ip; port: number }
+  /** P2P 앱으로 이름이 peer 인 상대와 연결 (STUN → 시그널링 → 홀 펀칭 → 안 되면 TURN) */
+  | { kind: "p2p-connect"; nodeId: string; peer: string };
 
 /** 링크에 실린 프레임 한 번 (로그에서 "그때 그 프레임" 을 찾기 위해 보관) */
 export interface FrameSighting {
@@ -364,6 +366,10 @@ export class Network {
       case "tcp-connect":
         ctx.trace("action", "sys", `[사용자] ${action.dst}:${action.port} 에 TCP 연결`, { ...action });
         this.getHost(action.nodeId).connect(action.dst, action.port, ctx);
+        break;
+      case "p2p-connect":
+        ctx.trace("action", "sys", `[사용자] P2P 연결 → ${action.peer}`, { ...action });
+        this.getHost(action.nodeId).p2p.connect(action.peer, ctx);
         break;
       case "ra-reconnect":
         ctx.trace("action", "sys", `[사용자] 원격 접속 VPN 다시 연결`, { ...action });

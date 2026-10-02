@@ -404,7 +404,57 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage;
+}
+
+/** STUN·TURN (UDP 3478) */
+export const STUN_PORT = 3478;
+/** P2P 앱이 쓰는 UDP 포트 (예: Tailscale 41641) */
+export const P2P_PORT = 41641;
+/** 시그널링 서버 포트 (실제로는 보통 HTTPS·웹소켓 — 여기서는 UDP 로 줄임) */
+export const SIGNAL_PORT = 8443;
+
+export interface Endpoint {
+  ip: Ip;
+  port: number;
+}
+
+/**
+ * STUN·TURN (RFC 5389·5766 축소판, UDP 3478)
+ * - binding: "바깥에서 본 내 주소:포트는?" → 서버가 본 출발지를 mapped 로 (XOR-MAPPED-ADDRESS)
+ * - allocate: TURN 서버에 릴레이 주소를 하나 받는다 (relayed)
+ * - send: 릴레이 주소에서 상대(peer)에게 data 를 내보내 달라 / data: 릴레이 주소로 상대가 보낸 것을 전해 줌
+ */
+export interface StunMessage {
+  kind: "stun";
+  op: "binding-request" | "binding-response" | "allocate-request" | "allocate-response" | "send" | "data";
+  txid: number;
+  mapped?: Endpoint;
+  relayed?: Endpoint;
+  peer?: Endpoint;
+  data?: P2pMessage;
+}
+
+/** P2P 후보 주소 (ICE 축소판): host = 내 사설 주소, srflx = STUN 이 알려 준 바깥 주소, relay = TURN 릴레이 주소 */
+export interface P2pCandidate extends Endpoint {
+  type: "host" | "srflx" | "relay";
+}
+
+/**
+ * P2P 앱 메시지 (UDP 41641 과 시그널링 서버 8443)
+ * - register·registered: 시그널링 서버에 이름 등록 / offer·answer·relay: 시그널링 서버를 거쳐 후보 교환
+ * - punch·punch-ack: 상대 후보로 직접 보내 NAT 에 구멍을 뚫고 확인 (홀 펀칭)
+ */
+export interface P2pMessage {
+  kind: "p2p";
+  op: "register" | "registered" | "offer" | "answer" | "relay" | "punch" | "punch-ack" | "error";
+  from: string;
+  to?: string;
+  candidates?: P2pCandidate[];
+  /** 내가 짐작한 NAT 종류 (STUN 두 곳의 결과로) */
+  nat?: "none" | "cone" | "symmetric";
+  error?: string;
+  seq?: number;
 }
 
 export const L2TP_PORT = 1701;
@@ -691,7 +741,40 @@ export function describeFrame(frame: EthernetFrame): string {
   if (d.kind === "vpn") return `VPN 터널 (암호화됨 · 안: ${d.inner.src} → ${d.inner.dst})`;
   if (d.kind === "dhcp6") return dhcp6Label(d);
   if (d.kind === "l2tp") return `L2TP${l2tpPartLabel(d)}`;
+  if (d.kind === "stun") return stunLabel(d);
+  if (d.kind === "p2p") return p2pLabel(d);
   return `DHCP ${DHCP_LABEL[d.op]}${d.yiaddr ? ` (${d.yiaddr})` : ""}`;
+}
+
+const STUN_OP_LABEL: Record<StunMessage["op"], string> = {
+  "binding-request": "STUN Binding 요청",
+  "binding-response": "STUN Binding 응답",
+  "allocate-request": "TURN Allocate 요청",
+  "allocate-response": "TURN Allocate 응답",
+  send: "TURN Send",
+  data: "TURN Data",
+};
+
+export function stunLabel(m: StunMessage): string {
+  const extra = m.mapped && m.op === "binding-response" ? ` (바깥에서 본 주소 ${m.mapped.ip}:${m.mapped.port})` : m.relayed ? ` (릴레이 주소 ${m.relayed.ip}:${m.relayed.port})` : m.peer ? ` (상대 ${m.peer.ip}:${m.peer.port}${m.data ? ` · 안: ${p2pLabel(m.data)}` : ""})` : "";
+  return `${STUN_OP_LABEL[m.op]}${extra}`;
+}
+
+const P2P_OP_LABEL: Record<P2pMessage["op"], string> = {
+  register: "등록",
+  registered: "등록됨",
+  offer: "연결 제안 (offer)",
+  answer: "연결 응답 (answer)",
+  relay: "릴레이 주소 알림",
+  punch: "홀 펀칭",
+  "punch-ack": "홀 펀칭 확인",
+  error: "오류",
+};
+
+export function p2pLabel(m: P2pMessage): string {
+  const who = m.to ? ` ${m.from} → ${m.to}` : ` ${m.from}`;
+  const cands = m.candidates?.length ? ` · 후보 ${m.candidates.map((c) => `${c.type} ${c.ip}:${c.port}`).join(", ")}` : "";
+  return `P2P ${P2P_OP_LABEL[m.op]}${who}${cands}${m.error ? ` (${m.error})` : ""}`;
 }
 
 const DHCP6_LABEL: Record<Dhcp6Message["type"], string> = { solicit: "Solicit", advertise: "Advertise", request: "Request", reply: "Reply", release: "Release" };
@@ -757,6 +840,8 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "vpn") return "VPN 터널";
   if (inner.payload.kind === "dhcp6") return `DHCPv6 ${DHCP6_LABEL[inner.payload.type]}`;
   if (inner.payload.kind === "l2tp") return "L2TP";
+  if (inner.payload.kind === "stun") return inner.payload.op.startsWith("binding") ? "STUN" : "TURN";
+  if (inner.payload.kind === "p2p") return inner.payload.op === "punch" || inner.payload.op === "punch-ack" ? "홀 펀칭" : "시그널링";
   return `DHCP ${DHCP_LABEL[inner.payload.op]}`;
 }
 

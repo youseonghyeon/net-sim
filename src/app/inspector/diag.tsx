@@ -160,11 +160,47 @@ export function SnapshotTable({ t }: { t: SnapshotTableData }) {
   );
 }
 
+/** P2P 연결: 상대 이름(다른 장치의 P2P 앱 이름)으로 연결하고 지금 상태를 한 줄로 */
+function P2pDiag({ d, node, peer, setPeer }: { d: Device; node: Host; peer: string; setPeer: (v: string) => void }) {
+  const names = topology.value.devices
+    .filter((x) => x.id !== d.id && x.host?.p2p?.enabled)
+    .map((x) => x.host!.p2p!.name?.trim() || x.name);
+  const go = () => {
+    const name = peer.trim() || names[0];
+    if (name) sim.act({ kind: "p2p-connect", nodeId: d.id, peer: name });
+  };
+  const s = node.p2p.session;
+  const summary = node.p2p.summary();
+  return (
+    <>
+      <div class="ping-row p2p-row">
+        <input class="input mono" list={`p2p-peers-${d.id}`} value={peer} placeholder={names[0] ? `P2P 상대 이름 (예: ${names[0]})` : "P2P 상대 이름"} onInput={(e) => setPeer(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && go()} />
+        <datalist id={`p2p-peers-${d.id}`}>
+          {names.map((n) => (
+            <option key={n} value={n} />
+          ))}
+        </datalist>
+        <button class="btn" onClick={go} title="STUN 으로 내 바깥 주소 확인 → 시그널링 서버로 후보 교환 → 홀 펀칭 → 안 되면 TURN 릴레이">
+          <Icon name="send" size={14} />
+          P2P 연결
+        </button>
+      </div>
+      {summary && (
+        <ul class="ping-log">
+          <li class={s?.phase === "connected" ? "ok" : s?.phase === "failed" ? "failed" : ""}>
+            <span>{summary}</span>
+          </li>
+        </ul>
+      )}
+    </>
+  );
+}
+
 /** ping, TCP 연결, DHCP 임대 갱신 */
 /** 진단 입력값을 장치별로 기억 (다른 장치에 갔다 와도 마지막 값이 남는다) */
-export const diagMemory = new Map<string, { ping?: string; tcp?: string; port?: string; inet?: string; inetPort?: string }>();
+export const diagMemory = new Map<string, { ping?: string; tcp?: string; port?: string; inet?: string; inetPort?: string; p2p?: string }>();
 
-export function useDiagField(deviceId: string, key: "ping" | "tcp" | "port" | "inet" | "inetPort", initial: string): [string, (v: string) => void] {
+export function useDiagField(deviceId: string, key: "ping" | "tcp" | "port" | "inet" | "inetPort" | "p2p", initial: string): [string, (v: string) => void] {
   const mem = diagMemory.get(deviceId) ?? {};
   const [v, setV] = useState(mem[key] ?? initial);
   const set = (next: string) => {
@@ -180,6 +216,7 @@ export function DiagSection({ d }: { d: Device }) {
   const [pingDst, setPingDst] = useDiagField(d.id, "ping", "");
   const [tcpDst, setTcpDst] = useDiagField(d.id, "tcp", "");
   const [tcpPort, setTcpPort] = useDiagField(d.id, "port", "80");
+  const [p2pPeer, setP2pPeer] = useDiagField(d.id, "p2p", "");
   if (!(node instanceof Host)) return null;
 
   const okTarget = (v: string) => validIp(v) || isIpv6(v) || (looksLikeName(v) && /^[a-z0-9.-]+$/i.test(v));
@@ -307,6 +344,7 @@ export function DiagSection({ d }: { d: Device }) {
           </ul>
         );
       })()}
+      {node.p2p.config.enabled && <P2pDiag d={d} node={node} peer={p2pPeer} setPeer={setP2pPeer} />}
       <p class="note">
         TCP 연결은 3-way handshake 뒤 "GET /" 요청을 보내고, 서버 응답 3세그먼트를 받은 다음 FIN 으로 닫습니다. 포트 443 은 HTTPS 로, TLS 핸드셰이크 뒤 같은 요청·응답을 암호화해 주고받습니다. 포트 22 는 SSH 로, 키 교환·인증 뒤 세션을 열어 둡니다 — 그 사이 경로를 바꿔 보고 "연결 해제" 로 닫아 보세요. 자세한 기록은 "표" 탭의 TCP 연결 표와 로그에서 봅니다.
       </p>

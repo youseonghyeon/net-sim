@@ -16,7 +16,27 @@ export interface NatEntry {
   finOut?: boolean;
   finIn?: boolean;
   closedAt?: number;
+  /** 이 매핑으로 안에서 먼저 보낸 상대 ("주소" 와 "주소:포트") — restricted·port-restricted·symmetric 의 필터링. 없으면(이중화로 받은 매핑) 거르지 않는다 */
+  peers?: Set<string>;
+  /** symmetric: 이 매핑이 묶인 목적지 ("주소:포트", ICMP 는 주소) */
+  dest?: string;
 }
+
+/**
+ * NAT 종류 (RFC 4787 의 매핑·필터링 조합 — 흔히 쓰는 이름)
+ * - full-cone: 안쪽 주소:포트 하나에 바깥 포트 하나, 그 포트로 바깥 누구든 들어옴 (가장 느슨 — 기본값, 예전 동작)
+ * - restricted: 매핑은 같고, 안에서 먼저 보낸 적이 있는 **주소**에서 온 것만 들어옴
+ * - port-restricted: 안에서 먼저 보낸 적이 있는 **주소:포트**에서 온 것만 들어옴 (가정용 공유기에 흔함)
+ * - symmetric: 목적지(주소:포트)마다 바깥 포트를 따로 고르고, 그 목적지에서 온 것만 들어옴 (통신사 CGNAT·기업 방화벽에 흔함 — 홀 펀칭이 안 됨)
+ */
+export type NatType = "full-cone" | "restricted" | "port-restricted" | "symmetric";
+
+export const NAT_TYPE_LABEL: Record<NatType, string> = {
+  "full-cone": "Full cone",
+  restricted: "Restricted cone",
+  "port-restricted": "Port-restricted cone",
+  symmetric: "Symmetric",
+};
 
 export const NAT_ID_START = 40000;
 /**
@@ -48,6 +68,8 @@ export class NatTable {
   private readonly ruleFlows = new Map<string, number>();
   /** 새 매핑이 생길 때 (이중화 세션 동기화) */
   onNew?: (e: NatEntry, ctx: NodeContext) => void;
+  /** NAT 종류 (매핑·필터링 방식) */
+  type: NatType = "full-cone";
 
   /** 다른 장비(이중화 master)가 만든 매핑을 공인 id 그대로 받아 둔다. 이후 이 장비가 할당할 id 와 겹치지 않게 한다 */
   importEntry(e: Pick<NatEntry, "proto" | "lanIp" | "innerId" | "publicId">, now: number): void {
@@ -114,18 +136,27 @@ export class NatTable {
       }
     }
     const innerId = p.kind === "icmp" ? p.id : p.srcPort;
-    const key = `${proto}:${pkt.src}:${innerId}`;
+    // symmetric 은 목적지마다 따로 매핑한다 (같은 안쪽 포트라도 상대가 다르면 바깥 포트가 다르다)
+    const dest = p.kind === "icmp" ? pkt.dst : `${pkt.dst}:${p.dstPort}`;
+    const key = this.type === "symmetric" ? `${proto}:${pkt.src}:${innerId}>${dest}` : `${proto}:${pkt.src}:${innerId}`;
     this.expire(ctx.now);
     let natKey = this.byInner.get(key);
+    let fresh = false;
     if (natKey === undefined) {
       const publicId = this.allocPublicId(proto);
       natKey = `${proto}:${publicId}`;
       this.byInner.set(key, natKey);
-      this.entries.set(natKey, { proto, lanIp: pkt.src, innerId, publicId, createdAt: ctx.now, lastUsed: ctx.now });
+      this.entries.set(natKey, { proto, lanIp: pkt.src, innerId, publicId, createdAt: ctx.now, lastUsed: ctx.now, peers: new Set(), ...(this.type === "symmetric" ? { dest } : {}) });
       this.onNew?.(this.entries.get(natKey)!, ctx);
+      fresh = true;
     }
     const entry = this.entries.get(natKey)!;
     entry.lastUsed = ctx.now;
+    // 필터링용: 안에서 먼저 보낸 상대를 기억 (이 상대의 응답은 들어온다)
+    entry.peers?.add(pkt.dst);
+    if (p.kind !== "icmp") entry.peers?.add(`${pkt.dst}:${p.dstPort}`);
+    if (fresh && this.type === "symmetric" && [...this.byInner.keys()].some((k) => k !== key && k.startsWith(`${proto}:${pkt.src}:${innerId}>`)))
+      ctx.trace("nat.translate", "L3", `Symmetric NAT: ${pkt.src}:${innerId} 이 새 상대 ${dest} 로 보냄 → 같은 안쪽 포트라도 상대마다 바깥 포트를 새로 고름 (${entry.publicId})`, { proto, lanIp: pkt.src, innerId, publicId: entry.publicId, symmetric: true }, frameId);
     if (p.kind === "tcp") this.noteTcp(entry, p, "out", ctx.now);
     const unit = proto === "icmp" ? "ICMP id" : `${proto.toUpperCase()} 포트`;
     ctx.trace(
@@ -146,7 +177,9 @@ export class NatTable {
     const o = p.original;
     let original = o;
     const innerId = o.l4.kind === "icmp" ? o.l4.id : o.l4.dstPort;
-    const natKey = this.byInner.get(`${o.l4.kind}:${o.dst}:${innerId}`);
+    // symmetric 은 상대마다 매핑이 따로라 원래 패킷의 상대(바깥 출발지)까지 넣어 찾는다
+    const peer = o.l4.kind === "icmp" ? o.src : `${o.src}:${o.l4.srcPort}`;
+    const natKey = this.byInner.get(`${o.l4.kind}:${o.dst}:${innerId}${this.type === "symmetric" ? `>${peer}` : ""}`);
     const entry = natKey ? this.entries.get(natKey) : undefined;
     if (entry) {
       original = { ...o, dst: publicIp, l4: o.l4.kind === "icmp" ? { ...o.l4, id: entry.publicId } : { ...o.l4, dstPort: entry.publicId } };
@@ -225,6 +258,27 @@ export class NatTable {
       ctx.trace("nat.miss", "L3", `NAT 테이블에 없는 ${what} → 드롭. 내부에서 시작하지 않은 통신은 들어올 수 없음${hint}`, { proto, publicId }, frameId);
       return undefined;
     }
+    // 필터링: 안에서 먼저 보낸 적이 있는 상대에게서 온 것만 (full cone 은 누구든)
+    const from = p.kind === "icmp" ? pkt.src : `${pkt.src}:${p.srcPort}`;
+    const allowed =
+      this.type === "full-cone" || !entry.peers
+        ? true
+        : this.type === "restricted"
+          ? entry.peers.has(pkt.src)
+          : this.type === "symmetric"
+            ? entry.dest === from
+            : entry.peers.has(from);
+    if (!allowed) {
+      const rule = this.type === "restricted" ? `${pkt.src} 로` : `${from} 로`;
+      ctx.trace(
+        "nat.miss",
+        "L3",
+        `${NAT_TYPE_LABEL[this.type]} NAT: ${what} 매핑은 있지만 안에서 ${rule} 먼저 보낸 적이 없음 → 드롭 (이 NAT 는 안쪽이 먼저 보낸 상대${this.type === "restricted" ? "(주소)" : "(주소·포트)"}에게서 온 것만 받는다)`,
+        { proto, publicId, from, filtered: this.type },
+        frameId,
+      );
+      return undefined;
+    }
     entry.lastUsed = ctx.now;
     if (p.kind === "tcp") this.noteTcp(entry, p, "in", ctx.now);
     ctx.trace(
@@ -258,15 +312,25 @@ export class NatTable {
     for (const [natKey, e] of [...this.entries]) {
       if (e.closedAt === undefined || now - e.closedAt < NAT_TCP_TIME_WAIT) continue;
       this.entries.delete(natKey);
-      const innerKey = `${e.proto}:${e.lanIp}:${e.innerId}`;
+      const innerKey = `${e.proto}:${e.lanIp}:${e.innerId}${e.dest ? `>${e.dest}` : ""}`;
       if (this.byInner.get(innerKey) === natKey) this.byInner.delete(innerKey);
     }
+  }
+
+  /** NAT 종류 바꾸기: 매핑 방식이 달라지므로 동적 매핑을 비운다 (실제 장비도 설정을 바꾸면 conntrack 을 비운다) */
+  setType(type: NatType): number {
+    if (type === this.type) return 0;
+    const n = this.entries.size;
+    this.type = type;
+    this.entries.clear();
+    this.byInner.clear();
+    return n;
   }
 
   rows(publicIp: Ip | undefined): string[][] {
     return this.values().map((e) => [
       `${e.lanIp} · ${e.proto === "icmp" ? "id" : "포트"} ${e.innerId}`,
-      `${publicIp ?? "?"} · ${e.proto === "icmp" ? "id" : "포트"} ${e.publicId}`,
+      `${publicIp ?? "?"} · ${e.proto === "icmp" ? "id" : "포트"} ${e.publicId}${e.dest ? ` (상대 ${e.dest} 전용)` : ""}`,
       `${e.lastUsed}ms`,
     ]);
   }

@@ -126,6 +126,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.lb.config.enabled) out.push(`LB ${node.lb.config.backends.length}대`);
     if (node.proxy.config.enabled) out.push("프록시");
     if (node.ra.config.enabled) out.push(node.ra.state === "up" ? "VPN 연결됨" : "VPN");
+    if (node.p2p.config.enabled) out.push(node.p2p.session?.phase === "connected" ? (node.p2p.session.via === "relay" ? "P2P 릴레이" : "P2P 직접") : "P2P");
     if (node.v6.enabled) out.push("IPv6");
     if (node.nics.length > 1 && node.activeNic === 1) out.push("Wi-Fi");
   } else if (node instanceof Router) {

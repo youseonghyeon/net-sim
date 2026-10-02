@@ -1,6 +1,6 @@
 // 규칙 편집기: 방화벽(라우터·게이트웨이·NAT 박스·방화벽 장비 공용)과 포트 포워딩.
 import { validCidr } from "../../core/nodes/firewall";
-import { type FirewallRuleSettings, type FirewallSettings, type PortForwardSettings } from "../../model/topology";
+import { type FirewallRuleSettings, type FirewallSettings, type NatTypeSetting, type PortForwardSettings } from "../../model/topology";
 import { Icon } from "../Icons";
 import { Field, Section, Toggle, ipError } from "./ui";
 
@@ -101,6 +101,41 @@ export function FirewallSection({ value, onChange, uplinkName }: { value: Firewa
           </button>
         </>
       )}
+    </Section>
+  );
+}
+
+const NAT_TYPE_TEXT: Record<NatTypeSetting, { label: string; note: string }> = {
+  "full-cone": { label: "Full cone", note: "안쪽 주소:포트마다 바깥 포트 하나. 매핑이 생기면 누가 보내든 들여보냅니다 (endpoint-independent). 홀 펀칭이 가장 쉽습니다." },
+  restricted: { label: "Restricted cone", note: "바깥 포트는 같지만, 안에서 먼저 보낸 적 있는 주소에서 온 것만 들여보냅니다 (포트는 상관없음)." },
+  "port-restricted": { label: "Port-restricted cone", note: "안에서 먼저 보낸 적 있는 주소:포트에서 온 것만 들여보냅니다. 가정용 공유기에 흔하고, 양쪽이 동시에 보내면(홀 펀칭) 뚫립니다." },
+  symmetric: { label: "Symmetric", note: "상대마다 바깥 포트를 새로 고르고, 그 상대에게서 온 것만 들여보냅니다. STUN 이 알려 준 포트가 다른 상대에게는 맞지 않아 홀 펀칭이 실패하고 TURN 릴레이가 필요합니다 (통신사 CGNAT·기업 방화벽)." },
+};
+
+/** NAT 종류(RFC 4787 매핑·필터링)와 헤어핀 NAT (라우터 / NAT 박스 공용) */
+export function NatTypeSection({ natType, hairpin, onChange }: { natType: NatTypeSetting; hairpin: boolean; onChange: (patch: { natType?: NatTypeSetting; hairpin?: boolean }) => void }) {
+  return (
+    <Section title="NAT 종류">
+      <Field label="매핑·필터링">
+        <select class="input" value={natType} onChange={(e) => onChange({ natType: e.currentTarget.value as NatTypeSetting })}>
+          {(Object.keys(NAT_TYPE_TEXT) as NatTypeSetting[]).map((k) => (
+            <option key={k} value={k}>
+              {NAT_TYPE_TEXT[k].label}
+              {k === "full-cone" ? " (기본)" : ""}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <p class="note">{NAT_TYPE_TEXT[natType].note} 바꾸면 지금의 NAT 매핑을 지웁니다.</p>
+      <label class="toggle-row">
+        <span>헤어핀 NAT {hairpin ? "켜짐" : "꺼짐"}</span>
+        <Toggle on={hairpin} onToggle={() => onChange({ hairpin: !hairpin })} />
+      </label>
+      <p class="note">
+        {hairpin
+          ? "안쪽 기기가 내 바깥 주소의 포워딩 포트(TCP)로 접속하면 안쪽 서버로 되돌려 줍니다. 서버는 이 장비의 안쪽 주소에서 온 연결로 봅니다 (응답도 이 장비를 거치게)."
+          : "켜면 안쪽에서도 바깥 주소:포트(도메인)로 포트 포워딩한 서버에 접속할 수 있습니다. 꺼져 있으면 드롭되니 안에서는 서버의 사설 주소로 접속합니다."}
+      </p>
     </Section>
   );
 }

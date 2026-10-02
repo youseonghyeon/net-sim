@@ -4,6 +4,7 @@ import {
   DHCP_CLIENT_PORT,
   DHCP_SERVER_PORT,
   DNS_PORT,
+  P2P_PORT,
   describeFrame,
   describeOriginal,
   isControl,
@@ -30,6 +31,7 @@ import { ForwardProxy, type ProxyConfig } from "./proxy";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
 import { endpoint, HTTPS_PORT, TCP_TIMER_TAG, TcpStack, type TcpConn } from "./tcp";
 import { L2tpClient } from "./l2tp";
+import { P2P_TIMER_TAG, P2pAgent, type P2pConfig } from "./p2p";
 import { RA_DPD_TAG, RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, NUD_TIMER_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
@@ -61,6 +63,8 @@ export interface HostConfig {
   httpProxy?: HttpProxySetting;
   /** 원격 접속 VPN 클라이언트 */
   ra?: RaClientConfig;
+  /** P2P 앱 (화상 통화·게임처럼 NAT 너머 상대와 직접 잇기) */
+  p2p?: P2pConfig;
   /** IPv6 (없으면 꺼짐) */
   ipv6?: Ipv6Settings;
   /** 노트북: 무선 NIC(wlan0, 포트 1)의 MAC. 있으면 유선(eth0, 포트 0)과 NIC 가 둘 — 유선이 살아 있으면 유선, 아니면 무선을 쓴다 */
@@ -145,6 +149,8 @@ export class Host implements SimNode {
   readonly dhcpServer: DhcpServer;
   readonly dnsServer: DnsServer;
   readonly resolver: DnsResolver;
+  /** P2P 앱 (STUN·시그널링·홀 펀칭·TURN) */
+  readonly p2p: P2pAgent;
   readonly tcp: TcpStack;
   /** 로드밸런서 서비스 (꺼져 있으면 아무것도 안 함) */
   readonly lb: LoadBalancer;
@@ -213,6 +219,12 @@ export class Host implements SimNode {
     this.dhcpServer = new DhcpServer(cfg.dhcpServer ?? { enabled: false, start: "", end: "" }, this.iface, false);
     this.dnsServer = new DnsServer(cfg.dnsServer ?? { enabled: false, records: [] }, this.iface, undefined, undefined, this.v6);
     this.resolver = new DnsResolver(this.iface, hashCode(cfg.id), this.v6);
+    this.p2p = new P2pAgent({
+      myIp: () => (this.iface.usable && !this.iface.probing ? this.iface.ip : undefined),
+      local: (dst) => !!this.iface.ip && sameSubnet(dst, this.iface.ip, this.iface.prefix),
+      send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)),
+    });
+    if (cfg.p2p) this.p2p.config = { ...cfg.p2p };
     this.resolver.local = this.dnsServer;
     this.iface.loopback = (pkt, ctx) => this.loopback(pkt, ctx);
     this.ra = this.makeVpnClient(cfg.ra?.type);
@@ -233,6 +245,10 @@ export class Host implements SimNode {
     // 클라이언트 식별은 유선 NIC 의 MAC (노트북이 Wi-Fi 로 넘어가 있어도 같은 기기 — 서버가 같은 가상 주소를 준다)
     const cid = this.nics[0]!.mac;
     return type === "l2tp" ? new L2tpClient(io, cid) : new RaClient(io, cid);
+  }
+
+  setP2p(cfg: P2pConfig, ctx: NodeContext): void {
+    this.p2p.setConfig(cfg, ctx);
   }
 
   setRemoteVpn(cfg: RaClientConfig, ctx: NodeContext): void {
@@ -374,6 +390,7 @@ export class Host implements SimNode {
         this.tcp.abortAll("주소 변경", ctx, (c) => !isIpv6(c.localIp));
         this.cancelTraceroute("주소 변경", ctx, (rec) => !isIpv6(rec.resolved ?? rec.dst));
         this.ra.lost(ctx, "주소 변경");
+        this.p2p.lost();
         if (this.linkUp && this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
       }
       ctx.trace(
@@ -492,6 +509,7 @@ export class Host implements SimNode {
     if (msg) ctx.trace("link.down", "L1", msg);
     this.v6.linkDown();
     this.ra.lost(ctx, why);
+    this.p2p.lost();
     this.iface.clearPending();
     this.tcp.abortAll(why, ctx);
     this.cancelTraceroute(why, ctx);
@@ -1137,8 +1155,10 @@ export class Host implements SimNode {
       if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) {
         this.dhcp.handle(m, frameId, ctx, this.emit(ctx));
         this.ra.connect(ctx); // 주소를 받았으면 원격 접속 VPN 접속
+        this.p2p.onAddress(ctx); // P2P 앱은 시그널링 서버에 등록
         return;
       }
+      if (udp.dstPort === P2P_PORT && pkt.dst === this.iface.ip && this.p2p.handle(pkt, udp, ctx, frameId)) return;
       if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) {
         if (!this.dhcpServer.config.enabled) ctx.trace("dhcp.ignore", "app", `다른 호스트의 DHCP ${m.op} 브로드캐스트 — 나는 서버가 아니므로 무시`, {}, frameId);
         else if (this.ipMode !== "static") ctx.trace("dhcp.misconfigured", "app", `DHCP 서버가 켜져 있지만 내 주소가 고정이 아님(자동) → 응답하지 않음. IP 설정을 수동으로 바꾸세요`, {}, frameId);
@@ -1270,9 +1290,13 @@ export class Host implements SimNode {
       case "arp-probe":
         if ((data as { mac: string }).mac === this.iface.mac) this.iface.finishProbe(ctx, this.emit(ctx));
         this.ra.connect(ctx); // 고정 주소를 쓰기 시작 → 원격 접속 VPN 접속
+        this.p2p.onAddress(ctx);
         return;
       case RA_TIMER_TAG:
         this.ra.onTimer(data, ctx);
+        return;
+      case P2P_TIMER_TAG:
+        this.p2p.onTimer(data, ctx);
         return;
       case RA_DPD_TAG:
         this.ra.onDpdTick(data, ctx);
@@ -1354,6 +1378,7 @@ export class Host implements SimNode {
           : []),
         ["TCP 서비스", this.tcp.listening.size ? [...this.tcp.listening].map((p) => `포트 ${p}`).join(", ") : "없음"],
         ...(this.ra.config.enabled ? [[this.ra instanceof L2tpClient ? "VPN (L2TP/IPsec)" : "원격 접속 VPN", this.ra.summary()!] as [string, string]] : []),
+        ...(this.p2p.config.enabled ? [["P2P 앱", this.p2p.summary()!] as [string, string]] : []),
         ...(this.dhcpServer.config.enabled
           ? [["DHCP 서버", `켜짐 · ${this.dhcpServer.config.start} ~ ${this.dhcpServer.config.end}`] as [string, string]]
           : []),

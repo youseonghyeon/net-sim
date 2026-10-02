@@ -7,6 +7,14 @@ export type TraceKind =
   | "link.up"
   /** 포트 공개 (docker -p 식 FULLNAT) */
   | "port.publish"
+  /** P2P (NAT 트래버설): STUN·시그널링·홀 펀칭·TURN 릴레이 */
+  | "p2p.stun"
+  | "p2p.signal"
+  | "p2p.connect"
+  | "p2p.punch"
+  | "p2p.relay"
+  | "p2p.connected"
+  | "p2p.failed"
   | "link.down"
   | "link.lost"
   | "frame.send"
@@ -273,4 +281,5 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "lb.down",
   "lb.fail",
   "vpn.drop",
+  "p2p.failed",
 ]);

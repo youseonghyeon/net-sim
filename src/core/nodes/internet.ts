@@ -19,8 +19,15 @@ import {
   type IpPacket,
   type Ipv4Packet,
   type Ipv6Packet,
+  SIGNAL_PORT,
+  STUN_PORT,
+  type Endpoint,
+  type P2pMessage,
+  type StunMessage,
+  type UdpPacket,
 } from "../packet";
 import { DhcpServer } from "./dhcp";
+import { SIGNAL_SERVER, STUN_SERVERS, TURN_SERVER } from "./p2p";
 import { normalizeName, PUBLIC_ZONE, PUBLIC_ZONE6 } from "./dns";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RA_PERIODIC_TAG } from "./ipv6";
 import { NetInterface, type Emit } from "./iface";
@@ -306,6 +313,89 @@ export class Internet implements SimNode {
     this.v6.send({ kind: "ipv6", src: this.v6.linkLocal, dst: pkt.src, hopLimit: 64, payload: { kind: "udp", srcPort: DHCP6_SERVER_PORT, dstPort: DHCP6_CLIENT_PORT, payload: reply } }, ctx, this.emit(ctx));
   }
 
+  // ---------- P2P 를 돕는 공인 서버 (STUN·시그널링·TURN) ----------
+
+  /** 시그널링 서버: 이름 → 등록한 기기의 바깥 주소 */
+  readonly signalRegistry = new Map<string, Endpoint>();
+  /** TURN: 릴레이 포트 → 할당받은 기기의 바깥 주소 */
+  readonly turnAllocations = new Map<number, Endpoint>();
+  private nextRelayPort = 49152;
+
+  private serverSend(src: Ip, srcPort: number, to: Endpoint, payload: StunMessage | P2pMessage, ctx: NodeContext): void {
+    this.iface.sendIp({ kind: "ipv4", src, dst: to.ip, ttl: 54, payload: { kind: "udp", srcPort, dstPort: to.port, payload } }, ctx, this.emit(ctx));
+  }
+
+  /** STUN·시그널링·TURN 서버 주소로 온 UDP. 처리했으면 true */
+  private p2pServers(pkt: Ipv4Packet, udp: UdpPacket, frameId: number, ctx: NodeContext): boolean {
+    const m = udp.payload;
+    const from: Endpoint = { ip: pkt.src, port: udp.srcPort };
+    const isServer = STUN_SERVERS.includes(pkt.dst) || pkt.dst === SIGNAL_SERVER || pkt.dst === TURN_SERVER;
+    if (!isServer) return false;
+    if (isPrivateIp(pkt.src)) {
+      ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} → 응답을 돌려줄 수 없어 드롭 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
+      return true;
+    }
+    if (STUN_SERVERS.includes(pkt.dst) && udp.dstPort === STUN_PORT && m.kind === "stun" && m.op === "binding-request") {
+      ctx.trace("p2p.stun", "app", `STUN 서버 ${pkt.dst}: Binding 요청의 출발지가 ${from.ip}:${from.port} → 그대로 알려 줌 ("바깥에서 본 당신의 주소")`, { mapped: `${from.ip}:${from.port}` }, frameId);
+      this.serverSend(pkt.dst, STUN_PORT, from, { kind: "stun", op: "binding-response", txid: m.txid, mapped: from }, ctx);
+      return true;
+    }
+    if (pkt.dst === SIGNAL_SERVER && udp.dstPort === SIGNAL_PORT && m.kind === "p2p") {
+      if (m.op === "register") {
+        this.signalRegistry.set(m.from, from);
+        ctx.trace("p2p.signal", "app", `시그널링 서버: "${m.from}" 등록 — 연락할 주소는 ${from.ip}:${from.port} (그 기기의 NAT 바깥)`, { name: m.from, at: `${from.ip}:${from.port}` }, frameId);
+        this.serverSend(SIGNAL_SERVER, SIGNAL_PORT, from, { kind: "p2p", op: "registered", from: "signal", candidates: [{ type: "srflx", ...from }] }, ctx);
+        return true;
+      }
+      if ((m.op === "offer" || m.op === "answer" || m.op === "relay") && m.to) {
+        const to = this.signalRegistry.get(m.to);
+        if (!to) {
+          ctx.trace("p2p.signal", "app", `시그널링 서버: "${m.to}" 는 등록돼 있지 않음 → ${m.from} 에게 오류`, { to: m.to }, frameId);
+          this.serverSend(SIGNAL_SERVER, SIGNAL_PORT, from, { kind: "p2p", op: "error", from: "signal", to: m.to, error: `상대 "${m.to}" 가 시그널링 서버에 등록돼 있지 않음 (상대의 P2P 앱이 켜져 있고 인터넷에 닿는지 확인)` }, ctx);
+          return true;
+        }
+        ctx.trace("p2p.signal", "app", `시그널링 서버: ${m.from} 의 ${m.op} 를 ${m.to} (${to.ip}:${to.port}) 에게 전달 — 두 기기는 서로의 주소를 이렇게 처음 안다`, { from: m.from, to: m.to }, frameId);
+        this.serverSend(SIGNAL_SERVER, SIGNAL_PORT, to, m, ctx);
+        return true;
+      }
+    }
+    if (pkt.dst === TURN_SERVER && udp.dstPort === STUN_PORT && m.kind === "stun") {
+      if (m.op === "allocate-request") {
+        const key = `${from.ip}:${from.port}`;
+        let port = [...this.turnAllocations].find(([, o]) => `${o.ip}:${o.port}` === key)?.[0];
+        if (port === undefined) {
+          port = this.nextRelayPort++;
+          this.turnAllocations.set(port, from);
+        }
+        ctx.trace("p2p.relay", "app", `TURN 서버: ${key} 에게 릴레이 주소 ${TURN_SERVER}:${port} 할당 — 이 주소로 온 것은 ${key} 에게 전해 준다`, { relay: `${TURN_SERVER}:${port}`, owner: key }, frameId);
+        this.serverSend(TURN_SERVER, STUN_PORT, from, { kind: "stun", op: "allocate-response", txid: m.txid, relayed: { ip: TURN_SERVER, port }, mapped: from }, ctx);
+        return true;
+      }
+      if (m.op === "send" && m.peer && m.data) {
+        const port = [...this.turnAllocations].find(([, o]) => o.ip === from.ip && o.port === from.port)?.[0];
+        if (port === undefined) {
+          ctx.trace("ip.drop", "L4", `TURN 서버: 할당받지 않은 ${from.ip}:${from.port} 의 Send → 드롭`, {}, frameId);
+          return true;
+        }
+        ctx.trace("p2p.relay", "app", `TURN 서버: ${from.ip}:${from.port} 의 Send 를 릴레이 주소 ${TURN_SERVER}:${port} 에서 ${m.peer.ip}:${m.peer.port} 로 내보냄`, { relay: port }, frameId);
+        this.serverSend(TURN_SERVER, port, m.peer, m.data, ctx);
+        return true;
+      }
+      return false;
+    }
+    if (pkt.dst === TURN_SERVER && udp.dstPort !== STUN_PORT && m.kind === "p2p") {
+      const owner = this.turnAllocations.get(udp.dstPort);
+      if (!owner) {
+        ctx.trace("ip.drop", "L4", `TURN 서버: 할당되지 않은 릴레이 포트 ${udp.dstPort} → 드롭`, { port: udp.dstPort }, frameId);
+        return true;
+      }
+      ctx.trace("p2p.relay", "app", `TURN 서버: 릴레이 주소 ${TURN_SERVER}:${udp.dstPort} 로 ${from.ip}:${from.port} 가 보낸 것을 ${owner.ip}:${owner.port} 에게 Data 로 전해 줌`, { relay: udp.dstPort }, frameId);
+      this.serverSend(TURN_SERVER, STUN_PORT, owner, { kind: "stun", op: "data", txid: 0, peer: from, data: m }, ctx);
+      return true;
+    }
+    return false;
+  }
+
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
     const emit = this.emit(ctx);
     if (pkt.payload.kind === "udp") {
@@ -315,6 +405,7 @@ export class Internet implements SimNode {
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frameId);
       else if (m.kind === "dns" && udp.dstPort === DNS_PORT && m.op === "query") this.handleDns(pkt, udp.srcPort, m, frameId, ctx);
       else if (m.kind === "dns") ctx.trace("ip.drop", "L4", `공인 DNS 가 아닌 주소로 온 DNS 응답 → 드롭`, {}, frameId);
+      else if (this.p2pServers(pkt, udp, frameId, ctx)) return;
       else ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
       return;
     }

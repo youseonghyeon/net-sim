@@ -20,7 +20,7 @@ import {
   vlanColor,
 } from "../../model/topology";
 import { Icon } from "../Icons";
-import { FirewallSection, ForwardSection } from "./rules";
+import { FirewallSection, ForwardSection, NatTypeSection } from "./rules";
 import { Field, IfaceFields, Section, Toggle, ip6Error, ipError, validIp } from "./ui";
 
 /** 다른 수동 인터페이스와 서브넷이 겹치면 그 인터페이스 이름 */
@@ -116,6 +116,13 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
           rules={l3.forwards ?? []}
           onChange={(forwards) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), forwards } }))}
           lanHint="안쪽 서버 주소가 다른 라우터 뒤에 있으면 그쪽 스태틱 라우팅도 있어야 합니다."
+        />
+      )}
+      {natOn(d) && (
+        <NatTypeSection
+          natType={l3.natType ?? "full-cone"}
+          hairpin={l3.hairpin === true}
+          onChange={(patch) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), ...patch } }))}
         />
       )}
       <FirewallSection

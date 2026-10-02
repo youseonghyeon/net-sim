@@ -1396,7 +1396,8 @@ select.btn.example {
   flex: 0 0 60px;
   padding: 0 6px;
 }
-.tcp-row {
+.tcp-row,
+.p2p-row {
   margin-top: 8px;
 }
 .ping-row .btn {
@@ -2081,6 +2082,87 @@ select.btn.example {
   height: 1px;
   margin: 6px 4px;
   background: var(--line);
+}
+/* 예제 고르기: 넓은 패널에 묶음별 3열, 제목 아래 괄호 속 부제 */
+.menu.menu-wide {
+  width: min(880px, calc(100vw - 32px));
+  padding: 8px;
+}
+.menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 4px 6px;
+}
+.menu-head .menu-caption {
+  padding: 0 4px;
+}
+.menu-head .menu-caption .muted {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.menu-search {
+  flex: 0 1 260px;
+  min-width: 140px;
+}
+.menu-examples {
+  column-count: 3;
+  column-gap: 8px;
+}
+.menu-examples .menu-group {
+  break-inside: avoid;
+  padding-bottom: 6px;
+}
+.menu-item.example-item {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 5px 8px;
+}
+.example-title {
+  font-size: 13px;
+  line-height: 18px;
+}
+.example-sub {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--ink-3);
+}
+.menu-empty {
+  padding: 8px;
+}
+.menu-actions {
+  display: flex;
+  gap: 4px;
+}
+.menu-actions .menu-item {
+  width: auto;
+}
+/* 좁은 창: 버튼 기준으로 펼치면 왼쪽이 화면 밖으로 나가므로 창 양옆에 맞춘다 */
+@media (max-width: 920px) {
+  .menu.menu-wide {
+    position: fixed;
+    top: 48px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    max-height: calc(100vh - 64px);
+    overflow-x: hidden;
+  }
+}
+@media (max-width: 760px) {
+  .menu-examples {
+    column-count: 2;
+  }
+  .menu-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .menu-search {
+    flex: none;
+  }
 }
 
 /* ---- 인스펙터: 장치 머리 + 탭 ---- */

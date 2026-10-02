@@ -23,7 +23,7 @@ import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient } from "./dhcp";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
 import { Firewall, type FirewallConfig, type FlowDirection } from "./firewall";
-import { NatTable, type PortForward } from "./nat";
+import { NAT_TYPE_LABEL, NatTable, type NatType, type PortForward } from "./nat";
 import { PortPublish, type PublishRule } from "./publish";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { Rip, RIP_TIMER_TAG, type RipConfig } from "./rip";
@@ -82,6 +82,10 @@ export interface L3Config {
   nat?: { enabled: boolean };
   /** 포트 공개 (docker -p 식, 장비 자신의 어느 주소로 와도) */
   publish?: PublishRule[];
+  /** NAT 종류 (없으면 full cone) */
+  natType?: NatType;
+  /** 헤어핀 NAT (NAT 루프백). 없으면 꺼짐 */
+  hairpin?: boolean;
 }
 
 /** 게이트웨이·NAT 박스의 IPv6: 켜면 물리 인터페이스마다 링크 로컬이 생기고, 인터페이스별 수동 주소와 IPv6 스태틱 라우팅(::/0 = 디폴트 라우트)으로 전달한다 */
@@ -122,6 +126,21 @@ export class L3Node implements SimNode {
   linkUp: boolean[];
   nat: NatTable | undefined;
   outside: number | undefined;
+  /** NAT 종류 (NAT 를 켤 때 쓴다) */
+  natType: NatType = "full-cone";
+  /** 헤어핀 NAT: 안에서 바깥 주소의 포워딩 포트로 온 연결을 안쪽 서버로 되돌림 */
+  hairpin = false;
+  private readonly hairpinNat: PortPublish = new PortPublish(
+    {
+      owns: (ip) => this.outside !== undefined && ip === this.addrOf(this.outside),
+      sourceFor: (dst) => {
+        const r = this.route(dst);
+        return r && r.kind !== "vpn" && r.kind !== "ra" ? this.addrOf(r.out) : undefined;
+      },
+      send: (pkt, _inPort, frameId, ctx) => this.sendPublished(pkt, frameId, ctx),
+    },
+    true,
+  );
   routes: StaticRoute[];
   /** 인터페이스별 DHCP 릴레이 대상 서버 */
   relays: (Ip | undefined)[];
@@ -228,6 +247,9 @@ export class L3Node implements SimNode {
     const natOn = cfg.kind === "nat" || cfg.nat?.enabled === true;
     this.outside = cfg.kind === "nat" ? (cfg.outside ?? 0) : natOn ? 0 : undefined;
     this.nat = natOn ? new NatTable() : undefined;
+    this.natType = cfg.natType ?? "full-cone";
+    this.hairpin = cfg.hairpin === true;
+    if (this.nat) this.nat.type = this.natType;
     if (cfg.publish) this.publish.rules = cfg.publish.map((r) => ({ ...r }));
     this.routes = [...(cfg.routes ?? [])];
     this.relays = cfg.interfaces.map((i) => i.relay);
@@ -281,6 +303,7 @@ export class L3Node implements SimNode {
       // if0 은 이제 NAT 바깥이라 RIP 에서 빠진다 — 그 전에 이웃에게 if0 으로 알렸던 경로를 철회한다
       this.rip.retire(0, ctx);
       this.nat = new NatTable();
+      this.nat.type = this.natType;
       this.outside = 0;
       this.wireNat(this.nat);
       ctx.trace("ip.config", "sys", `NAT 켜짐 (MASQUERADE): ${this.names[0]} 로 나가는 패킷의 출발지를 ${this.names[0]} 주소로 바꾸고, 바깥에서 안쪽 주소로 바로 오는 것은 막음`, { nat: true });
@@ -291,6 +314,42 @@ export class L3Node implements SimNode {
       ctx.trace("ip.config", "sys", `NAT 꺼짐 → 주소를 바꾸지 않고 라우팅만 (NAT 매핑 ${n}개 지움)`, { nat: false });
     }
     this.rip.kick(ctx); // NAT outside 는 RIP 에 참여하지 않는다
+  }
+
+  setHairpin(on: boolean, ctx: NodeContext): void {
+    if (on === this.hairpin) return;
+    this.hairpin = on;
+    ctx.trace("ip.config", "sys", on ? `헤어핀 NAT 켜짐: 안에서 바깥 주소의 포워딩 포트로 접속하면 안쪽 서버로 되돌려 준다` : `헤어핀 NAT 꺼짐`, { hairpin: on });
+  }
+
+  /** 안에서 내 바깥 주소로 온 TCP (헤어핀 NAT). 처리했으면 true */
+  private hairpinTcp(port: number, pkt: Ipv4Packet, frameId: number, ctx: NodeContext): boolean {
+    const seg = pkt.payload;
+    if (seg.kind !== "tcp" || !this.nat || this.outside === undefined || port === this.outside) return false;
+    const rules = this.nat.forwards.filter((r) => (r.proto ?? "tcp") === "tcp");
+    if (this.hairpin) {
+      this.hairpinNat.rules = rules.map((r) => ({ port: r.publicPort, bind: "0.0.0.0", to: r.lanIp, toPort: r.lanPort }));
+      return this.hairpinNat.handle(port, pkt, frameId, ctx);
+    }
+    const outsideIp = this.addrOf(this.outside);
+    const rule = pkt.dst === outsideIp ? rules.find((r) => r.publicPort === seg.dstPort) : undefined;
+    if (!rule) return false;
+    ctx.trace(
+      "ip.drop",
+      "L4",
+      `헤어핀 NAT 꺼짐: 안쪽 ${pkt.src} 가 바깥 주소 ${pkt.dst}:${seg.dstPort} 로 접속 → 포트 포워딩은 바깥에서 온 연결에만 적용돼 드롭 (헤어핀 NAT 를 켜거나, 안에서는 ${rule.lanIp}:${rule.lanPort} 로 접속)`,
+      { port: seg.dstPort, hairpin: false },
+      frameId,
+    );
+    return true;
+  }
+
+  setNatType(type: NatType, ctx: NodeContext): void {
+    if (type === this.natType) return;
+    const from = this.natType;
+    this.natType = type;
+    const n = this.nat ? this.nat.setType(type) : 0;
+    ctx.trace("ip.config", "sys", `NAT 종류 변경: ${NAT_TYPE_LABEL[from]} → ${NAT_TYPE_LABEL[type]}${this.nat ? ` (매핑 방식이 바뀌어 NAT 매핑 ${n}개를 지움)` : ""}`, { natType: type });
   }
 
   setPublish(rules: PublishRule[], ctx: NodeContext): void {
@@ -784,6 +843,7 @@ export class L3Node implements SimNode {
     }
     // 포트 공개 (docker -p): 내 주소의 공개 포트로 온 TCP 와 그 응답 — NAT 역변환보다 먼저
     if (pkt.payload.kind === "tcp" && this.publish.handle(port, pkt, frameId, ctx)) return;
+    if (pkt.payload.kind === "tcp" && this.hairpinTcp(port, pkt, frameId, ctx)) return;
     const mine = this.ownIndex(pkt.dst);
     const fromOutside = this.nat !== undefined && port === this.outside;
     if (fromOutside && mine >= 0 && mine !== this.outside) {
@@ -1180,6 +1240,7 @@ export class L3Node implements SimNode {
         ...(this.firewall.config.enabled
           ? [["방화벽", `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}`] as [string, string]]
           : []),
+        ...(this.nat ? [["NAT", `${NAT_TYPE_LABEL[this.natType]}${this.hairpin ? " · 헤어핀 NAT 켜짐" : ""}`] as [string, string]] : []),
       ],
       tables,
     };

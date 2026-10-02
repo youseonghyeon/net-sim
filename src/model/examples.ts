@@ -8,7 +8,7 @@ import { exampleTwoGatewaysTopology, exampleBackboneTopology, exampleRipTopology
 import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
 import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology } from "./examples/services";
-import { exampleInternetTopology, examplePublishTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology } from "./examples/internet";
+import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology } from "./examples/internet";
 import { exampleRoamingTopology } from "./examples/wireless";
 import { exampleCompanyTopology } from "./examples/overview";
 import { exampleDualStackHomeTopology, exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
@@ -24,7 +24,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -156,6 +156,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "도메인으로 회사 웹 서버 접속 (DNS·NAT·포트 포워딩)",
     blurb: "맥북에서 nexus.com:80 으로 TCP 연결을 보내 보세요. 공인 DNS 8.8.8.8(ISP 라우터 너머)이 회사 공인 주소를 알려 주고, 집 NAT(출발지 변환) → 회사 NAT 포트 포워딩(목적지 변환) → 방화벽(웹 서버 80 만 허용) → 웹 서버로 갑니다. srv-1(192.168.1.3)은 사설 주소라 밖에서 직접 닿지 않습니다.",
     build: examplePublishTopology,
+  },
+  p2p: {
+    id: "p2p",
+    group: "인터넷",
+    label: "NAT 종류와 홀 펀칭 (P2P·STUN·TURN·헤어핀)",
+    blurb: "민수 PC 의 진단 탭에서 hyunwoo 에게 P2P 연결을 보내 보세요. 두 PC 가 STUN 으로 자기 공인 주소:포트를 알아내고 시그널링 서버로 후보를 주고받은 뒤, 서로에게 동시에 보내(홀 펀칭) 두 공유기의 port-restricted NAT 를 뚫고 직접 연결됩니다. jiyoung 에게 보내면 통신사 CGNAT 가 symmetric(상대마다 바깥 포트가 바뀜)이라 홀 펀칭이 실패하고 TURN 릴레이로 이어집니다. 집 A 공유기의 NAT 종류를 full cone 으로 바꾸면 jiyoung 과도 직접 연결됩니다. 민수 PC 에서 집 A 공유기의 WAN 주소:8080 으로 TCP 연결하면 헤어핀 NAT 가 꺼져 있어 드롭되고, 공유기 설정에서 헤어핀 NAT 를 켜면 집 NAS 로 되돌아갑니다.",
+    build: exampleNatTraversalTopology,
   },
   vpn: {
     id: "vpn",

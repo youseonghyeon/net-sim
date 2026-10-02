@@ -189,6 +189,8 @@ export interface HostSettings {
   ra?: RaClientSettings;
   /** IPv6. 없으면 꺼짐 (실제 OS 는 기본으로 켜져 있지만, 여기서는 켜야 링크 로컬·NDP 가 오간다) */
   ipv6?: Ipv6HostSettings;
+  /** P2P 앱 (화상 통화·게임처럼 NAT 너머 상대와 직접 잇기). 이름이 비면 장치 이름 */
+  p2p?: { enabled: boolean; name?: string };
 }
 
 /** 호스트의 IPv6 설정 */
@@ -301,6 +303,10 @@ export interface L3Settings {
   nat?: { enabled: boolean };
   /** 포트 공개 (docker run -p 식): 장비 자신의 주소(bind, 0.0.0.0 = 모두)의 port 로 온 TCP 를 to:toPort 로 */
   publish?: PublishSettings[];
+  /** NAT 종류 (NAT 박스·NAT 를 켠 게이트웨이). 없으면 full cone */
+  natType?: NatTypeSetting;
+  /** 헤어핀 NAT (안에서 바깥 주소의 포워딩 포트로 접속). 없으면 꺼짐 */
+  hairpin?: boolean;
 }
 
 export interface PublishSettings {
@@ -406,6 +412,10 @@ function normalizeHostExtras(h: HostSettings): HostSettings {
     out.httpProxy = { enabled: p.enabled === true, server: typeof p.server === "string" ? p.server : typeof p.server === "number" ? String(p.server) : "", port: port(p.port, 3128) };
   }
   if (h.ipv6) out.ipv6 = normalizeIpv6Host(h.ipv6 as Partial<Ipv6HostSettings>);
+  if (h.p2p) {
+    const p = h.p2p as { enabled?: unknown; name?: unknown };
+    out.p2p = { enabled: p.enabled === true, ...(typeof p.name === "string" ? { name: p.name } : {}) };
+  }
   return out;
 }
 
@@ -580,6 +590,17 @@ export interface RouterSettings {
   ipv6?: RouterIpv6Settings;
   /** VPN 서버 (ipTIME 식 L2TP/IPsec). 없으면 꺼짐 */
   vpnServer?: RouterVpnServerSettings;
+  /** NAT 종류. 없으면 full cone */
+  natType?: NatTypeSetting;
+  /** 헤어핀 NAT (NAT 루프백). 없으면 꺼짐 */
+  hairpin?: boolean;
+}
+
+/** NAT 종류 (core/nodes/nat.ts NatType 과 같은 값) */
+export type NatTypeSetting = "full-cone" | "restricted" | "port-restricted" | "symmetric";
+const NAT_TYPES: NatTypeSetting[] = ["full-cone", "restricted", "port-restricted", "symmetric"];
+export function natTypeOf(v: unknown): NatTypeSetting | undefined {
+  return NAT_TYPES.includes(v as NatTypeSetting) ? (v as NatTypeSetting) : undefined;
 }
 
 /** 공유기 VPN 서버 (L2TP/IPsec): ipTIME 설정 화면의 세 칸 — 사전 공유 키, 계정, 할당 IP */
@@ -1142,6 +1163,8 @@ export function normalizeTopology(t: Topology): Topology {
           ...(fixed.l3.ipv6 ? { ipv6: normalizeIpv6L3(fixed.l3.ipv6) } : {}),
           ...(fixed.l3.nat ? { nat: { enabled: (fixed.l3.nat as { enabled?: unknown }).enabled === true } } : {}),
           ...(fixed.l3.publish ? { publish: normalizePublish(fixed.l3.publish) } : {}),
+          natType: natTypeOf(fixed.l3.natType),
+          hairpin: fixed.l3.hairpin === true ? true : undefined,
         };
       }
     }
@@ -1159,6 +1182,8 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.firewall ? { firewall: { ...DEFAULT_FIREWALL_SETTINGS, ...r.firewall, rules: r.firewall.rules ?? [] } } : {}),
           ...(r.ipv6 ? { ipv6: { enabled: (r.ipv6 as Partial<RouterIpv6Settings>).enabled === true, inboundBlock: (r.ipv6 as Partial<RouterIpv6Settings>).inboundBlock !== false } } : {}),
           ...(r.vpnServer ? { vpnServer: normalizeRouterVpn(r.vpnServer) } : {}),
+          natType: natTypeOf(r.natType),
+          hairpin: r.hairpin === true ? true : undefined,
         };
       }
     }

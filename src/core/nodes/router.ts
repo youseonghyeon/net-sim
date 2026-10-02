@@ -22,9 +22,10 @@ import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServ
 import { DNS_UPSTREAM_TIMER_TAG, DnsServer, type DnsServerConfig } from "./dns";
 import { Firewall, type FirewallConfig } from "./firewall";
 import { L2tpServer, type L2tpServerConfig } from "./l2tp";
+import { PortPublish } from "./publish";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
-import { NAT_ID_START, NatTable, type PortForward } from "./nat";
+import { NAT_ID_START, NAT_TYPE_LABEL, NatTable, type NatType, type PortForward } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { guardLoop } from "./switch";
 
@@ -56,6 +57,10 @@ export interface RouterConfig {
   ipv6?: RouterIpv6Config;
   /** VPN 서버 (ipTIME 식 L2TP/IPsec, 없으면 꺼짐) */
   vpnServer?: L2tpServerConfig;
+  /** NAT 종류 (없으면 full cone) */
+  natType?: NatType;
+  /** 헤어핀 NAT (NAT 루프백): 안에서 내 공인 주소의 포워딩 포트로 접속하면 안쪽 서버로 되돌려 준다. 없으면 꺼짐 */
+  hairpin?: boolean;
 }
 
 export interface RouterIpv6Config {
@@ -108,6 +113,16 @@ export class Router implements SimNode {
   private lan6Started = false;
   /** VPN 서버 (L2TP/IPsec): 붙은 노트북에게 LAN 주소를 주고, 그 주소의 ARP 에 대신 답해(프록시 ARP) 터널로 넘긴다 */
   readonly vpnServer: L2tpServer;
+  /** 헤어핀 NAT (켜져 있을 때만 쓴다) — 포트 포워딩 규칙을 안쪽 클라이언트에게도 적용 (FULLNAT) */
+  hairpin = false;
+  private readonly hairpinNat = new PortPublish(
+    {
+      owns: (ip) => ip === this.wan.ip,
+      sourceFor: () => this.lan.ip,
+      send: (pkt, _inPort, _frameId, ctx) => this.lan.sendIp({ ...pkt, ttl: pkt.ttl - 1 }, ctx, this.emitLan(ctx)),
+    },
+    true,
+  );
 
   constructor(cfg: RouterConfig) {
     this.id = cfg.id;
@@ -149,6 +164,8 @@ export class Router implements SimNode {
       this.lan6, // LAN 호스트가 IPv6(RA 의 RDNSS = 공유기 LAN 주소)로 물어도 답한다
     );
     if (cfg.forwards) this.nat.setForwards(cfg.forwards);
+    if (cfg.natType) this.nat.type = cfg.natType;
+    this.hairpin = cfg.hairpin === true;
     this.vpnServer = new L2tpServer({
       // 공유기 자신이 만든 바깥 패킷이라 NAT·방화벽을 거치지 않는다
       send: (outer, ctx) => this.wan.sendIp(outer, ctx, this.emitWan(ctx)),
@@ -256,9 +273,20 @@ export class Router implements SimNode {
       wifi?: { enabled: boolean; ssid: string };
       ipv6?: RouterIpv6Config;
       vpnServer?: L2tpServerConfig;
+      natType?: NatType;
+      hairpin?: boolean;
     },
     ctx: NodeContext,
   ): void {
+    if (cfg.hairpin !== undefined && cfg.hairpin !== this.hairpin) {
+      this.hairpin = cfg.hairpin;
+      ctx.trace("ip.config", "sys", cfg.hairpin ? `헤어핀 NAT 켜짐: 안에서 내 공인 주소의 포워딩 포트로 접속하면 안쪽 서버로 되돌려 준다 (도메인으로 집 서버에 접속하기)` : `헤어핀 NAT 꺼짐`, { hairpin: cfg.hairpin });
+    }
+    if (cfg.natType && cfg.natType !== this.nat.type) {
+      const from = this.nat.type;
+      const n = this.nat.setType(cfg.natType);
+      ctx.trace("ip.config", "sys", `NAT 종류 변경: ${NAT_TYPE_LABEL[from]} → ${NAT_TYPE_LABEL[cfg.natType]} (매핑 방식이 바뀌어 NAT 매핑 ${n}개를 지움)`, { natType: cfg.natType });
+    }
     if (cfg.firewall) this.firewall.setConfig(cfg.firewall, ctx, "");
     if (cfg.vpnServer) this.vpnServer.setConfig(cfg.vpnServer, ctx);
     if (cfg.ipv6) this.setIpv6(cfg.ipv6, ctx);
@@ -467,6 +495,7 @@ export class Router implements SimNode {
     }
     const pkt = frame.payload;
     if (pkt.kind !== "ipv4") return;
+    if (pkt.payload.kind === "tcp" && this.hairpinTcp(pkt, frame.id, ctx)) return;
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
       const m = udp.payload;
@@ -499,6 +528,30 @@ export class Router implements SimNode {
       return;
     }
     this.forwardToWan(pkt, frame.id, ctx);
+  }
+
+  /**
+   * 안에서 내 공인 주소로 온 TCP: 헤어핀 NAT 가 켜져 있으면 포트 포워딩 대상으로 되돌리고(그 응답도), 꺼져 있고 그 포트에 포워딩 규칙이 있으면
+   * 왜 안 되는지 남긴다. 처리했으면 true
+   */
+  private hairpinTcp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): boolean {
+    const seg = pkt.payload;
+    if (seg.kind !== "tcp" || !this.wan.ip || (pkt.dst !== this.wan.ip && pkt.dst !== this.lan.ip)) return false;
+    const rules = this.nat.forwards.filter((r) => (r.proto ?? "tcp") === "tcp");
+    if (this.hairpin) {
+      this.hairpinNat.rules = rules.map((r) => ({ port: r.publicPort, bind: "0.0.0.0", to: r.lanIp, toPort: r.lanPort }));
+      return this.hairpinNat.handle(0, pkt, frameId, ctx);
+    }
+    const rule = pkt.dst === this.wan.ip ? rules.find((r) => r.publicPort === seg.dstPort) : undefined;
+    if (!rule) return false;
+    ctx.trace(
+      "ip.drop",
+      "L4",
+      `헤어핀 NAT 꺼짐: 안쪽 ${pkt.src} 가 내 공인 주소 ${pkt.dst}:${seg.dstPort} 로 접속 → 포트 포워딩은 바깥에서 온 연결에만 적용돼 드롭 (공유기 설정에서 헤어핀 NAT 를 켜거나, 안에서는 ${rule.lanIp}:${rule.lanPort} 로 접속)`,
+      { port: seg.dstPort, hairpin: false },
+      frameId,
+    );
+    return true;
   }
 
   // ---------- IPv6 (NAT 없음) ----------
@@ -867,6 +920,7 @@ export class Router implements SimNode {
         ["DNS 포워더", this.dnsForwarder.config.enabled ? `켜짐 · 업스트림 ${this.dnsForwarder.config.upstream ?? "없음"}` : "꺼짐"],
         ["무선", this.wifi.enabled ? `켜짐 · SSID ${this.wifi.ssid}` : "꺼짐"],
         ["방화벽", this.firewall.config.enabled ? `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}` : "꺼짐"],
+        ["NAT", `${NAT_TYPE_LABEL[this.nat.type]}${this.hairpin ? " · 헤어핀 NAT 켜짐" : ""}`],
         ...(this.ipv6Enabled
           ? ([
               ["WAN IPv6", this.wan6.summary() || "없음"],

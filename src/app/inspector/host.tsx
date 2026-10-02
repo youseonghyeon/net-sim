@@ -419,6 +419,28 @@ export function HttpProxySection({ d, h }: { d: Device; h: HostSettings }) {
   );
 }
 
+/** P2P 앱 (화상 통화·게임 흉내): 시그널링 서버에 이름으로 등록하고, 진단 탭에서 상대 이름으로 연결한다 */
+export function P2pSection({ d, h }: { d: Device; h: HostSettings }) {
+  const p = h.p2p ?? { enabled: false };
+  const set = (patch: Partial<NonNullable<HostSettings["p2p"]>>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, p2p: { ...(x.host!.p2p ?? { enabled: false }), ...patch } } }));
+  return (
+    <Section title="P2P 앱">
+      <label class="toggle-row">
+        <span>
+          {p.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">UDP 41641</span>
+        </span>
+        <Toggle on={p.enabled} onToggle={() => set({ enabled: !p.enabled })} />
+      </label>
+      {!p.enabled && <p class="note">켜면 화상 통화 앱처럼 인터넷의 시그널링 서버에 이름으로 등록합니다. 진단 탭에서 상대 이름으로 연결하면 STUN 으로 내 바깥 주소를 알아내고, 홀 펀칭으로 NAT 를 뚫어 직접 잇거나 안 되면 TURN 릴레이를 거칩니다.</p>}
+      {p.enabled && (
+        <Field label="이름" hint="상대가 연결할 때 쓰는 이름">
+          <input class="input mono" value={p.name ?? ""} placeholder={d.name} onInput={(e) => set({ name: e.currentTarget.value })} />
+        </Field>
+      )}
+    </Section>
+  );
+}
+
 /** 로드밸런서 전용 장비의 설정 (서버의 서비스 섹션과 같은 칸, 섹션 하나로) */
 export function LbSection({ d, h }: { d: Device; h: HostSettings }) {
   return (

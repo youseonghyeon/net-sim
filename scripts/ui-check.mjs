@@ -1382,6 +1382,39 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
     console.log("log more:", rowsBefore, "→", await page.locator(".log-list .row").count(), "| total:", await page.locator(".log-toggle .count").textContent());
   } else console.log("log more: (500줄 이하라 버튼 없음)", rowsBefore);
 }
+// P2P (NAT 종류·홀 펀칭): 예제 메뉴 검색 → 진단 탭 "P2P 연결" → 직접 연결, 공유기 설정의 NAT 종류
+{
+  await page.click(".menu-btn");
+  await page.keyboard.type("홀 펀칭");
+  console.log("example search '홀 펀칭':", await page.locator(".menu-examples .menu-item").count(), "match(es)");
+  await page.keyboard.press("Enter");
+  await waitAddr("민수 PC", /^192\.168\.0\.1\d\d/);
+  await clickDevice("민수 PC");
+  const p2pLine = page.locator(".inspector .p2p-row ~ .ping-log li").first();
+  const waitText = async (re, timeout = 30000) => {
+    const start = Date.now();
+    for (;;) {
+      const t = (await p2pLine.count()) ? await p2pLine.textContent() : "";
+      if (re.test(t)) return t;
+      if (Date.now() - start > timeout) throw new Error(`P2P 상태 ${re} 를 기다리다 timeout; last = "${t}"`);
+      await page.waitForTimeout(150);
+    }
+  };
+  console.log("p2p registered:", await waitText(/등록됨/));
+  await page.locator(".inspector .p2p-row .input").fill("hyunwoo");
+  await page.click(".inspector .p2p-row .btn");
+  console.log("p2p hyunwoo:", await waitText(/연결됨|실패/));
+  await page.screenshot({ path: `${OUT}/95-p2p-direct.png` });
+  await page.locator(".inspector .p2p-row .input").fill("jiyoung");
+  await page.click(".inspector .p2p-row .btn");
+  console.log("p2p jiyoung:", await waitText(/jiyoung (와 연결됨|연결 실패)/, 60000));
+  await clickDevice("집 A 공유기");
+  await goTab("설정");
+  const natSel = page.locator(".inspector select").filter({ has: page.locator('option[value="symmetric"]') });
+  console.log("router NAT type select:", await natSel.inputValue(), "| hairpin toggle:", await page.locator(".inspector .toggle-row", { hasText: "헤어핀 NAT" }).count());
+  await page.locator(".inspector h3", { hasText: "NAT 종류" }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/96-nat-type.png` });
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");
