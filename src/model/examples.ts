@@ -10,6 +10,7 @@ import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTop
 import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology } from "./examples/internet";
 import { exampleRoamingTopology } from "./examples/wireless";
+import { exampleCompanyTopology } from "./examples/overview";
 import { exampleDualStackHomeTopology, exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
 
 export * from "./examples/basic";
@@ -21,8 +22,9 @@ export * from "./examples/services";
 export * from "./examples/internet";
 export * from "./examples/wireless";
 export * from "./examples/ipv6";
+export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -217,6 +219,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "듀얼 스택 집 (NAT 없는 IPv6·프리픽스 위임)",
     blurb: "공유기는 ISP 에게 DHCPv6-PD 로 /56 을 위임받아 LAN 에 첫 /64 를 RA 로 알립니다(공유기 → 표 탭). pc-1 에서 google.com 으로 ping 하면 AAAA 로 IPv6 주소를 받아 NAT 없이 나갑니다 — 공유기를 지나는 패킷을 눌러 출발지가 pc-1 의 주소 그대로인지 보세요(IPv4 는 WAN 주소로 바뀝니다). github.com 은 IPv6 가 없어(NODATA) IPv4·NAT 로 갑니다. 인터넷 노드의 '외부에서 접속' 으로 srv-1 의 IPv6 주소:80 에 접속하면 공유기의 IPv6 인바운드 기본 차단에 막히고, 끄면 포트 포워딩 없이 바로 들어옵니다 — IPv6 에서는 NAT 가 아니라 방화벽이 지킵니다.",
     build: exampleDualStackHomeTopology,
+  },
+  company: {
+    id: "company",
+    group: "종합",
+    label: "중소기업 전체 (본사·지사·재택·고객)",
+    blurb: "앞의 예제들이 한 그림에 모입니다. 지사 PC-1 에서 intranet.corp 로 TCP 80 을 보내면 사내 DNS 에 물어(지사 → 본사 IPsec 터널) 사내 위키에 닿습니다. 재택 노트북은 켜지면서 원격 접속 VPN(계정 kim)으로 붙어 있어 10.1.20.20 으로 SSH(22) 가 됩니다. 사무 PC 는 VLAN 10 에서 코어 게이트웨이의 DHCP 릴레이로 주소를 받고 www.corp 로 연결하면 웹 LB 가 web-1·web-2 로 나눕니다. 카페의 고객 폰에서 회사 공인 주소 203.0.113.10:80 으로 연결하면 본사 방화벽의 포트 포워딩 → 웹 LB 로 들어옵니다. 손님 폰(VLAN 30 손님 Wi-Fi)은 8.8.8.8 은 되지만 사내 위키(10.1.20.20)는 코어 방화벽에 막힙니다.",
+    build: exampleCompanyTopology,
   },
 };
 
