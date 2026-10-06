@@ -183,8 +183,16 @@ export class Firewall {
   }
 
   /** 지나가는 패킷 검사. true 면 통과. 차단이면 이유를 트레이스로 남긴다 */
+  /** 미리 들일 곳 ("proto:안쪽 주소:포트" — SIP ALG 가 연 음성 포트, conntrack 의 expectation·RELATED) */
+  readonly expects = new Set<string>();
+
   check(pkt: IpPacket, dir: FlowDirection, ctx: NodeContext, frameId?: number): boolean {
     if (!this.config.enabled) return true;
+    const p0 = pkt.payload;
+    if (dir === "in" && (p0.kind === "udp" || p0.kind === "tcp") && this.expects.has(`${p0.kind}:${pkt.dst}:${p0.dstPort}`)) {
+      ctx.trace("fw.established", "L3", `${this.label}: 인바운드 ${describePacket(pkt)} — SIP ALG 가 이 통화의 음성 포트로 미리 열어 둔 곳 (RELATED) → 허용`, { dir, expect: true }, frameId);
+      return true;
+    }
     const what = describePacket(pkt);
     const dirLabel = dir === "in" ? "인바운드" : dir === "out" ? "아웃바운드" : "서브넷 간";
     const established = this.config.stateful && this.flows.has(flowKey(pkt, true));

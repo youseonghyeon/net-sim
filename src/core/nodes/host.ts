@@ -40,7 +40,7 @@ import { ALL_HOSTS_IP, ALL_ROUTERS_IP, isMcastIp, MCAST_PORT, mcastMac, SIP_PORT
 /** 스트림 송출 한 번의 패킷 수 */
 const STREAM_PACKETS = 5;
 import { MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
-import { SIP_TIMER_TAG, SipPhone, type SipPhoneConfig } from "./sip";
+import { CALL_STATE_LABEL, SIP_TIMER_TAG, SipPhone, type SipPhoneConfig } from "./sip";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, NUD_TIMER_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
 export type IpMode = "dhcp" | "static";
@@ -645,7 +645,7 @@ export class Host implements SimNode {
     this.ra.lost(ctx, why);
     this.p2p.lost();
     this.mesh.lost();
-    this.sip.lost();
+    this.sip.lost(ctx);
     this.iface.clearPending();
     this.tcp.abortAll(why, ctx);
     this.cancelTraceroute(why, ctx);
@@ -1647,7 +1647,7 @@ export class Host implements SimNode {
           : []),
       ],
       tables: [
-        ...(this.sip.calls.length ? [{ title: "통화 기록", columns: ["상대", "방향", "상태", "음성 보냄 / 받음", "이유"], rows: this.sip.calls.map((c) => [c.peer, c.role === "caller" ? "건 전화" : "받은 전화", c.state, `${c.sent} / ${c.received}`, c.reason ?? "—"]) }] : []),
+        ...(this.sip.calls.length ? [{ title: "통화 기록", columns: ["상대", "방향", "상태", "음성 보냄 / 받음", "이유"], rows: this.sip.calls.map((c) => [c.peer, c.role === "caller" ? "건 전화" : "받은 전화", CALL_STATE_LABEL[c.state], `${c.sent} / ${c.received}`, c.reason ?? "—"]) }] : []),
         ...(this.mesh.config.enabled ? [{ title: `${this.mesh.brand} 피어 (${this.mesh.config.net === "zerotier" ? "zerotier-cli peers" : "tailscale status"})`, columns: ["이름", "메시 주소", "경로", "알린 대역", "패킷"], rows: this.mesh.rows() }] : []),
         ...(this.dhcpServer.config.enabled ? [{ title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() }] : []),
         ...(this.dnsServer.config.enabled ? [{ title: "DNS 레코드·캐시", columns: ["이름", "IP", "출처"], rows: this.dnsServer.rows() }] : []),

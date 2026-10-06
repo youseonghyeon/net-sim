@@ -90,7 +90,9 @@ export const MCAST_PORT = 5004;
 export interface SipMessage {
   kind: "sip";
   method?: "REGISTER" | "INVITE" | "ACK" | "BYE";
-  status?: 100 | 180 | 200 | 404;
+  status?: 100 | 180 | 200 | 404 | 486;
+  /** REGISTER 의 Expires (0 = 등록 해제) */
+  expires?: number;
   callId: string;
   from: string;
   to: string;
@@ -134,7 +136,8 @@ export const SIP_SERVER: Ip = "198.51.100.120";
 export const SIP_DOMAIN = "voip.example";
 
 export function sipLabel(m: SipMessage): string {
-  if (m.status) return `SIP ${m.status} ${m.status === 200 ? "OK" : m.status === 180 ? "Ringing" : m.status === 100 ? "Trying" : "Not Found"}${m.sdp ? " (SDP)" : ""}`;
+  if (m.status) return `SIP ${m.status} ${m.status === 200 ? "OK" : m.status === 180 ? "Ringing" : m.status === 100 ? "Trying" : m.status === 486 ? "Busy Here" : "Not Found"}${m.sdp ? " (SDP)" : ""}`;
+  if (m.method === "REGISTER" && m.expires === 0) return `SIP REGISTER ${m.from} (해제)`;
   return `SIP ${m.method} ${m.method === "REGISTER" ? m.from : `${m.from} → ${m.to}`}${m.sdp ? ` (SDP ${m.sdp.ip}:${m.sdp.port})` : ""}`;
 }
 export const ALL_ROUTERS_IP: Ip = "224.0.0.2";

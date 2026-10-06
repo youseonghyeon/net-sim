@@ -1207,6 +1207,7 @@ export class Router implements SimNode {
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
       const m = udp.payload;
+      if (this.sipHairpin(pkt, frame.id, ctx)) return;
       if (m.kind === "dhcp" && udp.dstPort === DHCP_SERVER_PORT) this.dhcpServer.handle(m, frame.id, ctx, emit);
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `LAN 쪽 DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frame.id);
       else if (m.kind === "dhcp") ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frame.id);
@@ -1542,6 +1543,31 @@ export class Router implements SimNode {
 
   /** SIP ALG (공유기가 인터넷 전화의 SIP 를 고쳐 줌) */
   sipAlg = false;
+  /** 통화(Call-ID)마다 ALG 가 연 구멍 */
+  private readonly sipPinholes = new Map<string, { nat: NatTable; publicId: number; lanIp: Ip; port: number }[]>();
+
+  private closeSipPinholes(callId: string, ctx: NodeContext): void {
+    const list = this.sipPinholes.get(callId);
+    if (!list) return;
+    this.sipPinholes.delete(callId);
+    for (const h of list) {
+      h.nat.closePinhole("udp", h.publicId);
+      this.firewall.expects.delete(`udp:${h.lanIp}:${h.port}`);
+    }
+    ctx.trace("sip.alg", "L4", `SIP ALG: 통화 ${callId} 가 끝남 → 음성 포트로 열어 둔 구멍 ${list.map((h) => h.publicId).join(", ")} 을(를) 닫음`, { sipAlg: true });
+  }
+
+  /** LAN 기기가 내 공인 주소의 ALG 구멍으로 보낸 UDP (같은 공유기 뒤 두 전화기): 공유기 안에서 바로 그 기기에게 되돌린다 (NAT 루프백). 처리했으면 true */
+  private sipHairpin(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): boolean {
+    const u = pkt.payload;
+    if (u.kind !== "udp" || !this.wan.ip || pkt.dst !== this.wan.ip) return false;
+    const e = this.nat.entries.get(`udp:${u.dstPort}`);
+    if (!e?.pinhole) return false;
+    const inner: Ipv4Packet = { ...pkt, dst: e.lanIp, ttl: pkt.ttl - 1, payload: { ...u, dstPort: e.innerId } };
+    ctx.trace("ip.forward", "L3", `NAT 루프백: ${pkt.src} 가 내 공인 주소 ${pkt.dst}:${u.dstPort} (SIP ALG 가 연 음성 포트)로 보냄 → 안쪽 ${e.lanIp}:${e.innerId} 로 바로 되돌림 (같은 공유기 뒤의 상대)`, { dst: e.lanIp }, frameId);
+    this.lan.sendIp(inner, ctx, this.emitLan(ctx));
+    return true;
+  }
 
   setSipAlg(on: boolean, ctx: NodeContext): void {
     if (on === this.sipAlg) return;
@@ -1554,7 +1580,17 @@ export class Router implements SimNode {
     const u = out.payload;
     if (u.kind !== "udp" || u.payload.kind !== "sip") return out;
     const m = u.payload;
-    const fixed = sipAlgRewrite(m, orig.src, publicIp, u.srcPort, (lanIp, port) => nat.openPinhole("udp", lanIp, port, ctx.now));
+    // 통화가 끝나면(BYE·그 200) 이 통화로 연 구멍을 닫는다
+    if (m.method === "BYE" || (m.status === 200 && m.cseq === -1)) this.closeSipPinholes(m.callId, ctx);
+    const fixed = sipAlgRewrite(m, orig.src, publicIp, u.srcPort, (lanIp, port) => {
+      const id = nat.openPinhole("udp", lanIp, port, ctx.now);
+      const list = this.sipPinholes.get(m.callId) ?? [];
+      list.push({ nat, publicId: id, lanIp, port });
+      this.sipPinholes.set(m.callId, list);
+      // 방화벽에도 이 음성 포트를 미리 들인다 (conntrack 의 expectation·RELATED)
+      this.firewall.expects.add(`udp:${lanIp}:${port}`);
+      return id;
+    });
     if (fixed === m) return out;
     ctx.trace(
       "sip.alg",

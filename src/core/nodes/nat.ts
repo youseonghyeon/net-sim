@@ -20,6 +20,8 @@ export interface NatEntry {
   peers?: Set<string>;
   /** symmetric: 이 매핑이 묶인 목적지 ("주소:포트", ICMP 는 주소) */
   dest?: string;
+  /** SIP ALG 가 미리 연 구멍 (통화가 끝나면 닫는다) */
+  pinhole?: boolean;
 }
 
 /**
@@ -109,7 +111,18 @@ export class NatTable {
     const seq = this.seq;
     this.importEntry({ proto, lanIp, innerId, publicId: id }, now);
     if (free) this.seq = seq; // 같은 번호를 쓴 구멍이 동적 할당 순서를 밀어내지 않게
+    this.entries.get(`${proto}:${id}`)!.pinhole = true;
     return id;
+  }
+
+  /** 미리 연 구멍을 닫는다 (통화가 끝남). 닫았으면 그 매핑 */
+  closePinhole(proto: "udp" | "tcp", publicId: number): NatEntry | undefined {
+    const key = `${proto}:${publicId}`;
+    const e = this.entries.get(key);
+    if (!e?.pinhole) return undefined;
+    this.entries.delete(key);
+    this.byInner.delete(innerKeyOf(e));
+    return e;
   }
 
   setForwards(rules: PortForward[]): void {

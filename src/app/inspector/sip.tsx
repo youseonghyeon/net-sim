@@ -1,7 +1,8 @@
 // 인터넷 전화 (SIP): 단말의 전화기 설정·전화 걸기, 공유기의 SIP ALG.
 import { useState } from "preact/hooks";
 import { Host } from "../../core/nodes/host";
-import { meshHostname } from "../../core/nodes/tailscale";
+import { CALL_STATE_LABEL } from "../../core/nodes/sip";
+import { effectiveSip } from "../../model/netSync";
 import { sim, simVersion } from "../../model/sim";
 import { topology, updateDevice } from "../../model/store";
 import type { Device, RouterSettings } from "../../model/topology";
@@ -20,7 +21,7 @@ export function SipPhoneSection({ d }: { d: Device }) {
       </label>
       {s.enabled && (
         <Field label="사용자" hint="@voip.example">
-          <input class="input mono" value={s.user} placeholder={meshHostname(d.name)} onChange={(e) => set({ user: e.currentTarget.value })} />
+          <input class="input mono" value={s.user} placeholder={effectiveSip({ ...d, host: { ...d.host!, sip: { enabled: true, user: "" } } }).user} onChange={(e) => set({ user: e.currentTarget.value })} />
         </Field>
       )}
       <p class="note">켜면 인터넷의 SIP 서버에 등록합니다. 진단 탭에서 다른 사용자에게 전화하면 신호(SIP)는 서버를 거치고, 음성(RTP)은 상대가 SDP 에 적은 주소로 직접 갑니다.</p>
@@ -32,7 +33,7 @@ export function SipPhoneSection({ d }: { d: Device }) {
 export function SipCallSection({ d }: { d: Device }) {
   void simVersion.value;
   const node = sim.node(d.id);
-  const others = topology.value.devices.filter((x) => x !== d && x.host?.sip?.enabled).map((x) => (x.host!.sip!.user.trim() || meshHostname(x.name)).toLowerCase());
+  const others = topology.value.devices.filter((x) => x !== d && x.host?.sip?.enabled).map((x) => effectiveSip(x).user);
   const [to, setTo] = useState(others[0] ?? "");
   if (!(node instanceof Host) || !node.sip.config.enabled) return null;
   const last = node.sip.calls.at(-1);
@@ -51,7 +52,7 @@ export function SipCallSection({ d }: { d: Device }) {
       </button>
       {last && (
         <p class={`note${last.reason ? " error-note" : ""}`}>
-          {last.peer} · {last.state === "ended" ? `받은 음성 ${last.received}/5` : last.state}
+          {last.peer} · {last.state === "ended" ? `받은 음성 ${last.received}/5` : CALL_STATE_LABEL[last.state]}
           {last.reason ? ` — ${last.reason}` : ""}
         </p>
       )}

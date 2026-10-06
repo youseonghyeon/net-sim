@@ -33,6 +33,8 @@ export type AppId =
   | "tailscale"
   | "zerotier"
   | "tor"
+  | "sip"
+  | "rtp"
   | "ssh"
   | "dns"
   | "http"
@@ -66,6 +68,8 @@ export const APPS: Record<AppId, { label: string; category: DpiCategory }> = {
   tailscale: { label: "Tailscale", category: "VPN" },
   zerotier: { label: "ZeroTier", category: "VPN" },
   tor: { label: "Tor", category: "VPN" },
+  sip: { label: "인터넷 전화 (SIP)", category: "기본" },
+  rtp: { label: "음성 (RTP)", category: "기본" },
   ssh: { label: "SSH", category: "기본" },
   dns: { label: "DNS", category: "기본" },
   http: { label: "HTTP", category: "웹" },
@@ -288,6 +292,8 @@ function classify(pkt: IpPacket, remote: Ip, ipApps: Map<Ip, { app: AppId; name:
     if (m.kind === "dhcp" || m.kind === "dhcp6") return { app: "dhcp", why: m.kind === "dhcp6" ? "DHCPv6" : "DHCP", strong: true };
     if (m.kind === "vpn") return { app: "wireguard", why: "WireGuard 식 사이트 간 VPN (UDP 51820 의 터널 데이터)", strong: true };
     if (m.kind === "ddns") return { app: "ddns", why: "DDNS 갱신", strong: true };
+    if (m.kind === "sip") return { app: "sip", why: "SIP 모양 (UDP 5060 의 요청 줄)", strong: true };
+    if (m.kind === "rtp") return { app: "rtp", why: "RTP 모양 (버전 2 머리·짧은 간격의 음성 조각)", strong: true };
     if (m.kind === "tor") return { app: "tor", why: "Tor 셀 모양 (512바이트 셀·알려진 릴레이 주소)", strong: true };
     if (m.kind === "ts") return m.net === "zerotier" ? { app: "zerotier", why: "ZeroTier 모양 (UDP 9993, 조정 서버·root 주소)", strong: true } : { app: "tailscale", why: m.op === "data" ? "WireGuard 모양 (Tailscale 데이터)" : "Tailscale 모양 (조정 서버·DERP·disco)", strong: true };
     if (m.kind === "ovpn") return { app: "openvpn", why: `OpenVPN 모양 (첫 바이트 opcode·세션 id${m.crypt ? " — tls-crypt 여도 opcode 는 보인다" : ""})`, strong: true };
