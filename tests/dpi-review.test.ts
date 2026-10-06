@@ -82,7 +82,7 @@ describe("DPI 리뷰", () => {
     const inet = L.node<Internet>("internet-1");
     expect([...inet.tcp.conns.values()].some((c) => c.role === "server" && c.state === "ESTABLISHED")).toBe(false);
     // 재분류된 흐름의 수는 새 앱으로 옮겨 한 줄
-    expect(L.node<Router>("회사 공유기").dpi.rows().filter((r) => r[0] === "10.30.0.50" && r[1].startsWith("HTTPS"))).toEqual([]);
+    expect(L.node<Router>("회사 공유기").dpi.rows().filter((r) => r[0] === "10.30.0.50" && r[1]!.startsWith("HTTPS"))).toEqual([]);
   });
 
   it("사이트 간 VPN(WireGuard 식)·DDNS·DHCP 도 알아보고, 패킷 상세는 난독화 메시지를 WireGuard 로 풀지 않는다", () => {
