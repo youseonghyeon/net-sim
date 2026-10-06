@@ -541,3 +541,31 @@ export function exampleNatTraversalTopology(): Topology {
   ];
   return t;
 }
+
+/**
+ * 멀티 WAN 페일오버 (GL.iNet·mwan3 식): Brume 3 의 lan4 를 WAN2 로 바꿔 휴대폰 핫스팟(LTE)을 예비 회선으로 꽂는다.
+ * - 평소엔 WAN1(유선, 통신사 공인 주소)로. 5초마다 회선마다 8.8.8.8 에 ping 해 살았는지 본다 (배경 타이머 — 시간이 흘러야 돈다)
+ * - 유선 케이블의 손실을 100% 로 두면(링크는 살아 있는데 인터넷이 안 되는 장애) 추적 ping 이 3번 실패한 뒤 WAN2 로 넘어간다
+ * - 넘어가면 공인 주소가 바뀌어(핫스팟의 주소로 한 번 더 NAT) 진행 중이던 연결은 끊기고, 새 연결은 핫스팟으로 나간다
+ */
+export function exampleMultiWanTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -296, "internet-1");
+  const isp = add("switch", 344, -168, "통신사 구간");
+  const hotspot = add("router", 640, -24, "휴대폰 핫스팟");
+  // 안드로이드 핫스팟의 기본 대역 192.168.43.0/24
+  hotspot.router = { ...hotspot.router!, lanIp: "192.168.43.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.43.100", end: "192.168.43.199" } };
+  const brume = add("router", 216, 104, "사무실 Brume 3");
+  brume.router = {
+    ...brume.router!,
+    lanIp: "192.168.8.1",
+    lanPrefix: 24,
+    dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
+    wan2: { enabled: true, ipMode: "dhcp", ip: "", prefix: 24, gateway: "", track: "8.8.8.8" },
+  };
+  const pc = add("pc", 120, 296, "사무실 PC");
+  const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, brume, 0), cable(isp, 6, hotspot, 0), cable(hotspot, 1, brume, 4), cable(brume, 1, pc, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [{ id: newId("zone"), label: "사무실 192.168.8.0/24 · WAN1 유선 + WAN2 핫스팟", tint: "blue", ...zoneAround(t, [brume.id, pc.id], 56)! }];
+  return t;
+}

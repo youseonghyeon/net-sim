@@ -129,6 +129,7 @@ export class NetworkSync {
           node.setWg(r.wgServer, r.wgClient, net.contextFor(d.id));
         }
         if (node instanceof Router && d.router?.ddns?.enabled) node.ddns.setConfig(effectiveRouter(d).ddns, net.contextFor(d.id));
+        if (node instanceof Router && d.router?.wan2?.enabled) node.setWan2(effectiveRouter(d).wan2, net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -425,6 +426,14 @@ export function effectiveRouter(d: Device, current?: Router) {
         .filter((p, i, all) => p.publicKey !== "" && validIp(p.ip) && all.findIndex((x) => x.publicKey === p.publicKey) === i),
       lanAccess: r.wgServer?.lanAccess !== false,
     },
+    wan2: (() => {
+      const w2 = r.wan2;
+      return {
+        enabled: w2?.enabled === true,
+        ...(w2?.ipMode === "static" ? { mode: "static" as const, ip: validIp(w2.ip), prefix: w2.prefix, gateway: validIp(w2.gateway) } : { mode: "dhcp" as const }),
+        ...(validIp(w2?.track?.trim()) ? { track: w2!.track.trim() } : {}),
+      };
+    })(),
     ddns: { enabled: r.ddns?.enabled === true && !!ddnsHostname(r.ddns.name), hostname: ddnsHostname(r.ddns?.name) ?? "" },
     wgClient: (() => {
       const c = r.wgClient;

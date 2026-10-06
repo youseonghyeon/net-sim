@@ -1499,6 +1499,28 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("ddns status:", (await dd.locator("p.note").first().textContent())?.trim());
   await page.screenshot({ path: `${OUT}/100-ddns.png` });
 }
+// 멀티 WAN: lan4 = WAN2(핫스팟), WAN1 케이블을 지우면 바로 WAN2 로 (타일 위쪽 줄 "WAN2 …", 배지)
+{
+  await loadEx("mwan");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitAddr("사무실 PC", /^192\.168\.8\.1\d\d/);
+  await clickDevice("사무실 Brume 3");
+  await goTab("설정");
+  await goGroup("인터넷");
+  const mw = page.locator(".inspector section", { has: page.locator("h3", { hasText: /^멀티 WAN$/ }) });
+  console.log("mwan section:", (await mw.locator(".stat-row b").textContent())?.trim());
+  await page.screenshot({ path: `${OUT}/101-mwan.png` });
+  // WAN1 케이블(Brume 3 의 wan 포트) 지우기
+  const cid = await page.evaluate(() => {
+    const t = JSON.parse(localStorage.getItem("net-sim.topology.v1"));
+    const b = t.devices.find((d) => d.name === "사무실 Brume 3");
+    return t.cables.find((c) => (c.a.device === b.id && c.a.port === 0) || (c.b.device === b.id && c.b.port === 0)).id;
+  });
+  await page.locator(`[data-cable="${cid}"]`).click({ force: true });
+  await page.keyboard.press("Delete");
+  for (let i = 0; i < 50 && !/WAN2/.test((await device("사무실 Brume 3").locator("text.uplink").textContent()) ?? ""); i++) await page.waitForTimeout(100);
+  console.log("after wan1 removed:", await device("사무실 Brume 3").locator("text.uplink").textContent(), "| badge:", await device("사무실 Brume 3").locator(".badge", { hasText: "WAN2 사용 중" }).count());
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

@@ -604,7 +604,20 @@ export interface RouterSettings {
   wgClient?: RouterWgClientSettings;
   /** DDNS (glddns.com). 없으면 꺼짐 */
   ddns?: RouterDdnsSettings;
+  /** 멀티 WAN 페일오버: lan4 를 WAN2(예비 회선)로. 없으면 꺼짐 */
+  wan2?: RouterWan2Settings;
 }
+
+export interface RouterWan2Settings extends WanSettings {
+  enabled: boolean;
+  /** 회선이 살았는지 ping 할 주소 (비우면 링크·주소만 본다) */
+  track: string;
+}
+
+export const DEFAULT_ROUTER_WAN2: RouterWan2Settings = { enabled: true, ipMode: "dhcp", ip: "", prefix: 24, gateway: "", track: "8.8.8.8" };
+
+/** 멀티 WAN 을 켠 공유기는 lan4 가 WAN2 */
+export const ROUTER_WAN2_PORT = 4;
 
 /** DDNS: 이름 앞부분 (myhome → myhome.glddns.com) */
 export interface RouterDdnsSettings {
@@ -676,6 +689,18 @@ export function wgKeyOf(d: Device, role: "server" | "client" | "host"): string {
 /** 그 장치(역할)의 WireGuard 공개 키 */
 export function wgPublicKeyOf(d: Device, role: "server" | "client" | "host"): string {
   return wgPublicKey(wgKeyOf(d, role));
+}
+
+function normalizeWan2(v: Partial<RouterWan2Settings>): RouterWan2Settings {
+  const str = (x: unknown) => (typeof x === "string" ? x : "");
+  return {
+    enabled: v.enabled === true,
+    ipMode: v.ipMode === "static" ? "static" : "dhcp",
+    ip: str(v.ip),
+    prefix: typeof v.prefix === "number" && Number.isInteger(v.prefix) && v.prefix >= 1 && v.prefix <= 32 ? v.prefix : 24,
+    gateway: str(v.gateway),
+    track: typeof v.track === "string" ? v.track : "8.8.8.8",
+  };
 }
 
 function normalizeWgFields(v: Partial<WgClientSettings>): WgClientSettings {
@@ -855,7 +880,15 @@ export function zoneAround(t: Topology, ids: string[], pad = 32): { x: number; y
   return { x: snap(minX - pad), y: snap(minY - pad - 12), w: snap(maxX - minX + pad * 2), h: snap(maxY - minY + pad * 2 + 12) };
 }
 
+/** 멀티 WAN 을 켠 공유기의 스펙: lan4 의 이름이 wan2 (위치는 그대로) */
+let routerWan2Spec: DeviceSpec | undefined;
+
 export function specOf(device: Device): DeviceSpec {
+  if (device.kind === "router" && device.router?.wan2?.enabled) {
+    const base = DEVICE_SPECS.router;
+    routerWan2Spec ??= { ...base, ports: base.ports.map((p, i) => (i === ROUTER_WAN2_PORT ? { ...p, name: "wan2" } : p)) };
+    return routerWan2Spec;
+  }
   return DEVICE_SPECS[device.kind];
 }
 
@@ -1310,6 +1343,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.vpnServer ? { vpnServer: normalizeRouterVpn(r.vpnServer) } : {}),
           ...(r.wgServer ? { wgServer: normalizeWgServer(r.wgServer) } : {}),
           ...(r.wgClient ? { wgClient: normalizeWgClient(r.wgClient) } : {}),
+          ...(r.wan2 ? { wan2: normalizeWan2(r.wan2) } : {}),
           ...(r.ddns ? { ddns: { enabled: (r.ddns as Partial<RouterDdnsSettings>).enabled === true, name: typeof (r.ddns as Partial<RouterDdnsSettings>).name === "string" ? r.ddns.name : "" } } : {}),
           natType: natTypeOf(r.natType),
           hairpin: r.hairpin === true ? true : undefined,

@@ -204,6 +204,12 @@ export type TraceKind =
   | "vpn.eap"
   /** DPD (Dead Peer Detection): 빈 INFORMATIONAL 요청·응답, 상대가 살아 있음 */
   | "vpn.dpd"
+  /** 멀티 WAN: 설정·추적 ping·회선 살아남/끊김·전환 */
+  | "mwan.config"
+  | "mwan.check"
+  | "mwan.up"
+  | "mwan.down"
+  | "mwan.switch"
   /** DDNS: 설정·갱신 요청·등록됨·실패, 서버 쪽 처리 */
   | "ddns.config"
   | "ddns.update"
@@ -299,5 +305,6 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "vpn.drop",
   "vpn.leak",
   "ddns.failed",
+  "mwan.down",
   "p2p.failed",
 ]);

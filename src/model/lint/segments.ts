@@ -1,6 +1,6 @@
 // L2 세그먼트 모델: 케이블·무선·VLAN·투명 방화벽을 따라 인터페이스를 브로드캐스트 도메인으로 묶고,
 // 세그먼트마다 라우터 인터페이스·호스트·주소·DHCP 서버를 모은다. 규칙들은 이 모델(`analyze`)을 본다.
-import { DEVICE_SPECS, portVlanOf, wirelessLinks, type Device, type PortRef, type Topology } from "../topology";
+import { DEVICE_SPECS, ROUTER_WAN2_PORT, portVlanOf, specOf, wirelessLinks, type Device, type PortRef, type Topology } from "../topology";
 import { subnetOf, validIp, type Subnet } from "./addr";
 
 // ---------- L2 세그먼트 ----------
@@ -115,7 +115,7 @@ const INTERNET_IP = "203.0.113.1";
 const INTERNET_PREFIX = 24;
 
 export function portName(d: Device, port: number): string {
-  return DEVICE_SPECS[d.kind].ports[port]?.name ?? `포트 ${port}`;
+  return specOf(d).ports[port]?.name ?? `포트 ${port}`;
 }
 
 function routerLanKey(d: Device): string {
@@ -160,7 +160,8 @@ function attachOf(d: Device, port: number): Attach {
     case "internet":
       return { kind: "end", key: `${d.id}:${port}` };
     case "router":
-      return port === 0 ? { kind: "end", key: `${d.id}:0` } : { kind: "bridge", key: routerLanKey(d) };
+      // 멀티 WAN 이면 lan4 는 WAN2 (공유기 LAN 브리지가 아니라 따로 끝점)
+      return port === 0 || (port === ROUTER_WAN2_PORT && d.router?.wan2?.enabled) ? { kind: "end", key: `${d.id}:${port}` } : { kind: "bridge", key: routerLanKey(d) };
     case "l3":
       return { kind: "end", key: `${d.id}:${port}`, subifs: validSubifs(d).filter((s) => s.port === port).map((s) => ({ vlan: s.vlan, key: s.key })) };
     case "hub":
@@ -195,7 +196,7 @@ export function analyze(t: Topology): Model {
   for (const d of t.devices) {
     if (d.kind !== "router") continue;
     const spec = DEVICE_SPECS[d.kind];
-    for (let p = 1; p < spec.ports.length; p++) uf.union(`${d.id}:${p}`, routerLanKey(d));
+    for (let p = 1; p < spec.ports.length; p++) if (!(p === ROUTER_WAN2_PORT && d.router?.wan2?.enabled)) uf.union(`${d.id}:${p}`, routerLanKey(d));
   }
 
   // 투명 방화벽(IP 없는 브리지)은 L2 로는 전선과 같다: 양쪽 케이블을 하나로 접어 방화벽 너머의 장치끼리 직접 잇는다
@@ -339,6 +340,12 @@ export function analyze(t: Topology): Model {
       const wan = r.wan;
       const wanIp = wan?.ipMode === "static" ? validIp(wan.ip) : undefined;
       if (wanIp) memberOf(ids.get(wanKey)!).addrs.push({ device: d, key: wanKey, ip: wanIp, label: `${d.name} WAN` });
+      if (r.wan2?.enabled) {
+        const k2 = `${d.id}:${ROUTER_WAN2_PORT}`;
+        register(k2);
+        const ip2 = r.wan2.ipMode === "static" ? validIp(r.wan2.ip) : undefined;
+        if (ip2) memberOf(ids.get(k2)!).addrs.push({ device: d, key: k2, ip: ip2, label: `${d.name} WAN2` });
+      }
       const lanIp = validIp(r.lanIp);
       addGw({ device: d, key: routerLanKey(d), label: `${d.name} LAN`, ifName: "LAN", ip: lanIp, subnet: subnetOf(lanIp, r.lanPrefix), inside: true, uplink: false, gwKind: "router", port: 1 });
       for (let p = 2; p < spec.ports.length; p++) register(`${d.id}:${p}`);

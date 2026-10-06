@@ -8,7 +8,7 @@ import { exampleTwoGatewaysTopology, exampleBackboneTopology, exampleRipTopology
 import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
 import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology } from "./examples/services";
-import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology } from "./examples/internet";
+import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology, exampleMultiWanTopology } from "./examples/internet";
 import { exampleDdnsTopology, exampleWireguardTopology } from "./examples/vpn";
 import { exampleRoamingTopology } from "./examples/wireless";
 import { exampleCompanyTopology } from "./examples/overview";
@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -165,6 +165,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "NAT 종류와 홀 펀칭 (P2P·STUN·TURN·헤어핀)",
     blurb: "민수 PC 의 진단 탭에서 hyunwoo 에게 P2P 연결을 보내 보세요. 두 PC 가 STUN 으로 자기 공인 주소:포트를 알아내고 시그널링 서버로 후보를 주고받은 뒤, 서로에게 동시에 보내(홀 펀칭) 두 공유기의 port-restricted NAT 를 뚫고 직접 연결됩니다. jiyoung 에게 보내면 통신사 CGNAT 가 symmetric(상대마다 바깥 포트가 바뀜)이라 홀 펀칭이 실패하고 TURN 릴레이로 이어집니다. 집 A 공유기의 NAT 종류를 full cone 으로 바꾸면 jiyoung 과도 직접 연결됩니다. 민수 PC 에서 집 A 공유기의 WAN 주소:8080 으로 TCP 연결하면 헤어핀 NAT 가 꺼져 있어 드롭되고, 공유기 설정에서 헤어핀 NAT 를 켜면 집 NAS 로 되돌아갑니다.",
     build: exampleNatTraversalTopology,
+  },
+  mwan: {
+    id: "mwan",
+    group: "인터넷",
+    label: "멀티 WAN 페일오버 (유선 + 휴대폰 핫스팟)",
+    blurb: "사무실 Brume 3 은 lan4 를 WAN2 로 바꿔 휴대폰 핫스팟을 예비 회선으로 꽂았습니다(표 탭의 멀티 WAN). 사무실 PC 에서 8.8.8.8 로 ping 하면 유선(WAN1)으로 나갑니다. Brume 3 ↔ 통신사 구간 케이블의 손실을 100% 로 바꾸고(링크는 살아 있는데 인터넷이 안 되는 장애) \"+10초\" 를 두어 번 누르면, 5초마다 보내던 추적 ping 이 3번 실패한 뒤 WAN2 로 넘어갑니다. 다시 ping 하면 핫스팟을 거쳐 다른 공인 주소로 나갑니다. 손실을 0% 로 되돌리면 추적 ping 이 2번 답한 뒤 WAN1 으로 돌아옵니다. 케이블을 지우면 기다리지 않고 바로 넘어갑니다.",
+    build: exampleMultiWanTopology,
   },
   vpn: {
     id: "vpn",

@@ -138,6 +138,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.ipv6Enabled) out.push("IPv6");
     if (node.vpnServer.config.enabled) out.push(`VPN 서버 ${node.vpnServer.connected.length}`);
     if (node.wgServerCfg?.enabled) out.push(`WG 서버 ${node.wgs.connected}`);
+    if (node.wan2On) out.push(node.mwan.active === "wan2" ? "WAN2 사용 중" : "멀티 WAN");
     if (node.ddns.config.enabled) out.push(node.ddns.state === "ok" ? "DDNS" : node.ddns.state === "failed" ? "DDNS 실패" : "DDNS 갱신 중");
     if (node.wgClientCfg?.enabled) out.push(node.wgc.connected > 0 ? "VPN 연결됨" : node.wgClientSummary()?.startsWith("끊김") && node.wgClientCfg.killSwitch ? "킬 스위치" : "VPN");
   } else if (node instanceof L3Node) {
@@ -176,6 +177,8 @@ export function wanStatusOf(node: SimNode | undefined): StatusLine | null {
   if (!(node instanceof Router)) return null;
   const wc = conflictLine("WAN ", node.wan);
   if (wc) return wc;
+  // 멀티 WAN 이 예비 회선으로 넘어가 있으면 그 회선을 보인다
+  if (node.wan2On && node.mwan.active === "wan2" && node.wan2.ip) return { text: `WAN2 ${node.wan2.ip}`, tone: "warn", mono: true };
   if (node.wan.ip) return { text: `WAN ${node.wan.ip}`, tone: "ok", mono: true };
   if (!node.wanLinkUp) return { text: "WAN 연결 없음", tone: "muted", mono: false };
   if (node.wanMode === "static") return { text: "WAN 주소 수동 입력 필요", tone: "warn", mono: false };

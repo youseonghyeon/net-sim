@@ -6,6 +6,8 @@ import {
   DEFAULT_ROUTER_DNS,
   DEFAULT_ROUTER_IPV6,
   DEFAULT_ROUTER_VPN_SERVER,
+  DEFAULT_ROUTER_WAN2,
+  type RouterWan2Settings,
   DEFAULT_WAN,
   type Device,
   type RouterIpv6Settings,
@@ -19,7 +21,8 @@ import { sim, simVersion } from "../../model/sim";
 import { WifiBaseSection } from "./host";
 import { FirewallSection, ForwardSection, NatTypeSection } from "./rules";
 import { Icon } from "../Icons";
-import { ConfigGroups, Field, Section, Toggle, ipError, validIp } from "./ui";
+import { ConfigGroups, Field, IfaceFields, Section, Toggle, ipError, validIp } from "./ui";
+import { WAN_LABEL } from "../../core/nodes/mwan";
 import { DdnsSection, WgClientSection, WgServerSection } from "./wg";
 
 /** LAN 주소/서브넷이 바뀔 때, 기존 범위가 옛 서브넷 안에 있었다면 호스트 부분을 유지한 채 새 서브넷으로 옮긴다 */
@@ -107,10 +110,11 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         {
           id: "internet",
           label: "인터넷",
-          on: r.ipv6?.enabled === true || r.ddns?.enabled === true,
+          on: r.ipv6?.enabled === true || r.ddns?.enabled === true || r.wan2?.enabled === true,
           content: (
             <>
               <WanSection d={d} w={r.wan ?? DEFAULT_WAN} />
+              <MultiWanSection d={d} r={r} />
               <DdnsSection d={d} r={r} />
               <RouterIpv6Section d={d} r={r} />
             </>
@@ -283,6 +287,47 @@ export function RouterDnsSection({ d, r }: { d: Device; r: RouterSettings }) {
         </>
       ) : (
         <p class="note">꺼져 있으면 호스트가 이름을 못 씁니다. 호스트에 8.8.8.8 같은 DNS 를 직접 주거나 다시 켜세요.</p>
+      )}
+    </Section>
+  );
+}
+
+/** 멀티 WAN 페일오버: lan4 를 WAN2(예비 회선)로, 추적 주소 */
+export function MultiWanSection({ d, r }: { d: Device; r: RouterSettings }) {
+  void simVersion.value;
+  const w = r.wan2 ?? { ...DEFAULT_ROUTER_WAN2, enabled: false };
+  const set = (patch: Partial<RouterWan2Settings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, wan2: { ...(x.router!.wan2 ?? DEFAULT_ROUTER_WAN2), ...patch } } }));
+  const node = sim.node(d.id);
+  return (
+    <Section title="멀티 WAN">
+      <label class="toggle-row">
+        <span>
+          {w.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">lan4 → WAN2</span>
+        </span>
+        <Toggle on={w.enabled} onToggle={() => set({ enabled: !w.enabled })} />
+      </label>
+      {!w.enabled && <p class="note">켜면 lan4 포트가 WAN2(예비 회선 — 다른 통신사·LTE·휴대폰 테더링)가 됩니다. 평소엔 WAN1 로 나가다가 WAN1 이 끊기면 WAN2 로 넘어가고, 살아나면 돌아옵니다(페일오버).</p>}
+      {w.enabled && (
+        <>
+          <IfaceFields
+            value={{ ipMode: w.ipMode, ip: w.ip, prefix: w.prefix, gateway: w.gateway }}
+            onChange={(patch) => set(patch as Partial<RouterWan2Settings>)}
+            gatewayLabel="게이트웨이"
+            dhcpNote="WAN2 에 꽂은 장비(핫스팟·LTE 모뎀·다른 통신사)에서 주소를 받습니다."
+          />
+          <Field label="추적 주소" hint="회선이 살았는지 ping" error={ipError(w.track, false)}>
+            <input class="input mono" value={w.track} placeholder="비우면 링크만 봄 (예: 8.8.8.8)" onInput={(e) => set({ track: e.currentTarget.value })} />
+          </Field>
+          {node instanceof Router && node.wan2On && (
+            <div class="stat-row">
+              <span>지금</span>
+              <b class="mono">
+                {WAN_LABEL[node.mwan.active]} 사용 · WAN1 {node.mwan.lines.wan.online ? "살아 있음" : "끊김"} · WAN2 {node.mwan.lines.wan2.online ? "살아 있음" : "끊김"}
+              </b>
+            </div>
+          )}
+          <p class="note">5초마다 회선마다 추적 주소에 ping 해 3번 이어 답이 없으면 끊긴 것으로 보고, 끊긴 회선이 2번 이어 답하면 살아난 것으로 봅니다(시간이 흐를 때만 — "+10초"). 넘어가면 공인 주소가 바뀌어 진행 중이던 연결은 끊깁니다. VPN 서버·포트 포워딩의 IPv6·이 공유기 자신의 이름 해석은 WAN1 만 씁니다.</p>
+        </>
       )}
     </Section>
   );
