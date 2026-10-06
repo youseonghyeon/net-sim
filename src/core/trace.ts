@@ -204,6 +204,9 @@ export type TraceKind =
   | "vpn.eap"
   /** DPD (Dead Peer Detection): 빈 INFORMATIONAL 요청·응답, 상대가 살아 있음 */
   | "vpn.dpd"
+  /** DPI: 흐름의 앱을 알아봄 / 막을 앱이라 끊음 */
+  | "dpi.app"
+  | "dpi.block"
   /** DNS 필터(AdGuard Home·자녀 보호)가 이름을 막음 */
   | "dns.blocked"
   /** DNS 가로채기: 다른 DNS 서버로 가던 질의를 공유기가 대신 받음 */
@@ -310,5 +313,6 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "vpn.leak",
   "ddns.failed",
   "mwan.down",
+  "dpi.block",
   "p2p.failed",
 ]);

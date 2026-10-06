@@ -608,6 +608,15 @@ export interface RouterSettings {
   wan2?: RouterWan2Settings;
   /** AdGuard Home·자녀 보호 (DNS 필터). 없으면 꺼짐 */
   adguard?: RouterAdguardSettings;
+  /** DPI (앱 알아보기·차단). 없으면 꺼짐 */
+  dpi?: RouterDpiSettings;
+}
+
+/** DPI: 막을 앱(core/nodes/dpi.ts AppId)·카테고리 */
+export interface RouterDpiSettings {
+  enabled: boolean;
+  blockApps: string[];
+  blockCategories: string[];
 }
 
 export type ParentalCategorySetting = "sns" | "game" | "video";
@@ -691,6 +700,8 @@ export interface WgClientSettings {
   allowedIps: string;
   /** 연결된 동안 쓸 DNS (비우면 그대로) */
   dns: string;
+  /** 난독화 (AmneziaWG 식 — 서버도 켜야 한다) */
+  obfuscate?: boolean;
 }
 
 export interface RouterWgServerSettings {
@@ -704,6 +715,8 @@ export interface RouterWgServerSettings {
   peers: { name: string; publicKey: string; ip: string }[];
   /** 클라이언트가 집 LAN 에 접근해도 되는지 */
   lanAccess: boolean;
+  /** 난독화 (AmneziaWG 식 — 클라이언트도 켜야 한다) */
+  obfuscate?: boolean;
 }
 
 export interface RouterWgClientSettings extends WgClientSettings {
@@ -752,6 +765,7 @@ function normalizeWgFields(v: Partial<WgClientSettings>): WgClientSettings {
     serverKey: str(v.serverKey),
     allowedIps: str(v.allowedIps, "0.0.0.0/0"),
     dns: str(v.dns),
+    ...(v.obfuscate === true ? { obfuscate: true } : {}),
   };
 }
 
@@ -766,6 +780,7 @@ function normalizeWgServer(v: Partial<RouterWgServerSettings>): RouterWgServerSe
       .filter((p): p is Record<string, unknown> => !!p && typeof p === "object")
       .map((p) => ({ name: typeof p.name === "string" ? p.name : "", publicKey: typeof p.publicKey === "string" ? p.publicKey : "", ip: typeof p.ip === "string" ? p.ip : "" })),
     lanAccess: v.lanAccess !== false,
+    ...(v.obfuscate === true ? { obfuscate: true } : {}),
   };
 }
 
@@ -1385,6 +1400,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.wgClient ? { wgClient: normalizeWgClient(r.wgClient) } : {}),
           ...(r.wan2 ? { wan2: normalizeWan2(r.wan2) } : {}),
           ...(r.adguard ? { adguard: normalizeAdguard(r.adguard) } : {}),
+          ...(r.dpi ? { dpi: { enabled: (r.dpi as Partial<RouterDpiSettings>).enabled === true, blockApps: Array.isArray(r.dpi.blockApps) ? r.dpi.blockApps.filter((x): x is string => typeof x === "string") : [], blockCategories: Array.isArray(r.dpi.blockCategories) ? r.dpi.blockCategories.filter((x): x is string => typeof x === "string") : [] } } : {}),
           ...(r.ddns ? { ddns: { enabled: (r.ddns as Partial<RouterDdnsSettings>).enabled === true, name: typeof (r.ddns as Partial<RouterDdnsSettings>).name === "string" ? r.ddns.name : "" } } : {}),
           natType: natTypeOf(r.natType),
           hairpin: r.hairpin === true ? true : undefined,

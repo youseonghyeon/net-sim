@@ -31,15 +31,16 @@ interface Client {
   address: string;
   allowedIps: string;
   dns: string;
+  obfuscate: boolean;
 }
 
 function clientsOf(devices: Device[]): Client[] {
   const out: Client[] = [];
   for (const d of devices) {
     const c = d.router?.wgClient;
-    if (c?.enabled) out.push({ d, role: "client", where: "WireGuard 클라이언트", server: c.server, port: c.port, serverKey: c.serverKey, address: c.address, allowedIps: c.allowedIps, dns: c.dns });
+    if (c?.enabled) out.push({ d, role: "client", where: "WireGuard 클라이언트", server: c.server, port: c.port, serverKey: c.serverKey, address: c.address, allowedIps: c.allowedIps, dns: c.dns, obfuscate: c.obfuscate === true });
     const h = d.host?.ra;
-    if (h?.enabled && h.type === "wireguard" && h.wg) out.push({ d, role: "host", where: "VPN (WireGuard)", server: h.server, port: h.wg.port, serverKey: h.wg.serverKey, address: h.wg.address, allowedIps: h.wg.allowedIps, dns: h.wg.dns });
+    if (h?.enabled && h.type === "wireguard" && h.wg) out.push({ d, role: "host", where: "VPN (WireGuard)", server: h.server, port: h.wg.port, serverKey: h.wg.serverKey, address: h.wg.address, allowedIps: h.wg.allowedIps, dns: h.wg.dns, obfuscate: h.wg.obfuscate === true });
   }
   return out;
 }
@@ -189,6 +190,10 @@ export function wireguardRules({ t, m, add }: LintContext): void {
     const where = via ? `${via.name} 가 UDP ${c.port} 을 포워딩하는 대상` : (server ?? name);
     if (!s?.enabled) {
       add({ deviceId: d.id, severity: "warn", code: "wg.server-off", message: `${srv.name} (${where}) 에 WireGuard 서버가 꺼져 있음 → 핸드셰이크에 답이 없어 연결 실패`, fix: `${srv.name} → WireGuard 서버 켜기`, related: [srv.id] });
+      continue;
+    }
+    if (!!s.obfuscate !== c.obfuscate) {
+      add({ deviceId: d.id, severity: "error", code: "wg.obfuscation-mismatch", message: `난독화가 ${c.obfuscate ? "이 장치만 켜져" : `${srv.name} 만 켜져`} 있음 → 서로 패킷을 WireGuard 로 알아보지 못해 아무 답도 없음 (timeout)`, fix: `${d.name} 의 ${c.where} 와 ${srv.name} 의 WireGuard 서버에서 난독화를 같게`, related: [srv.id] });
       continue;
     }
     if (s.port !== found.port) {

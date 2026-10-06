@@ -1540,6 +1540,23 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("표");
   console.log("adguard log rows:", await page.locator(".inspector section", { has: page.locator("h3", { hasText: "AdGuard 쿼리 로그" }) }).locator("tbody tr").count());
 }
+// DPI 와 VPN 난독화: 회사 공유기의 DPI 가 WireGuard 를 막음, "앱" 묶음의 DPI 칩, 표의 앱별 트래픽
+{
+  await loadEx("dpi");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitAddr("직원 PC", /^10\.30\.0\.1\d\d/);
+  await clickDevice("회사 공유기");
+  await goTab("설정");
+  await goGroup("앱");
+  const dp = page.locator(".inspector section", { has: page.locator("h3", { hasText: "DPI" }) });
+  console.log("dpi blocked chips:", (await dp.locator(".chip.on").allTextContents()).join(", "));
+  await dp.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/103-dpi.png` });
+  await goTab("표");
+  const dpiRows = () => page.locator(".inspector section", { has: page.locator("h3", { hasText: "DPI 앱별 트래픽" }) }).locator("tbody tr", { hasText: "WireGuard" });
+  for (let i = 0; i < 100 && !(await dpiRows().count()); i++) await page.waitForTimeout(100);
+  console.log("dpi rows:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "DPI 앱별 트래픽" }) }).locator("tbody tr").allInnerTexts()).map((x) => x.replace(/\s+/g, " ")).join(" | "));
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

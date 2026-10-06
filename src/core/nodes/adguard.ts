@@ -33,7 +33,7 @@ export const FILTER_ZONE: DnsRecord[] = [
   { name: "roblox.com", ip: "128.116.123.3" },
   { name: "minecraft.net", ip: "13.107.246.40" },
   { name: "steampowered.com", ip: "23.192.228.84" },
-  { name: "youtube.com", ip: "142.250.76.142" },
+  { name: "youtube.com", ip: "142.250.207.14" },
   { name: "twitch.tv", ip: "151.101.66.167" },
   { name: "netflix.com", ip: "54.155.178.5" },
 ];

@@ -504,7 +504,10 @@ export const VPN_PORT = 51820;
  */
 export interface WgMessage {
   kind: "wg";
-  type: "initiation" | "response" | "data";
+  /** junk: 난독화(AmneziaWG 식)가 핸드셰이크 앞에 섞는 쓰레기 패킷 — 받는 쪽은 버린다 */
+  type: "initiation" | "response" | "data" | "junk";
+  /** 난독화: 머리·크기를 흐트러뜨려 DPI 가 WireGuard 로 알아보지 못하게 (양쪽이 같이 켜야 서로 알아본다) */
+  obf?: boolean;
   /** 보낸 쪽이 정한 자기 세션 번호 (sender index) */
   sender?: number;
   /** 받는 쪽의 세션 번호 (response·data) */
@@ -546,13 +549,18 @@ export function ddnsLabel(m: DdnsMessage): string {
 
 /** WireGuard 메시지의 UDP 길이 (실제 형식의 크기) */
 export function wgLength(m: WgMessage, innerLength: number): number {
-  if (m.type === "initiation") return 148;
-  if (m.type === "response") return 92;
+  // 난독화는 메시지마다 앞에 쓰레기 바이트를 붙여 크기가 늘 다르다 (여기서는 고정 값으로 흉내)
+  const pad = m.obf ? 37 : 0;
+  if (m.type === "junk") return 64 + ((m.sender ?? 0) % 64);
+  if (m.type === "initiation") return 148 + pad;
+  if (m.type === "response") return 92 + pad;
   // data: 머리 16 + 암호화된 원래 패킷(16바이트 단위로 채움) + 인증 태그 16
-  return 32 + (m.inner ? Math.ceil(innerLength / 16) * 16 : 0);
+  return 32 + pad + (m.inner ? Math.ceil(innerLength / 16) * 16 : 0);
 }
 
 export function wgLabel(m: WgMessage): string {
+  if (m.type === "junk") return "UDP (난독화 — 쓰레기 패킷)";
+  if (m.obf) return `UDP (난독화된 WireGuard ${m.type === "initiation" ? "핸드셰이크 시작" : m.type === "response" ? "핸드셰이크 응답" : m.inner ? "데이터" : "keepalive"} — 밖에서는 모양을 알아볼 수 없음)`;
   if (m.type === "initiation") return `WireGuard 핸드셰이크 시작 (Initiation, 보낸 세션 ${m.sender})`;
   if (m.type === "response") return `WireGuard 핸드셰이크 응답 (Response, 세션 ${m.sender} ↔ ${m.receiver})`;
   return m.inner ? `WireGuard 데이터 (세션 ${m.receiver} · 암호화됨 · 안: ${m.inner.src} → ${m.inner.dst})` : `WireGuard keepalive (세션 ${m.receiver})`;
@@ -909,7 +917,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";
   if (inner.payload.kind === "ddns") return inner.payload.op === "update" ? "DDNS 갱신" : inner.payload.op === "release" ? "DDNS 내려놓기" : "DDNS 응답";
-  if (inner.payload.kind === "wg") return inner.payload.type === "data" ? (inner.payload.inner ? "WireGuard" : "keepalive") : "WG 핸드셰이크";
+  if (inner.payload.kind === "wg") return inner.payload.obf || inner.payload.type === "junk" ? "UDP" : inner.payload.type === "data" ? (inner.payload.inner ? "WireGuard" : "keepalive") : "WG 핸드셰이크";
   if (inner.payload.kind === "dhcp6") return `DHCPv6 ${DHCP6_LABEL[inner.payload.type]}`;
   if (inner.payload.kind === "l2tp") return "L2TP";
   if (inner.payload.kind === "stun") return inner.payload.op.startsWith("binding") ? "STUN" : "TURN";

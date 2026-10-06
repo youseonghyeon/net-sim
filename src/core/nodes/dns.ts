@@ -304,6 +304,8 @@ export class DnsServer {
    * 질의마다 (막았든 아니든) note 로 알린다 — 쿼리 로그
    */
   filter: ((name: string, qtype: QType, client: Ip, ctx: NodeContext) => { answer?: Ip; rcode?: "NXDOMAIN"; why: string } | undefined) | undefined;
+  /** 클라이언트에게 이름의 주소를 답할 때 (DPI 가 "그 주소 = 그 앱" 을 배운다) */
+  onAnswer: ((name: string, ip: Ip) => void) | undefined;
 
   constructor(
     public config: DnsServerConfig,
@@ -356,6 +358,7 @@ export class DnsServer {
       // 캐시한 답에 TTL 이 있었으면 남은 만큼만 알려 준다 (DDNS 이름처럼 짧은 TTL 이 아래 캐시까지 이어지게)
       const ce = fromCache ? this.cache.get(cacheKey(name, qtype)) : undefined;
       const ttl = ce?.ttl !== undefined ? Math.max(1, Math.round((ce.ttl - (ctx.now - ce.at)) / 1000)) : undefined;
+      this.onAnswer?.(name, ip);
       ctx.trace("dns.response.sent", "app", `${this.label}: ${name}${tq} = ${ip} 응답 (${fromCache ? "업스트림 서버 답 캐시" : "내 레코드"}) → ${pkt.src}`, { name, ip, to: pkt.src, qtype });
       this.respond(pkt.src, srcPort, answer({ answer: ip, ...(ttl !== undefined ? { ttl } : {}) }), ctx, emit, replyFrom);
       return;
@@ -412,6 +415,7 @@ export class DnsServer {
     p.timer.cancel();
     const tq = p.qtype === "AAAA" ? " AAAA" : "";
     if (msg.answer) {
+      this.onAnswer?.(p.name, msg.answer);
       this.cache.set(cacheKey(p.name, p.qtype), { ip: msg.answer, at: ctx.now, ...(msg.ttl !== undefined ? { ttl: msg.ttl * 1000 } : {}) });
       ctx.trace("dns.response.received", "app", `${this.label}: 업스트림 DNS ${pkt.src} 의 답 ${p.name}${tq} = ${msg.answer} → 캐시`, { name: p.name, ip: msg.answer }, frameId);
       ctx.trace("dns.response.sent", "app", `${this.label}: ${p.name}${tq} = ${msg.answer} 응답 (업스트림 서버 답 전달) → ${p.clientIp}`, { name: p.name, ip: msg.answer, to: p.clientIp });

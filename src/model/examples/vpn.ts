@@ -102,3 +102,49 @@ export function exampleDdnsTopology(): Topology {
   ];
   return t;
 }
+
+/**
+ * DPI 와 VPN 난독화:
+ * - 회사 공유기의 DPI 가 지나가는 흐름의 앱을 알아보고 VPN·게임 카테고리를 막는다 (TLS SNI·DNS 로 배운 주소·프로토콜 모양)
+ * - 직원 노트북의 WireGuard 는 첫 패킷(148바이트 Initiation)의 모양으로 들켜 막힌다 → 노트북과 집 Brume 3 양쪽에서 난독화를 켜면
+ *   모양을 알아볼 수 없는 UDP 가 되어 지나간다 (한쪽만 켜면 서로 못 알아봐 침묵 — 구성 검사가 짚음)
+ * - 직원 PC 의 roblox.com(HTTPS)은 SNI 로 게임이라 RST 로 끊기고, youtube.com 은 된다
+ */
+export function exampleDpiTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -296, "internet-1");
+  const isp = add("switch", 344, -168, "통신사 구간");
+  const office = add("router", 120, -24, "회사 공유기");
+  office.router = {
+    ...office.router!,
+    lanIp: "10.30.0.1",
+    lanPrefix: 24,
+    dhcp: { enabled: true, start: "10.30.0.100", end: "10.30.0.199" },
+    dpi: { enabled: true, blockApps: [], blockCategories: ["VPN", "게임"] },
+  };
+  const sw = add("switch", 120, 136, "사무실 스위치");
+  const laptop = add("laptop", 8, 288, "직원 노트북");
+  const pc = add("pc", 232, 288, "직원 PC");
+  const home = add("router", 568, -24, "집 Brume 3");
+  const nas = add("server", 568, 152, "집 NAS");
+  home.router = {
+    ...home.router!,
+    lanIp: "192.168.8.1",
+    lanPrefix: 24,
+    dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
+    wan: { ipMode: "static", ip: "203.0.113.30", prefix: 24, gateway: "203.0.113.1" },
+    wgServer: { enabled: true, address: "10.0.0.1/24", port: 51820, peers: [{ name: "직원 노트북", publicKey: wgPublicKeyOf(laptop, "host"), ip: "10.0.0.2" }], lanAccess: true },
+  };
+  nas.host = { ipMode: "static", ip: "192.168.8.20", prefix: 24, gateway: "192.168.8.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  laptop.host = {
+    ...laptop.host!,
+    ra: { enabled: true, type: "wireguard", server: "203.0.113.30", psk: "", wg: { address: "10.0.0.2/32", port: 51820, serverKey: wgPublicKeyOf(home, "server"), allowedIps: "10.0.0.0/24, 192.168.8.0/24", dns: "" } },
+  };
+  const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, office, 0), cable(isp, 6, home, 0), cable(office, 1, sw, 0), cable(sw, 1, laptop, 0), cable(sw, 2, pc, 0), cable(home, 1, nas, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "회사 10.30.0.0/24 · DPI (VPN·게임 차단)", tint: "gray", ...zoneAround(t, [office.id, sw.id, laptop.id, pc.id], 56)! },
+    { id: newId("zone"), label: "집 192.168.8.0/24 · WireGuard", tint: "blue", ...zoneAround(t, [home.id, nas.id], 56)! },
+  ];
+  return t;
+}

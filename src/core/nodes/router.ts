@@ -24,6 +24,7 @@ import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, type Dns
 import { DDNS_TIMER_TAG, DdnsClient, type DdnsConfig } from "./ddns";
 import { MWAN_ICMP_ID, MWAN_TIMER_TAG, MultiWan, WAN_LABEL, type WanName } from "./mwan";
 import { Adguard, PARENTAL_CATEGORIES, type AdguardConfig } from "./adguard";
+import { APPS, Dpi, type DpiConfig } from "./dpi";
 import { Firewall, type FirewallConfig } from "./firewall";
 import { L2tpServer, type L2tpServerConfig } from "./l2tp";
 import { PortPublish } from "./publish";
@@ -78,6 +79,8 @@ export interface RouterConfig {
   wan2Mac?: Mac;
   /** AdGuard Home·자녀 보호 (없으면 꺼짐) */
   adguard?: AdguardConfig;
+  /** DPI (없으면 꺼짐) */
+  dpi?: DpiConfig;
 }
 
 /** 멀티 WAN 페일오버: lan4 = WAN2 (예비 회선), 추적 주소 */
@@ -98,6 +101,8 @@ export interface RouterWgServerConfig {
   peers: { name: string; publicKey: string; ip: Ip }[];
   /** 클라이언트가 집 LAN 에 접근해도 되는지 (GL.iNet "Remote Access LAN") */
   lanAccess: boolean;
+  /** 난독화 (AmneziaWG 식 — 클라이언트도 켜야 한다) */
+  obfuscate?: boolean;
 }
 
 /** 공유기 WireGuard 클라이언트: LAN 기기들의 트래픽을 VPN 서버로 */
@@ -117,6 +122,8 @@ export interface RouterWgClientConfig {
   dns?: Ip;
   /** 킬 스위치: VPN 이 끊기면 WAN 으로 바로 내보내지 않는다 (GL.iNet "Block Non-VPN Traffic") */
   killSwitch: boolean;
+  /** 난독화 (AmneziaWG 식 — 서버도 켜야 한다) */
+  obfuscate?: boolean;
   /** VPN 정책: 모든 기기 / 목록의 기기만 빼고 / 목록의 기기만 */
   policy: { mode: "all" | "exclude" | "only"; devices: Ip[] };
 }
@@ -196,6 +203,8 @@ export class Router implements SimNode {
   readonly mwan: MultiWan;
   /** AdGuard Home·자녀 보호: DNS 포워더 앞의 필터 */
   readonly adguard = new Adguard();
+  /** DPI: 지나가는 흐름의 앱을 알아보고 세고 막는다 */
+  readonly dpi = new Dpi();
   /** 공유기 자신의 이름 해석 (VPN 서버 이름 등) — WAN 으로 DNS 포워더의 업스트림에 직접 묻는다 */
   readonly resolver: DnsResolver;
   /** VPN 클라이언트 쪽 NAT: LAN 기기의 출발지를 내 터널 주소로 (서버는 이 주소 하나만 안다 — AllowedIPs) */
@@ -325,6 +334,8 @@ export class Router implements SimNode {
       const zero = this.adguard.config.mode === "zero";
       return { ...(zero ? { answer: qtype === "AAAA" ? "::" : "0.0.0.0" } : { rcode: "NXDOMAIN" as const }), why: `${v.list} 규칙 ${v.rule} 에 걸림 (AdGuard Home)` };
     };
+    this.dnsForwarder.onAnswer = (name, ip) => this.dpi.learnDns(name, ip);
+    if (cfg.dpi) this.dpi.config = { ...cfg.dpi, blockApps: [...cfg.dpi.blockApps], blockCategories: [...cfg.dpi.blockCategories] };
     if (cfg.adguard) this.adguard.config = { ...cfg.adguard, custom: [...cfg.adguard.custom], allow: [...cfg.adguard.allow], parental: cfg.adguard.parental.map((p) => ({ ...p, categories: [...p.categories] })) };
     if (cfg.wgServer) this.wgServerCfg = cfg.wgServer;
     if (cfg.wgClient) this.wgClientCfg = cfg.wgClient;
@@ -398,6 +409,44 @@ export class Router implements SimNode {
     return c.enabled && c.forceDns && this.dnsForwarder.config.enabled && !!this.lan.ip && !sameSubnet(dst, this.lan.ip, this.lan.prefix);
   }
 
+  /** DPI 설정 */
+  setDpi(cfg: DpiConfig, ctx: NodeContext): void {
+    if (JSON.stringify(cfg) === JSON.stringify(this.dpi.config)) return;
+    const was = this.dpi.config.enabled;
+    this.dpi.config = { ...cfg, blockApps: [...cfg.blockApps], blockCategories: [...cfg.blockCategories] };
+    this.dpi.resetFlows();
+    if (!cfg.enabled) {
+      if (was) ctx.trace("ip.config", "sys", `DPI 꺼짐`, { dpi: false });
+      return;
+    }
+    const blocked = [...cfg.blockCategories.map((c) => `${c} 전체`), ...cfg.blockApps.map((a) => APPS[a].label)];
+    ctx.trace("ip.config", "sys", `DPI 켜짐: 지나가는 흐름마다 앱을 알아본다 (TLS SNI·DNS 로 배운 주소·프로토콜 모양·포트)${blocked.length ? ` — 막을 것: ${blocked.join(", ")} (TCP 는 RST 를 넣어 끊고 UDP 는 드롭)` : " — 막는 것 없이 세기만"}`, { dpi: true });
+  }
+
+  /**
+   * DPI 검사: 지나가는 패킷의 앱을 알아보고(처음·근거가 바뀔 때 기록) 막을 앱이면 끊는다. 통과면 true.
+   * dir out = LAN → 밖 (client = 출발지), in = 밖 → LAN (client = 목적지)
+   */
+  private dpiCheck(pkt: Ipv4Packet, dir: "out" | "in", frameId: number, ctx: NodeContext): boolean {
+    const client = dir === "out" ? pkt.src : pkt.dst;
+    const v = this.dpi.inspect(pkt, dir, client);
+    if (!v) return true;
+    const remote = dir === "out" ? pkt.dst : pkt.src;
+    if (v.fresh && !v.block) ctx.trace("dpi.app", "app", `DPI: ${client} ↔ ${remote} 흐름은 ${APPS[v.app].label} (${APPS[v.app].category}) — 근거: ${v.why}`, { app: v.app, client }, frameId);
+    if (!v.block) return true;
+    const p = pkt.payload;
+    if (p.kind === "tcp" && !p.rst) {
+      // 양쪽에 RST 를 넣어 끊는다 (기기 쪽만 그려도 기기는 연결이 끊긴 것을 안다)
+      ctx.trace("dpi.block", "app", `DPI 차단: ${client} ↔ ${remote} 는 ${APPS[v.app].label} (${APPS[v.app].category}, ${v.why}) → 드롭하고 기기에 RST 를 넣어 연결을 끊음`, { app: v.app, client, rst: true }, frameId);
+      const toClient: Ipv4Packet =
+        dir === "out"
+          ? { kind: "ipv4", src: pkt.dst, dst: pkt.src, ttl: 64, payload: { kind: "tcp", srcPort: p.dstPort, dstPort: p.srcPort, seq: p.ack, ack: p.seq + p.len + (p.syn ? 1 : 0) + (p.fin ? 1 : 0), rst: true, ackFlag: true, len: 0 } }
+          : { kind: "ipv4", src: pkt.src, dst: pkt.dst, ttl: 64, payload: { kind: "tcp", srcPort: p.srcPort, dstPort: p.dstPort, seq: p.seq + p.len, ack: p.ack, rst: true, ackFlag: true, len: 0 } };
+      this.lan.sendIp(toClient, ctx, this.emitLan(ctx));
+    } else if (v.fresh) ctx.trace("dpi.block", "app", `DPI 차단: ${client} ↔ ${remote} 는 ${APPS[v.app].label} (${APPS[v.app].category}, ${v.why}) → 드롭`, { app: v.app, client }, frameId);
+    return false;
+  }
+
   /** AdGuard Home·자녀 보호 설정 */
   setAdguard(cfg: AdguardConfig, ctx: NodeContext): void {
     if (JSON.stringify(cfg) === JSON.stringify(this.adguard.config)) return;
@@ -434,6 +483,7 @@ export class Router implements SimNode {
             ...(s.address ? { address: s.address } : {}),
             listenPort: s.listenPort,
             peers: s.peers.map((p) => ({ name: p.name, publicKey: p.publicKey, allowedIps: [{ dest: p.ip, prefix: 32 }] })),
+            ...(s.obfuscate ? { obfuscate: true } : {}),
           }
         : { ...DEFAULT_WG, peers: [] },
       ctx,
@@ -447,6 +497,7 @@ export class Router implements SimNode {
             ...(c.address ? { address: c.address } : {}),
             listenPort: this.wgcPort,
             peers: [{ name: "VPN 서버", publicKey: c.serverKey, ...(c.server ? { endpoint: c.server } : {}), allowedIps: c.allowedIps }],
+            ...(c.obfuscate ? { obfuscate: true } : {}),
           }
         : { ...DEFAULT_WG, peers: [] },
       ctx,
@@ -642,9 +693,11 @@ export class Router implements SimNode {
       ddns?: DdnsConfig;
       wan2?: Wan2Config;
       adguard?: AdguardConfig;
+      dpi?: DpiConfig;
     },
     ctx: NodeContext,
   ): void {
+    if (cfg.dpi) this.setDpi(cfg.dpi, ctx);
     if (cfg.adguard) this.setAdguard(cfg.adguard, ctx);
     if (cfg.ddns) this.ddns.setConfig(cfg.ddns, ctx);
     if (cfg.wan2) this.setWan2(cfg.wan2, ctx);
@@ -1149,6 +1202,7 @@ export class Router implements SimNode {
     }
     const restored = this.nat.restore(pkt, this.wan.ip, ctx, frameId);
     if (!restored) return;
+    if (!this.dpiCheck(restored, "in", frameId, ctx)) return;
     if (!this.firewall.check(restored, "in", ctx, frameId)) return;
     if (this.wgServerCfg?.enabled && this.wgs.route(restored.dst)) {
       this.toWgPeerFwd(restored, frameId, ctx); // WireGuard 로 붙은 기기의 인터넷 응답
@@ -1266,6 +1320,7 @@ export class Router implements SimNode {
       if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
       return;
     }
+    if (!this.dpiCheck(pkt, "out", frameId, ctx)) return;
     if (!this.firewall.check(pkt, "out", ctx, frameId)) return;
     const translated = o.nat.translate({ ...pkt, ttl: pkt.ttl - 1 }, o.iface.ip, ctx, frameId);
     if (!translated) return;
@@ -1386,6 +1441,7 @@ export class Router implements SimNode {
     }
     const restored = this.nat2.restore(pkt, this.wan2.ip, ctx, frame.id);
     if (!restored) return;
+    if (!this.dpiCheck(restored, "in", frame.id, ctx)) return;
     if (!this.firewall.check(restored, "in", ctx, frame.id)) return;
     const inner: Ipv4Packet = { ...restored, ttl: pkt.ttl - 1 };
     ctx.trace("ip.forward", "L3", `라우팅: ${inner.dst} 는 LAN 안 → LAN 인터페이스로 전달 (WAN2 로 들어옴, TTL ${pkt.ttl} → ${inner.ttl})`, { dst: inner.dst }, frame.id);
@@ -1711,6 +1767,7 @@ export class Router implements SimNode {
           : []),
         ...(this.wgClientCfg?.enabled ? ([["WireGuard 클라이언트", this.wgClientSummary()!]] as [string, string][]) : []),
         ...(this.ddns.config.enabled ? ([["DDNS", this.ddns.summary()!]] as [string, string][]) : []),
+        ...(this.dpi.config.enabled ? ([["DPI", `켜짐${this.dpi.config.blockCategories.length + this.dpi.config.blockApps.length ? ` · 차단 ${[...this.dpi.config.blockCategories, ...this.dpi.config.blockApps.map((a) => APPS[a].label)].join(", ")}` : " · 세기만"}`]] as [string, string][]) : []),
         ...(this.adguard.config.enabled ? ([["AdGuard Home", `${this.adguard.summary()}${this.adguard.config.forceDns ? " · DNS 가로채기" : ""}`]] as [string, string][]) : []),
         ...(this.wan2On
           ? ([
@@ -1722,6 +1779,7 @@ export class Router implements SimNode {
       tables: [
         { title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
         ...(this.dnsForwarder.cache.size > 0 ? [{ title: "DNS 캐시", columns: ["이름", "IP", "출처"], rows: this.dnsForwarder.rows() }] : []),
+        ...(this.dpi.config.enabled ? [{ title: "DPI 앱별 트래픽", columns: ["기기", "앱", "카테고리", "트래픽"], rows: this.dpi.rows() }] : []),
         ...(this.adguard.config.enabled ? [{ title: "AdGuard 쿼리 로그", columns: ["시각", "기기", "질의", "결과"], rows: this.adguard.rows() }] : []),
         { title: this.wan2On ? "NAT 테이블 (WAN1)" : "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(this.wan.ip) },
         ...(this.wan2On

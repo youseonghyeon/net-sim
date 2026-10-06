@@ -2,7 +2,8 @@
 import { Router } from "../../core/nodes/router";
 import { sim, simVersion } from "../../model/sim";
 import { topology, updateDevice } from "../../model/store";
-import { DEFAULT_ADGUARD_SETTINGS, type Device, type ParentalCategorySetting, type RouterAdguardSettings, type RouterSettings } from "../../model/topology";
+import { DEFAULT_ADGUARD_SETTINGS, type Device, type ParentalCategorySetting, type RouterAdguardSettings, type RouterDpiSettings, type RouterSettings } from "../../model/topology";
+import { APPS, type AppId, type DpiCategory } from "../../core/nodes/dpi";
 import { Icon } from "../Icons";
 import { Field, Section, Toggle, ipError, validIp } from "./ui";
 
@@ -118,6 +119,49 @@ export function AdguardSection({ d, r }: { d: Device; r: RouterSettings }) {
             </button>
           )}
           <p class="note">자녀 보호는 기기의 주소로 구분하므로 수동 주소(또는 늘 같은 주소)가 필요합니다. 쿼리 로그는 표 탭에 있습니다. DoH(HTTPS 위의 DNS)를 쓰는 앱은 DNS 가로채기로도 막지 못합니다.</p>
+        </>
+      )}
+    </Section>
+  );
+}
+
+const DPI_CATEGORIES: DpiCategory[] = ["VPN", "게임", "SNS", "동영상", "알 수 없음"];
+
+/** DPI: 흐름마다 앱을 알아보고 세고, 고른 카테고리·앱을 막는다 */
+export function DpiSection({ d, r }: { d: Device; r: RouterSettings }) {
+  void simVersion.value;
+  const c: RouterDpiSettings = r.dpi ?? { enabled: false, blockApps: [], blockCategories: [] };
+  const set = (patch: Partial<RouterDpiSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, dpi: { ...(x.router!.dpi ?? { enabled: true, blockApps: [], blockCategories: [] }), ...patch } } }));
+  const toggle = <T extends string>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+  const apps = (Object.keys(APPS) as AppId[]).filter((a) => !["unknown", "https", "http", "quic", "dns", "ping"].includes(a));
+  return (
+    <Section title="DPI (앱 알아보기·차단)">
+      <label class="toggle-row">
+        <span>{c.enabled ? "켜짐" : "꺼짐"}</span>
+        <Toggle on={c.enabled} onToggle={() => set({ enabled: !c.enabled })} />
+      </label>
+      {!c.enabled && <p class="note">켜면 지나가는 흐름마다 무슨 앱인지 알아봅니다 — 내용은 암호화돼 못 보지만 TLS 의 접속 이름(SNI), DNS 로 배운 주소, 프로토콜의 모양(WireGuard·IPsec), 포트는 보입니다. 앱·기기별 트래픽은 표 탭에 쌓이고, 고른 카테고리·앱은 막습니다(TCP 는 RST 를 넣어 끊음).</p>}
+      {c.enabled && (
+        <>
+          <Field label="막을 카테고리">
+            <div class="kid-cats">
+              {DPI_CATEGORIES.map((cat) => (
+                <button key={cat} class={`chip${c.blockCategories.includes(cat) ? " on" : ""}`} onClick={() => set({ blockCategories: toggle(c.blockCategories, cat) })}>
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="막을 앱">
+            <div class="kid-cats">
+              {apps.map((a) => (
+                <button key={a} class={`chip${c.blockApps.includes(a) ? " on" : ""}`} title={APPS[a].category} onClick={() => set({ blockApps: toggle(c.blockApps, a) })}>
+                  {APPS[a].label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <p class="note">"알 수 없음" 을 막으면 모양을 알아볼 수 없는 흐름(난독화한 VPN 등)까지 막습니다. 이미 지나간 흐름은 설정을 바꾸면 다시 검사합니다.</p>
         </>
       )}
     </Section>

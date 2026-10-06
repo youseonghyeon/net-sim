@@ -9,7 +9,7 @@ import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./e
 import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology, exampleAdguardTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology, exampleMultiWanTopology } from "./examples/internet";
-import { exampleDdnsTopology, exampleWireguardTopology } from "./examples/vpn";
+import { exampleDdnsTopology, exampleDpiTopology, exampleWireguardTopology } from "./examples/vpn";
 import { exampleRoamingTopology } from "./examples/wireless";
 import { exampleCompanyTopology } from "./examples/overview";
 import { exampleDualStackHomeTopology, exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "lb" | "proxy" | "adguard" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "dpi" | "lb" | "proxy" | "adguard" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -221,6 +221,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "주소가 바뀌는 집 (DDNS·WireGuard)",
     blurb: "집 Brume 3 의 WAN 은 자동(DHCP)이라 공인 주소가 바뀔 수 있습니다. 공유기가 DDNS 로 myhome.glddns.com 을 지금 주소로 갱신하고, 카페 폰의 WireGuard 앱은 서버를 이름으로 적어 둡니다. 폰에서 집 NAS 192.168.8.20 으로 ping 한 뒤, internet-1 의 진단 탭에서 \"공인 주소 바꾸기\" 로 집 주소를 바꿔 보세요 — 공유기가 새 주소를 받아 DDNS 를 갱신합니다. 폰은 옛 주소로 보낸 것에 답이 없으니 \"+10초\" 를 몇 번 눌러 시간을 흘리면 새 핸드셰이크가 실패한 뒤 이름을 다시 풀어 새 주소로 붙습니다.",
     build: exampleDdnsTopology,
+  },
+  dpi: {
+    id: "dpi",
+    group: "VPN",
+    label: "DPI 와 VPN 난독화 (앱 알아보기·차단)",
+    blurb: "회사 공유기의 DPI 가 흐름마다 앱을 알아보고(TLS SNI·DNS 로 배운 주소·프로토콜 모양) VPN·게임을 막습니다(표 탭의 DPI 앱별 트래픽). 직원 노트북의 WireGuard 는 첫 패킷의 모양으로 들켜 막힙니다 — 노트북의 VPN 과 집 Brume 3 의 WireGuard 서버 양쪽에서 \"난독화\" 를 켜고 노트북에서 \"다시 연결\" 하면 알아볼 수 없는 UDP 가 되어 지나갑니다(한쪽만 켜면 서로 못 알아봐 침묵합니다). 직원 PC 에서 roblox.com:443 으로 TCP 연결하면 SNI 로 게임이라 RST 로 끊기고, youtube.com:443 은 됩니다.",
+    build: exampleDpiTopology,
   },
   roaming: {
     id: "roaming",

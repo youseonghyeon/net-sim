@@ -108,6 +108,8 @@ export interface WgConfig {
   address?: { ip: Ip; prefix: number };
   listenPort: number;
   peers: WgPeer[];
+  /** 난독화 (AmneziaWG 식): 모양을 흐트러뜨리고 핸드셰이크 앞에 쓰레기 패킷을 섞는다. 상대도 켜야 서로 알아본다 */
+  obfuscate?: boolean;
 }
 
 interface Session {
@@ -224,7 +226,7 @@ export class WgInterface {
       this.peers.clear();
       return false;
     }
-    const base = (c: WgConfig) => JSON.stringify({ e: c.enabled, k: c.privateKey, a: c.address, p: c.listenPort });
+    const base = (c: WgConfig) => JSON.stringify({ e: c.enabled, k: c.privateKey, a: c.address, p: c.listenPort, o: !!c.obfuscate });
     const resetAll = base(cfg) !== base(this.config);
     const old = new Map(this.peers);
     const kept = new Map<string, WgPeerState>();
@@ -244,7 +246,7 @@ export class WgInterface {
     ctx.trace(
       "vpn.config",
       "sys",
-      `${this.label} 설정: 내 공개 키 ${shortKey(this.publicKey)}, 터널 주소 ${cfg.address ? `${cfg.address.ip}/${cfg.address.prefix}` : "없음"}, UDP ${cfg.listenPort}, 피어 ${cfg.peers.length}개${dropped ? ` — 바뀐 피어의 세션 ${dropped}개는 버리고 다음 패킷에 새로 핸드셰이크` : ""}`,
+      `${this.label} 설정: 내 공개 키 ${shortKey(this.publicKey)}, 터널 주소 ${cfg.address ? `${cfg.address.ip}/${cfg.address.prefix}` : "없음"}, UDP ${cfg.listenPort}, 피어 ${cfg.peers.length}개${cfg.obfuscate ? ", 난독화 켜짐 (AmneziaWG 식)" : ""}${dropped ? ` — 바뀐 피어의 세션 ${dropped}개는 버리고 다음 패킷에 새로 핸드셰이크` : ""}`,
       { wg: true, enabled: true, peers: cfg.peers.length },
     );
     return true;
@@ -305,6 +307,10 @@ export class WgInterface {
       return;
     }
     p.pending = { local, tries };
+    if (this.config.obfuscate) {
+      // 핸드셰이크 앞의 쓰레기 패킷 두 개 (Jc) — 첫 패킷의 모양으로 VPN 을 알아보는 DPI 를 헷갈리게
+      for (let j = 0; j < 2; j++) this.out(src, ep, { kind: "wg", type: "junk", sender: local * 2 + j }, ctx, frameId);
+    }
     ctx.trace(
       "vpn.handshake",
       "L4",
@@ -362,7 +368,8 @@ export class WgInterface {
   }
 
   private out(src: Ip, ep: { ip: Ip; port: number }, m: WgMessage, ctx: NodeContext, frameId?: number): void {
-    this.io.send({ kind: "ipv4", src, dst: ep.ip, ttl: 64, payload: { kind: "udp", srcPort: this.config.listenPort, dstPort: ep.port, payload: m } }, ctx, frameId);
+    const msg: WgMessage = this.config.obfuscate ? { ...m, obf: true } : m;
+    this.io.send({ kind: "ipv4", src, dst: ep.ip, ttl: 64, payload: { kind: "udp", srcPort: this.config.listenPort, dstPort: ep.port, payload: msg } }, ctx, frameId);
   }
 
   /** 데이터(또는 keepalive) 송신 */
@@ -451,6 +458,11 @@ export class WgInterface {
   handle(outer: Ipv4Packet, srcPort: number, m: WgMessage, ctx: NodeContext, frameId?: number): Ipv4Packet | null {
     if (!this.config.enabled) return null;
     const from = { ip: outer.src, port: srcPort };
+    if (m.type === "junk") return null; // 난독화의 쓰레기 패킷 — 조용히 버린다
+    if (!!m.obf !== !!this.config.obfuscate) {
+      ctx.trace("vpn.drop", "L4", `${this.label}: ${from.ip}:${from.port} 의 UDP 를 WireGuard 로 알아볼 수 없음 — ${m.obf ? "상대는 난독화를 켰는데 나는 꺼짐" : "나는 난독화를 켰는데 상대는 꺼짐"} → 응답 없이 버림 (양쪽 난독화 설정을 같게)`, { wg: true, from: from.ip, reason: "obfuscation" }, frameId);
+      return null;
+    }
     if (m.type === "initiation") {
       if (m.to !== this.publicKey) {
         ctx.trace("vpn.drop", "L4", `${this.label}: ${from.ip}:${from.port} 의 Initiation 을 내 공개 키로 확인할 수 없음 (mac1 불일치 — 보낸 쪽이 알고 있는 이 장비의 공개 키 ${shortKey(m.to ?? "")} 가 내 키 ${shortKey(this.publicKey)} 와 다름) → 응답 없이 버림`, { wg: true, from: from.ip, reason: "mac1" }, frameId);
@@ -680,7 +692,7 @@ export class WgClient {
     const byName = !!cfg.server && /[a-z]/i.test(cfg.server);
     this.wg.setConfig(
       ok
-        ? { enabled: true, privateKey: w!.privateKey, address: w!.address, listenPort: this.listenPort, peers: [{ name: "서버", publicKey: w!.serverKey, ...(byName ? {} : { endpoint: { ip: cfg.server!, port: w!.port } }), allowedIps: w!.allowedIps }] }
+        ? { enabled: true, privateKey: w!.privateKey, address: w!.address, listenPort: this.listenPort, peers: [{ name: "서버", publicKey: w!.serverKey, ...(byName ? {} : { endpoint: { ip: cfg.server!, port: w!.port } }), allowedIps: w!.allowedIps }], ...(w!.obfuscate ? { obfuscate: true } : {}) }
         : { ...DEFAULT_WG, peers: [] },
       ctx,
     );

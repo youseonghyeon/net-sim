@@ -797,6 +797,15 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       if (ip && sent) out.push({ tool: "시스코 debug ip nat", line: `NAT*: s=${ip.src}, d=${ip.dst}->${sent.dst} [${detail(ev, "publicId") ?? ""}]` });
       break;
     }
+    case "dpi.app":
+    case "dpi.block": {
+      // netifyd (GL.iNet DPI 엔진) 의 흐름 기록
+      const app = detail(ev, "app") ?? "unknown";
+      const l4 = ip?.payload;
+      const ports = l4 && (l4.kind === "tcp" || l4.kind === "udp") ? [l4.srcPort, l4.dstPort] : [0, 0];
+      out.push({ tool: "netifyd (DPI)", line: `${ip ? `${ip.src}:${ports[0]} -> ${ip.dst}:${ports[1]}` : "?"} [${l4?.kind.toUpperCase() ?? "?"}] app: ${app}${ev.kind === "dpi.block" ? " → blocked" : ""}` });
+      break;
+    }
     case "dns.blocked": {
       // AdGuard Home 쿼리 로그 (웹 화면의 한 줄을 텍스트로)
       const why = /은\(는\) (.+) → 업스트림/.exec(ev.summary)?.[1] ?? "";

@@ -11,6 +11,7 @@ import { Internet } from "../core/nodes/internet";
 import { L3Node } from "../core/nodes/l3";
 import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
+import { APPS, type AppId, type DpiCategory } from "../core/nodes/dpi";
 import type { StpConfig } from "../core/nodes/stp";
 import type { RaClientConfig } from "../core/nodes/ravpn";
 import { Switch, type PortVlan } from "../core/nodes/switch";
@@ -131,6 +132,7 @@ export class NetworkSync {
         if (node instanceof Router && d.router?.ddns?.enabled) node.ddns.setConfig(effectiveRouter(d).ddns, net.contextFor(d.id));
         if (node instanceof Router && d.router?.wan2?.enabled) node.setWan2(effectiveRouter(d).wan2, net.contextFor(d.id));
         if (node instanceof Router && d.router?.adguard?.enabled) node.setAdguard(effectiveRouter(d).adguard, net.contextFor(d.id));
+        if (node instanceof Router && d.router?.dpi?.enabled) node.setDpi(effectiveRouter(d).dpi, net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -322,6 +324,7 @@ export function effectiveWgFields(w: Partial<import("./topology").WgClientSettin
     serverKey: (w?.serverKey ?? "").trim(),
     allowedIps: parseCidrList(w?.allowedIps),
     ...(validIp(w?.dns) ? { dns: w!.dns!.trim() } : {}),
+    ...(w?.obfuscate === true ? { obfuscate: true } : {}),
   };
 }
 
@@ -426,6 +429,7 @@ export function effectiveRouter(d: Device, current?: Router) {
         .map((p) => ({ name: p.name.trim(), publicKey: p.publicKey.trim(), ip: p.ip.trim() }))
         .filter((p, i, all) => p.publicKey !== "" && validIp(p.ip) && all.findIndex((x) => x.publicKey === p.publicKey) === i),
       lanAccess: r.wgServer?.lanAccess !== false,
+      ...(r.wgServer?.obfuscate === true ? { obfuscate: true } : {}),
     },
     wan2: (() => {
       const w2 = r.wan2;
@@ -435,6 +439,11 @@ export function effectiveRouter(d: Device, current?: Router) {
         ...(validIp(w2?.track?.trim()) ? { track: w2!.track.trim() } : {}),
       };
     })(),
+    dpi: {
+      enabled: r.dpi?.enabled === true,
+      blockApps: (r.dpi?.blockApps ?? []).filter((a): a is AppId => a in APPS),
+      blockCategories: (r.dpi?.blockCategories ?? []).filter((c): c is DpiCategory => Object.values(APPS).some((x) => x.category === c)),
+    },
     adguard: (() => {
       const a = r.adguard;
       const names = (l: string[] | undefined) => (l ?? []).map((x) => x.trim().toLowerCase().replace(/^\|\|/, "").replace(/\^$/, "")).filter((x) => /^[a-z0-9.-]+$/.test(x) && x.includes("."));
@@ -464,6 +473,7 @@ export function effectiveRouter(d: Device, current?: Router) {
         allowedIps: f.allowedIps,
         ...(f.dns ? { dns: f.dns } : {}),
         killSwitch: c?.killSwitch === true,
+        ...(f.obfuscate ? { obfuscate: true } : {}),
         policy: { mode: c?.policy.mode ?? ("all" as const), devices: (c?.policy.devices ?? []).map((x) => x.trim()).filter((x) => validIp(x)) },
       };
     })(),

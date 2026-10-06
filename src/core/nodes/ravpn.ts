@@ -58,6 +58,8 @@ export interface WgClientFields {
   allowedIps: { dest: Ip; prefix: number }[];
   /** [Interface] DNS */
   dns?: Ip;
+  /** 난독화 (AmneziaWG 식 — 서버도 켜야 한다) */
+  obfuscate?: boolean;
 }
 
 export const DEFAULT_RA_CLIENT: RaClientConfig = { enabled: false, psk: "" };

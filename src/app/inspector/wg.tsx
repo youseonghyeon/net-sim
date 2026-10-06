@@ -99,6 +99,13 @@ function ClientFields({ server, w, setServer, setW }: { server: string; w: WgCli
       <Field label="DNS" error={ipError(w.dns, false)}>
         <input class="input mono" value={w.dns} placeholder="비우면 그대로 (예: 10.0.0.1)" onInput={(e) => setW({ dns: e.currentTarget.value })} />
       </Field>
+      <label class="toggle-row">
+        <span>
+          난독화
+          <small class="muted">VPN 을 막는 DPI 를 지나가게 (서버도 켜야 함)</small>
+        </span>
+        <Toggle on={w.obfuscate === true} onToggle={() => setW({ obfuscate: !w.obfuscate })} />
+      </label>
     </>
   );
 }
@@ -204,6 +211,13 @@ export function WgServerSection({ d, r }: { d: Device; r: RouterSettings }) {
           <Field label="포트" hint="UDP">
             <input class="input mono" type="number" min={1} max={65535} value={s.port} onInput={(e) => { if (e.currentTarget.value === "") return; set({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 51820)) }); }} />
           </Field>
+          <label class="toggle-row">
+            <span>
+              난독화
+              <small class="muted">AmneziaWG 식 — 클라이언트도 켜야 함</small>
+            </span>
+            <Toggle on={s.obfuscate === true} onToggle={() => set({ obfuscate: !s.obfuscate })} />
+          </label>
           <label class="toggle-row">
             <span>
               LAN 접근 허용
