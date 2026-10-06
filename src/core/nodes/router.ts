@@ -1356,6 +1356,13 @@ export class Router implements SimNode {
       return;
     }
     if (this.blockedFrame(pkt.src, pkt.dst, frame, ctx)) return;
+    if (this.tor.enabled) {
+      // Tor 는 IPv4 회로만 — IPv6 를 그대로 내보내면 실제 주소가 드러난다. 바로 실패를 알려 기기가 IPv4(→ Tor)로 다시 시도하게
+      ctx.trace("tor.drop", "L3", `Tor: ${pkt.src} → ${pkt.dst} 는 IPv6 — Tor 회로로 나르지 않음 → 버리고 Destination Unreachable (기기는 IPv4 로 다시 시도)`, { tor: true, dst: pkt.dst }, frame.id);
+      const notice = this.lan6.unreachable(pkt, "net", ctx, frame.id);
+      if (notice) this.lan6.send(notice, ctx, emit);
+      return;
+    }
     if (!this.dpiCheck(pkt, "out", frame.id, ctx)) return;
     if (!this.firewall.check(pkt, "out", ctx, frame.id)) return;
     this.inbound6.remember(pkt, ctx); // 나가는 흐름을 기억해 돌아오는 응답을 들인다
@@ -1761,8 +1768,13 @@ export class Router implements SimNode {
     // DPI 는 LAN 쪽에서 본다 — VPN 클라이언트 터널로 가는 흐름도
     if (!this.dpiCheck(pkt, "out", frameId, ctx)) return;
     if (this.policyApplies(pkt.src) && this.toWgClient(pkt, frameId, ctx)) return;
-    // Tor: LAN 의 인터넷 트래픽은 모두 Tor 회로로 (나르지 못하는 것은 버림 — 밖으로 새지 않게)
-    if (this.tor.enabled && this.tor.sendInner({ ...pkt, ttl: pkt.ttl - 1 }, ctx, frameId)) return;
+    // Tor: LAN 이 시작한 인터넷 트래픽은 Tor 회로로 (나르지 못하는 것은 버림 — 밖으로 새지 않게).
+    // 공유기 방화벽 규칙은 그 전에 보고, 포트 포워딩으로 들어온 연결의 응답(NAT 가 이미 아는 흐름)은 원래 길로 (REDIRECT 는 새 연결에만)
+    if (this.tor.enabled && !this.nat.carries(pkt) && !(this.wan2On && this.nat2.carries(pkt))) {
+      if (!this.firewall.check(pkt, "out", ctx, frameId)) return;
+      this.tor.sendInner({ ...pkt, ttl: pkt.ttl - 1 }, ctx, frameId);
+      return;
+    }
     const o = this.outFor(pkt, ctx);
     if (!o.iface.ip) {
       ctx.trace("ip.no-route", "L3", `${pkt.dst} 는 외부 주소인데 ${this.wan2On ? `${WAN_LABEL[o.name]}(지금 쓰는 회선)` : "WAN"} 에 공인 주소가 없음 → 인터넷으로 보낼 수 없음 (WAN 케이블과 DHCP 확인)`, { dst: pkt.dst }, frameId);

@@ -27,6 +27,8 @@ export class TorClient {
   private nextCirc: number;
   sent = 0;
   received = 0;
+  /** 회로를 만들지 못함 (가드 무응답) */
+  failed = false;
 
   constructor(
     private readonly io: TorIo,
@@ -74,6 +76,7 @@ export class TorClient {
   private build(ctx: NodeContext): void {
     if (this.building || !this.io.wanIp()) return;
     this.building = true;
+    this.failed = false;
     this.tries = 1;
     const circ = this.nextCirc++;
     const tok = ++this.tok;
@@ -87,7 +90,8 @@ export class TorClient {
    */
   sendInner(pkt: Ipv4Packet, ctx: NodeContext, frameId?: number): boolean {
     const p = pkt.payload;
-    const dns = p.kind === "udp" && p.dstPort === 53;
+    // DNS 는 이름 질의만 (출구가 대신 푼다) — UDP 53 이라도 DNS 가 아니면 Tor 는 나르지 못한다
+    const dns = p.kind === "udp" && p.dstPort === 53 && p.payload.kind === "dns" && p.payload.op === "query";
     if (p.kind !== "tcp" && !dns) {
       ctx.trace("tor.drop", "L3", `Tor: ${pkt.src} → ${pkt.dst} 의 ${p.kind === "icmp" ? "ICMP(ping)" : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} 는 Tor 가 나르지 못함 (TCP 스트림·DNS 만) → 버림 — Tor 밖으로 내보내면 실제 주소가 드러난다`, { tor: true, dst: pkt.dst }, frameId);
       return true;
@@ -118,8 +122,12 @@ export class TorClient {
       return null;
     }
     if (m.op === "destroy") {
+      if (m.circ !== this.circ) return null;
       this.circ = undefined;
-      ctx.trace("tor.circuit", "app", `Tor: 회로가 닫힘 → 다음 패킷에 다시 만든다`, { tor: true }, frameId);
+      // 가드가 거절한 패킷(돌려준 것)은 새 회로로 다시 보낸다 — 가드가 회로를 잊었을 때 첫 패킷이 사라지지 않게
+      if (m.inner && this.queue.length < QUEUE) this.queue.push(m.inner);
+      ctx.trace("tor.circuit", "app", `Tor: 가드가 회로 ${m.circ} 를 모름 (DESTROY — 가드가 다시 시작했거나 회로를 잊음) → 새 회로를 만들고${m.inner ? " 거절된 패킷을 다시 보냄" : ""}`, { tor: true }, frameId);
+      this.build(ctx);
       return null;
     }
     if (m.op === "data" && m.inner && m.circ === this.circ) {
@@ -135,6 +143,7 @@ export class TorClient {
     if (d.tok !== this.tok || !this.enabled || this.circ !== undefined) return;
     if (this.tries > 2) {
       this.building = false;
+      this.failed = true;
       ctx.trace("tor.drop", "app", `Tor: 가드 ${TOR_GUARD} 응답 없음 (3번) — 회로를 만들지 못함. 기다리던 ${this.queue.length}개를 버림 (Tor 를 막는 망이면 브리지가 필요)`, { tor: true, failed: true });
       this.queue = [];
       return;
@@ -146,13 +155,20 @@ export class TorClient {
 
   summary(): string | undefined {
     if (!this.enabled) return undefined;
-    return this.circ !== undefined ? `회로 ${this.circ} · 출구 ${TOR_EXIT} · 보냄 ${this.sent} · 받음 ${this.received}` : "회로 만드는 중";
+    return this.circ !== undefined ? `회로 ${this.circ} · 출구 ${TOR_EXIT} · 보냄 ${this.sent} · 받음 ${this.received}` : this.failed ? "회로 실패 · 가드 응답 없음 (다음 패킷에 다시 시도)" : "회로 만드는 중";
   }
 }
 
 // ---------- Tor 네트워크 (인터넷 노드가 세 릴레이를 흉내) ----------
 
+/** 출구가 기억하는 흐름 수 상한 */
+const FLOW_CAP = 4096;
+
 interface ExitFlow {
+  innerKey: string;
+  /** TCP: 양쪽이 FIN 을 보냈는지 (끝난 흐름은 치운다) */
+  finOut?: boolean;
+  finIn?: boolean;
   /** 셀을 돌려보낼 공유기 (가드가 본 주소) */
   client: Endpoint;
   circ: number;
@@ -166,7 +182,7 @@ export class TorNetwork {
   private readonly byInner = new Map<string, number>();
   private nextPort = 30000;
   private nextCirc = 1;
-  readonly circuits = new Map<number, Endpoint>();
+  readonly circuits = new Map<string, Endpoint>();
 
   constructor(
     private readonly io: {
@@ -179,38 +195,62 @@ export class TorNetwork {
 
   handle(pkt: Ipv4Packet, srcPort: number, m: TorCell, ctx: NodeContext, frameId: number): void {
     const from: Endpoint = { ip: pkt.src, port: srcPort };
+    // 회로 번호는 링크(보낸 곳)마다 따로 — 다른 공유기가 같은 번호를 골라도 섞이지 않게
+    const ck = `${from.ip}:${from.port}:${m.circ}`;
     if (m.op === "create") {
       const circ = m.circ || this.nextCirc++;
-      this.circuits.set(circ, from);
+      this.circuits.set(`${from.ip}:${from.port}:${circ}`, from);
       ctx.trace("tor.relay", "app", `Tor 가드 ${TOR_GUARD}: ${from.ip} 의 CREATE → 중간 ${TOR_MIDDLE} 로 EXTEND → 출구 ${TOR_EXIT} 로 EXTEND → 회로 ${circ} (가드는 보낸 사람 ${from.ip} 를 안다, 중간은 가드·출구만, 출구는 보낸 사람을 모른다)`, { circ }, frameId);
       this.io.toClient(from, { kind: "tor", op: "created", circ, layers: 0 }, ctx);
       return;
     }
     if (m.op === "destroy") {
-      this.circuits.delete(m.circ);
+      this.circuits.delete(ck);
       return;
     }
     if (m.op !== "data" || !m.inner) return;
-    if (!this.circuits.has(m.circ)) {
-      ctx.trace("tor.relay", "app", `Tor 가드: 모르는 회로 ${m.circ} → DESTROY`, { circ: m.circ }, frameId);
-      this.io.toClient(from, { kind: "tor", op: "destroy", circ: m.circ, layers: 0 }, ctx);
+    if (!this.circuits.has(ck)) {
+      ctx.trace("tor.relay", "app", `Tor 가드: 모르는 회로 ${m.circ} → DESTROY (그 셀을 돌려보내 새 회로로 다시 보내게)`, { circ: m.circ }, frameId);
+      this.io.toClient(from, { kind: "tor", op: "destroy", circ: m.circ, layers: 0, inner: m.inner }, ctx);
       return;
     }
-    this.circuits.set(m.circ, from);
     const inner = m.inner;
     const p = inner.payload;
     if (p.kind !== "tcp" && p.kind !== "udp") return;
     ctx.trace("tor.relay", "app", `Tor: 가드 ${TOR_GUARD} 가 한 겹 벗김 (보낸 곳 ${from.ip} — 안은 여전히 암호) → 중간 ${TOR_MIDDLE} 가 한 겹 → 출구 ${TOR_EXIT} 가 마지막 겹을 벗겨 목적지 ${inner.dst}:${p.dstPort} 를 봄 (누가 보냈는지는 모름)`, { circ: m.circ }, frameId);
     const innerKey = `${p.kind}:${m.circ}:${inner.src}:${p.srcPort}:${inner.dst}:${p.dstPort}`;
-    let port = this.byInner.get(innerKey);
+    const innerKeyFull = `${from.ip}:${from.port}:${innerKey}`;
+    let port = this.byInner.get(innerKeyFull);
     if (port === undefined) {
-      port = this.nextPort++;
-      if (this.nextPort > 60000) this.nextPort = 30000;
-      this.byInner.set(innerKey, port);
-      this.flows.set(`${p.kind}:${port}`, { client: from, circ: m.circ, src: inner.src, sport: p.srcPort });
+      // 흐름이 너무 많으면 오래된 것부터 잊는다 (실제 출구도 끝난 스트림을 닫는다)
+      if (this.flows.size >= FLOW_CAP) {
+        const [oldKey, old] = this.flows.entries().next().value!;
+        this.flows.delete(oldKey);
+        this.byInner.delete(old.innerKey);
+      }
+      // 쓰는 중인 출구 포트는 건너뛴다
+      do {
+        port = this.nextPort++;
+        if (this.nextPort > 60000) this.nextPort = 30000;
+      } while (this.flows.has(`${p.kind}:${port}`));
+      this.byInner.set(innerKeyFull, port);
+      this.flows.set(`${p.kind}:${port}`, { client: from, circ: m.circ, src: inner.src, sport: p.srcPort, innerKey: innerKeyFull });
     }
     const out: Ipv4Packet = { ...inner, src: TOR_EXIT, ttl: 60, payload: { ...p, srcPort: port } } as Ipv4Packet;
+    this.finish(`${p.kind}:${port}`, p, "out");
     this.io.deliver(out, ctx, frameId);
+  }
+
+  /** 끝난 TCP 흐름(RST, 양쪽 FIN)은 출구 포트를 돌려준다 */
+  private finish(key: string, p: Ipv4Packet["payload"], dir: "out" | "in"): void {
+    if (p.kind !== "tcp") return;
+    const f = this.flows.get(key);
+    if (!f) return;
+    if (p.fin) f[dir === "out" ? "finOut" : "finIn"] = true;
+    if (p.rst || (f.finOut && f.finIn && !p.fin)) {
+      this.flows.delete(key);
+      this.byInner.delete(f.innerKey);
+    }
   }
 
   /** 출구 주소로 온 응답: 원래 흐름을 찾아 세 겹 감싸 공유기로 돌려보낸다. 처리했으면 true */
@@ -227,6 +267,7 @@ export class TorNetwork {
       return true;
     }
     const inner: Ipv4Packet = { ...pkt, dst: f.src, payload: { ...p, dstPort: f.sport } } as Ipv4Packet;
+    this.finish(`${p.kind}:${p.dstPort}`, p, "in");
     ctx.trace("tor.relay", "app", `Tor 출구 ${TOR_EXIT}: ${pkt.src} 의 응답을 출구 키로 감쌈 → 중간 → 가드가 한 겹씩 더 감싸 ${f.client.ip} 로`, { circ: f.circ });
     this.io.toClient(f.client, { kind: "tor", op: "data", circ: f.circ, layers: 3, inner }, ctx);
     return true;

@@ -141,7 +141,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.wgServerCfg?.enabled) out.push(`WG 서버 ${node.wgs.connected}`);
     if (node.ovpn.enabled) out.push(`OpenVPN ${node.ovpn.connected}`);
     if (node.dropIn) out.push("드롭인");
-    if (node.tor.enabled) out.push(node.tor.up ? "Tor" : "Tor 대기");
+    if (node.tor.enabled) out.push(node.tor.up ? "Tor" : node.tor.failed ? "Tor 실패" : "Tor 대기");
     if (node.cloud.enabled) out.push(node.cloud.registered ? "GoodCloud" : "GoodCloud 대기");
     if (node.mesh.config.enabled) out.push(node.mesh.up ? node.mesh.brand : `${node.mesh.brand} 대기`);
     if (node.adguard.config.enabled) out.push("AdGuard");
