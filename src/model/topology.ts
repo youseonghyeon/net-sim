@@ -635,7 +635,26 @@ export interface RouterSettings {
   ovpnServer?: RouterOvpnServerSettings;
   /** 메시 VPN (Tailscale·ZeroTier — 서브넷 라우터·exit node). 없으면 꺼짐 */
   mesh?: MeshSettings;
+  /** 관리 화면 (HTTP·HTTPS·SSH) 접근 제어. 없으면 관리 화면 흉내 꺼짐 */
+  admin?: RouterAdminSettings;
+  /** GoodCloud 원격 관리. 없으면 꺼짐 */
+  cloud?: boolean;
+  /** 인터넷을 막은 LAN 기기 (MAC) */
+  blocked?: string[];
+  /** 드롭인 게이트웨이: WAN 쪽 LAN 기기의 게이트웨이가 되어 준다 (한 팔 라우터). 없으면 꺼짐 */
+  dropIn?: boolean;
 }
+
+export interface RouterAdminSettings {
+  enabled: boolean;
+  /** WAN(인터넷)에서도 접근 허용 */
+  remote: boolean;
+  /** LAN 에서 열 수 있는 주소·대역, 쉼표로 (비우면 LAN 전부) */
+  allow: string;
+  ssh: boolean;
+}
+
+export const DEFAULT_ADMIN_SETTINGS: RouterAdminSettings = { enabled: true, remote: false, allow: "", ssh: true };
 
 /**
  * 메시 VPN (Tailscale·ZeroTier) 앱 설정. 노트북·폰·공유기 공통 — advertiseLan·exitNode 는 공유기만, useExitNode 는 단말만
@@ -1517,6 +1536,12 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.wgClient ? { wgClient: normalizeWgClient(r.wgClient) } : {}),
           ...(r.ovpnServer ? { ovpnServer: normalizeOvpnServer(r.ovpnServer) } : {}),
           ...(r.mesh && typeof r.mesh === "object" ? { mesh: normalizeMesh(r.mesh) } : {}),
+          ...(r.admin && typeof r.admin === "object"
+            ? { admin: { enabled: r.admin.enabled === true, remote: r.admin.remote === true, allow: typeof r.admin.allow === "string" ? r.admin.allow : "", ssh: r.admin.ssh !== false } }
+            : {}),
+          ...(r.cloud === true ? { cloud: true } : {}),
+          ...(r.dropIn === true ? { dropIn: true } : {}),
+          ...(Array.isArray(r.blocked) ? { blocked: r.blocked.filter((x): x is string => typeof x === "string") } : {}),
           ...(r.wan2 ? { wan2: normalizeWan2(r.wan2) } : {}),
           ...(r.adguard ? { adguard: normalizeAdguard(r.adguard) } : {}),
           ...(r.dpi ? { dpi: { enabled: (r.dpi as Partial<RouterDpiSettings>).enabled === true, blockApps: Array.isArray(r.dpi.blockApps) ? r.dpi.blockApps.filter((x): x is string => typeof x === "string") : [], blockCategories: Array.isArray(r.dpi.blockCategories) ? r.dpi.blockCategories.filter((x): x is string => typeof x === "string") : [] } } : {}),

@@ -1616,6 +1616,38 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("ts router toggles on:", await rs.locator(".toggle.on").count());
   await page.screenshot({ path: `${OUT}/107-ts-router.png` });
 }
+// 드롭인 게이트웨이·관리 접근·기기 차단: 아이 PC 만 Brume 을 거침, 보안 묶음의 관리 접근·기기 차단 섹션
+{
+  await loadEx("dropin");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitAddr("아빠 PC", /^192\.168\.0\.1\d\d/);
+  await clickDevice("아이 PC");
+  await page.fill(".ping-row .input", "8.8.8.8");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 40000 });
+  console.log("dropin kid → 8.8.8.8:", (await page.locator(".ping-log li").first().innerText()).replace(/\s+/g, " "));
+  await clickDevice("Brume 3 (드롭인)");
+  await goTab("설정");
+  await goGroup("인터넷");
+  const di = page.locator(".inspector section", { has: page.locator("h3", { hasText: "드롭인 게이트웨이" }) });
+  console.log("dropin on:", await di.locator(".toggle.on").count());
+  await goGroup("보안");
+  const adm = page.locator(".inspector section", { has: page.locator("h3", { hasText: "관리 접근" }) });
+  await adm.locator(".toggle").first().click();
+  await adm.scrollIntoViewIfNeeded();
+  console.log("admin toggles:", await adm.locator(".toggle-row").count(), "| block rows:", await page.locator(".inspector section", { has: page.locator("h3", { hasText: "기기 차단" }) }).locator(".toggle-row").count());
+  await page.screenshot({ path: `${OUT}/108-dropin-admin.png` });
+  await goGroup("앱");
+  const cl = page.locator(".inspector section", { has: page.locator("h3", { hasText: "GoodCloud" }) });
+  await cl.locator(".toggle").first().click();
+  await page.waitForTimeout(800);
+  console.log("cloud status:", (await cl.locator("p.note").first().textContent())?.trim());
+  await clickDevice("internet-1");
+  const cm = page.locator(".inspector section", { has: page.locator("h3", { hasText: "GoodCloud 원격 관리" }) });
+  await cm.locator("button").first().click();
+  await page.waitForTimeout(800);
+  console.log("cloud manage row:", (await cm.locator(".toggle-row").first().innerText()).replace(/\s+/g, " "));
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

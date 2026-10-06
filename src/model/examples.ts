@@ -6,7 +6,7 @@ import { exampleStarterTopology, exampleTopology } from "./examples/basic";
 import { examplePartsTopology } from "./examples/parts";
 import { exampleTwoGatewaysTopology, exampleBackboneTopology, exampleRipTopology } from "./examples/routing";
 import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
-import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
+import { exampleDropInTopology, exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology, exampleAdguardTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology, exampleMultiWanTopology } from "./examples/internet";
 import { exampleDdnsTopology, exampleDpiTopology, exampleOpenVpnTopology, exampleTailscaleTopology, exampleWireguardTopology } from "./examples/vpn";
@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "dpi" | "lb" | "proxy" | "adguard" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "dpi" | "lb" | "proxy" | "adguard" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -116,6 +116,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "투명 방화벽 장비 (서버 앞)",
     blurb: "pc-1 → srv-1 ping 은 fw-1 에서 차단되지만 TCP 80 연결은 됩니다. srv-1 → pc-1 ping 은 응답이 Stateful 검사로 돌아오고, srv-1 → pc-1 traceroute 는 1홉 — fw-1 은 IP 가 없어 홉에 안 보입니다.",
     build: exampleFirewallApplianceTopology,
+  },
+  dropin: {
+    id: "dropin",
+    group: "보안",
+    label: "드롭인 게이트웨이 (기존 공유기 옆에 꽂기)",
+    blurb: "기존 공유기는 그대로 두고 Brume 3 의 WAN 만 거실 스위치에 꽂았습니다. 아이 PC 는 게이트웨이를 Brume(192.168.0.2)으로 적어 Brume 을 거쳐 나가고(Brume 의 DPI 가 게임을 막음), 아빠 PC 는 기존 공유기로 바로 나갑니다. 두 PC 에서 roblox.com:443 으로 TCP 연결해 보세요 — 아이 PC 만 RST 로 끊깁니다. Brume 은 WAN 하나로 받고 같은 WAN 으로 내보내며(한 팔 라우터), 응답이 Brume 으로 돌아오게 NAT 합니다.",
+    build: exampleDropInTopology,
   },
   ha: {
     id: "ha",

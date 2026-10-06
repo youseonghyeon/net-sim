@@ -24,7 +24,7 @@ import {
 } from "../model/store";
 import { cableAt, DEFAULT_FIREWALL_SETTINGS, defaultL3, peerOf, specOf, type Device } from "../model/topology";
 import { Icon } from "./Icons";
-import { DiagSection, InternetDiagSection, IspRenumberSection, LiveTables, StatusSection } from "./inspector/diag";
+import { CloudManageSection, DiagSection, InternetDiagSection, IspRenumberSection, LiveTables, StatusSection } from "./inspector/diag";
 import { MeshSection } from "./inspector/mesh";
 import { HostSection, HttpProxySection, Ipv6Section, LbSection, P2pSection, ServiceSection, WifiBaseSection, WifiClientSection, RemoteVpnSection } from "./inspector/host";
 import { L3Section, StpSection, VlanSection } from "./inspector/l3";
@@ -247,6 +247,7 @@ function DevicePanel({ d }: { d: Device }) {
           {d.host && <DiagSection d={d} />}
           {spec.role === "internet" && <InternetDiagSection d={d} />}
           {spec.role === "internet" && <IspRenumberSection d={d} />}
+          {spec.role === "internet" && <CloudManageSection d={d} />}
         </>
       )}
       {tab === "tables" && (

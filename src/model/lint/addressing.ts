@@ -244,7 +244,7 @@ export function staticHostRules({ t, m, add }: LintContext): void {
           message: `이 서브넷엔 게이트웨이 장치가 없음 → 게이트웨이 ${gw} 로 보낸 패킷은 응답 없이 사라짐`,
           fix: `게이트웨이/NAT 박스나 공유기를 이 스위치에 연결하고 그 인터페이스 주소를 ${gw} 로 맞추기 (같은 서브넷 안에서만 통신한다면 게이트웨이 칸을 비워도 됨)`,
         });
-      } else if (gws.every((g) => g.ip) && !gws.some((g) => g.ip === gw || g.vip === gw)) {
+      } else if (gws.every((g) => g.ip) && !gws.some((g) => g.ip === gw || g.vip === gw) && !dropInGateway(t, m, key, gw)) {
         const pick = pickGw(gws, ip);
         flaggedHosts.add(d.id);
         add({
@@ -405,4 +405,10 @@ export function uplinkSubnetRule({ t, m, add }: LintContext): void {
       related: uniqueDevices(refs).map((x) => x.id),
     });
   }
+}
+
+/** 게이트웨이가 같은 세그먼트의 드롭인 게이트웨이 공유기(수동 WAN 주소)인가 — 그 공유기는 WAN 쪽 기기의 게이트웨이가 되어 준다 */
+function dropInGateway(t: Topology, m: LintContext["m"], key: string, gw: string): boolean {
+  const seg = m.ids.get(key);
+  return t.devices.some((x) => x.router?.dropIn && x.router.wan?.ipMode === "static" && x.router.wan.ip === gw && seg !== undefined && m.ids.get(`${x.id}:0`) === seg);
 }

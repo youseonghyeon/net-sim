@@ -26,6 +26,7 @@ import { WAN_LABEL } from "../../core/nodes/mwan";
 import { DdnsSection, WgClientSection, WgServerSection } from "./wg";
 import { OvpnServerSection } from "./ovpn";
 import { MeshSection } from "./mesh";
+import { AdminSection, BlockSection, CloudSection, DropInSection } from "./system";
 import { AdguardSection, DpiSection } from "./apps";
 
 /** LAN 주소/서브넷이 바뀔 때, 기존 범위가 옛 서브넷 안에 있었다면 호스트 부분을 유지한 채 새 서브넷으로 옮긴다 */
@@ -113,10 +114,11 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         {
           id: "internet",
           label: "인터넷",
-          on: r.ipv6?.enabled === true || r.ddns?.enabled === true || r.wan2?.enabled === true,
+          on: r.ipv6?.enabled === true || r.ddns?.enabled === true || r.wan2?.enabled === true || r.dropIn === true,
           content: (
             <>
               <WanSection d={d} w={r.wan ?? DEFAULT_WAN} />
+              <DropInSection d={d} r={r} />
               <MultiWanSection d={d} r={r} />
               <DdnsSection d={d} r={r} />
               <RouterIpv6Section d={d} r={r} />
@@ -140,21 +142,24 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         {
           id: "apps",
           label: "앱",
-          on: r.adguard?.enabled === true || r.dpi?.enabled === true,
+          on: r.adguard?.enabled === true || r.dpi?.enabled === true || r.cloud === true,
           content: (
             <>
               <AdguardSection d={d} r={r} />
               <DpiSection d={d} r={r} />
+              <CloudSection d={d} r={r} />
             </>
           ),
         },
         {
           id: "security",
           label: "보안",
-          on: r.firewall?.enabled === true || (r.forwards?.length ?? 0) > 0 || r.hairpin === true,
+          on: r.firewall?.enabled === true || (r.forwards?.length ?? 0) > 0 || r.hairpin === true || r.admin?.enabled === true || (r.blocked?.length ?? 0) > 0,
           content: (
             <>
               <FirewallSection value={r.firewall ?? DEFAULT_FIREWALL_SETTINGS} onChange={(firewall) => set({ firewall })} uplinkName="WAN" />
+              <AdminSection d={d} r={r} />
+              <BlockSection d={d} r={r} />
               <ForwardSection rules={r.forwards ?? []} onChange={(forwards) => set({ forwards })} lanHint="예: 공인 :80 → 192.168.0.20:80 (LAN 의 웹 서버)." />
               <NatTypeSection natType={r.natType ?? "full-cone"} hairpin={r.hairpin === true} onChange={(patch) => set(patch)} />
             </>

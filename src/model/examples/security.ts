@@ -113,3 +113,32 @@ export function exampleHaTopology(): Topology {
   t.zones = [{ id: newId("zone"), label: "HA 쌍 · 가상 주소 203.0.113.10 / 192.168.0.1", tint: "amber", ...zoneAround(t, [fwA.id, fwB.id], 24)! }];
   return t;
 }
+
+/**
+ * 드롭인 게이트웨이 (GL.iNet Drop-in Gateway): 기존 공유기는 그대로 두고 Brume 의 WAN 만 기존 LAN 에 꽂는다.
+ * 아이 PC 는 게이트웨이를 Brume(192.168.0.2)으로 적어 Brume 의 DPI(게임 차단)를 거치고, 아빠 PC 는 기존 공유기로 바로 나간다
+ */
+export function exampleDropInTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -296, "internet-1");
+  const isp = add("router", 344, -152, "기존 공유기");
+  isp.router = { ...isp.router!, lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" } };
+  const sw = add("switch", 344, -8, "거실 스위치");
+  const brume = add("router", 600, 120, "Brume 3 (드롭인)");
+  brume.router = {
+    ...brume.router!,
+    lanIp: "192.168.8.1",
+    lanPrefix: 24,
+    dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
+    wan: { ipMode: "static", ip: "192.168.0.2", prefix: 24, gateway: "192.168.0.1" },
+    dropIn: true,
+    dpi: { enabled: true, blockApps: [], blockCategories: ["게임"] },
+  };
+  const kid = add("pc", 216, 168, "아이 PC");
+  kid.host = { ...kid.host!, ipMode: "static", ip: "192.168.0.50", prefix: 24, gateway: "192.168.0.2", dns: "8.8.8.8" };
+  const dad = add("pc", 440, 168, "아빠 PC");
+  const cables: Cable[] = [cable(isp, 0, inet, 0), cable(isp, 1, sw, 1), cable(sw, 2, kid, 0), cable(sw, 4, dad, 0), cable(sw, 6, brume, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [{ id: newId("zone"), label: "기존 LAN 192.168.0.0/24", tint: "blue", ...zoneAround(t, [sw.id, kid.id, dad.id, brume.id], 48)! }];
+  return t;
+}

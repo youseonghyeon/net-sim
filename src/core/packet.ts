@@ -406,7 +406,7 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage | OvpnMessage | TsMessage;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage | OvpnMessage | TsMessage | CloudMessage;
 }
 
 /** STUN·TURN (UDP 3478) */
@@ -627,6 +627,28 @@ export interface TsMessage {
   inner?: Ipv4Packet;
   /** DERP 로 맡긴 메시지 */
   msg?: TsMessage;
+}
+
+/**
+ * GoodCloud (GL.iNet 원격 관리 클라우드): 공유기가 먼저 클라우드에 연결(register)해 두고 그 연결을 유지(keepalive)하면,
+ * 관리자가 클라우드 화면에서 누른 요청(manage)이 그 연결로 공유기에 닿고 공유기가 상태(status)로 답한다 — 포트 포워딩 없이
+ */
+export interface CloudMessage {
+  kind: "cloud";
+  op: "register" | "registered" | "keepalive" | "manage" | "status";
+  /** 기기 식별 (MAC) */
+  device: string;
+  name?: string;
+  txid?: number;
+  status?: { wan: Ip; clients: number; vpn: string };
+}
+
+export const CLOUD_PORT = 443;
+export const CLOUD_SERVER: Ip = "198.51.100.90";
+
+export function cloudLabel(m: CloudMessage): string {
+  const op: Record<CloudMessage["op"], string> = { register: "기기 등록", registered: "등록됨", keepalive: "연결 유지", manage: "원격 관리 요청", status: "상태 응답" };
+  return `GoodCloud ${op[m.op]}`;
 }
 
 export const TS_PORT = 41641;
@@ -957,6 +979,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (d.kind === "ddns") return ddnsLabel(d);
   if (d.kind === "ovpn") return ovpnLabel(d);
   if (d.kind === "ts") return tsLabel(d);
+  if (d.kind === "cloud") return cloudLabel(d);
   if (d.kind === "dhcp6") return dhcp6Label(d);
   if (d.kind === "l2tp") return `L2TP${l2tpPartLabel(d)}`;
   if (d.kind === "stun") return stunLabel(d);
@@ -1059,6 +1082,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";
   if (inner.payload.kind === "ts") return inner.payload.net === "zerotier" ? "ZeroTier" : "Tailscale";
+  if (inner.payload.kind === "cloud") return "GoodCloud";
   if (inner.payload.kind === "ovpn") return inner.payload.op === "data" ? "OpenVPN" : "OpenVPN 제어";
   if (inner.payload.kind === "ddns") return inner.payload.op === "update" ? "DDNS 갱신" : inner.payload.op === "release" ? "DDNS 내려놓기" : "DDNS 응답";
   if (inner.payload.kind === "wg") return inner.payload.obf || inner.payload.type === "junk" ? "UDP" : inner.payload.type === "data" ? (inner.payload.inner ? "WireGuard" : "keepalive") : "WG 핸드셰이크";

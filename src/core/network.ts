@@ -56,6 +56,8 @@ export type ActionSpec =
   | { kind: "tcp-close"; nodeId: string; conn: string }
   /** 인터넷 노드의 "저편 클라이언트" 가 공인 주소 dst:port 로 TCP 연결 (포트 포워딩 시연) */
   | { kind: "inet-connect"; nodeId: string; dst: Ip; port: number }
+  /** GoodCloud: 관리자가 클라우드 화면에서 그 공유기(MAC)를 엶 */
+  | { kind: "cloud-manage"; nodeId: string; device: string }
   /** P2P 앱으로 이름이 peer 인 상대와 연결 (STUN → 시그널링 → 홀 펀칭 → 안 되면 TURN) */
   | { kind: "p2p-connect"; nodeId: string; peer: string }
   /** 인터넷 노드: ISP 가 그 공인 주소를 쓰는 고객에게 다른 주소를 주게 한다 (FORCERENEW) */
@@ -392,6 +394,11 @@ export class Network {
         if (!(node instanceof Internet)) throw new Error(`${action.nodeId} is not an internet node`);
         ctx.trace("action", "sys", `[사용자] ISP 가 ${action.ip} 고객의 공인 주소를 바꿈`, { ...action });
         node.renumber(action.ip, ctx);
+        break;
+      case "cloud-manage":
+        if (!(node instanceof Internet)) throw new Error(`${action.nodeId} is not an internet node`);
+        ctx.trace("action", "sys", `[사용자] GoodCloud 관리 화면에서 기기 ${action.device} 를 엶`, { ...action });
+        node.cloudManage(action.device, ctx);
         break;
       case "inet-connect":
         if (!(node instanceof Internet)) throw new Error(`${action.nodeId} is not an internet node`);

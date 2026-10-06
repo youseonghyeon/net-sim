@@ -123,6 +123,28 @@ export function IspRenumberSection({ d }: { d: Device }) {
   );
 }
 
+/** GoodCloud 관리 화면 흉내: 등록한 공유기를 열면 클라우드가 공유기가 연결해 둔 주소로 요청한다 */
+export function CloudManageSection({ d }: { d: Device }) {
+  void simVersion.value;
+  const node = sim.node(d.id);
+  if (!(node instanceof Internet) || node.cloud.devices.size === 0) return null;
+  return (
+    <Section title="GoodCloud 원격 관리">
+      <p class="note">공유기가 먼저 클라우드에 연결해 둔 길로 요청이 들어갑니다 — 공유기의 관리 포트를 인터넷에 열지 않아도 됩니다.</p>
+      {[...node.cloud.devices.entries()].map(([dev, x]) => (
+        <div key={dev} class="toggle-row">
+          <span>
+            {x.name} <span class="mono muted">{x.lastStatus ? `WAN ${x.lastStatus.wan} · 기기 ${x.lastStatus.clients}대` : `${x.at.ip}:${x.at.port}`}</span>
+          </span>
+          <button class="btn ghost small" onClick={() => sim.act({ kind: "cloud-manage", nodeId: d.id, device: dev })} title="클라우드 화면에서 이 공유기를 엽니다">
+            원격 관리
+          </button>
+        </div>
+      ))}
+    </Section>
+  );
+}
+
 // ---------- 시뮬레이션 상태 ----------
 
 export function StatusSection({ d }: { d: Device }) {

@@ -139,6 +139,14 @@ export class NetworkSync {
         if (node instanceof Router && d.router?.dpi?.enabled) node.setDpi(effectiveRouter(d).dpi, net.contextFor(d.id));
         if (node instanceof Router && d.router?.ovpnServer?.enabled) node.ovpn.setConfig(effectiveRouter(d).ovpnServer, net.contextFor(d.id));
         if (node instanceof Router && d.router?.mesh?.enabled) node.setMesh(effectiveRouter(d).mesh, net.contextFor(d.id));
+        if (node instanceof Router && (d.router?.admin?.enabled || d.router?.cloud || d.router?.blocked?.length || d.router?.dropIn)) {
+          const r = effectiveRouter(d);
+          const c = net.contextFor(d.id);
+          node.setDropIn(r.dropIn, c);
+          node.admin.setConfig(r.admin, c);
+          node.cloud.setEnabled(r.cloud, c);
+          node.setBlocked(r.blocked, c);
+        }
         if (node instanceof Host && d.host?.mesh?.enabled) node.setMesh(effectiveMesh(d), net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
@@ -483,6 +491,10 @@ export function effectiveRouter(d: Device, current?: Router) {
       };
     })(),
     mesh: effectiveMesh(d),
+    admin: { enabled: r.admin?.enabled === true, remote: r.admin?.remote === true, allow: parseCidrList(r.admin?.allow), ssh: r.admin?.ssh !== false },
+    cloud: r.cloud === true,
+    dropIn: r.dropIn === true,
+    blocked: (r.blocked ?? []).map((m) => m.trim().toLowerCase()).filter((m) => /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(m)),
     ovpnServer: (() => {
       const o = r.ovpnServer;
       const net = parseCidr(o?.subnet, 24);

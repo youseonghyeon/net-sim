@@ -4,7 +4,7 @@
 // - practitionerLines: 장치가 내린 판단을 실무 명령의 출력(시스코 debug, iptables LOG, dhclient, ping, curl …)으로
 // 시뮬레이터에 없는 필드(체크섬, 윈도우 크기, IP ID 등)는 넣지 않고, 길이는 근사값이다.
 import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, L2tpPacket, OvpnMessage, P2pMessage, StunMessage, TcpSegment, TsMessage, UdpPacket, WgMessage } from "../core/packet";
-import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE, ovpnLength, tsLabel, tsLength, wgLength } from "../core/packet";
+import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE, cloudLabel, ovpnLength, tsLabel, tsLength, wgLength } from "../core/packet";
 import { scopeLabel6 } from "../core/addr6";
 import type { TraceEvent } from "../core/trace";
 
@@ -73,6 +73,7 @@ function appLength(u: UdpPacket): number {
   if (m.kind === "wg") return wgLength(m, m.inner ? 20 + l4Length(m.inner.payload) : 0);
   if (m.kind === "ddns") return 60 + m.hostname.length; // 실제는 HTTPS 요청 — 대략의 크기
   if (m.kind === "ovpn") return ovpnLength(m, m.inner ? 20 + l4Length(m.inner.payload) : 0);
+  if (m.kind === "cloud") return 60 + (m.status ? 40 : 0);
   if (m.kind === "ts") {
     const inner = m.inner ?? m.msg?.inner;
     return tsLength(m, inner ? 20 + l4Length(inner.payload) : 0);
@@ -211,6 +212,7 @@ function udpText(u: UdpPacket): string {
   if (m.kind === "ovpn") return `UDP, length ${appLength(u)}`;
   // Tailscale·ZeroTier 도 tcpdump 는 길이만 (WireGuard·암호화)
   if (m.kind === "ts") return `UDP, length ${appLength(u)}`;
+  if (m.kind === "cloud") return `UDP, length ${appLength(u)}`;
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
 }
 
@@ -671,6 +673,19 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
     return [udp, { title: "DNS (앱)", rows }];
   }
   if (m.kind === "vpn" || m.kind === "esp" || m.kind === "wg" || m.kind === "ovpn" || m.kind === "ts") return [udp];
+  if (m.kind === "cloud")
+    return [
+      udp,
+      {
+        title: "GoodCloud (앱)",
+        rows: [
+          ["메시지", cloudLabel(m)],
+          ["기기", `${m.name ?? ""} (${m.device})`],
+          ...(m.status ? ([["상태", `WAN ${m.status.wan} · 기기 ${m.status.clients}대 · VPN ${m.status.vpn}`]] as [string, string][]) : []),
+          ["참고", "실제는 HTTPS(WebSocket) — 여기서는 UDP 로 줄임. 공유기가 먼저 연 연결이라 포트 포워딩이 필요 없다"],
+        ],
+      },
+    ];
   if (m.kind === "ddns")
     return [
       udp,

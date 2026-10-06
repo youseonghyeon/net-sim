@@ -244,6 +244,10 @@ export type TraceKind =
   | "mesh.decap"
   | "mesh.drop"
   | "mesh.control"
+  /** GoodCloud: 공유기의 등록·연결 유지, 원격 관리 요청, 클라우드 서버 쪽 처리 */
+  | "cloud.register"
+  | "cloud.manage"
+  | "cloud.server"
   | "ha.config"
   | "ha.state"
   | "ha.advert"

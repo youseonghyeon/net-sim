@@ -17,7 +17,7 @@ Brume 3(GL-MT5000)는 OpenWrt 기반 VPN 보안 게이트웨이다. 공식 문�
 5. ✅ (2026-10-07) **DPI·VPN 난독화** — SNI·DNS·모양·포트로 앱 분류, 앱별 통계·차단(RST 주입), VPN 탐지 차단을 WireGuard 난독화(AmneziaWG 식 — 모양 흐트러뜨리기·쓰레기 패킷)로 통과. TCP 443 위장은 OpenVPN(6단계)의 TCP 모드로
 6. ✅ (2026-10-07) **OpenVPN** — 공유기 서버(CA·인증서 발급·폐기(CRL)·tls-crypt·계정·PUSH: 가상 주소·경로·DNS·redirect-gateway), 노트북·폰 앱(원격 접속 종류 "OpenVPN", 설정 파일 가져오기), UDP/TCP 전송(TCP 443 으로 웹만 허용한 방화벽 통과, DPI 는 모양으로 알아봄), keepalive·ping-restart, 서버 재시작 알림, duplicate-cn. 생략: 공유기 OpenVPN 클라이언트, 데이터 채널 키 교환·재협상, TAP
 7. ✅ (2026-10-07) **Tailscale·ZeroTier** — 조정 서버(로그인·netmap 배포)·DERP/root 릴레이를 인터넷 노드가 흉내, 기기는 STUN 으로 후보 주소를 알리고 disco ping·call-me-maybe 로 홀 펀칭(symmetric NAT 끼리는 릴레이에 남음), 공유기 서브넷 라우터·exit node, MagicDNS(Tailscale), ZeroTier 는 같은 엔진의 종류(네트워크 ID·10.147.17.x·DNS 없음). 생략: 데이터 평면 WireGuard 핸드셰이크, ACL·기기 승인·키 만료, ZeroTier 의 L2 브리지
-8. **드롭인 게이트웨이·관리 접근 제어·클라이언트 차단·GoodCloud 원격 관리**
+8. ✅ (2026-10-07) **드롭인 게이트웨이·관리 접근 제어·클라이언트 차단·GoodCloud 원격 관리** — 드롭인(WAN 하나로 받고 내보내는 한 팔 라우터 + NAT, 기존 LAN 기기가 게이트웨이를 Brume 으로), 관리 화면(공유기 TCP 스택: HTTP·HTTPS·SSH, LAN·허용 목록·WAN 원격), 기기 차단(MAC), GoodCloud(공유기가 먼저 연 연결로 원격 관리 — 포트 포워딩 없이). 생략: 관리 로그인·비밀번호, 원격으로 설정 바꾸기, 드롭인 쪽 기기의 DNS 가로채기
 9. 후순위: SIP ALG, IGMP 스누핑, Tor, 네트워크 저장소(Samba)
 
 # 편집 도구 묶음 (2026-09-20 결정 → 같은 날 완료)
