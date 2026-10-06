@@ -54,7 +54,12 @@ function routerWanIp(x: Device): string | undefined {
  * 그 UDP 포트를 안쪽으로 포워딩하면 포워딩 대상(수동 WAN 주소의 공유기)으로 따라간다 (공유기 뒤 Brume). 모르면 undefined (침묵)
  */
 function serverAt(devices: Device[], self: Device, ip: string, port: number): { srv: Device; port: number; via?: Device } | undefined {
-  let srv = devices.find((x) => x !== self && routerWanIp(x) === ip);
+  return followFrom(devices, self, devices.find((x) => x !== self && routerWanIp(x) === ip), port);
+}
+
+/** 그 장비가 서버를 켜지 않고 그 UDP 포트를 안쪽으로 포워딩하면 대상(수동 WAN 주소의 공유기)으로 따라간다 */
+function followFrom(devices: Device[], self: Device, start: Device | undefined, port: number): { srv: Device; port: number; via?: Device } | undefined {
+  let srv = start;
   let p = port;
   let via: Device | undefined;
   for (let hop = 0; srv && !(srv.router?.wgServer?.enabled && srv.router.wgServer.port === p) && hop < 4; hop++) {
@@ -93,8 +98,15 @@ export function ddnsRules({ t, add }: LintContext): void {
   }
 }
 
+/** 공유기 WAN 이 다른 공유기의 LAN 에 붙어 있으면 그 앞 공유기 (밖에서는 앞 공유기의 공인 주소로 보인다) */
+function frontRouter(m: LintContext["m"], d: Device): Device | undefined {
+  const seg = m.ids.get(`${d.id}:0`);
+  if (seg === undefined) return undefined;
+  return m.allGws.find((g) => g.device !== d && g.gwKind === "router" && m.ids.get(g.key) === seg)?.device;
+}
+
 // 규칙 20c: WireGuard
-export function wireguardRules({ t, add }: LintContext): void {
+export function wireguardRules({ t, m, add }: LintContext): void {
   // 서버 쪽: 피어 주소 중복, 터널 대역이 LAN 과 겹침, 피어 없음
   for (const d of t.devices) {
     const s = d.router?.wgServer;
@@ -163,12 +175,18 @@ export function wireguardRules({ t, add }: LintContext): void {
         add({ deviceId: d.id, severity: "warn", code: "wg.name-unknown", message: `서버 이름 ${name} 을(를) DDNS 로 등록한 공유기가 없음 → 이름을 풀지 못해(NXDOMAIN) 연결 실패`, fix: `서버 공유기 → 인터넷 → DDNS 켜고 이름을 ${name.slice(0, -(DDNS_ZONE_NAME.length + 1))} 로, 또는 ${d.name} 의 서버 주소를 고치기` });
         continue;
       }
-      found = owner && owner !== d ? { srv: owner, port: c.port } : undefined;
+      found = owner && owner !== d ? followFrom(t.devices, d, owner, c.port) : undefined;
+      // 이름의 주인이 다른 공유기 뒤에 있으면 DDNS 는 그 앞 공유기의 공인 주소를 등록한다 — 앞 공유기가 그 포트를 포워딩해야 닿는다
+      const front = owner ? frontRouter(m, owner) : undefined;
+      if (found && owner && front && !front.router?.forwards?.some((f) => f.proto === "udp" && f.publicPort === c.port)) {
+        add({ deviceId: d.id, severity: "warn", code: "wg.server-behind-nat", message: `${owner.name} 는 ${front.name} 뒤에 있어 ${name} 이(가) ${front.name} 의 공인 주소를 가리킴 → ${front.name} 에 UDP ${c.port} 포트 포워딩이 없어 핸드셰이크가 닿지 않음`, fix: `${front.name} → 보안 → 포트 포워딩: UDP ${c.port} → ${owner.name} 의 WAN 주소`, related: [front.id, owner.id] });
+        continue;
+      }
     }
     if (!found) continue;
     const { srv, via } = found;
     const s = srv.router?.wgServer;
-    const where = via ? `${via.name} 가 UDP ${c.port} 을 포워딩하는 대상` : server;
+    const where = via ? `${via.name} 가 UDP ${c.port} 을 포워딩하는 대상` : (server ?? name);
     if (!s?.enabled) {
       add({ deviceId: d.id, severity: "warn", code: "wg.server-off", message: `${srv.name} (${where}) 에 WireGuard 서버가 꺼져 있음 → 핸드셰이크에 답이 없어 연결 실패`, fix: `${srv.name} → WireGuard 서버 켜기`, related: [srv.id] });
       continue;

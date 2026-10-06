@@ -325,6 +325,9 @@ export class Router implements SimNode {
     this.wgc.onFail = (_p, ctx) => {
       if (this.wgClientCfg?.enabled && this.wgClientCfg.serverName) this.resolveWgServer(ctx, "핸드셰이크 실패 — 서버 주소가 바뀌었을 수 있어 이름을 다시 풂", true);
     };
+    this.wgc.needEndpoint = (_p, ctx) => {
+      if (this.wgClientCfg?.enabled && this.wgClientCfg.serverName) this.resolveWgServer(ctx, "보낼 패킷이 생겼는데 서버 주소를 모름 — 이름을 다시 풂");
+    };
   }
 
   /** VPN 서버 이름을 풀어 엔드포인트로 (캐시는 지우고 — 바뀐 주소를 받으려고) */
@@ -340,8 +343,13 @@ export class Router implements SimNode {
       if (!ip) {
         peer.resolving = false;
         peer.failed = `서버 이름 ${n.name} 을(를) 풀지 못함 (${reason ?? "?"})`;
+        const q = peer.queue.length;
         peer.queue = [];
-        ctx.trace("vpn.drop", "L4", `WireGuard 클라이언트: ${peer.failed} — DDNS 이름과 공유기 DNS 를 확인`, { wg: true, failed: true });
+        if (peer.prevEndpoint) {
+          peer.endpoint = peer.prevEndpoint;
+          peer.prevEndpoint = undefined;
+        }
+        ctx.trace("vpn.drop", "L4", `WireGuard 클라이언트: ${peer.failed}${q ? ` → 기다리던 패킷 ${q}개 드롭` : ""}${peer.endpoint ? ` — 전에 쓰던 ${peer.endpoint.ip} 로 계속 시도` : " — 보낼 패킷이 또 생기면 다시 풂"}. DDNS 이름과 공유기 DNS 를 확인`, { wg: true, failed: true });
         return;
       }
       ctx.trace("vpn.config", "sys", `WireGuard 클라이언트: ${n.name} = ${ip} → 엔드포인트 ${ip}:${n.port}`, { wg: true, name: n.name, ip });
@@ -657,6 +665,7 @@ export class Router implements SimNode {
 
   onRemove(ctx: NodeContext): void {
     this.vpnServer.clear();
+    this.ddns.release(ctx, "공유기를 치움");
     if (this.ipv6Enabled) {
       if (this.wanLinkUp) this.pd.release(ctx, this.emitWan(ctx));
       this.lan6.shutdown(ctx, this.emitLan(ctx));
@@ -1482,8 +1491,9 @@ export class Router implements SimNode {
     const c = this.wgClientCfg;
     if (!c?.enabled) return undefined;
     const p = this.wgcPeer;
-    const state = !p ? "설정 확인 필요" : p.session ? `연결됨 · 터널 주소 ${c.address?.ip ?? "?"}` : p.pending ? "연결 중 (핸드셰이크)" : p.failed ? `끊김 · ${c.killSwitch ? "킬 스위치로 인터넷 차단 중" : "WAN 으로 바로 나가는 중 (킬 스위치 꺼짐)"}` : "대기 (보낼 패킷이 생기면 연결)";
-    return `${state} · 서버 ${c.server ? `${c.server.ip}:${c.server.port}` : "없음"}`;
+    const state = !p ? "설정 확인 필요" : p.session ? `연결됨 · 터널 주소 ${c.address?.ip ?? "?"}` : p.pending ? "연결 중 (핸드셰이크)" : p.resolving ? "서버 이름을 푸는 중" : p.failed ? `끊김 (${p.failed.split(" — ")[0]}) · ${c.killSwitch ? "킬 스위치로 인터넷 차단 중" : "WAN 으로 바로 나가는 중 (킬 스위치 꺼짐)"}` : "대기 (보낼 패킷이 생기면 연결)";
+    const server = c.serverName ? `${c.serverName.name}${p?.endpoint ? ` = ${p.endpoint.ip}` : ""}:${c.serverName.port}` : c.server ? `${c.server.ip}:${c.server.port}` : "없음";
+    return `${state} · 서버 ${server}`;
   }
 
   private handleIcmp(pkt: Ipv4Packet, icmp: IcmpPacket, frameId: number, ctx: NodeContext, iface: NetInterface, emit: Emit, replySrc?: Ip): void {

@@ -425,7 +425,9 @@ export class Internet implements SimNode {
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frameId);
       else if (m.kind === "dns" && udp.dstPort === DNS_PORT && m.op === "query") this.handleDns(pkt, udp.srcPort, m, frameId, ctx);
       else if (m.kind === "dns") ctx.trace("ip.drop", "L4", `공인 DNS 가 아닌 주소로 온 DNS 응답 → 드롭`, {}, frameId);
-      else if (m.kind === "ddns" && pkt.dst === DDNS_SERVER && udp.dstPort === DDNS_PORT && m.op === "update") {
+      else if (m.kind === "ddns" && pkt.dst === DDNS_SERVER && udp.dstPort === DDNS_PORT && m.op === "release") {
+        if (!isPrivateIp(pkt.src)) this.ddns.handle(pkt.src, m, ctx, frameId);
+      } else if (m.kind === "ddns" && pkt.dst === DDNS_SERVER && udp.dstPort === DDNS_PORT && m.op === "update") {
         if (isPrivateIp(pkt.src)) {
           ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} 인 DDNS 갱신 → 응답을 돌려줄 수 없어 드롭 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
           return;

@@ -527,7 +527,8 @@ export interface WgMessage {
  */
 export interface DdnsMessage {
   kind: "ddns";
-  op: "update" | "response";
+  /** release: 이 기기가 이름을 내려놓음 (DDNS 를 끄거나 장치를 치울 때 — 다른 기기가 그 이름을 쓸 수 있게) */
+  op: "update" | "response" | "release";
   id: number;
   hostname: string;
   /** 기기 식별 (GL.iNet 은 기기마다 이름이 정해져 있다 — 여기서는 WAN MAC) */
@@ -540,7 +541,7 @@ export interface DdnsMessage {
 export const DDNS_PORT = 8245;
 
 export function ddnsLabel(m: DdnsMessage): string {
-  return m.op === "update" ? `DDNS 갱신 요청 (${m.hostname})` : `DDNS 응답 (${m.hostname}: ${m.result}${m.ip ? ` ${m.ip}` : ""})`;
+  return m.op === "release" ? `DDNS 이름 내려놓기 (${m.hostname})` : m.op === "update" ? `DDNS 갱신 요청 (${m.hostname})` : `DDNS 응답 (${m.hostname}: ${m.result}${m.ip ? ` ${m.ip}` : ""})`;
 }
 
 /** WireGuard 메시지의 UDP 길이 (실제 형식의 크기) */
@@ -907,7 +908,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";
-  if (inner.payload.kind === "ddns") return inner.payload.op === "update" ? "DDNS 갱신" : "DDNS 응답";
+  if (inner.payload.kind === "ddns") return inner.payload.op === "update" ? "DDNS 갱신" : inner.payload.op === "release" ? "DDNS 내려놓기" : "DDNS 응답";
   if (inner.payload.kind === "wg") return inner.payload.type === "data" ? (inner.payload.inner ? "WireGuard" : "keepalive") : "WG 핸드셰이크";
   if (inner.payload.kind === "dhcp6") return `DHCPv6 ${DHCP6_LABEL[inner.payload.type]}`;
   if (inner.payload.kind === "l2tp") return "L2TP";

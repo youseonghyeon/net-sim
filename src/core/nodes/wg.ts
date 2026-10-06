@@ -194,6 +194,8 @@ export class WgInterface {
   private tok = 0;
   /** 핸드셰이크가 끝내 실패했을 때 (엔드포인트가 이름이면 다시 풀어 보게 — GL.iNet 의 reresolve) */
   onFail: ((p: WgPeerState, ctx: NodeContext) => void) | undefined;
+  /** 보낼 패킷이 있는데 엔드포인트가 없음 (이름 풀기가 실패했던 피어 — 다시 풀어 보게). 없으면 드롭 */
+  needEndpoint: ((p: WgPeerState, ctx: NodeContext) => void) | undefined;
 
   constructor(
     private readonly io: WgIo,
@@ -267,8 +269,9 @@ export class WgInterface {
   /** 원래 패킷을 피어에게: 세션이 있으면 바로, 없으면 쌓아 두고 핸드셰이크를 시작한다 */
   send(p: WgPeerState, inner: Ipv4Packet, ctx: NodeContext, frameId?: number): void {
     if (!this.config.enabled) return;
-    if (!p.endpoint && p.resolving) {
+    if (!p.endpoint && (p.resolving || this.needEndpoint)) {
       if (p.queue.length < WG_QUEUE) p.queue.push({ inner, frameId });
+      if (!p.resolving) this.needEndpoint!(p, ctx);
       return;
     }
     if (!p.endpoint) {
@@ -600,6 +603,10 @@ export class WgClient {
     this.wg.onFail = (_p, ctx) => {
       if (this.serverName) this.resolveServer(ctx, "핸드셰이크 실패 — 서버 주소가 바뀌었을 수 있어 이름을 다시 풂", true);
     };
+    // 이름 풀기가 실패해 엔드포인트가 없는데 보낼 패킷이 생김: 다시 풀어 본다
+    this.wg.needEndpoint = (_p, ctx) => {
+      if (this.serverName) this.resolveServer(ctx, "보낼 패킷이 생겼는데 서버 주소를 모름 — 이름을 다시 풂");
+    };
   }
 
   /** 서버를 이름으로 적었으면 그 이름 */
@@ -624,9 +631,15 @@ export class WgClient {
       if (this.serverName !== name || !this.wg.enabled) return;
       if (!ip) {
         p.resolving = false;
+        const n = p.queue.length;
         p.queue = [];
         p.failed = `서버 이름 ${name} 을(를) 풀지 못함 (${reason ?? "?"})`;
-        ctx.trace("vpn.drop", "L4", `WireGuard: ${p.failed} — 이름(DDNS)과 DNS 설정을 확인`, { wg: true, failed: true });
+        // 전에 쓰던 주소가 있으면 그대로 다시 써 본다 (이름 풀기만 잠깐 안 됐을 수 있다)
+        if (p.prevEndpoint) {
+          p.endpoint = p.prevEndpoint;
+          p.prevEndpoint = undefined;
+        }
+        ctx.trace("vpn.drop", "L4", `WireGuard: ${p.failed}${n ? ` → 기다리던 패킷 ${n}개 드롭` : ""}${p.endpoint ? ` — 전에 쓰던 ${p.endpoint.ip} 로 계속 시도` : " — 보낼 패킷이 또 생기면 다시 풂"}. 이름(DDNS)과 DNS 설정을 확인`, { wg: true, failed: true });
         return;
       }
       ctx.trace("vpn.config", "sys", `WireGuard: ${name} = ${ip} → 엔드포인트 ${ip}:${w.port}`, { wg: true, name, ip });
@@ -760,8 +773,10 @@ export class WgClient {
     const s = this.state;
     const w = this.config.wg;
     if (!w?.address || !this.config.server) return "설정 필요 (서버 주소·내 터널 주소)";
-    if (s === "up") return `연결됨 · 터널 주소 ${w.address.ip} · ${prefixesLabel(w.allowedIps)} 는 터널로`;
-    if (s === "init") return "연결 중 (핸드셰이크)";
+    const ep = this.peer?.endpoint;
+    const via = this.serverName ? ` · ${this.serverName}${ep ? ` = ${ep.ip}` : ""}` : "";
+    if (s === "up") return `연결됨 · 터널 주소 ${w.address.ip} · ${prefixesLabel(w.allowedIps)} 는 터널로${via}`;
+    if (s === "init") return `연결 중 (핸드셰이크)${via}`;
     if (s === "failed") return `실패 · ${this.peer?.failed ?? ""}`;
     return "대기 (주소를 받으면 연결)";
   }

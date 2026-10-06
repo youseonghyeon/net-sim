@@ -52,6 +52,8 @@ export class DdnsClient {
   setConfig(cfg: DdnsConfig, ctx: NodeContext): void {
     if (cfg.enabled === this.config.enabled && cfg.hostname === this.config.hostname) return;
     const wasOn = this.config.enabled;
+    // 쓰던 이름은 내려놓는다 (끔·이름 변경 — 다른 기기가 그 이름을 쓸 수 있게)
+    if (wasOn && this.state === "ok") this.release(ctx, cfg.enabled ? "이름을 바꿈" : "DDNS 끔");
     this.config = { ...cfg };
     this.pending = undefined;
     this.sentFrom = undefined;
@@ -59,7 +61,7 @@ export class DdnsClient {
     this.reason = undefined;
     this.state = cfg.enabled ? "updating" : "off";
     if (!cfg.enabled) {
-      if (wasOn) ctx.trace("ddns.config", "sys", `DDNS 꺼짐 — 서버의 이름은 마지막 주소 그대로 남는다 (지우지 않음)`, {});
+      if (wasOn) ctx.trace("ddns.config", "sys", `DDNS 꺼짐`, {});
       return;
     }
     ctx.trace("ddns.config", "sys", `DDNS 켜짐: ${cfg.hostname} 을(를) 이 공유기의 공인 주소로 등록 (서버 ${DDNS_SERVER}, WAN 주소가 바뀔 때마다·10분마다 갱신)`, { hostname: cfg.hostname });
@@ -67,18 +69,35 @@ export class DdnsClient {
     this.arm(ctx);
   }
 
-  /** WAN 주소가 생기거나 바뀜 */
+  /** 이 이름을 내려놓는다 (응답은 기다리지 않는다 — 장치를 치울 때도 쓴다) */
+  release(ctx: NodeContext, why: string): void {
+    const src = this.io.wanIp();
+    if (!this.config.enabled || !src || this.state !== "ok") return;
+    ctx.trace("ddns.update", "app", `DDNS: ${why} → ${this.config.hostname} 을(를) 내려놓음 (다른 기기가 쓸 수 있게)`, { hostname: this.config.hostname, release: true });
+    const m: DdnsMessage = { kind: "ddns", op: "release", id: ++this.idSeq, hostname: this.config.hostname, device: this.io.device };
+    this.io.send({ kind: "ipv4", src, dst: DDNS_SERVER, ttl: 64, payload: { kind: "udp", srcPort: DDNS_PORT, dstPort: DDNS_PORT, payload: m } }, ctx);
+    this.state = "off";
+  }
+
+  /** WAN 주소가 생기거나 바뀜 (등록이 아직 안 됐으면 같은 주소여도 다시 시도) */
   onWanAddress(ctx: NodeContext): void {
     if (!this.config.enabled) return;
     const ip = this.io.wanIp();
-    if (!ip || ip === this.sentFrom) return;
+    if (!ip || (ip === this.sentFrom && this.state === "ok")) return;
+    if (this.pending && ip === this.sentFrom) return; // 이 주소로 보낸 갱신의 답을 기다리는 중
     this.update(ctx, this.sentFrom ? `WAN 주소가 ${this.sentFrom} → ${ip} 로 바뀜` : `WAN 주소 ${ip} 를 받음`);
   }
 
   /** 갱신 요청을 보낸다 */
   update(ctx: NodeContext, why: string, tries = 1): void {
     const src = this.io.wanIp();
-    if (!this.config.enabled || !src) return;
+    if (!this.config.enabled) return;
+    if (!src) {
+      // WAN 주소를 잃음: 기다리던 갱신은 접는다 (주소가 다시 생기면 onWanAddress 가 다시 보낸다 — 남겨 두면 주기 확인도 막힌다)
+      this.pending = undefined;
+      if (this.state !== "ok") this.state = "updating";
+      return;
+    }
     const id = tries === 1 ? ++this.idSeq : this.pending!.id;
     this.pending = { id, tries };
     this.sentFrom = src;
@@ -152,6 +171,13 @@ export class DdnsService {
       return reply("notfqdn");
     }
     const cur = this.records.get(name);
+    if (m.op === "release") {
+      if (cur && cur.device === m.device) {
+        this.records.delete(name);
+        ctx.trace("ddns.server", "app", `DDNS 서버: ${name} 을(를) 등록한 기기가 내려놓음 → 레코드 삭제 (이제 다른 기기가 쓸 수 있다)`, { name, release: true }, frameId);
+      }
+      return reply("nochg");
+    }
     if (cur && cur.device !== m.device) {
       ctx.trace("ddns.server", "app", `DDNS 서버: ${name} 은(는) 다른 기기(${cur.device})가 등록한 이름 → badauth (기존 ${cur.ip} 유지)`, { name, result: "badauth" }, frameId);
       return reply("badauth");

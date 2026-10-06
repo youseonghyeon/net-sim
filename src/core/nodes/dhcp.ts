@@ -197,7 +197,7 @@ export class DhcpClient {
       case "forcerenew": {
         // RFC 3203: 서버가 "지금 임대를 다시 확인하라" 고 알린다 (ISP 가 고객 주소를 바꿀 때). 쓰던 주소로 Request → 서버가 Nak 이면 Discover 부터
         if (this.state !== "bound" || !this.iface.ip) {
-          ctx.trace("dhcp.ignore", "app", this.tag(`주소가 없는 상태라 FORCERENEW 무시`), {}, frameId);
+          ctx.trace("dhcp.ignore", "app", this.tag(this.iface.ip ? `수동 주소(${this.iface.ip})를 쓰는 중이라 FORCERENEW 무시 — DHCP 로 받은 주소가 아니다 (서버에는 예전 임대가 남아 있었다)` : `주소가 없는 상태라 FORCERENEW 무시`), {}, frameId);
           return;
         }
         const cur = this.iface.ip;
@@ -479,7 +479,8 @@ export class DhcpServer {
       const ok = msg.requestedIp && ((offered && offered === msg.requestedIp) || (leased && leased.mac === msg.clientMac));
       if (!ok) {
         const nak: DhcpMessage = { kind: "dhcp", op: "nak", xid: msg.xid, clientMac: msg.clientMac, serverId: me, giaddr: msg.giaddr };
-        ctx.trace("dhcp.nak.sent", "app", `DHCP Nak: ${msg.requestedIp} 는 ${msg.clientMac} 에게 제안한 주소가 아님 → 거부`, { ...nak });
+        const taken = this.avoid.get(msg.clientMac) === msg.requestedIp;
+        ctx.trace("dhcp.nak.sent", "app", taken ? `DHCP Nak: ${msg.requestedIp} 는 서버가 거둬 간 주소 (주소 바꾸기) → 다시 Discover 하라고 거부` : `DHCP Nak: ${msg.requestedIp} 는 ${msg.clientMac} 에게 제안한 주소가 아님 → 거부`, { ...nak });
         this.reply(nak, LIMITED_BROADCAST_IP, msg, ctx, emit);
         return;
       }
