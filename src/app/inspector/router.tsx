@@ -20,7 +20,7 @@ import { WifiBaseSection } from "./host";
 import { FirewallSection, ForwardSection, NatTypeSection } from "./rules";
 import { Icon } from "../Icons";
 import { ConfigGroups, Field, Section, Toggle, ipError, validIp } from "./ui";
-import { WgClientSection, WgServerSection } from "./wg";
+import { DdnsSection, WgClientSection, WgServerSection } from "./wg";
 
 /** LAN 주소/서브넷이 바뀔 때, 기존 범위가 옛 서브넷 안에 있었다면 호스트 부분을 유지한 채 새 서브넷으로 옮긴다 */
 export function remapRange(oldIp: string, oldPrefix: number, newIp: string, newPrefix: number, range: { start: string; end: string }): { start: string; end: string } | null {
@@ -107,10 +107,11 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         {
           id: "internet",
           label: "인터넷",
-          on: r.ipv6?.enabled === true,
+          on: r.ipv6?.enabled === true || r.ddns?.enabled === true,
           content: (
             <>
               <WanSection d={d} w={r.wan ?? DEFAULT_WAN} />
+              <DdnsSection d={d} r={r} />
               <RouterIpv6Section d={d} r={r} />
             </>
           ),

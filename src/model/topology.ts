@@ -602,6 +602,26 @@ export interface RouterSettings {
   wgServer?: RouterWgServerSettings;
   /** WireGuard 클라이언트 (LAN 전체를 VPN 으로 — 킬 스위치·VPN 정책). 없으면 꺼짐 */
   wgClient?: RouterWgClientSettings;
+  /** DDNS (glddns.com). 없으면 꺼짐 */
+  ddns?: RouterDdnsSettings;
+}
+
+/** DDNS: 이름 앞부분 (myhome → myhome.glddns.com) */
+export interface RouterDdnsSettings {
+  enabled: boolean;
+  name: string;
+}
+
+/** DDNS 이름의 영역 (core/nodes/ddns.ts DDNS_ZONE 과 같은 값) */
+export const DDNS_ZONE_NAME = "glddns.com";
+
+/** DDNS 이름 칸 → 전체 이름 (앞부분만 적으면 영역을 붙이고, 영역까지 적었으면 그대로). 쓸 수 없는 이름이면 undefined */
+export function ddnsHostname(name: string | undefined): string | undefined {
+  const n = (name ?? "").trim().toLowerCase().replace(/\.$/, "");
+  if (!n) return undefined;
+  const full = n.endsWith(`.${DDNS_ZONE_NAME}`) ? n : `${n}.${DDNS_ZONE_NAME}`;
+  const label = full.slice(0, -(DDNS_ZONE_NAME.length + 1));
+  return /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(label) ? full : undefined;
 }
 
 /** WireGuard 설정 파일 한 장의 클라이언트 쪽 ([Interface] Address·DNS + [Peer] PublicKey·Endpoint 포트·AllowedIPs) */
@@ -1286,6 +1306,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.vpnServer ? { vpnServer: normalizeRouterVpn(r.vpnServer) } : {}),
           ...(r.wgServer ? { wgServer: normalizeWgServer(r.wgServer) } : {}),
           ...(r.wgClient ? { wgClient: normalizeWgClient(r.wgClient) } : {}),
+          ...(r.ddns ? { ddns: { enabled: (r.ddns as Partial<RouterDdnsSettings>).enabled === true, name: typeof (r.ddns as Partial<RouterDdnsSettings>).name === "string" ? r.ddns.name : "" } } : {}),
           natType: natTypeOf(r.natType),
           hairpin: r.hairpin === true ? true : undefined,
         };

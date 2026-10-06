@@ -62,3 +62,43 @@ export function exampleWireguardTopology(): Topology {
   ];
   return t;
 }
+
+/**
+ * 주소가 바뀌는 집 (DDNS·WireGuard):
+ * - 집 Brume 3 의 WAN 은 자동(DHCP) — 가정용 회선은 공인 주소가 바뀐다. DDNS 로 myhome.glddns.com 을 지금 주소로 갱신한다
+ * - 카페 폰의 WireGuard 앱은 서버를 주소가 아니라 이름(myhome.glddns.com)으로 적는다
+ * - 인터넷 노드의 진단 탭 "공인 주소 바꾸기" 로 ISP 가 집 주소를 바꾸면(FORCERENEW) 공유기가 새 주소를 받아 DDNS 를 갱신하고,
+ *   폰은 옛 주소로 보낸 것에 답이 없어 새 핸드셰이크 → 실패 → 이름을 다시 풀어 새 주소로 잇는다
+ */
+export function exampleDdnsTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -296, "internet-1");
+  const isp = add("switch", 344, -168, "통신사 구간");
+  const cafe = add("router", 120, -24, "카페 공유기");
+  // 카페 공유기는 가정·매장용에 흔한 port-restricted NAT: 집 서버가 새 주소에서 먼저 다시 잇는 것은 막혀(폰이 보낸 적 없는 주소) 폰이 이름을 다시 풀어야 한다
+  cafe.router = { ...cafe.router!, lanIp: "10.20.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "10.20.0.100", end: "10.20.0.199" }, wifi: { enabled: true, ssid: "cafe" }, natType: "port-restricted" };
+  const phone = add("phone", 40, 152, "카페 폰");
+  const home = add("router", 568, -24, "집 Brume 3");
+  const nas = add("server", 568, 152, "집 NAS");
+  home.router = {
+    ...home.router!,
+    lanIp: "192.168.8.1",
+    lanPrefix: 24,
+    dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
+    ddns: { enabled: true, name: "myhome" },
+    wgServer: { enabled: true, address: "10.0.0.1/24", port: 51820, peers: [{ name: "카페 폰", publicKey: wgPublicKeyOf(phone, "host"), ip: "10.0.0.2" }], lanAccess: true },
+  };
+  nas.host = { ipMode: "static", ip: "192.168.8.20", prefix: 24, gateway: "192.168.8.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  phone.wifi = { ssid: "cafe" };
+  phone.host = {
+    ...phone.host!,
+    ra: { enabled: true, type: "wireguard", server: "myhome.glddns.com", psk: "", wg: { address: "10.0.0.2/32", port: 51820, serverKey: wgPublicKeyOf(home, "server"), allowedIps: "10.0.0.0/24, 192.168.8.0/24", dns: "" } },
+  };
+  const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, cafe, 0), cable(isp, 6, home, 0), cable(home, 1, nas, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "카페 10.20.0.0/24", tint: "green", ...zoneAround(t, [cafe.id, phone.id], 56)! },
+    { id: newId("zone"), label: "집 · WAN 자동 · myhome.glddns.com", tint: "blue", ...zoneAround(t, [home.id, nas.id], 56)! },
+  ];
+  return t;
+}

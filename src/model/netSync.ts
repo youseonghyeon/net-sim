@@ -27,6 +27,7 @@ import { DEFAULT_LB_SETTINGS, DEFAULT_PROXY_SETTINGS,
   DEVICE_SPECS,
   defaultL3,
   wgKeyOf,
+  ddnsHostname,
   wirelessLinks,
   type Device,
   type FirewallSettings,
@@ -127,6 +128,7 @@ export class NetworkSync {
           const r = effectiveRouter(d);
           node.setWg(r.wgServer, r.wgClient, net.contextFor(d.id));
         }
+        if (node instanceof Router && d.router?.ddns?.enabled) node.ddns.setConfig(effectiveRouter(d).ddns, net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -280,7 +282,15 @@ export function effectiveRaClient(d: Device): RaClientConfig | undefined {
     ...(r.dpd === true && r.type !== "l2tp" && r.type !== "wireguard" ? { dpd: true } : {}),
     ...(r.type === "l2tp" ? { type: "l2tp" as const } : {}),
     ...(r.type === "wireguard" ? { type: "wireguard" as const, wg: effectiveWgFields(r.wg, wgKeyOf(d, "host")) } : {}),
+    // WireGuard 는 서버를 이름(DDNS)으로도 적는다
+    ...(r.type === "wireguard" && !server && endpointName(r.server) ? { server: endpointName(r.server)! } : {}),
   };
+}
+
+/** 엔드포인트 이름 칸 (DDNS 이름처럼 글자가 든 호스트 이름): 소문자로, 모양이 아니면 undefined */
+export function endpointName(text: string | undefined): string | undefined {
+  const n = (text ?? "").trim().toLowerCase().replace(/\.$/, "");
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(n) && /[a-z]/.test(n) ? n : undefined;
 }
 
 /** "10.0.0.2/32" 같은 주소/프리픽스 (프리픽스가 없으면 dflt). 올바르지 않으면 undefined */
@@ -415,15 +425,18 @@ export function effectiveRouter(d: Device, current?: Router) {
         .filter((p, i, all) => p.publicKey !== "" && validIp(p.ip) && all.findIndex((x) => x.publicKey === p.publicKey) === i),
       lanAccess: r.wgServer?.lanAccess !== false,
     },
+    ddns: { enabled: r.ddns?.enabled === true && !!ddnsHostname(r.ddns.name), hostname: ddnsHostname(r.ddns?.name) ?? "" },
     wgClient: (() => {
       const c = r.wgClient;
       const f = effectiveWgFields(c, wgKeyOf(d, "client"));
       const server = validIp(c?.server) ? c!.server.trim() : undefined;
+      const name = !server ? endpointName(c?.server) : undefined;
       return {
         enabled: c?.enabled === true,
         privateKey: f.privateKey,
         ...(f.address ? { address: f.address } : {}),
         ...(server ? { server: { ip: server, port: f.port } } : {}),
+        ...(name ? { serverName: { name, port: f.port } } : {}),
         serverKey: f.serverKey,
         allowedIps: f.allowedIps,
         ...(f.dns ? { dns: f.dns } : {}),

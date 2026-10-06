@@ -9,7 +9,7 @@ import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./e
 import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology } from "./examples/internet";
-import { exampleWireguardTopology } from "./examples/vpn";
+import { exampleDdnsTopology, exampleWireguardTopology } from "./examples/vpn";
 import { exampleRoamingTopology } from "./examples/wireless";
 import { exampleCompanyTopology } from "./examples/overview";
 import { exampleDualStackHomeTopology, exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -200,6 +200,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "GL.iNet 식 VPN 게이트웨이 (WireGuard·킬 스위치)",
     blurb: "집 Brume 3 은 WireGuard 서버, 호텔 뒤 여행용 공유기는 WireGuard 클라이언트입니다. 여행 노트북은 아무 설정 없이 모든 트래픽이 집을 거칩니다 — 여행용 공유기에 \"VPN 연결됨\" 이 뜨면(첫 핸드셰이크는 호텔 공유기가 아직 인터넷에 붙기 전이라 사라지고 5초 뒤 다시 시도) 노트북에서 집 NAS 192.168.8.20 으로 TCP 80, 8.8.8.8 로 ping 해 보세요(집 공인 주소로 나감). 출장 폰은 WireGuard 앱으로 집 대역만 터널로 보냅니다(split tunnel). 집 Brume 3 의 피어에서 폰의 공개 키를 한 글자 바꾸면 핸드셰이크에 아무 답도 없이 timeout 이 납니다 — WireGuard 는 모르는 키에 답하지 않습니다. 집 Brume 3 의 WireGuard 서버를 끄면 여행용 공유기의 킬 스위치가 노트북의 인터넷을 막습니다(끄면 호텔로 바로 새어 나감).",
     build: exampleWireguardTopology,
+  },
+  ddns: {
+    id: "ddns",
+    group: "VPN",
+    label: "주소가 바뀌는 집 (DDNS·WireGuard)",
+    blurb: "집 Brume 3 의 WAN 은 자동(DHCP)이라 공인 주소가 바뀔 수 있습니다. 공유기가 DDNS 로 myhome.glddns.com 을 지금 주소로 갱신하고, 카페 폰의 WireGuard 앱은 서버를 이름으로 적어 둡니다. 폰에서 집 NAS 192.168.8.20 으로 ping 한 뒤, internet-1 의 진단 탭에서 \"공인 주소 바꾸기\" 로 집 주소를 바꿔 보세요 — 공유기가 새 주소를 받아 DDNS 를 갱신합니다. 폰은 옛 주소로 보낸 것에 답이 없으니 \"+10초\" 를 몇 번 눌러 시간을 흘리면 새 핸드셰이크가 실패한 뒤 이름을 다시 풀어 새 주소로 붙습니다.",
+    build: exampleDdnsTopology,
   },
   roaming: {
     id: "roaming",

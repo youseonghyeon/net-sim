@@ -93,6 +93,36 @@ export function InternetDiagSection({ d }: { d: Device }) {
   );
 }
 
+/** 인터넷 노드: ISP 가 고객의 공인 주소를 바꾼다 (FORCERENEW) — 가정용 회선의 주소가 바뀌는 순간 (DDNS 가 필요한 이유) */
+export function IspRenumberSection({ d }: { d: Device }) {
+  void simVersion.value;
+  const node = sim.node(d.id);
+  if (!(node instanceof Internet)) return null;
+  const leases = [...node.dhcpServer.leases.entries()].map(([ip, l]) => {
+    const owner = topology.value.devices.find((x) => {
+      const n = sim.node(x.id);
+      return n instanceof Router ? n.wan.mac === l.mac : n instanceof L3Node ? n.ifaces.some((f) => f.mac === l.mac) : n instanceof Host ? n.iface.mac === l.mac : false;
+    });
+    return { ip, name: owner?.name ?? l.mac };
+  });
+  return (
+    <Section title="공인 주소 바꾸기">
+      <p class="note">ISP 가 고객 회선의 공인 주소를 바꿉니다(DHCP FORCERENEW). 가정용 회선은 이렇게 주소가 바뀌어, 집으로 접속하려면 DDNS 이름을 씁니다.</p>
+      {leases.length === 0 && <p class="note">자동(DHCP)으로 공인 주소를 받은 장치가 없습니다.</p>}
+      {leases.map((l) => (
+        <div key={l.ip} class="toggle-row">
+          <span>
+            {l.name} <span class="mono muted">{l.ip}</span>
+          </span>
+          <button class="btn ghost small" onClick={() => sim.act({ kind: "isp-renumber", nodeId: d.id, ip: l.ip })} title="이 고객에게 다른 공인 주소를 줍니다">
+            주소 바꾸기
+          </button>
+        </div>
+      ))}
+    </Section>
+  );
+}
+
 // ---------- 시뮬레이션 상태 ----------
 
 export function StatusSection({ d }: { d: Device }) {

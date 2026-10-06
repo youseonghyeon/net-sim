@@ -19,16 +19,19 @@ import {
   type IpPacket,
   type Ipv4Packet,
   type Ipv6Packet,
+  DDNS_PORT,
   SIGNAL_PORT,
   STUN_PORT,
   type Endpoint,
   type P2pMessage,
   type StunMessage,
+  type DdnsMessage,
   type UdpPacket,
 } from "../packet";
 import { DhcpServer } from "./dhcp";
 import { SIGNAL_SERVER, STUN_SERVERS, TURN_SERVER } from "./p2p";
 import { normalizeName, PUBLIC_ZONE, PUBLIC_ZONE6 } from "./dns";
+import { DDNS_SERVER, DDNS_TTL, DDNS_ZONE, DdnsService } from "./ddns";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RA_PERIODIC_TAG } from "./ipv6";
 import { NetInterface, type Emit } from "./iface";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
@@ -46,6 +49,7 @@ export interface InternetConfig {
 export const KNOWN_SERVERS: Record<Ip, string> = {
   "8.8.8.8": "Google DNS",
   "1.1.1.1": "Cloudflare DNS",
+  [DDNS_SERVER]: `${DDNS_ZONE} DDNS`,
   ...Object.fromEntries(PUBLIC_ZONE.map((r) => [r.ip, r.name])),
 };
 
@@ -90,6 +94,8 @@ export class Internet implements SimNode {
   private readonly pdAlloc = new Map<Mac, Ip>();
   /** 지금 위임 중인 프리픽스 → 그 고객 라우터 (WAN 링크 로컬 = 넥스트 홉) */
   readonly delegations = new Map<Ip, { client: Mac; via: Ip; at: number }>();
+  /** DDNS 서비스 (glddns.com): 공유기가 갱신한 이름 → 주소. 공인 DNS 가 이 이름들도 답한다 */
+  readonly ddns = new DdnsService();
 
   constructor(cfg: InternetConfig) {
     this.id = cfg.id;
@@ -130,6 +136,11 @@ export class Internet implements SimNode {
     }
     ctx.trace("inet.forward", "app", `인터넷 저편의 클라이언트 ${src} 가 ${dst}:${port} 로 연결 시도 (바깥에서 시작한 통신)`, { src, dst, port });
     this.tcp.connect(src, dst, port, ctx);
+  }
+
+  /** ISP 가 고객의 공인 주소를 바꾼다 (임대를 지우고 FORCERENEW) — DDNS 시연 */
+  renumber(ip: Ip, ctx: NodeContext): void {
+    this.dhcpServer.renumber(ip, ctx, this.emit(ctx));
   }
 
   onLink(_port: number, up: boolean, ctx: NodeContext): void {
@@ -321,7 +332,7 @@ export class Internet implements SimNode {
   readonly turnAllocations = new Map<number, Endpoint>();
   private nextRelayPort = 49152;
 
-  private serverSend(src: Ip, srcPort: number, to: Endpoint, payload: StunMessage | P2pMessage, ctx: NodeContext): void {
+  private serverSend(src: Ip, srcPort: number, to: Endpoint, payload: StunMessage | P2pMessage | DdnsMessage, ctx: NodeContext): void {
     this.iface.sendIp({ kind: "ipv4", src, dst: to.ip, ttl: 54, payload: { kind: "udp", srcPort, dstPort: to.port, payload } }, ctx, this.emit(ctx));
   }
 
@@ -414,7 +425,14 @@ export class Internet implements SimNode {
       else if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) ctx.trace("dhcp.ignore", "app", `DHCP 클라이언트 메시지는 내 것이 아님 → 무시`, {}, frameId);
       else if (m.kind === "dns" && udp.dstPort === DNS_PORT && m.op === "query") this.handleDns(pkt, udp.srcPort, m, frameId, ctx);
       else if (m.kind === "dns") ctx.trace("ip.drop", "L4", `공인 DNS 가 아닌 주소로 온 DNS 응답 → 드롭`, {}, frameId);
-      else if (this.p2pServers(pkt, udp, frameId, ctx)) return;
+      else if (m.kind === "ddns" && pkt.dst === DDNS_SERVER && udp.dstPort === DDNS_PORT && m.op === "update") {
+        if (isPrivateIp(pkt.src)) {
+          ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} 인 DDNS 갱신 → 응답을 돌려줄 수 없어 드롭 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
+          return;
+        }
+        const reply = this.ddns.handle(pkt.src, m, ctx, frameId);
+        this.serverSend(DDNS_SERVER, DDNS_PORT, { ip: pkt.src, port: udp.srcPort }, reply, ctx);
+      } else if (this.p2pServers(pkt, udp, frameId, ctx)) return;
       else ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
       return;
     }
@@ -530,6 +548,15 @@ export class Internet implements SimNode {
         if (isIpv6(to)) this.send6({ kind: "ipv6", src: server, dst: to, hopLimit: 54, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } }, ctx);
         else this.iface.sendIp({ kind: "ipv4", src: server, dst: to, ttl: 54, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } }, ctx, this.emit(ctx));
       };
+      const dyn = this.ddns.lookup(name);
+      if (dyn || normalizeName(name).endsWith(`.${DDNS_ZONE}`)) {
+        // DDNS 이름: 공유기가 마지막으로 갱신한 주소 (IPv6 는 다루지 않아 AAAA 는 NODATA)
+        const msg: DnsMessage = qtype === "AAAA" ? { kind: "dns", id, op: "response", name, qtype, rcode: dyn ? "NODATA" : "NXDOMAIN" } : dyn ? { kind: "dns", id, op: "response", name, answer: dyn, ttl: DDNS_TTL } : { kind: "dns", id, op: "response", name, rcode: "NXDOMAIN" };
+        if (dyn && qtype !== "AAAA") ctx.trace("dns.response.sent", "app", `공인 DNS ${server}: ${normalizeName(name)} = ${dyn} 응답 (DDNS 로 마지막에 갱신된 주소, TTL ${DDNS_TTL}초 — 주소가 바뀌므로 캐시가 오래 들고 있지 않게) → ${to}`, { name, ip: dyn });
+        else ctx.trace(dyn ? "dns.response.sent" : "dns.nxdomain", "app", dyn ? `공인 DNS ${server}: ${normalizeName(name)} 은(는) IPv6 주소가 없는 DDNS 이름 → NODATA` : `공인 DNS ${server}: ${normalizeName(name)} 은(는) DDNS 에 등록되지 않은 이름 → NXDOMAIN (공유기의 DDNS 를 켜고 갱신됐는지 확인)`, { name });
+        reply(msg);
+        return;
+      }
       const rec = PUBLIC_ZONE.find((r) => r.name === normalizeName(name));
       if (qtype === "AAAA") {
         // 공개 이름의 IPv6 주소: 있으면 AAAA, 이름만 있으면 NODATA (github.com·naver.com 은 실제로도 아직 IPv6 가 없다)
@@ -580,6 +607,7 @@ export class Internet implements SimNode {
       tables: [
         { title: "웹 서버 연결 (포트 80·443)", columns: ["상대", "상태", "보냄 / 받음"], rows: this.tcp.rows() },
         { title: "공인 주소 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
+        ...(this.ddns.records.size > 0 ? [{ title: `DDNS (${DDNS_ZONE})`, columns: ["이름", "주소", "기기", "갱신 시각"], rows: this.ddns.rows() }] : []),
         { title: "IPv6 프리픽스 위임 (DHCPv6-PD)", columns: ["프리픽스", "고객", "넥스트 홉"], rows: [...this.delegations.entries()].map(([p, d]) => [`${p}/${Internet.PD_LENGTH}`, d.client, d.via]) },
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: this.iface.arpRows() },
         { title: "알려진 서버", columns: ["IP", "이름"], rows: Object.entries(KNOWN_SERVERS) },

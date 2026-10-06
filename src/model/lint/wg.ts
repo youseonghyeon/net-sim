@@ -1,6 +1,6 @@
 // WireGuard 규칙: 공유기 서버(피어 목록·터널 대역)와 클라이언트(공유기·노트북·폰)가 가리키는 서버의 켜짐·포트·공개 키·등록·주소.
 // WireGuard 는 틀리면 거절하지 않고 침묵하므로(timeout 만 보인다) 로그만으로는 원인을 찾기 어렵다 — 그래서 구성 검사가 짚어 준다
-import { wgPublicKeyOf, type Device } from "../topology";
+import { DDNS_ZONE_NAME, ddnsHostname, wgPublicKeyOf, type Device } from "../topology";
 import { contains, fmtSubnet, overlaps, subnetOf, validIp } from "./addr";
 import type { LintContext } from "./context";
 
@@ -68,6 +68,31 @@ function serverAt(devices: Device[], self: Device, ip: string, port: number): { 
   return srv ? { srv, port: p, ...(via ? { via } : {}) } : undefined;
 }
 
+/** 이 DDNS 이름을 켜 둔 공유기 */
+function ddnsOwner(devices: Device[], name: string): Device | undefined {
+  return devices.find((x) => x.router?.ddns?.enabled && ddnsHostname(x.router.ddns.name) === name);
+}
+
+// 규칙 20d: DDNS — 이름이 비었거나 쓸 수 없음, 두 공유기가 같은 이름
+export function ddnsRules({ t, add }: LintContext): void {
+  const seen = new Map<string, Device>();
+  for (const d of t.devices) {
+    const c = d.router?.ddns;
+    if (!c?.enabled) continue;
+    const name = ddnsHostname(c.name);
+    if (!name) {
+      add({ deviceId: d.id, severity: "warn", code: "ddns.name-invalid", message: `DDNS 이름 "${c.name}" 을(를) 쓸 수 없음 (영문 소문자·숫자·- 만) → 갱신하지 않음`, fix: `${d.name} → DDNS → 이름 (예: myhome → myhome.${DDNS_ZONE_NAME})` });
+      continue;
+    }
+    const prev = seen.get(name);
+    if (prev) {
+      add({ deviceId: d.id, severity: "error", code: "ddns.name-taken", message: `${prev.name} 도 DDNS 이름 ${name} 을(를) 씀 → 이름은 기기마다 하나라 나중에 갱신하는 쪽이 거절됨 (badauth)`, fix: `${d.name} → DDNS → 다른 이름`, related: [prev.id] });
+      continue;
+    }
+    seen.set(name, d);
+  }
+}
+
 // 규칙 20c: WireGuard
 export function wireguardRules({ t, add }: LintContext): void {
   // 서버 쪽: 피어 주소 중복, 터널 대역이 LAN 과 겹침, 피어 없음
@@ -104,8 +129,18 @@ export function wireguardRules({ t, add }: LintContext): void {
       add({ deviceId: d.id, severity: "warn", code: "wg.dns-outside", message: `${c.where} 의 DNS ${dns} 가 AllowedIPs(${c.allowedIps || "없음"}) 밖 → DNS 질의가 터널로 가지 않음 (사설 주소면 닿지 않고, 공인 주소면 VPN 밖으로 새어 나감)`, fix: `${d.name} → ${c.where} → AllowedIPs 에 ${dns} 를 넣거나 DNS 를 비우기` });
     }
     const server = validIp(c.server.trim());
-    if (!server) continue;
-    const found = serverAt(t.devices, d, server, c.port);
+    const name = server ? undefined : c.server.trim().toLowerCase().replace(/\.$/, "");
+    let found: ReturnType<typeof serverAt>;
+    if (server) found = serverAt(t.devices, d, server, c.port);
+    else if (name) {
+      // 서버를 DDNS 이름으로 적음: 그 이름을 켜 둔 공유기가 서버 (이 서비스의 이름인데 아무도 등록하지 않으면 NXDOMAIN)
+      const owner = ddnsOwner(t.devices, name);
+      if (!owner && name.endsWith(`.${DDNS_ZONE_NAME}`)) {
+        add({ deviceId: d.id, severity: "warn", code: "wg.name-unknown", message: `서버 이름 ${name} 을(를) DDNS 로 등록한 공유기가 없음 → 이름을 풀지 못해(NXDOMAIN) 연결 실패`, fix: `서버 공유기 → 인터넷 → DDNS 켜고 이름을 ${name.slice(0, -(DDNS_ZONE_NAME.length + 1))} 로, 또는 ${d.name} 의 서버 주소를 고치기` });
+        continue;
+      }
+      found = owner && owner !== d ? { srv: owner, port: c.port } : undefined;
+    }
     if (!found) continue;
     const { srv, via } = found;
     const s = srv.router?.wgServer;

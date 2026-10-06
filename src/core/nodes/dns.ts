@@ -15,6 +15,11 @@ export function qtypeOf(ip: Ip): QType {
 }
 
 /** 캐시 키: A 는 이름 그대로 (예전과 같음), AAAA 는 뒤에 표시 */
+/** 캐시 항목의 수명(ms): 응답의 TTL 과 캐시 기본값 중 짧은 것 */
+function cacheLife(e: { ttl?: number }): number {
+  return Math.min(e.ttl ?? DNS_CACHE_TTL, DNS_CACHE_TTL);
+}
+
 function cacheKey(name: string, qtype: QType): string {
   return qtype === "A" ? name : `${name} (AAAA)`;
 }
@@ -81,11 +86,13 @@ interface PendingQuery {
   attempts: number;
   timer: TimerHandle;
   done: ResolveDone;
+  /** VPN 이 알려 준 DNS 를 건너뛰고 원래 DNS 에 (VPN 서버 이름처럼 터널이 서기 전에 풀어야 하는 것) */
+  direct?: boolean;
 }
 
 /** 호스트 쪽 리졸버: 설정된 DNS 서버에 묻고 결과를 캐시한다. DNS 서버는 IPv4 가 있으면 그쪽, 없으면 IPv6 DNS (질의 종류와 운반 버전은 따로 — AAAA 를 IPv4 로 물어도 된다) */
 export class DnsResolver {
-  readonly cache = new Map<string, { ip: Ip; at: number }>();
+  readonly cache = new Map<string, { ip: Ip; at: number; ttl?: number }>();
   private readonly pending = new Map<number, PendingQuery>();
   private idSeq: number;
   /** 질의를 보내는 UDP 포트 (호스트마다 다름) */
@@ -111,8 +118,8 @@ export class DnsResolver {
   }
 
   /** 물어볼 DNS 서버와 내 출발지: IPv4 DNS 가 있고 내 IPv4 주소가 있으면 그쪽, 아니면 IPv6 DNS */
-  private pick(): { server: Ip; src: Ip } | undefined {
-    const d4 = this.vpnDns?.() ?? this.iface.dns;
+  private pick(direct = false): { server: Ip; src: Ip } | undefined {
+    const d4 = (direct ? undefined : this.vpnDns?.()) ?? this.iface.dns;
     if (d4 && this.iface.ip) return { server: d4, src: this.iface.ip };
     const d6 = this.v6?.effectiveDns;
     const src6 = d6 ? this.v6!.sourceFor(d6) : undefined;
@@ -121,17 +128,17 @@ export class DnsResolver {
   }
 
   /** qtype = 물을 레코드 종류 (A: IPv4 주소, AAAA: IPv6 주소) */
-  resolve(rawName: string, ctx: NodeContext, emit: Emit, done: ResolveDone, qtype: QType = "A"): void {
+  resolve(rawName: string, ctx: NodeContext, emit: Emit, done: ResolveDone, qtype: QType = "A", direct = false): void {
     const name = normalizeName(rawName);
     const key = cacheKey(name, qtype);
     const cached = this.cache.get(key);
-    if (cached && ctx.now - cached.at <= DNS_CACHE_TTL) {
+    if (cached && ctx.now - cached.at <= cacheLife(cached)) {
       ctx.trace("dns.cache.hit", "app", `DNS 캐시 적중: ${name}${qtype === "AAAA" ? " AAAA" : ""} = ${cached.ip} (서버에 묻지 않음)`, { name, ip: cached.ip });
       done(cached.ip);
       return;
     }
     if (cached) this.cache.delete(key);
-    const pick = this.pick();
+    const pick = this.pick(direct);
     if (!pick) {
       if (!this.iface.dns && !this.v6?.effectiveDns) {
         ctx.trace("dns.no-server", "app", `${name} 을(를) 찾을 수 없음: DNS 서버가 설정되지 않음 (수동이면 DNS 칸 입력, 자동이면 DHCP 서버가 DNS 를 안내하는지 확인)`, { name });
@@ -144,13 +151,13 @@ export class DnsResolver {
     }
     const id = ++this.idSeq;
     const timer = ctx.timer(DNS_TIMEOUT, DNS_TIMER_TAG, { id });
-    this.pending.set(id, { name, qtype, server: pick.server, attempts: 1, timer, done });
+    this.pending.set(id, { name, qtype, server: pick.server, attempts: 1, timer, done, ...(direct ? { direct } : {}) });
     this.send(id, name, 1, ctx, emit);
   }
 
   private send(id: number, name: string, attempt: number, ctx: NodeContext, emit: Emit): void {
     const q = this.pending.get(id);
-    const pick = this.pick();
+    const pick = this.pick(q?.direct);
     if (!q || !pick) {
       this.fail(id, "DNS 설정이 사라짐", ctx);
       return;
@@ -193,7 +200,7 @@ export class DnsResolver {
     this.pending.delete(msg.id);
     q.timer.cancel();
     if (msg.answer) {
-      this.cache.set(cacheKey(q.name, q.qtype), { ip: msg.answer, at: ctx.now });
+      this.cache.set(cacheKey(q.name, q.qtype), { ip: msg.answer, at: ctx.now, ...(msg.ttl !== undefined ? { ttl: msg.ttl * 1000 } : {}) });
       ctx.trace("dns.response.received", "app", `DNS 응답: ${q.name}${q.qtype === "AAAA" ? " AAAA" : ""} = ${msg.answer} (서버 ${from}) → 캐시에 저장`, { name: q.name, ip: msg.answer, qtype: q.qtype }, frameId);
       q.done(msg.answer);
       return;
@@ -240,6 +247,13 @@ export class DnsResolver {
     q.done(undefined, reason, retry ? { retry: true } : undefined);
   }
 
+  /** 이 이름의 캐시를 지운다 (바뀐 주소를 다시 받으려고 — DDNS 이름을 다시 풀 때) */
+  forget(rawName: string): void {
+    const name = normalizeName(rawName);
+    this.cache.delete(cacheKey(name, "A"));
+    this.cache.delete(cacheKey(name, "AAAA"));
+  }
+
   /** 링크 끊김·설정 변경: 대기 중인 질의는 실패(취소)로 끝내고 캐시를 비운다. 콜백이 새 질의를 걸어도 함께 지워지지 않게 목록을 먼저 떼어 낸다 */
   clear(reason = "취소됨"): void {
     const list = [...this.pending.values()];
@@ -278,7 +292,7 @@ interface PendingUpstream {
 
 export class DnsServer {
   /** 업스트림 서버에서 받아 둔 답 */
-  readonly cache = new Map<string, { ip: Ip; at: number }>();
+  readonly cache = new Map<string, { ip: Ip; at: number; ttl?: number }>();
   private readonly pendingUpstream = new Map<number, PendingUpstream>();
   private idSeq = 0x7000;
   /** 지금 물어볼 업스트림을 바꿔야 할 때 (공유기 VPN 클라이언트가 연결되면 VPN 의 DNS — DNS 유출 방지). 없거나 undefined 면 설정값 */
@@ -303,7 +317,7 @@ export class DnsServer {
     if (rec) return rec;
     const key = cacheKey(name, qtype);
     const c = this.cache.get(key);
-    if (c && (now === undefined || now - c.at <= DNS_CACHE_TTL)) return c.ip;
+    if (c && (now === undefined || now - c.at <= cacheLife(c))) return c.ip;
     if (c) this.cache.delete(key);
     return undefined;
   }
@@ -327,8 +341,11 @@ export class DnsServer {
     const ip = this.lookup(name, ctx.now, qtype);
     if (ip) {
       const fromCache = !this.config.records.some((r) => normalizeName(r.name) === name && qtypeOf(r.ip) === qtype);
+      // 캐시한 답에 TTL 이 있었으면 남은 만큼만 알려 준다 (DDNS 이름처럼 짧은 TTL 이 아래 캐시까지 이어지게)
+      const ce = fromCache ? this.cache.get(cacheKey(name, qtype)) : undefined;
+      const ttl = ce?.ttl !== undefined ? Math.max(1, Math.round((ce.ttl - (ctx.now - ce.at)) / 1000)) : undefined;
       ctx.trace("dns.response.sent", "app", `${this.label}: ${name}${tq} = ${ip} 응답 (${fromCache ? "업스트림 서버 답 캐시" : "내 레코드"}) → ${pkt.src}`, { name, ip, to: pkt.src, qtype });
-      this.respond(pkt.src, srcPort, answer({ answer: ip }), ctx, emit, replyFrom);
+      this.respond(pkt.src, srcPort, answer({ answer: ip, ...(ttl !== undefined ? { ttl } : {}) }), ctx, emit, replyFrom);
       return;
     }
     // 내 레코드에 이름은 있는데 그 종류가 없다: 이 이름의 주인이므로 업스트림에 묻지 않고 "없음(NODATA)"
@@ -383,7 +400,7 @@ export class DnsServer {
     p.timer.cancel();
     const tq = p.qtype === "AAAA" ? " AAAA" : "";
     if (msg.answer) {
-      this.cache.set(cacheKey(p.name, p.qtype), { ip: msg.answer, at: ctx.now });
+      this.cache.set(cacheKey(p.name, p.qtype), { ip: msg.answer, at: ctx.now, ...(msg.ttl !== undefined ? { ttl: msg.ttl * 1000 } : {}) });
       ctx.trace("dns.response.received", "app", `${this.label}: 업스트림 DNS ${pkt.src} 의 답 ${p.name}${tq} = ${msg.answer} → 캐시`, { name: p.name, ip: msg.answer }, frameId);
       ctx.trace("dns.response.sent", "app", `${this.label}: ${p.name}${tq} = ${msg.answer} 응답 (업스트림 서버 답 전달) → ${p.clientIp}`, { name: p.name, ip: msg.answer, to: p.clientIp });
     } else if (msg.rcode === "NODATA") {
@@ -391,7 +408,7 @@ export class DnsServer {
     } else {
       ctx.trace("dns.nxdomain", "app", `${this.label}: 업스트림 DNS 도 ${p.name} 을(를) 모름 (${msg.rcode ?? "NXDOMAIN"}) → 클라이언트 ${p.clientIp} 에게 그대로 전달`, { name: p.name }, frameId);
     }
-    this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, ...(p.qtype === "AAAA" ? { qtype: p.qtype } : {}), answer: msg.answer, rcode: msg.rcode }, ctx, emit, p.replyFrom);
+    this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, ...(p.qtype === "AAAA" ? { qtype: p.qtype } : {}), answer: msg.answer, rcode: msg.rcode, ...(msg.ttl !== undefined ? { ttl: msg.ttl } : {}) }, ctx, emit, p.replyFrom);
   }
 
   onTimeout(data: unknown, ctx: NodeContext, emit: Emit): void {

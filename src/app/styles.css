@@ -1243,6 +1243,14 @@ select.btn.example {
   grid-column: 1 / -1;
   margin-top: 0;
 }
+/* 칸 뒤에 고정 꼬리 (DDNS 이름 .glddns.com) */
+.suffix-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
 .sub-head {
   margin: 10px 0 4px;
   font-size: 12px;

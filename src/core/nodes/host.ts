@@ -246,7 +246,21 @@ export class Host implements SimNode {
     };
     // 클라이언트 식별은 유선 NIC 의 MAC (노트북이 Wi-Fi 로 넘어가 있어도 같은 기기 — 서버가 같은 가상 주소를 준다)
     const cid = this.nics[0]!.mac;
-    if (type === "wireguard") return new WgClient({ myIp: io.myIp, send: io.send, local: io.local }, this.id, 49152 + (Math.abs(hashCode(`${this.id}:wg`)) % 16000));
+    if (type === "wireguard")
+      return new WgClient(
+        {
+          myIp: io.myIp,
+          send: io.send,
+          local: io.local,
+          // 서버 이름은 터널 밖 DNS 로 (VPN DNS 를 건너뛰고), 바뀐 주소를 받게 캐시를 지우고
+          resolve: (name, ctx, done) => {
+            this.resolver.forget(name);
+            this.resolver.resolve(name, ctx, this.emit(ctx), (ip, reason) => done(ip, reason), "A", true);
+          },
+        },
+        this.id,
+        49152 + (Math.abs(hashCode(`${this.id}:wg`)) % 16000),
+      );
     return type === "l2tp" ? new L2tpClient(io, cid) : new RaClient(io, cid);
   }
 

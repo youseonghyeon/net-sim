@@ -11,7 +11,7 @@ Brume 3(GL-MT5000)는 OpenWrt 기반 VPN 보안 게이트웨이다. 공식 문�
 
 순서 (단계마다 테스트·ui-check·push·clean-context 리뷰 → 결함 수정):
 1. ✅ (2026-10-07) **WireGuard 서버·클라이언트** — 공유기 서버(피어 = 공개 키 + 터널 주소), 공유기 클라이언트(LAN 전체를 터널로, 킬 스위치, 기기별 VPN 정책, VPN DNS 로 DNS 유출 방지), 노트북·폰 클라이언트(원격 접속 VPN 종류 "WireGuard"). 키 쌍·1-RTT 핸드셰이크(Initiation/Response)·cryptokey routing(AllowedIPs)·엔드포인트 로밍·모르는 키에는 침묵·passive keepalive·응답 없으면 재핸드셰이크
-2. **DDNS** — WAN 주소가 바뀌면 DDNS 서비스(인터넷 노드)에 갱신, 클라이언트는 이름으로 접속
+2. ✅ (2026-10-07) **DDNS** — WAN 주소가 바뀌면 DDNS 서비스(인터넷 노드)에 갱신, 클라이언트는 이름으로 접속. ISP 주소 바꾸기(FORCERENEW), DNS TTL, WireGuard 이름 엔드포인트·실패 시 다시 풀기
 3. **멀티 WAN 페일오버** — LAN 포트 하나를 WAN2 로(테더링·셀룰러 흉내), 추적 ping 으로 장애 감지 → 넘어감, NAT 세션이 끊기는 이유
 4. **AdGuard Home·자녀 보호** — DNS 차단 목록(0.0.0.0/NXDOMAIN), 쿼리 로그·차단 통계, DNS 가로채기(53 리디렉션), 기기별 차단
 5. **DPI·VPN 난독화** — SNI·DNS·포트로 앱 분류, 앱별 통계·차단, VPN 탐지 차단을 TCP 443 위장으로 통과

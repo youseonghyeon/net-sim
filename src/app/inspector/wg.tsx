@@ -8,6 +8,8 @@ import {
   DEFAULT_ROUTER_WG_CLIENT,
   DEFAULT_WG_CLIENT_FIELDS,
   DEFAULT_WG_SERVER,
+  DDNS_ZONE_NAME,
+  ddnsHostname,
   wgPublicKeyOf,
   type Device,
   type RouterSettings,
@@ -35,6 +37,15 @@ function allowedError(s: string): string | undefined {
   if (parts.length === 0) return "터널로 보낼 목적지가 없습니다. 전부면 0.0.0.0/0";
   const bad = parts.find((x) => cidrError(x, true));
   return bad ? `${bad} — 예: 0.0.0.0/0 또는 10.0.0.0/24, 192.168.8.0/24` : undefined;
+}
+
+/** 서버 칸: 주소 또는 이름(DDNS) */
+function hostError(s: string): string | undefined {
+  const v = s.trim();
+  if (!v) return "필요한 값입니다";
+  if (validIp(v)) return undefined;
+  if (/[a-z]/i.test(v)) return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\.?$/i.test(v) ? undefined : "예: myhome.glddns.com";
+  return "예: 203.0.113.30 또는 myhome.glddns.com";
 }
 
 function keyError(s: string): string | undefined {
@@ -70,8 +81,8 @@ function MyKey({ d, role, onRegenerate }: { d: Device; role: Role; onRegenerate:
 function ClientFields({ server, w, setServer, setW }: { server: string; w: WgClientSettings; setServer: (v: string) => void; setW: (p: Partial<WgClientSettings>) => void }) {
   return (
     <>
-      <Field label="서버 주소" hint="Endpoint" error={ipError(server, true)}>
-        <input class="input mono" value={server} placeholder="203.0.113.30" onInput={(e) => setServer(e.currentTarget.value)} />
+      <Field label="서버 주소" hint="Endpoint · 주소 또는 이름" error={hostError(server)}>
+        <input class="input mono" value={server} placeholder="203.0.113.30 또는 myhome.glddns.com" onInput={(e) => setServer(e.currentTarget.value)} />
       </Field>
       <Field label="서버 포트" hint="UDP">
         <input class="input mono" type="number" min={1} max={65535} value={w.port} onInput={(e) => { if (e.currentTarget.value === "") return; setW({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 51820)) }); }} />
@@ -121,7 +132,8 @@ function importFrom(self: Device, role: "client" | "host", srv: Device): void {
   const ip = existing?.ip.trim() || nextPeerIp(s);
   const serverAddr = s.address.split("/")[0]!.trim();
   const fields: Partial<WgClientSettings> = { port: s.port, serverKey: wgPublicKeyOf(srv, "server"), address: `${ip}/32`, dns: validIp(serverAddr) ? serverAddr : "" };
-  const wan = srv.router!.wan?.ipMode === "static" ? srv.router!.wan.ip : "";
+  // 서버 공유기에 DDNS 가 켜져 있으면 이름(주소가 바뀌어도 따라감), 아니면 수동 WAN 주소
+  const wan = srv.router!.ddns?.enabled && ddnsHostname(srv.router!.ddns.name) ? ddnsHostname(srv.router!.ddns.name)! : srv.router!.wan?.ipMode === "static" ? srv.router!.wan.ip : "";
   updateDevices([self.id, srv.id], (x) => {
     if (x.id === srv.id && !existing) return { ...x, router: { ...x.router!, wgServer: { ...x.router!.wgServer!, peers: [...x.router!.wgServer!.peers, { name: self.name, publicKey: myKey, ip }] } } };
     if (x.id !== self.id) return x;
@@ -329,5 +341,39 @@ export function HostWgFields({ d }: { d: Device }) {
       )}
       <p class="note">WireGuard 는 주소를 받아 오지 않습니다 — 서버 관리자가 정해 준 터널 주소를 적어 둡니다. 켜 두면 AllowedIPs 로 가는 패킷은 늘 터널로 가서, 핸드셰이크가 안 돼도 밖으로 새지 않습니다. Wi-Fi 를 바꿔도 세션이 이어집니다(엔드포인트 로밍).</p>
     </>
+  );
+}
+
+// ---------- DDNS ----------
+
+export function DdnsSection({ d, r }: { d: Device; r: RouterSettings }) {
+  void simVersion.value;
+  const c = r.ddns ?? { enabled: false, name: "" };
+  const set = (patch: Partial<NonNullable<RouterSettings["ddns"]>>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, ddns: { ...(x.router!.ddns ?? { enabled: false, name: "" }), ...patch } } }));
+  const node = sim.node(d.id);
+  const status = node instanceof Router ? node.ddns.summary() : undefined;
+  const full = ddnsHostname(c.name);
+  return (
+    <Section title="DDNS">
+      <label class="toggle-row">
+        <span>
+          {c.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">{full ?? DDNS_ZONE_NAME}</span>
+        </span>
+        <Toggle on={c.enabled} onToggle={() => set({ enabled: !c.enabled })} />
+      </label>
+      {!c.enabled && <p class="note">켜면 WAN 의 공인 주소가 바뀔 때마다 이름(예: myhome.{DDNS_ZONE_NAME})을 그 주소로 갱신합니다. 밖에서 VPN 서버 주소를 이름으로 적어 두면 집 주소가 바뀌어도 따라갑니다.</p>}
+      {c.enabled && (
+        <>
+          <Field label="이름" error={c.name.trim() && !full ? "영문 소문자·숫자·- 만 (예: myhome)" : !c.name.trim() ? "이름을 넣으세요" : undefined}>
+            <div class="suffix-row">
+              <input class="input mono" value={c.name} placeholder="myhome" onInput={(e) => set({ name: e.currentTarget.value })} />
+              <span class="mono muted">.{DDNS_ZONE_NAME}</span>
+            </div>
+          </Field>
+          {status && <p class={`note${status.startsWith("실패") ? " error-note" : ""}`}>{status}</p>}
+          <p class="note">DDNS 서버는 갱신 요청의 출발지를 등록합니다 — 이 공유기 앞에 다른 NAT 가 있으면 그 공인 주소가 등록됩니다. 앞쪽 주소가 바뀐 것은 공유기가 모르므로 10분마다도 확인합니다. 이름의 TTL 이 30초라 DNS 캐시가 옛 주소를 오래 들고 있지 않습니다.</p>
+        </>
+      )}
+    </Section>
   );
 }

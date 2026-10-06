@@ -139,6 +139,10 @@ export interface WgPeerState {
   deadTok: number;
   /** 마지막 핸드셰이크 실패 이유 (다시 맺히면 지운다) */
   failed?: string;
+  /** 엔드포인트 이름을 푸는 중 (그동안 보낼 패킷은 쌓아 둔다) */
+  resolving?: boolean;
+  /** 이름을 다시 풀기 전의 엔드포인트 (같은 주소가 나오면 다시 잇지 않는다 — 실패 → 다시 풀기 → 실패 의 끝없는 반복 방지) */
+  prevEndpoint?: { ip: Ip; port: number };
 }
 
 /** 바깥(인터넷 쪽) 송신: 장치가 정한다 — 공유기는 WAN, 노트북은 지금 쓰는 NIC */
@@ -186,6 +190,8 @@ export class WgInterface {
   readonly peers = new Map<string, WgPeerState>();
   private nextIdx: number;
   private tok = 0;
+  /** 핸드셰이크가 끝내 실패했을 때 (엔드포인트가 이름이면 다시 풀어 보게 — GL.iNet 의 reresolve) */
+  onFail: ((p: WgPeerState, ctx: NodeContext) => void) | undefined;
 
   constructor(
     private readonly io: WgIo,
@@ -259,6 +265,10 @@ export class WgInterface {
   /** 원래 패킷을 피어에게: 세션이 있으면 바로, 없으면 쌓아 두고 핸드셰이크를 시작한다 */
   send(p: WgPeerState, inner: Ipv4Packet, ctx: NodeContext, frameId?: number): void {
     if (!this.config.enabled) return;
+    if (!p.endpoint && p.resolving) {
+      if (p.queue.length < WG_QUEUE) p.queue.push({ inner, frameId });
+      return;
+    }
     if (!p.endpoint) {
       ctx.trace("vpn.drop", "L3", `${this.label}: ${inner.dst} 는 ${this.peerName(p)} 의 AllowedIPs 인데 그 피어의 주소(엔드포인트)를 모름 — 피어가 먼저 핸드셰이크를 해야 주소를 배운다 → 드롭`, { wg: true, dst: inner.dst }, frameId);
       return;
@@ -309,6 +319,38 @@ export class WgInterface {
     p.session = undefined;
     p.failed = why;
     ctx.trace("vpn.drop", "L4", `${this.label}: 핸드셰이크 실패 — ${why}${n ? ` → 기다리던 패킷 ${n}개 드롭` : ""}. 보낼 패킷이 또 생기면 다시 시도`, { wg: true, failed: true, dropped: n }, frameId);
+    this.onFail?.(p, ctx);
+  }
+
+  /**
+   * 엔드포인트를 이름에서 풀어 정함 (처음, 또는 실패 뒤 다시 풀었을 때). 주소가 바뀌었거나 처음이면 세션을 버리고,
+   * 기다리던 패킷이 있거나 connect 가 true 면 바로 핸드셰이크
+   */
+  setEndpoint(p: WgPeerState, ep: { ip: Ip; port: number }, ctx: NodeContext, connect: "always" | "if-changed"): void {
+    const before = p.endpoint ?? p.prevEndpoint;
+    const changed = !before || before.ip !== ep.ip || before.port !== ep.port;
+    p.resolving = false;
+    p.prevEndpoint = undefined;
+    if (!p.endpoint || p.endpoint.ip !== ep.ip || p.endpoint.port !== ep.port) {
+      p.endpoint = { ...ep };
+      p.session = undefined;
+      p.pending = undefined;
+    }
+    if (!this.config.enabled || p.pending || p.session) return;
+    if (p.queue.length > 0 || connect === "always" || changed) {
+      this.initiate(p, ctx, undefined, changed && before ? `서버 주소가 ${before.ip} → ${ep.ip} 로 바뀜` : `엔드포인트 ${ep.ip}:${ep.port}`);
+      return;
+    }
+    ctx.trace("vpn.config", "sys", `${this.label}: 다시 푼 주소도 ${ep.ip} 그대로 → 다시 잇지 않음 (보낼 패킷이 생기면 시도)`, { wg: true, ip: ep.ip });
+  }
+
+  /** 엔드포인트 이름을 푸는 동안: 보낼 패킷은 쌓아 두고(주소를 알면 보낸다), 옛 주소는 쓰지 않는다 */
+  markResolving(p: WgPeerState): void {
+    p.resolving = true;
+    if (p.endpoint) p.prevEndpoint = p.endpoint;
+    p.endpoint = undefined;
+    p.session = undefined;
+    p.pending = undefined;
   }
 
   private out(src: Ip, ep: { ip: Ip; port: number }, m: WgMessage, ctx: NodeContext, frameId?: number): void {
@@ -359,7 +401,13 @@ export class WgInterface {
         this.initiate(p, ctx, undefined, `핸드셰이크 응답 없음 (${WG_REKEY_TIMEOUT / 1000}초)`, (d.tries ?? 1) + 1);
         return true;
       }
-      this.fail(p, `${this.peerName(p)} 가 ${WG_HANDSHAKE_TRIES}번 모두 응답하지 않음 (timeout) — WireGuard 는 키가 틀리거나 등록되지 않은 상대에게 답하지 않는다. 양쪽 공개 키, 상대 주소·UDP ${p.endpoint?.port ?? WG_PORT} 포트(포트 포워딩)를 확인`, ctx);
+      this.fail(
+        p,
+        p.cfg.endpoint || p.resolving !== undefined
+          ? `${this.peerName(p)} 가 ${WG_HANDSHAKE_TRIES}번 모두 응답하지 않음 (timeout) — WireGuard 는 키가 틀리거나 등록되지 않은 상대에게 답하지 않는다. 양쪽 공개 키, 상대 주소·UDP ${p.endpoint?.port ?? WG_PORT} 포트(포트 포워딩)를 확인`
+          : `${this.peerName(p)} 가 ${WG_HANDSHAKE_TRIES}번 모두 응답하지 않음 (timeout) — 상대가 먼저 접속해 배운 주소라, 상대 앞 NAT 가 이쪽(바뀐 주소 등)에서 먼저 온 패킷을 막을 수 있다. 상대가 다시 보내면 이어진다`,
+        ctx,
+      );
       return true;
     }
     if (d.what === "keepalive") {
@@ -514,6 +562,8 @@ export interface WgClientIo {
   myIp(): Ip | undefined;
   send(outer: Ipv4Packet, ctx: NodeContext): void;
   local(dst: Ip): boolean;
+  /** 서버 이름 풀기 (터널 밖 DNS 로 — 캐시를 지우고) */
+  resolve(name: string, ctx: NodeContext, done: (ip: Ip | undefined, reason?: string) => void): void;
 }
 
 /**
@@ -534,6 +584,42 @@ export class WgClient {
     readonly listenPort: number,
   ) {
     this.wg = new WgInterface({ source: () => this.io.myIp(), send: (outer, ctx) => this.io.send(outer, ctx) }, "WireGuard", seed);
+    // 핸드셰이크가 끝내 실패하면 서버 이름을 다시 풀어 본다 (서버의 공인 주소가 바뀌었을 수 있다)
+    this.wg.onFail = (_p, ctx) => {
+      if (this.serverName) this.resolveServer(ctx, "핸드셰이크 실패 — 서버 주소가 바뀌었을 수 있어 이름을 다시 풂", true);
+    };
+  }
+
+  /** 서버를 이름으로 적었으면 그 이름 */
+  private get serverName(): string | undefined {
+    const s = this.config.server;
+    return s && /[a-z]/i.test(s) ? s : undefined;
+  }
+
+  /** 지금 쓰는 서버 주소 (이름이면 푼 주소) */
+  private get serverIp(): Ip | undefined {
+    return this.serverName ? this.peer?.endpoint?.ip : this.config.server;
+  }
+
+  private resolveServer(ctx: NodeContext, why: string, reresolve = false): void {
+    const name = this.serverName;
+    const p = this.peer;
+    const w = this.config.wg;
+    if (!name || !p || !w || !this.io.myIp()) return;
+    this.wg.markResolving(p);
+    ctx.trace("vpn.config", "sys", `WireGuard: ${why} → ${name} 을(를) 터널 밖 DNS 로 물음`, { wg: true, name });
+    this.io.resolve(name, ctx, (ip, reason) => {
+      if (this.serverName !== name || !this.wg.enabled) return;
+      if (!ip) {
+        p.resolving = false;
+        p.queue = [];
+        p.failed = `서버 이름 ${name} 을(를) 풀지 못함 (${reason ?? "?"})`;
+        ctx.trace("vpn.drop", "L4", `WireGuard: ${p.failed} — 이름(DDNS)과 DNS 설정을 확인`, { wg: true, failed: true });
+        return;
+      }
+      ctx.trace("vpn.config", "sys", `WireGuard: ${name} = ${ip} → 엔드포인트 ${ip}:${w.port}`, { wg: true, name, ip });
+      this.wg.setEndpoint(p, { ip, port: w.port }, ctx, reresolve ? "if-changed" : "always");
+    });
   }
 
   private get peer(): WgPeerState | undefined {
@@ -566,9 +652,10 @@ export class WgClient {
     this.config = { ...cfg };
     const w = cfg.wg;
     const ok = cfg.enabled && !!w && !!w.address && !!cfg.server;
+    const byName = !!cfg.server && /[a-z]/i.test(cfg.server);
     this.wg.setConfig(
       ok
-        ? { enabled: true, privateKey: w!.privateKey, address: w!.address, listenPort: this.listenPort, peers: [{ name: "서버", publicKey: w!.serverKey, endpoint: { ip: cfg.server!, port: w!.port }, allowedIps: w!.allowedIps }] }
+        ? { enabled: true, privateKey: w!.privateKey, address: w!.address, listenPort: this.listenPort, peers: [{ name: "서버", publicKey: w!.serverKey, ...(byName ? {} : { endpoint: { ip: cfg.server!, port: w!.port } }), allowedIps: w!.allowedIps }] }
         : { ...DEFAULT_WG, peers: [] },
       ctx,
     );
@@ -580,7 +667,13 @@ export class WgClient {
   }
 
   connect(ctx: NodeContext): void {
-    if (this.io.myIp()) this.wg.connect(ctx);
+    if (!this.io.myIp()) return;
+    const p = this.peer;
+    if (this.serverName && p && !p.endpoint) {
+      if (!p.resolving) this.resolveServer(ctx, "연결");
+      return;
+    }
+    this.wg.connect(ctx);
   }
 
   handleIke(): boolean {
@@ -610,9 +703,11 @@ export class WgClient {
     const p = pkt.payload;
     // 터널 자신(바깥 UDP)·서버로 가는 것·직접 연결된 서브넷·DHCP·브로드캐스트는 그대로 (가로채면 바깥 패킷이 다시 터널로 들어간다)
     if (p.kind === "udp" && (p.payload.kind === "wg" || p.payload.kind === "dhcp")) return false;
-    if (pkt.dst === this.config.server || pkt.dst === "255.255.255.255" || this.io.local(pkt.dst)) return false;
+    if (pkt.dst === this.serverIp || pkt.dst === "255.255.255.255" || this.io.local(pkt.dst)) return false;
     const peer = this.wg.route(pkt.dst);
     if (!peer) return false;
+    // 서버 이름을 푸는 중(엔드포인트 없음)에는 DNS 질의를 터널 밖으로 — 터널이 서기 전에 풀어야 한다 (wg-quick 도 DNS 를 바꾸기 전에 푼다)
+    if (!peer.endpoint && p.kind === "udp" && p.payload.kind === "dns") return false;
     this.wg.send(peer, { ...pkt, src: vip }, ctx);
     return true;
   }
@@ -636,6 +731,11 @@ export class WgClient {
 
   reconnect(ctx: NodeContext): void {
     this.wg.reset();
+    const p = this.peer;
+    if (this.serverName && p) {
+      this.resolveServer(ctx, "다시 연결");
+      return;
+    }
     this.connect(ctx);
   }
 

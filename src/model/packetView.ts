@@ -27,6 +27,7 @@ const DHCP_TYPE: Record<DhcpOp, [number, string]> = {
   nak: [6, "NAK"],
   ack: [5, "ACK"],
   release: [7, "Release"],
+  forcerenew: [9, "ForceRenew"],
 };
 
 // ---------- 길이 (근사) ----------
@@ -70,6 +71,7 @@ function appLength(u: UdpPacket): number {
   if (m.kind === "stun") return 20 + (m.mapped ? 12 : 0) + (m.relayed ? 12 : 0) + (m.peer ? 12 : 0) + (m.data ? 4 + p2pLength(m.data) : 0); // 머리 20 + 속성
   if (m.kind === "p2p") return p2pLength(m);
   if (m.kind === "wg") return wgLength(m, m.inner ? 20 + l4Length(m.inner.payload) : 0);
+  if (m.kind === "ddns") return 60 + m.hostname.length; // 실제는 HTTPS 요청 — 대략의 크기
   return 4 + m.entries.length * 20; // RIP
 }
 
@@ -199,6 +201,7 @@ function udpText(u: UdpPacket): string {
   if (m.kind === "stun" || m.kind === "p2p") return `UDP, length ${appLength(u)}`;
   // WireGuard 도 암호화돼 tcpdump 는 길이만 (148 = Initiation, 92 = Response, 32 = keepalive)
   if (m.kind === "wg") return `UDP, length ${appLength(u)}`;
+  if (m.kind === "ddns") return `UDP, length ${appLength(u)}`;
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
 }
 
@@ -582,6 +585,18 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
     return [udp, { title: "DNS (앱)", rows }];
   }
   if (m.kind === "vpn" || m.kind === "esp" || m.kind === "wg") return [udp];
+  if (m.kind === "ddns")
+    return [
+      udp,
+      {
+        title: "DDNS (앱)",
+        rows: [
+          ["요청", m.op === "update" ? `GET /nic/update?hostname=${m.hostname} (실제는 HTTPS — 여기서는 UDP 8245 로 줄임)` : `응답 ${m.result}${m.ip ? ` ${m.ip}` : ""}`],
+          ["이름", m.hostname],
+          ...(m.op === "update" ? ([["주소", "적지 않음 — 서버가 이 요청의 출발지(공인 주소)를 등록"]] as [string, string][]) : []),
+        ],
+      },
+    ];
   if (m.kind === "ike") return [udp, ikeLayer(m)];
   if (m.kind === "dhcp6") {
     const TYPE: Record<typeof m.type, string> = { solicit: "1 (Solicit)", advertise: "2 (Advertise)", request: "3 (Request)", reply: "7 (Reply)", release: "8 (Release)" };
@@ -782,6 +797,18 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       if (ip && sent) out.push({ tool: "시스코 debug ip nat", line: `NAT*: s=${ip.src}, d=${ip.dst}->${sent.dst} [${detail(ev, "publicId") ?? ""}]` });
       break;
     }
+    case "ddns.update":
+      // OpenWrt ddns-scripts (GL.iNet 도 이것) 의 로그
+      if (!detail(ev, "late")) out.push({ tool: "OpenWrt ddns-scripts", line: `: Update needed - L: '${ip?.src ?? "?"}' <> R: (DNS 에 등록된 주소)` });
+      break;
+    case "ddns.ok":
+      out.push({ tool: "OpenWrt ddns-scripts", line: `: Update successful - IP '${detail(ev, "ip") ?? "?"}' send` });
+      out.push({ tool: "dyndns2 응답", line: `${detail(ev, "result") ?? "good"} ${detail(ev, "ip") ?? ""}`.trim() });
+      break;
+    case "ddns.failed":
+      if (detail(ev, "result")) out.push({ tool: "dyndns2 응답", line: String(detail(ev, "result")) });
+      out.push({ tool: "OpenWrt ddns-scripts", line: detail(ev, "result") === "badauth" ? `: Error sending update to DDNS Provider: 'badauth'` : `: Can not connect to DDNS Provider` });
+      break;
     case "fw.deny":
     case "fw.allow":
       if (ip6) {

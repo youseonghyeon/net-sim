@@ -404,7 +404,7 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage;
 }
 
 /** STUN·TURN (UDP 3478) */
@@ -517,6 +517,30 @@ export interface WgMessage {
   counter?: number;
   /** data: 복호화했을 때의 원래 패킷. 없으면 keepalive */
   inner?: Ipv4Packet;
+}
+
+/**
+ * DDNS 갱신 (GL.iNet 의 glddns.com·ipTIME 의 iptime.org 같은 서비스): 공유기가 "이 이름은 지금 내 주소" 를 알린다.
+ * 서버는 요청의 출발지 주소(공유기 앞에 NAT 가 있으면 그 NAT 의 공인 주소)를 그 이름의 A 레코드로 둔다.
+ * 실제는 HTTPS GET /nic/update?hostname=… (dyndns2 프로토콜) — 여기서는 UDP 8245 의 메시지 한 쌍으로 줄였다.
+ * 답: good(바꿈) · nochg(그대로) · badauth(다른 기기가 등록한 이름) · notfqdn(이 서비스의 이름이 아님)
+ */
+export interface DdnsMessage {
+  kind: "ddns";
+  op: "update" | "response";
+  id: number;
+  hostname: string;
+  /** 기기 식별 (GL.iNet 은 기기마다 이름이 정해져 있다 — 여기서는 WAN MAC) */
+  device?: string;
+  result?: "good" | "nochg" | "badauth" | "notfqdn";
+  /** 서버가 등록한 주소 */
+  ip?: Ip;
+}
+
+export const DDNS_PORT = 8245;
+
+export function ddnsLabel(m: DdnsMessage): string {
+  return m.op === "update" ? `DDNS 갱신 요청 (${m.hostname})` : `DDNS 응답 (${m.hostname}: ${m.result}${m.ip ? ` ${m.ip}` : ""})`;
 }
 
 /** WireGuard 메시지의 UDP 길이 (실제 형식의 크기) */
@@ -672,11 +696,13 @@ export interface DnsMessage {
   rcode?: "NXDOMAIN" | "SERVFAIL" | "NODATA";
   /** 재귀 질의가 서버를 거친 횟수 (루프 방지) */
   hops?: number;
+  /** 응답의 TTL(초): 캐시가 이만큼만 기억한다. 없으면 캐시 기본값(60초). DDNS 이름은 주소가 바뀌므로 짧다 */
+  ttl?: number;
 }
 
 export const DNS_PORT = 53;
 
-export type DhcpOp = "discover" | "offer" | "request" | "ack" | "nak" | "release";
+export type DhcpOp = "discover" | "offer" | "request" | "ack" | "nak" | "release" | "forcerenew";
 
 export interface DhcpMessage {
   kind: "dhcp";
@@ -753,7 +779,7 @@ export function l2tpPartLabel(l: L2tpPacket): string {
 const IKE_LABEL = (m: IkeMessage) =>
   `IKE ${m.exchange} ${m.response ? (m.error ? `응답 (${m.error})` : "응답") : "요청"}${m.ra ? " · 원격 접속" : ""}${m.eap ? ` · EAP ${m.eap === "request" ? "요청" : m.eap === "response" ? "응답" : m.eap === "success" ? "성공" : "실패"}` : ""}${m.dpd ? " · DPD" : ""}`;
 
-const DHCP_LABEL: Record<DhcpOp, string> = { discover: "Discover", offer: "Offer", request: "Request", ack: "Ack", nak: "Nak", release: "Release" };
+const DHCP_LABEL: Record<DhcpOp, string> = { discover: "Discover", offer: "Offer", request: "Request", ack: "Ack", nak: "Nak", release: "Release", forcerenew: "FORCERENEW" };
 
 /** UI 라벨/로그용 짧은 설명 */
 export function describeFrame(frame: EthernetFrame): string {
@@ -779,6 +805,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (d.kind === "rip") return d.command === "request" ? "RIP Request (전체 경로 요청)" : `RIP Response (경로 ${d.entries.length}개)`;
   if (d.kind === "vpn") return `VPN 터널 (암호화됨 · 안: ${d.inner.src} → ${d.inner.dst})`;
   if (d.kind === "wg") return wgLabel(d);
+  if (d.kind === "ddns") return ddnsLabel(d);
   if (d.kind === "dhcp6") return dhcp6Label(d);
   if (d.kind === "l2tp") return `L2TP${l2tpPartLabel(d)}`;
   if (d.kind === "stun") return stunLabel(d);
@@ -880,6 +907,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";
+  if (inner.payload.kind === "ddns") return inner.payload.op === "update" ? "DDNS 갱신" : "DDNS 응답";
   if (inner.payload.kind === "wg") return inner.payload.type === "data" ? (inner.payload.inner ? "WireGuard" : "keepalive") : "WG 핸드셰이크";
   if (inner.payload.kind === "dhcp6") return `DHCPv6 ${DHCP6_LABEL[inner.payload.type]}`;
   if (inner.payload.kind === "l2tp") return "L2TP";
@@ -906,5 +934,5 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.payload.kind === "esp") return "vpn";
   if (isControl(p.payload)) return "vrrp";
   const k = p.payload.payload.kind;
-  return k === "dns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" || k === "wg" ? "vpn" : "dhcp";
+  return k === "dns" || k === "ddns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" || k === "wg" ? "vpn" : "dhcp";
 }

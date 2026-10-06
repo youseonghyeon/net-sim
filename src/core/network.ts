@@ -57,7 +57,9 @@ export type ActionSpec =
   /** 인터넷 노드의 "저편 클라이언트" 가 공인 주소 dst:port 로 TCP 연결 (포트 포워딩 시연) */
   | { kind: "inet-connect"; nodeId: string; dst: Ip; port: number }
   /** P2P 앱으로 이름이 peer 인 상대와 연결 (STUN → 시그널링 → 홀 펀칭 → 안 되면 TURN) */
-  | { kind: "p2p-connect"; nodeId: string; peer: string };
+  | { kind: "p2p-connect"; nodeId: string; peer: string }
+  /** 인터넷 노드: ISP 가 그 공인 주소를 쓰는 고객에게 다른 주소를 주게 한다 (FORCERENEW) */
+  | { kind: "isp-renumber"; nodeId: string; ip: Ip };
 
 /** 링크에 실린 프레임 한 번 (로그에서 "그때 그 프레임" 을 찾기 위해 보관) */
 export interface FrameSighting {
@@ -385,6 +387,11 @@ export class Network {
       case "tcp-close":
         ctx.trace("action", "sys", `[사용자] 연결 해제 ${action.conn.split("-")[1] ?? action.conn}`, { ...action });
         if (!(node instanceof Internet ? node.tcp : this.getHost(action.nodeId).tcp).disconnect(action.conn, ctx)) ctx.trace("tcp.ignore", "L4", `닫을 연결이 없음 (이미 끝났거나 연결 중이 아님)`, { conn: action.conn });
+        break;
+      case "isp-renumber":
+        if (!(node instanceof Internet)) throw new Error(`${action.nodeId} is not an internet node`);
+        ctx.trace("action", "sys", `[사용자] ISP 가 ${action.ip} 고객의 공인 주소를 바꿈`, { ...action });
+        node.renumber(action.ip, ctx);
         break;
       case "inet-connect":
         if (!(node instanceof Internet)) throw new Error(`${action.nodeId} is not an internet node`);

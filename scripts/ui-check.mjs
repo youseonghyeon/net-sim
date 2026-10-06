@@ -1472,6 +1472,33 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await ra.scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${OUT}/99-wg-phone.png` });
 }
+// DDNS: 집 Brume 의 공인 주소를 ISP 가 바꾸면 DDNS 가 갱신된다 (인터넷 노드 진단 "공인 주소 바꾸기")
+{
+  await loadEx("ddns");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "카페 폰" && /VPN 연결됨/.test(el.textContent ?? "")), null, { timeout: 30000 });
+  const wanText = async () => (await device("집 Brume 3").locator("text.uplink").textContent()) ?? "";
+  const before = await wanText();
+  await clickDevice("internet-1");
+  const ren = page.locator(".inspector section", { has: page.locator("h3", { hasText: "공인 주소 바꾸기" }) });
+  console.log("isp renumber rows:", await ren.locator(".toggle-row").count());
+  await ren.locator(".toggle-row", { hasText: "집 Brume 3" }).locator("button").click();
+  for (let i = 0; i < 150; i++) {
+    const w = await wanText();
+    if (w !== before && /WAN 203\./.test(w)) break;
+    await page.waitForTimeout(100);
+  }
+  const after = await wanText();
+  console.log("home wan:", before, "→", after);
+  await clickDevice("집 Brume 3");
+  await goTab("설정");
+  await goGroup("인터넷");
+  const dd = page.locator(".inspector section", { has: page.locator("h3", { hasText: /^DDNS$/ }) });
+  const newIp = after.replace("WAN ", "");
+  for (let i = 0; i < 80 && !((await dd.locator("p.note").first().textContent()) ?? "").includes(newIp); i++) await page.waitForTimeout(100);
+  console.log("ddns status:", (await dd.locator("p.note").first().textContent())?.trim());
+  await page.screenshot({ path: `${OUT}/100-ddns.png` });
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

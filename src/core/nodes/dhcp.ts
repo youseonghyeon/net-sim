@@ -128,7 +128,8 @@ export class DhcpClient {
   }
 
   handle(msg: DhcpMessage, frameId: number, ctx: NodeContext, emit: Emit): void {
-    if (msg.xid !== this.xid) {
+    // FORCERENEW 는 서버가 먼저 보내는 메시지라 xid 가 내 요청과 상관없다
+    if (msg.xid !== this.xid && msg.op !== "forcerenew") {
       ctx.trace("dhcp.ignore", "app", this.tag(`DHCP ${msg.op} 의 xid 가 내 요청과 다름 → 무시`), { xid: msg.xid }, frameId);
       return;
     }
@@ -193,6 +194,21 @@ export class DhcpClient {
         );
         this.restart(ctx, emit);
         return;
+      case "forcerenew": {
+        // RFC 3203: 서버가 "지금 임대를 다시 확인하라" 고 알린다 (ISP 가 고객 주소를 바꿀 때). 쓰던 주소로 Request → 서버가 Nak 이면 Discover 부터
+        if (this.state !== "bound" || !this.iface.ip) {
+          ctx.trace("dhcp.ignore", "app", this.tag(`주소가 없는 상태라 FORCERENEW 무시`), {}, frameId);
+          return;
+        }
+        const cur = this.iface.ip;
+        this.state = "requesting";
+        this.attempts = 1;
+        ctx.trace("dhcp.request.sent", "app", this.tag(`DHCP FORCERENEW 수신: 서버 ${msg.serverId ?? "?"} 가 임대를 다시 확인하라고 함 → 쓰던 ${cur} 로 Request (RFC 3203)`), { ip: cur, forcerenew: true }, frameId);
+        const req: DhcpMessage = { kind: "dhcp", op: "request", xid: this.xid, clientMac: this.iface.mac, requestedIp: cur, serverId: this.serverId ?? msg.serverId };
+        this.iface.sendBroadcast(clientPacket(req), ctx, emit);
+        this.arm(ctx);
+        return;
+      }
       default:
         ctx.trace("dhcp.ignore", "app", this.tag(`클라이언트가 처리하지 않는 DHCP ${msg.op} → 무시`), {}, frameId);
     }
@@ -514,6 +530,27 @@ export class DhcpServer {
     this.iface.sendToMac(req.clientMac, this.packet(msg, clientDst), ctx, emit);
   }
 
+  /** 고객마다 다시 주지 않을 주소 (ISP 가 주소를 바꾼 고객의 옛 주소) */
+  private readonly avoid = new Map<Mac, Ip>();
+
+  /**
+   * ISP 의 고객 주소 바꾸기: 그 임대를 지우고(옛 주소는 그 고객에게 다시 주지 않음) FORCERENEW 로 알린다 (RFC 3203).
+   * 고객 공유기는 쓰던 주소로 Request → Nak → Discover 로 새 주소를 받는다. 지운 임대가 있으면 그 고객 MAC
+   */
+  renumber(ip: Ip, ctx: NodeContext, emit: Emit): Mac | undefined {
+    const lease = this.leases.get(ip);
+    if (!lease) {
+      ctx.trace("dhcp.ignore", "app", `${ip} 는 임대 중인 주소가 아님 → 바꿀 것이 없음`, { ip });
+      return undefined;
+    }
+    this.leases.delete(ip);
+    this.avoid.set(lease.mac, ip);
+    ctx.trace("dhcp.lease", "app", `고객 ${lease.mac} 의 공인 주소 ${ip} 임대를 지우고 다른 주소를 주기로 함 → DHCP FORCERENEW 로 알림 (가정용 회선의 공인 주소가 바뀌는 순간 — 그래서 DDNS 가 필요하다)`, { ip, mac: lease.mac, renumber: true });
+    const msg: DhcpMessage = { kind: "dhcp", op: "forcerenew", xid: 0, clientMac: lease.mac, serverId: this.iface.ip };
+    this.iface.sendToMac(lease.mac, this.packet(msg, ip), ctx, emit);
+    return lease.mac;
+  }
+
   /** 기존 임대 → 기존 제안 → 풀 안의 첫 빈 주소 (기존 것이 그 풀 밖이면 버린다) */
   private pickAddress(mac: Mac, pool: DhcpPool): Ip | undefined {
     for (const [ip, lease] of this.leases) {
@@ -532,9 +569,10 @@ export class DhcpServer {
       return undefined;
     }
     const taken = new Set([...this.leases.keys(), ...this.offers.values(), this.iface.ip]);
+    const avoid = this.avoid.get(mac);
     for (let n = start; n <= end; n++) {
       const ip = intToIp(n);
-      if (!taken.has(ip)) return ip;
+      if (!taken.has(ip) && ip !== avoid) return ip;
     }
     return undefined;
   }

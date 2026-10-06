@@ -138,6 +138,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.ipv6Enabled) out.push("IPv6");
     if (node.vpnServer.config.enabled) out.push(`VPN 서버 ${node.vpnServer.connected.length}`);
     if (node.wgServerCfg?.enabled) out.push(`WG 서버 ${node.wgs.connected}`);
+    if (node.ddns.config.enabled) out.push(node.ddns.state === "ok" ? "DDNS" : node.ddns.state === "failed" ? "DDNS 실패" : "DDNS 갱신 중");
     if (node.wgClientCfg?.enabled) out.push(node.wgc.connected > 0 ? "VPN 연결됨" : node.wgClientSummary()?.startsWith("끊김") && node.wgClientCfg.killSwitch ? "킬 스위치" : "VPN");
   } else if (node instanceof L3Node) {
     if (node.relays.some(Boolean)) out.push("DHCP 릴레이");
