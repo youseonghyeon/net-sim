@@ -287,6 +287,8 @@ export interface TcpSegment {
   tls?: TlsRecord;
   /** TLS ClientHello 의 SNI (접속할 이름 — 암호화 전이라 중간 장비도 본다) */
   sni?: string;
+  /** OpenVPN TCP 모드: 이 세그먼트가 나르는 OpenVPN 메시지 (TCP 스트림 위의 OpenVPN 패킷) */
+  ovpn?: OvpnMessage;
   /**
    * 헬스 체크 연결의 SYN (시뮬레이터 안에서만 쓰는 표시 — 실제 패킷에는 없다). 받은 서버도 그 연결의 재전송을 배경 타이머로 걸어,
    * 주기 체크가 일반 타이머를 끝없이 이어 시계를 멈추지 못하게 하는 일을 막는다
@@ -404,7 +406,7 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage | OvpnMessage;
 }
 
 /** STUN·TURN (UDP 3478) */
@@ -545,6 +547,62 @@ export const DDNS_PORT = 8245;
 
 export function ddnsLabel(m: DdnsMessage): string {
   return m.op === "release" ? `DDNS 이름 내려놓기 (${m.hostname})` : m.op === "update" ? `DDNS 갱신 요청 (${m.hostname})` : `DDNS 응답 (${m.hostname}: ${m.result}${m.ip ? ` ${m.ip}` : ""})`;
+}
+
+/**
+ * OpenVPN (UDP 또는 TCP, 기본 1194): TLS 로 서로의 인증서를 확인하는 VPN.
+ * - reset-client·reset-server: 세션 시작 (P_CONTROL_HARD_RESET_*_V2)
+ * - tls-client·tls-server·tls-auth·tls-ok·tls-fail: 제어 채널 위의 TLS — 서버 인증서(CA 확인) → 클라이언트 인증서·계정 → 결과
+ * - push-request·push-reply: 서버가 주소(ifconfig)·경로(route)·DNS·전부 터널로(redirect-gateway)를 내려 준다
+ * - data: 원래 IP 패킷 (P_DATA_V2), ping: keepalive, exit: 클라이언트가 끊음 (explicit-exit-notify)
+ * crypt: tls-crypt 키 (같은 키가 아니면 받는 쪽이 열지 못하고 침묵 — 실제로는 HMAC), 시뮬레이터는 키 지문을 그대로 싣는다
+ */
+export interface OvpnMessage {
+  kind: "ovpn";
+  op: "reset-client" | "reset-server" | "tls-client" | "tls-server" | "tls-auth" | "tls-ok" | "tls-fail" | "push-request" | "push-reply" | "data" | "ping" | "exit";
+  /** 클라이언트 세션 번호 */
+  sid: number;
+  /** tls-crypt 키 지문 (없으면 tls-crypt 안 씀) */
+  crypt?: string;
+  /** tls-server: 서버 인증서 / tls-auth: 클라이언트 인증서 — 발급한 CA 의 지문 */
+  cert?: { cn: string; ca: string };
+  /** tls-auth: 계정 (auth-user-pass) */
+  user?: string;
+  password?: string;
+  /** tls-fail 의 이유 */
+  reason?: string;
+  /** push-reply */
+  push?: { ip: Ip; prefix: number; routes: { dest: Ip; prefix: number }[]; dns?: Ip; redirectGateway: boolean };
+  /** data */
+  inner?: Ipv4Packet;
+  /** 클라이언트 식별 (다시 붙으면 같은 주소) */
+  cid?: string;
+}
+
+export const OVPN_PORT = 1194;
+
+export function ovpnLabel(m: OvpnMessage): string {
+  const op: Record<OvpnMessage["op"], string> = {
+    "reset-client": "세션 시작 (HARD_RESET_CLIENT)",
+    "reset-server": "세션 시작 응답 (HARD_RESET_SERVER)",
+    "tls-client": "TLS ClientHello",
+    "tls-server": "TLS ServerHello·서버 인증서",
+    "tls-auth": "TLS 클라이언트 인증서·계정",
+    "tls-ok": "TLS 완료",
+    "tls-fail": "TLS 실패",
+    "push-request": "PUSH_REQUEST",
+    "push-reply": "PUSH_REPLY (주소·경로·DNS)",
+    data: "데이터",
+    ping: "ping (keepalive)",
+    exit: "끊음 (exit-notify)",
+  };
+  return m.op === "data" && m.inner ? `OpenVPN 데이터 (암호화됨 · 안: ${m.inner.src} → ${m.inner.dst})` : `OpenVPN ${op[m.op]}${m.crypt ? " · tls-crypt" : ""}`;
+}
+
+/** OpenVPN 메시지의 길이 (근사) */
+export function ovpnLength(m: OvpnMessage, innerLength: number): number {
+  const base = m.op === "data" ? 24 + innerLength : m.op === "tls-server" ? 1200 : m.op === "tls-auth" ? 900 : m.op === "push-reply" ? 180 : m.op === "ping" ? 40 : 60;
+  return base + (m.crypt ? 32 : 0);
 }
 
 /** WireGuard 메시지의 UDP 길이 (실제 형식의 크기) */
@@ -815,6 +873,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (d.kind === "vpn") return `VPN 터널 (암호화됨 · 안: ${d.inner.src} → ${d.inner.dst})`;
   if (d.kind === "wg") return wgLabel(d);
   if (d.kind === "ddns") return ddnsLabel(d);
+  if (d.kind === "ovpn") return ovpnLabel(d);
   if (d.kind === "dhcp6") return dhcp6Label(d);
   if (d.kind === "l2tp") return `L2TP${l2tpPartLabel(d)}`;
   if (d.kind === "stun") return stunLabel(d);
@@ -916,6 +975,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";
+  if (inner.payload.kind === "ovpn") return inner.payload.op === "data" ? "OpenVPN" : "OpenVPN 제어";
   if (inner.payload.kind === "ddns") return inner.payload.op === "update" ? "DDNS 갱신" : inner.payload.op === "release" ? "DDNS 내려놓기" : "DDNS 응답";
   if (inner.payload.kind === "wg") return inner.payload.obf || inner.payload.type === "junk" ? "UDP" : inner.payload.type === "data" ? (inner.payload.inner ? "WireGuard" : "keepalive") : "WG 핸드셰이크";
   if (inner.payload.kind === "dhcp6") return `DHCPv6 ${DHCP6_LABEL[inner.payload.type]}`;
@@ -943,5 +1003,5 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.payload.kind === "esp") return "vpn";
   if (isControl(p.payload)) return "vrrp";
   const k = p.payload.payload.kind;
-  return k === "dns" || k === "ddns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" || k === "wg" ? "vpn" : "dhcp";
+  return k === "dns" || k === "ddns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" || k === "wg" || k === "ovpn" ? "vpn" : "dhcp";
 }

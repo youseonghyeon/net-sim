@@ -1,4 +1,5 @@
 // 호스트 설정: IP 설정, 서비스(웹·DHCP 서버·DNS 서버·로드밸런서·프록시), HTTP 프록시 설정, 무선 단말·AP.
+import { HostOvpnFields } from "./ovpn";
 import { prefixToMask, intToIp, sameSubnet } from "../../core/addr";
 import { topology, updateDevice } from "../../model/store";
 import {
@@ -604,17 +605,18 @@ export function RemoteVpnSection({ d, h }: { d: Device; h: HostSettings }) {
   const status = node instanceof Host ? node.ra.summary() : undefined;
   const l2tp = ra.type === "l2tp";
   const wg = ra.type === "wireguard";
+  const ovpn = ra.type === "openvpn";
   return (
     <Section title="원격 접속 VPN">
       <label class="toggle-row">
         <span>
-          {ra.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">{wg ? "WireGuard" : l2tp ? "공유기 VPN" : "회사 VPN"}</span>
+          {ra.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">{wg ? "WireGuard" : ovpn ? "OpenVPN" : l2tp ? "공유기 VPN" : "회사 VPN"}</span>
         </span>
         <Toggle on={ra.enabled} onToggle={() => set({ enabled: !ra.enabled })} />
       </label>
       <Field label="종류">
         <div class="segmented" role="radiogroup">
-          <button class={!l2tp && !wg ? "on" : ""} onClick={() => set({ type: undefined })} title="회사 VPN 장비에 IKEv2 로 — 사내 대역만 터널로 (split tunnel)">
+          <button class={!l2tp && !wg && !ovpn ? "on" : ""} onClick={() => set({ type: undefined })} title="회사 VPN 장비에 IKEv2 로 — 사내 대역만 터널로 (split tunnel)">
             IKEv2
           </button>
           <button class={l2tp ? "on" : ""} onClick={() => set({ type: "l2tp", dpd: undefined })} title="집 공유기(ipTIME 등)의 VPN 서버에 L2TP/IPsec 으로 — 모든 트래픽을 집으로 (full tunnel)">
@@ -623,11 +625,16 @@ export function RemoteVpnSection({ d, h }: { d: Device; h: HostSettings }) {
           <button class={wg ? "on" : ""} onClick={() => set({ type: "wireguard", dpd: undefined, wg: ra.wg ?? { ...DEFAULT_WG_CLIENT_FIELDS } })} title="GL.iNet 등의 WireGuard 서버에 — 공개 키로 붙고, AllowedIPs 로 터널로 보낼 곳을 정한다">
             WireGuard
           </button>
+          <button class={ovpn ? "on" : ""} onClick={() => set({ type: "openvpn", dpd: undefined })} title="GL.iNet 등의 OpenVPN 서버에 — 인증서로 서로 확인하고, 서버가 주소·경로·DNS 를 내려 준다">
+            OpenVPN
+          </button>
         </div>
       </Field>
       {!ra.enabled && (
         <p class="note">
-          {wg
+          {ovpn
+            ? "켜면 OpenVPN 앱처럼 서버와 인증서를 서로 확인한 뒤 가상 주소·경로·DNS 를 받아 옵니다. 서버 공유기에서 이 기기의 설정 파일(.ovpn)을 가져와야 붙습니다."
+            : wg
             ? "켜면 WireGuard 앱처럼 서버와 공개 키로 핸드셰이크하고, AllowedIPs 로 가는 패킷을 터널로 보냅니다. 서버 화면에 이 기기의 공개 키를 등록해야 붙습니다."
             : l2tp
             ? "켜면 집 공유기의 VPN 서버에 붙어 집 LAN 주소를 하나 받고, 모든 트래픽을 집으로 보냅니다(full tunnel). Windows 의 \"L2TP/IPsec 및 미리 공유한 키\" 와 같습니다."
@@ -635,7 +642,8 @@ export function RemoteVpnSection({ d, h }: { d: Device; h: HostSettings }) {
         </p>
       )}
       {ra.enabled && wg && <HostWgFields d={d} />}
-      {ra.enabled && !wg && (
+      {ra.enabled && ovpn && <HostOvpnFields d={d} />}
+      {ra.enabled && !wg && !ovpn && (
         <>
           <Field label="VPN 서버 (공인 주소)" error={ipError(ra.server, true)}>
             <input class="input mono" value={ra.server} placeholder={l2tp ? "203.0.113.20" : "203.0.113.11"} onInput={(e) => set({ server: e.currentTarget.value })} />

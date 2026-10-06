@@ -28,6 +28,8 @@ import { DEFAULT_LB_SETTINGS, DEFAULT_PROXY_SETTINGS,
   DEVICE_SPECS,
   defaultL3,
   wgKeyOf,
+  ovpnCaOfDevice,
+  ovpnTlsCryptOfDevice,
   ddnsHostname,
   wirelessLinks,
   type Device,
@@ -133,6 +135,7 @@ export class NetworkSync {
         if (node instanceof Router && d.router?.wan2?.enabled) node.setWan2(effectiveRouter(d).wan2, net.contextFor(d.id));
         if (node instanceof Router && d.router?.adguard?.enabled) node.setAdguard(effectiveRouter(d).adguard, net.contextFor(d.id));
         if (node instanceof Router && d.router?.dpi?.enabled) node.setDpi(effectiveRouter(d).dpi, net.contextFor(d.id));
+        if (node instanceof Router && d.router?.ovpnServer?.enabled) node.ovpn.setConfig(effectiveRouter(d).ovpnServer, net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -288,6 +291,19 @@ export function effectiveRaClient(d: Device): RaClientConfig | undefined {
     ...(r.type === "wireguard" ? { type: "wireguard" as const, wg: effectiveWgFields(r.wg, wgKeyOf(d, "host")) } : {}),
     // WireGuard 는 서버를 이름(DDNS)으로도 적는다
     ...(r.type === "wireguard" && !server && endpointName(r.server) ? { server: endpointName(r.server)! } : {}),
+    ...(r.type === "openvpn"
+      ? {
+          type: "openvpn" as const,
+          ...(!server && endpointName(r.server) ? { server: endpointName(r.server)! } : {}),
+          ovpn: {
+            proto: r.ovpn?.proto === "tcp" ? ("tcp" as const) : ("udp" as const),
+            port: Number.isInteger(r.ovpn?.port) && r.ovpn!.port >= 1 && r.ovpn!.port <= 65535 ? r.ovpn!.port : 1194,
+            ca: (r.ovpn?.ca ?? "").trim(),
+            cert: { cn: (r.ovpn?.cn ?? "").trim(), ca: (r.ovpn?.certCa ?? "").trim() },
+            ...(r.ovpn?.tlsCrypt?.trim() ? { tlsCrypt: r.ovpn.tlsCrypt.trim() } : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -437,6 +453,23 @@ export function effectiveRouter(d: Device, current?: Router) {
         enabled: w2?.enabled === true,
         ...(w2?.ipMode === "static" ? { mode: "static" as const, ip: validIp(w2.ip), prefix: w2.prefix, gateway: validIp(w2.gateway) } : { mode: "dhcp" as const }),
         ...(validIp(w2?.track?.trim()) ? { track: w2!.track.trim() } : {}),
+      };
+    })(),
+    ovpnServer: (() => {
+      const o = r.ovpnServer;
+      const net = parseCidr(o?.subnet, 24);
+      return {
+        enabled: o?.enabled === true,
+        proto: o?.proto === "tcp" ? ("tcp" as const) : ("udp" as const),
+        port: Number.isInteger(o?.port) && o!.port >= 1 && o!.port <= 65535 ? o!.port : 1194,
+        ca: ovpnCaOfDevice(d),
+        ...(net && net.prefix <= 30 ? { subnet: net } : {}),
+        lanAccess: o?.lanAccess !== false,
+        redirectGateway: o?.redirectGateway === true,
+        pushDns: o?.pushDns !== false,
+        ...(o?.tlsCrypt !== false ? { tlsCrypt: ovpnTlsCryptOfDevice(d) } : {}),
+        users: (o?.users ?? []).map((u) => ({ name: u.name.trim(), password: u.password })).filter((u) => u.name),
+        revoked: (o?.revoked ?? []).map((x) => x.trim()).filter(Boolean),
       };
     })(),
     dpi: {

@@ -1014,7 +1014,7 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await clickDevice("집 ipTIME");
   await goTab("설정");
   await goGroup("VPN");
-  const vpnSec = page.locator(".inspector section", { has: page.locator("h3", { hasText: "VPN 서버" }) });
+  const vpnSec = page.locator(".inspector section", { has: page.locator("h3", { hasText: /^VPN 서버/ }) });
   console.log("iptime server: accounts", await vpnSec.locator(".record-row").count(), "| connected:", (await vpnSec.locator(".stat-row").first().innerText()).replace(/\s+/g, " "));
   await vpnSec.screenshot({ path: `${OUT}/59-iptime-server.png` });
   console.log("iptime badge:", await device("집 ipTIME").locator(".badge", { hasText: "VPN 서버 1" }).count());
@@ -1565,6 +1565,31 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   const dpiRows = () => page.locator(".inspector section", { has: page.locator("h3", { hasText: "DPI 앱별 트래픽" }) }).locator("tbody tr", { hasText: "WireGuard" });
   for (let i = 0; i < 100 && !(await dpiRows().count()); i++) await page.waitForTimeout(100);
   console.log("dpi rows:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "DPI 앱별 트래픽" }) }).locator("tbody tr").allInnerTexts()).map((x) => x.replace(/\s+/g, " ")).join(" | "));
+}
+// OpenVPN: 카페 노트북이 TCP 443 으로 집 Brume 3 에 붙음 — 서버 섹션(CA·전송·발급한 인증서 폐기)·노트북의 설정 파일 칸·표의 클라이언트
+{
+  await loadEx("openvpn");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "카페 노트북" && /VPN 연결됨/.test(el.textContent ?? "")), null, { timeout: 30000 });
+  await clickDevice("카페 노트북");
+  await page.fill(".ping-row .input", "192.168.8.20");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 40000 });
+  console.log("ovpn laptop → NAS:", (await page.locator(".ping-log li").first().innerText()).replace(/\s+/g, " "));
+  await goTab("설정");
+  const ra = page.locator(".inspector section", { has: page.locator("h3", { hasText: "원격 접속 VPN" }) });
+  console.log("ovpn laptop type:", await ra.locator(".segmented button.on").first().textContent(), "| status:", (await ra.locator("p.note").first().textContent())?.trim());
+  await ra.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/104-ovpn-laptop.png` });
+  await clickDevice("집 Brume 3");
+  await goTab("설정");
+  await goGroup("VPN");
+  const srv = page.locator(".inspector section", { has: page.locator("h3", { hasText: "OpenVPN 서버" }) });
+  await srv.scrollIntoViewIfNeeded();
+  console.log("ovpn server proto:", await srv.locator(".segmented button.on").first().textContent(), "| issued certs:", (await srv.locator(".toggle-row", { hasText: "카페 노트북" }).count()));
+  await page.screenshot({ path: `${OUT}/105-ovpn-server.png` });
+  await goTab("표");
+  console.log("ovpn status rows:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "OpenVPN 클라이언트" }) }).locator("tbody tr").allInnerTexts()).map((x) => x.replace(/\s+/g, " ")).join(" | "));
 }
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 

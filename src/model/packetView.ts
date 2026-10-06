@@ -3,8 +3,8 @@
 // - headerLayers: 이더넷 → ARP/IPv4 → ICMP/TCP/UDP → DHCP/DNS/RIP 필드를 실제 번호(타입·코드·옵션)와 함께
 // - practitionerLines: 장치가 내린 판단을 실무 명령의 출력(시스코 debug, iptables LOG, dhclient, ping, curl …)으로
 // 시뮬레이터에 없는 필드(체크섬, 윈도우 크기, IP ID 등)는 넣지 않고, 길이는 근사값이다.
-import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, L2tpPacket, P2pMessage, StunMessage, TcpSegment, UdpPacket, WgMessage } from "../core/packet";
-import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE, wgLength } from "../core/packet";
+import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, L2tpPacket, OvpnMessage, P2pMessage, StunMessage, TcpSegment, UdpPacket, WgMessage } from "../core/packet";
+import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE, ovpnLength, wgLength } from "../core/packet";
 import { scopeLabel6 } from "../core/addr6";
 import type { TraceEvent } from "../core/trace";
 
@@ -72,6 +72,7 @@ function appLength(u: UdpPacket): number {
   if (m.kind === "p2p") return p2pLength(m);
   if (m.kind === "wg") return wgLength(m, m.inner ? 20 + l4Length(m.inner.payload) : 0);
   if (m.kind === "ddns") return 60 + m.hostname.length; // 실제는 HTTPS 요청 — 대략의 크기
+  if (m.kind === "ovpn") return ovpnLength(m, m.inner ? 20 + l4Length(m.inner.payload) : 0);
   return 4 + m.entries.length * 20; // RIP
 }
 
@@ -202,6 +203,8 @@ function udpText(u: UdpPacket): string {
   // WireGuard 도 암호화돼 tcpdump 는 길이만 (148 = Initiation, 92 = Response, 32 = keepalive)
   if (m.kind === "wg") return `UDP, length ${appLength(u)}`;
   if (m.kind === "ddns") return `UDP, length ${appLength(u)}`;
+  // OpenVPN 도 tcpdump 는 길이만 (제어 채널은 tls-crypt·TLS, 데이터는 암호화)
+  if (m.kind === "ovpn") return `UDP, length ${appLength(u)}`;
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
 }
 
@@ -389,8 +392,44 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
       layers.push(wgLayer(m));
       if (m.inner && !m.obf) layers.push(...ipLayers(m.inner, true));
     }
+    if (l4.payload.kind === "ovpn") {
+      layers.push(ovpnLayer(l4.payload));
+      if (l4.payload.inner) layers.push(...ipLayers(l4.payload.inner, true));
+    }
   }
   return inTunnel ? layers.map((l) => ({ ...l, title: `터널 안 · ${l.title}` })) : layers;
+}
+
+const OVPN_OPCODE: Record<OvpnMessage["op"], string> = {
+  "reset-client": "7 (P_CONTROL_HARD_RESET_CLIENT_V2)",
+  "reset-server": "8 (P_CONTROL_HARD_RESET_SERVER_V2)",
+  "tls-client": "4 (P_CONTROL_V1 — TLS ClientHello)",
+  "tls-server": "4 (P_CONTROL_V1 — TLS ServerHello·인증서)",
+  "tls-auth": "4 (P_CONTROL_V1 — TLS 클라이언트 인증서·계정)",
+  "tls-ok": "4 (P_CONTROL_V1 — TLS Finished)",
+  "tls-fail": "4 (P_CONTROL_V1 — TLS alert / AUTH_FAILED)",
+  "push-request": "4 (P_CONTROL_V1 — PUSH_REQUEST)",
+  "push-reply": "4 (P_CONTROL_V1 — PUSH_REPLY)",
+  data: "9 (P_DATA_V2)",
+  ping: "9 (P_DATA_V2 — keepalive ping)",
+  exit: "9 (P_DATA_V2 — EXIT / RESTART 알림)",
+};
+
+/** OpenVPN 층: 바깥에서 보이는 opcode·세션 id 와, 두 끝이 풀면 보이는 내용 */
+function ovpnLayer(m: OvpnMessage): HeaderLayer {
+  const rows: [string, string][] = [
+    ["opcode", OVPN_OPCODE[m.op]],
+    ["세션 id", String(m.sid)],
+  ];
+  if (m.crypt) rows.push(["tls-crypt", `키 ${m.crypt.slice(0, 11)}… 로 감쌈 — 같은 키가 없으면 열지 못하고(서버는 답하지 않음), 중간 장비도 인증서를 못 본다`]);
+  else if (m.op !== "data" && m.op !== "ping" && m.op !== "exit") rows.push(["tls-crypt", "없음 — 제어 채널의 TLS 핸드셰이크(인증서)가 중간 장비에도 보인다"]);
+  if (m.cert) rows.push([m.op === "tls-server" ? "서버 인증서" : "클라이언트 인증서", `CN=${m.cert.cn}, 발급 CA ${m.cert.ca.slice(0, 11)}…`]);
+  if (m.user) rows.push(["계정 (auth-user-pass)", `${m.user} / ••••`]);
+  if (m.op === "tls-fail") rows.push(["결과", m.reason === "AUTH_FAILED" ? "AUTH_FAILED" : m.reason === "revoked" ? "인증서 폐기됨 (CRL)" : "인증서 확인 실패 (다른 CA)"]);
+  if (m.push) rows.push(["PUSH_REPLY", [m.push.redirectGateway ? "redirect-gateway def1" : "", ...m.push.routes.map((r) => `route ${r.dest}/${r.prefix}`), m.push.dns ? `dhcp-option DNS ${m.push.dns}` : "", `ifconfig ${m.push.ip}/${m.push.prefix}`].filter(Boolean).join(", ")]);
+  if (m.op === "data" && m.inner) rows.push(["안쪽", "암호화됨 — 두 끝만 아래 원래 패킷을 본다"]);
+  if (m.reason === "restart") rows.push(["알림", "서버가 다시 시작함 — 클라이언트는 다시 연결"]);
+  return { title: "OpenVPN", rows };
 }
 
 function wgLayer(m: WgMessage): HeaderLayer {
@@ -519,6 +558,11 @@ function icmpLayer(p: IcmpPacket): HeaderLayer {
 
 /** TCP 층과, TLS 레코드면 그 위의 TLS 층 (응용 데이터의 HTTP 헤더는 TLS 안에 있어 TLS 층에 둔다) */
 function tcpLayers(t: TcpSegment): HeaderLayer[] {
+  if (t.ovpn) {
+    const tcp = tcpLayer({ kind: "tcp", srcPort: t.srcPort, dstPort: t.dstPort, seq: t.seq, ack: t.ack, syn: t.syn, ackFlag: t.ackFlag, fin: t.fin, rst: t.rst, len: t.len });
+    tcp.rows.push(["데이터", "OpenVPN 패킷 (앞 2바이트 = 길이, TCP 스트림 위)"]);
+    return [tcp, ovpnLayer(t.ovpn), ...(t.ovpn.inner ? ipLayers(t.ovpn.inner, true) : [])];
+  }
   if (!t.tls) return [tcpLayer(t)];
   const tcp = tcpLayer({ kind: "tcp", srcPort: t.srcPort, dstPort: t.dstPort, seq: t.seq, ack: t.ack, syn: t.syn, ackFlag: t.ackFlag, fin: t.fin, rst: t.rst, len: t.len });
   tcp.rows.push(["데이터", "TLS 레코드 (아래)"]);
@@ -595,7 +639,7 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
       ]);
     return [udp, { title: "DNS (앱)", rows }];
   }
-  if (m.kind === "vpn" || m.kind === "esp" || m.kind === "wg") return [udp];
+  if (m.kind === "vpn" || m.kind === "esp" || m.kind === "wg" || m.kind === "ovpn") return [udp];
   if (m.kind === "ddns")
     return [
       udp,
@@ -770,6 +814,7 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
   const l2tp = ev.kind.startsWith("vpn.") && (detail(ev, "l2tp") !== undefined || detail(ev, "ppp") !== undefined);
   if (l2tp) l2tpLines(ev, ip, out);
   else if (ev.kind.startsWith("vpn.") && detail(ev, "wg") !== undefined) wgLines(ev, frames, out);
+  else if (ev.kind.startsWith("vpn.") && detail(ev, "ovpn") !== undefined) ovpnLines(ev, frames, out);
   else switch (ev.kind) {
     case "ip.forward":
       if (ip) out.push({ tool: "시스코 debug ip packet", line: `IP: s=${ip.src}, d=${ip.dst} (${detail(ev, "out") ?? "?"}), len ${len}, forward` });
@@ -1081,6 +1126,55 @@ function wgLines(ev: TraceEvent, frames: { received?: EthernetFrame; sent?: Ethe
       else if (detail(ev, "src") !== undefined) line(`Packet has unallowed src IP (${detail(ev, "src")}) from peer 1 (${from})`);
       else if (detail(ev, "failed") === "true") line(`Handshake for peer 1 did not complete after 3 attempts, giving up`);
       break;
+  }
+}
+
+/** OpenVPN 로그 (verb 3) 의 해당 줄 — 서버·클라이언트 양쪽 (요약문으로 어느 단계인지 가린다) */
+function ovpnLines(ev: TraceEvent, frames: { received?: EthernetFrame; sent?: EthernetFrame }, out: PractitionerLine[]): void {
+  const tool = "openvpn 로그 (verb 3)";
+  const ep = (f: EthernetFrame | undefined) => {
+    if (!f || f.payload.kind !== "ipv4") return "?";
+    const p = f.payload.payload;
+    return p.kind === "udp" || p.kind === "tcp" ? `${f.payload.src}:${p.srcPort}` : f.payload.src;
+  };
+  const from = ep(frames.received);
+  const line = (l: string) => out.push({ tool, line: l });
+  const sm = ev.summary;
+  const server = sm.startsWith("OpenVPN 서버");
+  const cn = /CN=([^ ,)]+(?: [^ ,)(]+)*)/.exec(sm)?.[1];
+  if (ev.kind === "vpn.handshake") {
+    if (server && sm.includes("HARD_RESET_CLIENT")) line(`TLS: Initial packet from [AF_INET]${from}, sid=${Number(detail(ev, "sid") ?? 0).toString(16).padStart(8, "0")} ${"0".repeat(8)}`);
+    else if (server && sm.includes("VERIFY OK")) {
+      line(`${from} VERIFY OK: depth=1, CN=GL.iNet CA`);
+      line(`${from} VERIFY OK: depth=0, CN=${cn ?? "?"}`);
+    } else if (!server && sm.includes("VERIFY OK")) {
+      line("VERIFY OK: depth=1, CN=GL.iNet CA");
+      line("VERIFY OK: depth=0, CN=server");
+    } else if (!server && sm.includes("TLS 완료")) line("Control Channel: TLSv1.3, cipher TLSv1.3 TLS_AES_256_GCM_SHA384, peer certificate: 2048 bits RSA");
+    else if (!server && sm.includes("TCP 연결됨")) line("TCP connection established");
+    else if (!server && sm.includes("(SYN)")) line(`Attempting to establish TCP connection with [AF_INET]${sm.match(/TCP ([0-9.]+:\d+)/)?.[1] ?? "?"}`);
+  } else if (ev.kind === "vpn.up") {
+    const push = String(detail(ev, "push") ?? "");
+    const who = String(detail(ev, "cn") ?? "client");
+    if (server) line(`${who}/${from} SENT CONTROL [${who}]: 'PUSH_REPLY,${push}' (status=1)`);
+    else {
+      line(`PUSH: Received control message: 'PUSH_REPLY,${push}'`);
+      line("Initialization Sequence Completed");
+    }
+  } else if (ev.kind === "vpn.drop") {
+    if (sm.includes("tls-crypt unwrap")) {
+      line("tls-crypt unwrap error: packet authentication failed");
+      line(`TLS Error: tls-crypt unwrapping failed from [AF_INET]${from}`);
+    } else if (sm.includes("certificate revoked") || (server && sm.includes("CRL"))) line(`${from} VERIFY ERROR: depth=0, error=certificate revoked: CN=${cn ?? "?"}`);
+    else if (server && sm.includes("VERIFY ERROR")) line(`${from} VERIFY ERROR: depth=0, error=unable to get local issuer certificate: CN=${cn ?? "?"}`);
+    else if (server && sm.includes("AUTH_FAILED")) line(`${from} TLS Auth Error: Auth Username/Password verification failed for peer`);
+    else if (!server && sm.includes("AUTH_FAILED")) line("AUTH: Received control message: AUTH_FAILED");
+    else if (!server && sm.includes("VERIFY ERROR")) line("VERIFY ERROR: depth=1, error=unable to get local issuer certificate: CN=GL.iNet CA");
+    else if (!server && sm.includes("응답 없음")) line("TLS Error: TLS key negotiation failed to occur within 60 seconds (check your network connectivity)");
+    else if (sm.includes("ping-restart")) line("[server] Inactivity timeout (--ping-restart), restarting");
+    else if (sm.includes("RESTART")) line("SIGUSR1[soft,server-pushed-connection-reset] received, process restarting");
+    else if (sm.includes("duplicate-cn")) line(`MULTI: new connection by client '${cn ?? "?"}' will cause previous active sessions by this client to be dropped.  Remember to use the --duplicate-cn option if you want multiple clients using the same certificate or username to concurrently connect.`);
+    else if (sm.includes("explicit-exit-notify") || sm.includes("FIN")) line(server ? `${cn ?? "client"}/${from} SIGTERM[soft,remote-exit] received, client-instance exiting` : "SIGTERM[hard,] received, process exiting");
   }
 }
 

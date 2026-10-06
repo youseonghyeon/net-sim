@@ -46,7 +46,7 @@ function clientsOf(devices: Device[]): Client[] {
 }
 
 /** 공유기의 수동 WAN 주소 (자동이면 모름 — 판단하지 않는다) */
-function routerWanIp(x: Device): string | undefined {
+export function routerWanIp(x: Device): string | undefined {
   return x.router?.wan?.ipMode === "static" ? validIp(x.router.wan.ip) : undefined;
 }
 
@@ -60,11 +60,16 @@ function serverAt(devices: Device[], self: Device, ip: string, port: number): { 
 
 /** 그 장비가 서버를 켜지 않고 그 UDP 포트를 안쪽으로 포워딩하면 대상(수동 WAN 주소의 공유기)으로 따라간다 */
 function followFrom(devices: Device[], self: Device, start: Device | undefined, port: number): { srv: Device; port: number; via?: Device } | undefined {
+  return followTarget(devices, self, start, port, "udp", (x, p) => !!x.router?.wgServer?.enabled && x.router.wgServer.port === p);
+}
+
+/** 그 장비가 서버(isServer)가 아니고 그 포트(proto)를 안쪽으로 포워딩하면 대상(수동 WAN 주소의 공유기)으로 따라간다 */
+export function followTarget(devices: Device[], self: Device, start: Device | undefined, port: number, proto: "udp" | "tcp", isServer: (x: Device, port: number) => boolean): { srv: Device; port: number; via?: Device } | undefined {
   let srv = start;
   let p = port;
   let via: Device | undefined;
-  for (let hop = 0; srv && !(srv.router?.wgServer?.enabled && srv.router.wgServer.port === p) && hop < 4; hop++) {
-    const fwd = srv.router?.forwards?.find((f) => f.proto === "udp" && f.publicPort === p);
+  for (let hop = 0; srv && !isServer(srv, p) && hop < 4; hop++) {
+    const fwd = srv.router?.forwards?.find((f) => (f.proto ?? "tcp") === proto && f.publicPort === p);
     if (!fwd) break;
     const lan = validIp(fwd.lanIp);
     via = srv;
@@ -75,7 +80,7 @@ function followFrom(devices: Device[], self: Device, start: Device | undefined, 
 }
 
 /** 이 DDNS 이름을 켜 둔 공유기 */
-function ddnsOwner(devices: Device[], name: string): Device | undefined {
+export function ddnsOwner(devices: Device[], name: string): Device | undefined {
   return devices.find((x) => x.router?.ddns?.enabled && ddnsHostname(x.router.ddns.name) === name);
 }
 
@@ -100,7 +105,7 @@ export function ddnsRules({ t, add }: LintContext): void {
 }
 
 /** 공유기 WAN 이 다른 공유기의 LAN 에 붙어 있으면 그 앞 공유기 (밖에서는 앞 공유기의 공인 주소로 보인다) */
-function frontRouter(m: LintContext["m"], d: Device): Device | undefined {
+export function frontRouter(m: LintContext["m"], d: Device): Device | undefined {
   const seg = m.ids.get(`${d.id}:0`);
   if (seg === undefined) return undefined;
   return m.allGws.find((g) => g.device !== d && g.gwKind === "router" && m.ids.get(g.key) === seg)?.device;

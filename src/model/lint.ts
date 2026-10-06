@@ -15,6 +15,7 @@ import { analyze } from "./lint/segments";
 import { forwardClosedRule, httpProxyRule, proxyPortClashRule, routerDnsRule } from "./lint/services";
 import { remoteAccessRules, routerVpnRules, siteVpnRules } from "./lint/vpn";
 import { ddnsRules, wireguardRules } from "./lint/wg";
+import { ovpnRules } from "./lint/ovpn";
 import { adguardRules } from "./lint/adguard";
 
 export type { LintIssue } from "./lint/context";
@@ -52,6 +53,7 @@ const RULES: ((ctx: LintContext) => void)[] = [
   routerVpnRules, // 20b
   wireguardRules, // 20c
   ddnsRules, // 20d
+  ovpnRules, // 20e
   httpProxyRule, // 21
   proxyPortClashRule, // 21b
   adguardRules, // 21c

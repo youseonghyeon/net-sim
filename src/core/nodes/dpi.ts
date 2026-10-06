@@ -2,7 +2,7 @@
 // 내용을 풀지 않고(암호화돼 못 푼다) 보이는 것만 본다:
 // - TLS ClientHello 의 SNI (접속할 이름은 암호화 전이라 보인다) → 이름으로 앱 (youtube.com → YouTube)
 // - 공유기 DNS 포워더가 답해 준 이름 → 그 주소로 가는 흐름 (DNS 로 배운 주소)
-// - 프로토콜의 모양: WireGuard(첫 메시지 종류·크기 148바이트), IKE·ESP(IPsec), L2TP, DNS, STUN, 포트(SSH 22, HTTP 80, QUIC 443/UDP)
+// - 프로토콜의 모양: WireGuard(첫 메시지 종류·크기 148바이트), OpenVPN(opcode — TCP 443 이어도), IKE·ESP(IPsec), L2TP, DNS, STUN, 포트(SSH 22, HTTP 80, QUIC 443/UDP)
 // 앱마다·기기마다 트래픽(패킷·바이트)을 세고, 막을 앱·카테고리를 고르면 TCP 는 RST 를 주입해 끊고 UDP 는 드롭한다.
 // 난독화한 VPN(모양을 흐트러뜨린 WireGuard)은 "알 수 없는 UDP" 로 보여 VPN 차단을 지나간다 — "알 수 없음" 까지 막으면 그것도 막힌다.
 // 생략: 흐름 수 상한 이상의 기억(오래된 것부터 버림), 앱 시그니처 갱신, 대역폭 제한(QoS — 대역폭 모델이 없다)
@@ -282,10 +282,13 @@ function classify(pkt: IpPacket, remote: Ip, ipApps: Map<Ip, { app: AppId; name:
     if (m.kind === "dhcp" || m.kind === "dhcp6") return { app: "dhcp", why: m.kind === "dhcp6" ? "DHCPv6" : "DHCP", strong: true };
     if (m.kind === "vpn") return { app: "wireguard", why: "WireGuard 식 사이트 간 VPN (UDP 51820 의 터널 데이터)", strong: true };
     if (m.kind === "ddns") return { app: "ddns", why: "DDNS 갱신", strong: true };
+    if (m.kind === "ovpn") return { app: "openvpn", why: `OpenVPN 모양 (첫 바이트 opcode·세션 id${m.crypt ? " — tls-crypt 여도 opcode 는 보인다" : ""})`, strong: true };
     if (p.dstPort === 443 || p.srcPort === 443) return { app: "quic", why: "UDP 443 (QUIC 로 짐작)", strong: false };
     return { app: "unknown", why: m.kind === "wg" ? "모양을 알아볼 수 없는 UDP (난독화된 VPN 일 수 있음)" : `알아볼 수 없는 UDP ${p.dstPort}`, strong: false };
   }
   if (p.kind !== "tcp") return { app: "unknown", why: p.kind, strong: false };
+  // TCP 위의 OpenVPN: 앞 2바이트 길이 + opcode — 포트(443)를 바꿔도 모양으로 알아본다
+  if (p.ovpn) return { app: "openvpn", why: `OpenVPN 모양 (TCP ${Math.min(p.dstPort, p.srcPort)} 위 길이·opcode — 포트가 443 이어도 HTTPS 가 아님)`, strong: true };
   if (p.sni) {
     const app = appOfName(p.sni);
     return app ? { app, why: `TLS SNI ${p.sni}`, strong: true } : { app: "https", why: `TLS SNI ${p.sni} (모르는 이름)`, strong: false };

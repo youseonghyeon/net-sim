@@ -9,7 +9,7 @@ import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./e
 import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology, exampleAdguardTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology, exampleMultiWanTopology } from "./examples/internet";
-import { exampleDdnsTopology, exampleDpiTopology, exampleWireguardTopology } from "./examples/vpn";
+import { exampleDdnsTopology, exampleDpiTopology, exampleOpenVpnTopology, exampleWireguardTopology } from "./examples/vpn";
 import { exampleRoamingTopology } from "./examples/wireless";
 import { exampleCompanyTopology } from "./examples/overview";
 import { exampleDualStackHomeTopology, exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "dpi" | "lb" | "proxy" | "adguard" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "dpi" | "lb" | "proxy" | "adguard" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -221,6 +221,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "주소가 바뀌는 집 (DDNS·WireGuard)",
     blurb: "집 Brume 3 의 WAN 은 자동(DHCP)이라 공인 주소가 바뀔 수 있습니다. 공유기가 DDNS 로 myhome.glddns.com 을 지금 주소로 갱신하고, 카페 폰의 WireGuard 앱은 서버를 이름으로 적어 둡니다. 폰에서 집 NAS 192.168.8.20 으로 ping 한 뒤, internet-1 의 진단 탭에서 \"공인 주소 바꾸기\" 로 집 주소를 바꿔 보세요 — 공유기가 새 주소를 받아 DDNS 를 갱신합니다. 폰은 옛 주소로 보낸 것에 답이 없으니 \"+10초\" 를 몇 번 눌러 시간을 흘리면 새 핸드셰이크가 실패한 뒤 이름을 다시 풀어 새 주소로 붙습니다.",
     build: exampleDdnsTopology,
+  },
+  openvpn: {
+    id: "openvpn",
+    group: "VPN",
+    label: "OpenVPN (인증서·tls-crypt·TCP 443)",
+    blurb: "집 Brume 3 은 OpenVPN 서버를 TCP 443 으로 엽니다. 카페 공유기의 방화벽은 웹(TCP 80·443)만 내보내 보통의 UDP 1194 는 막히기 때문입니다. 카페 노트북은 서버 인증서가 설정 파일의 CA 가 발급한 것인지 확인하고, 서버도 노트북 인증서를 확인한 뒤 가상 주소 10.8.0.2·집 LAN 경로·DNS 를 내려 줍니다(PUSH). 노트북에서 집 NAS 192.168.8.20 으로 TCP 80 을 보내 보세요. 서버와 노트북의 전송을 UDP 1194 로 바꾸면 카페 방화벽에서 막힙니다. 집 Brume 3 에서 노트북 인증서를 폐기하면(CRL) 다시 붙지 못하고, 노트북의 tls-crypt 키를 한 글자 바꾸면 서버는 아무 답도 하지 않습니다.",
+    build: exampleOpenVpnTopology,
   },
   dpi: {
     id: "dpi",

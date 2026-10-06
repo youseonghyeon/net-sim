@@ -10,6 +10,7 @@
 //   (목록에서 지워도 이미 붙은 세션은 다시 붙을 때까지 유지 — 실제 장비도 인증은 접속할 때 한 번)
 // 연결 해제는 INFORMATIONAL(Delete) 로 알려 가상 주소를 돌려준다. DPD 는 클라이언트가 사용자 동작으로 보내는 빈 INFORMATIONAL.
 // 재협상(rekey)은 생략.
+import type { OvpnClientFields } from "./openvpn";
 import { ipToInt, intToIp, sameSubnet, type Ip } from "../addr";
 import { IKE_PORT, NAT_T_PORT, type EspPacket, type IkeMessage, type Ipv4Packet } from "../packet";
 import { DPD_INTERVAL, IKE_RETRANSMITS, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
@@ -40,9 +41,11 @@ export interface RaClientConfig {
   /** 주기 DPD: 서버에게서 10초 동안 받은 것이 없으면 DPD (배경 타이머) */
   dpd?: boolean;
   /** VPN 종류: 회사 VPN 장비(IKEv2, 없으면 이것), 공유기 VPN 서버(L2TP/IPsec — ipTIME 식, nodes/l2tp.ts), WireGuard (nodes/wg.ts) */
-  type?: "ikev2" | "l2tp" | "wireguard";
+  type?: "ikev2" | "l2tp" | "wireguard" | "openvpn";
   /** WireGuard 설정 (type 이 wireguard 일 때). server 는 엔드포인트 주소 */
   wg?: WgClientFields;
+  /** OpenVPN 설정 (type 이 openvpn 일 때). server 는 remote (주소 또는 이름), user·password 는 auth-user-pass */
+  ovpn?: OvpnClientFields;
 }
 
 /** WireGuard 앱의 설정 파일 한 장 ([Interface] + [Peer]) */

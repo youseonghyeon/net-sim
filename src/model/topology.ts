@@ -1,5 +1,6 @@
 // 편집 가능한 토폴로지 모델. 시뮬레이션 코어(src/core)와 분리되어 있고, 실행 시 코어 Network 로 변환된다.
 import { wgPrivateKey, wgPublicKey } from "../core/nodes/wg";
+import { ovpnCaOf, ovpnTlsCryptOf } from "../core/nodes/openvpn";
 
 export type DeviceKind = "pc" | "laptop" | "phone" | "server" | "lb" | "switch" | "hub" | "ap" | "router" | "gateway" | "nat" | "firewall" | "internet";
 export type Role = "host" | "switch" | "hub" | "ap" | "router" | "l3" | "internet" | "firewall";
@@ -345,9 +346,25 @@ export interface RaClientSettings {
   /** 주기 DPD (없으면 꺼짐) */
   dpd?: boolean;
   /** VPN 종류: 없으면 회사 VPN 장비(IKEv2), "l2tp" 면 공유기 VPN 서버(L2TP/IPsec), "wireguard" 면 WireGuard 앱 (server = 엔드포인트) */
-  type?: "l2tp" | "wireguard";
+  type?: "l2tp" | "wireguard" | "openvpn";
   /** WireGuard 설정 파일 (type 이 wireguard 일 때) */
   wg?: WgClientSettings;
+  /** OpenVPN 설정 파일 (type 이 openvpn 일 때 — server = remote) */
+  ovpn?: OvpnClientSettings;
+}
+
+/** OpenVPN 설정 파일 (.ovpn) 의 클라이언트 쪽: remote 의 포트·proto, <ca>, <cert>(CN·발급 CA), <tls-crypt> */
+export interface OvpnClientSettings {
+  proto: "udp" | "tcp";
+  port: number;
+  /** <ca> — 믿는 CA 의 지문 */
+  ca: string;
+  /** <cert> 의 CN */
+  cn: string;
+  /** <cert> 를 발급한 CA 의 지문 */
+  certCa: string;
+  /** <tls-crypt> 키 지문 (비우면 안 씀) */
+  tlsCrypt: string;
 }
 
 export interface HaSettings {
@@ -460,8 +477,9 @@ function normalizeRaClient(r: Partial<RaClientSettings>): RaClientSettings {
     psk: str(r.psk, ""),
     ...(user !== undefined ? { user, password: accountText(r.password) ?? "" } : {}),
     ...(r.dpd === true ? { dpd: true } : {}),
-    ...(r.type === "l2tp" ? { type: "l2tp" as const } : r.type === "wireguard" ? { type: "wireguard" as const } : {}),
+    ...(r.type === "l2tp" ? { type: "l2tp" as const } : r.type === "wireguard" ? { type: "wireguard" as const } : r.type === "openvpn" ? { type: "openvpn" as const } : {}),
     ...(r.wg && typeof r.wg === "object" ? { wg: normalizeWgFields(r.wg) } : {}),
+    ...(r.ovpn && typeof r.ovpn === "object" ? { ovpn: normalizeOvpnClient(r.ovpn) } : {}),
   };
 }
 
@@ -610,6 +628,68 @@ export interface RouterSettings {
   adguard?: RouterAdguardSettings;
   /** DPI (앱 알아보기·차단). 없으면 꺼짐 */
   dpi?: RouterDpiSettings;
+  /** OpenVPN 서버. 없으면 꺼짐 */
+  ovpnServer?: RouterOvpnServerSettings;
+}
+
+/** 공유기 OpenVPN 서버: CA·서버 인증서·tls-crypt 키는 장치마다 정해진 것 (ovpnCaOfDevice) */
+export interface RouterOvpnServerSettings {
+  enabled: boolean;
+  proto: "udp" | "tcp";
+  port: number;
+  /** 터널 대역 (예: 10.8.0.0/24 — 서버는 첫 주소) */
+  subnet: string;
+  /** 집 LAN 접근 허용 (push route) */
+  lanAccess: boolean;
+  /** 클라이언트의 모든 트래픽을 터널로 (push redirect-gateway) */
+  redirectGateway: boolean;
+  /** 서버 터널 주소를 DNS 로 알려 줌 (push dhcp-option DNS) */
+  pushDns: boolean;
+  tlsCrypt: boolean;
+  /** 계정 (비우면 인증서만) */
+  users: { name: string; password: string }[];
+  /** 폐기한 인증서의 CN (CRL) */
+  revoked: string[];
+}
+
+export const DEFAULT_OVPN_SERVER_SETTINGS: RouterOvpnServerSettings = { enabled: true, proto: "udp", port: 1194, subnet: "10.8.0.0/24", lanAccess: true, redirectGateway: false, pushDns: true, tlsCrypt: true, users: [], revoked: [] };
+
+/** 그 공유기의 OpenVPN CA 지문 (장치 id 에서 — 복사한 공유기는 새 CA) */
+export function ovpnCaOfDevice(d: Device): string {
+  return ovpnCaOf(d.id);
+}
+
+/** 그 공유기의 tls-crypt 키 지문 */
+export function ovpnTlsCryptOfDevice(d: Device): string {
+  return ovpnTlsCryptOf(d.id);
+}
+
+function normalizeOvpnServer(v: Partial<RouterOvpnServerSettings>): RouterOvpnServerSettings {
+  const users = Array.isArray(v.users) ? (v.users as unknown[]) : [];
+  return {
+    enabled: v.enabled === true,
+    proto: v.proto === "tcp" ? "tcp" : "udp",
+    port: typeof v.port === "number" && Number.isInteger(v.port) && v.port >= 1 && v.port <= 65535 ? v.port : 1194,
+    subnet: typeof v.subnet === "string" ? v.subnet : "10.8.0.0/24",
+    lanAccess: v.lanAccess !== false,
+    redirectGateway: v.redirectGateway === true,
+    pushDns: v.pushDns !== false,
+    tlsCrypt: v.tlsCrypt !== false,
+    users: users.filter((u): u is Record<string, unknown> => !!u && typeof u === "object").map((u) => ({ name: accountText(u.name) ?? "", password: accountText(u.password) ?? "" })),
+    revoked: Array.isArray(v.revoked) ? v.revoked.filter((x): x is string => typeof x === "string") : [],
+  };
+}
+
+function normalizeOvpnClient(v: Partial<OvpnClientSettings>): OvpnClientSettings {
+  const str = (x: unknown) => (typeof x === "string" ? x : "");
+  return {
+    proto: v.proto === "tcp" ? "tcp" : "udp",
+    port: typeof v.port === "number" && Number.isInteger(v.port) && v.port >= 1 && v.port <= 65535 ? v.port : 1194,
+    ca: str(v.ca),
+    cn: str(v.cn),
+    certCa: str(v.certCa),
+    tlsCrypt: str(v.tlsCrypt),
+  };
 }
 
 /** DPI: 막을 앱(core/nodes/dpi.ts AppId)·카테고리 */
@@ -1398,6 +1478,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.vpnServer ? { vpnServer: normalizeRouterVpn(r.vpnServer) } : {}),
           ...(r.wgServer ? { wgServer: normalizeWgServer(r.wgServer) } : {}),
           ...(r.wgClient ? { wgClient: normalizeWgClient(r.wgClient) } : {}),
+          ...(r.ovpnServer ? { ovpnServer: normalizeOvpnServer(r.ovpnServer) } : {}),
           ...(r.wan2 ? { wan2: normalizeWan2(r.wan2) } : {}),
           ...(r.adguard ? { adguard: normalizeAdguard(r.adguard) } : {}),
           ...(r.dpi ? { dpi: { enabled: (r.dpi as Partial<RouterDpiSettings>).enabled === true, blockApps: Array.isArray(r.dpi.blockApps) ? r.dpi.blockApps.filter((x): x is string => typeof x === "string") : [], blockCategories: Array.isArray(r.dpi.blockCategories) ? r.dpi.blockCategories.filter((x): x is string => typeof x === "string") : [] } } : {}),

@@ -1,5 +1,5 @@
 // 예제 묶음 "VPN" 중 GL.iNet(Brume 3) 식 공유기 VPN. 다른 VPN 예제는 internet.ts. 등록(메뉴 순서·설명)은 ../examples.ts 의 EXAMPLES.
-import { type Cable, DEFAULT_DHCP_SERVER, type Topology, newId, wgPublicKeyOf, zoneAround } from "../topology";
+import { type Cable, DEFAULT_DHCP_SERVER, DEFAULT_OVPN_SERVER_SETTINGS, type Topology, newId, ovpnCaOfDevice, ovpnTlsCryptOfDevice, wgPublicKeyOf, zoneAround } from "../topology";
 import { builder, cable } from "./build";
 
 /**
@@ -145,6 +145,59 @@ export function exampleDpiTopology(): Topology {
   t.zones = [
     { id: newId("zone"), label: "회사 10.30.0.0/24 · DPI (VPN·게임 차단)", tint: "gray", ...zoneAround(t, [office.id, sw.id, laptop.id, pc.id], 56)! },
     { id: newId("zone"), label: "집 192.168.8.0/24 · WireGuard", tint: "blue", ...zoneAround(t, [home.id, nas.id], 56)! },
+  ];
+  return t;
+}
+
+/**
+ * OpenVPN (인증서·tls-crypt·TCP 443):
+ * - 집 Brume 3 은 OpenVPN 서버를 TCP 443 으로 연다 — 카페 공유기의 방화벽이 웹(TCP 80·443)만 내보내기 때문
+ * - 카페 노트북의 OpenVPN 앱은 공유기에서 내보낸 설정 파일(CA 지문·내 인증서·tls-crypt 키)을 가진다
+ * - 연결되면 서버가 가상 주소(10.8.0.x)·집 LAN 경로·DNS 를 PUSH 로 내려 준다
+ */
+export function exampleOpenVpnTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -296, "internet-1");
+  const isp = add("switch", 344, -168, "통신사 구간");
+  const cafe = add("router", 120, -24, "카페 공유기");
+  // 카페: 손님에게 웹만 허용 (나가는 TCP 80·443 만, 나머지는 드롭 — 응답은 Stateful 검사로)
+  cafe.router = {
+    ...cafe.router!,
+    lanIp: "10.20.0.1",
+    lanPrefix: 24,
+    dhcp: { enabled: true, start: "10.20.0.100", end: "10.20.0.199" },
+    firewall: {
+      enabled: true,
+      defaultPolicy: "deny",
+      stateful: true,
+      rules: [
+        { action: "allow", proto: "tcp", direction: "out", src: "", dst: "", dstPort: "80" },
+        { action: "allow", proto: "tcp", direction: "out", src: "", dst: "", dstPort: "443" },
+      ],
+    },
+  };
+  const laptop = add("laptop", 120, 152, "카페 노트북");
+  const home = add("router", 568, -24, "집 Brume 3");
+  const nas = add("server", 568, 152, "집 NAS");
+  home.router = {
+    ...home.router!,
+    lanIp: "192.168.8.1",
+    lanPrefix: 24,
+    dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
+    wan: { ipMode: "static", ip: "203.0.113.40", prefix: 24, gateway: "203.0.113.1" },
+    ovpnServer: { ...DEFAULT_OVPN_SERVER_SETTINGS, proto: "tcp", port: 443 },
+  };
+  nas.host = { ipMode: "static", ip: "192.168.8.20", prefix: 24, gateway: "192.168.8.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const ca = ovpnCaOfDevice(home);
+  laptop.host = {
+    ...laptop.host!,
+    ra: { enabled: true, type: "openvpn", server: "203.0.113.40", psk: "", ovpn: { proto: "tcp", port: 443, ca, cn: "카페 노트북", certCa: ca, tlsCrypt: ovpnTlsCryptOfDevice(home) } },
+  };
+  const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, cafe, 0), cable(isp, 6, home, 0), cable(cafe, 1, laptop, 0), cable(home, 1, nas, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "카페 10.20.0.0/24 · 웹만 허용", tint: "green", ...zoneAround(t, [cafe.id, laptop.id], 56)! },
+    { id: newId("zone"), label: "집 192.168.8.0/24 · OpenVPN 10.8.0.0/24", tint: "blue", ...zoneAround(t, [home.id, nas.id], 56)! },
   ];
   return t;
 }

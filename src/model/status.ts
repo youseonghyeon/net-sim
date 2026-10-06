@@ -138,6 +138,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.ipv6Enabled) out.push("IPv6");
     if (node.vpnServer.config.enabled) out.push(`VPN 서버 ${node.vpnServer.connected.length}`);
     if (node.wgServerCfg?.enabled) out.push(`WG 서버 ${node.wgs.connected}`);
+    if (node.ovpn.enabled) out.push(`OpenVPN ${node.ovpn.connected}`);
     if (node.adguard.config.enabled) out.push("AdGuard");
     if (node.dpi.config.enabled) out.push("DPI");
     if (node.wan2On) out.push(node.mwan.active === "wan2" ? "WAN2 사용 중" : "멀티 WAN");
