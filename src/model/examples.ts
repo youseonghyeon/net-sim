@@ -5,7 +5,7 @@ import type { Topology } from "./topology";
 import { exampleStarterTopology, exampleTopology } from "./examples/basic";
 import { examplePartsTopology } from "./examples/parts";
 import { exampleTwoGatewaysTopology, exampleBackboneTopology, exampleRipTopology } from "./examples/routing";
-import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
+import { exampleIgmpTopology, exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
 import { exampleDropInTopology, exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology, exampleAdguardTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology, exampleMultiWanTopology } from "./examples/internet";
@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "dpi" | "lb" | "proxy" | "adguard" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "igmp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "dpi" | "lb" | "proxy" | "adguard" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -102,6 +102,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "스위치 이중화 (STP)",
     blurb: "스위치 셋을 삼각형으로 이어 경로가 둘입니다. STP 가 access-1 의 한 포트를 막아(점선) 루프를 끊습니다. pc-1 에서 srv-1 로 ping 한 뒤 core-1 ↔ access-1 케이블을 지우면 막혔던 포트가 열려 다른 길로 갑니다.",
     build: exampleStpTopology,
+  },
+  igmp: {
+    id: "igmp",
+    group: "L2",
+    label: "IPTV 멀티캐스트와 IGMP 스누핑",
+    blurb: "거실 TV 의 진단 탭에서 그룹 239.1.1.1 에 가입하고(IGMP Report), IPTV 서버에서 그 그룹으로 송출해 보세요. 스누핑이 없는 거실 스위치는 영상 조각을 안방 PC·노트북 포트까지 뿌립니다(그 기기들의 NIC 가 버릴 뿐). 거실 스위치 설정에서 IGMP 스누핑을 켜고 TV 가 다시 가입한 뒤 송출하면 TV 포트로만 갑니다. TV 가 탈퇴하면 아무 데도 보내지 않습니다.",
+    build: exampleIgmpTopology,
   },
   firewall: {
     id: "firewall",

@@ -110,3 +110,22 @@ export function exampleStpTopology(): Topology {
   t.zones = [{ id: newId("zone"), label: "스위치 삼각형 (경로 두 개) — STP 가 한 포트를 막음", tint: "blue", ...zoneAround(t, [core1.id, core2.id, access.id], 24)! }];
   return t;
 }
+
+/**
+ * IPTV 멀티캐스트와 IGMP 스누핑: IPTV 서버가 그룹 239.1.1.1 로 영상 조각을 보내면, 스누핑이 없는 스위치는 모든 포트로 뿌린다.
+ * 거실 TV 만 그룹에 가입(IGMP Report)했는데 안방 PC·노트북 링크까지 채운다 — 스누핑을 켜면 TV 포트로만
+ */
+export function exampleIgmpTopology(): Topology {
+  const { devices, add } = builder();
+  const rt = add("router", 344, -120, "공유기");
+  const sw = add("switch", 344, 40, "거실 스위치");
+  const srv = add("server", 96, 200, "IPTV 서버");
+  srv.host = { ipMode: "static", ip: "192.168.0.10", prefix: 24, gateway: "192.168.0.1", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const tv = add("pc", 272, 200, "거실 TV");
+  const pc = add("pc", 448, 200, "안방 PC");
+  const lap = add("laptop", 616, 200, "노트북");
+  const cables: Cable[] = [cable(rt, 1, sw, 0), cable(sw, 1, srv, 0), cable(sw, 3, tv, 0), cable(sw, 5, pc, 0), cable(sw, 7, lap, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [{ id: newId("zone"), label: "거실 LAN · 그룹 239.1.1.1", tint: "blue", ...zoneAround(t, [sw.id, srv.id, tv.id, pc.id, lap.id], 48)! }];
+  return t;
+}

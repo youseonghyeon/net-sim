@@ -54,6 +54,10 @@ export type ActionSpec =
   | { kind: "vpn-dpd"; nodeId: string }
   /** 열린 TCP 연결을 사용자가 닫는다 (SSH "연결 해제"). conn 은 TcpConn.id */
   | { kind: "tcp-close"; nodeId: string; conn: string }
+  /** 멀티캐스트 그룹 가입·탈퇴(IGMP)·스트림 송출 (IPTV 흉내) */
+  | { kind: "mcast-join"; nodeId: string; group: Ip }
+  | { kind: "mcast-leave"; nodeId: string; group: Ip }
+  | { kind: "mcast-send"; nodeId: string; group: Ip }
   /** 인터넷 노드의 "저편 클라이언트" 가 공인 주소 dst:port 로 TCP 연결 (포트 포워딩 시연) */
   | { kind: "inet-connect"; nodeId: string; dst: Ip; port: number }
   /** GoodCloud: 관리자가 클라우드 화면에서 그 공유기(MAC)를 엶 */
@@ -385,6 +389,18 @@ export class Network {
         ctx.trace("action", "sys", `[사용자] VPN 상대 확인 (DPD)`, { ...action });
         if (node instanceof L3Node) node.vpn.dpd(ctx);
         else this.getHost(action.nodeId).ra.dpd(ctx);
+        break;
+      case "mcast-join":
+        ctx.trace("action", "sys", `[사용자] 멀티캐스트 그룹 ${action.group} 가입`, { ...action });
+        this.getHost(action.nodeId).joinGroup(action.group, ctx);
+        break;
+      case "mcast-leave":
+        ctx.trace("action", "sys", `[사용자] 멀티캐스트 그룹 ${action.group} 탈퇴`, { ...action });
+        this.getHost(action.nodeId).leaveGroup(action.group, ctx);
+        break;
+      case "mcast-send":
+        ctx.trace("action", "sys", `[사용자] 멀티캐스트 그룹 ${action.group} 로 스트림 송출`, { ...action });
+        this.getHost(action.nodeId).sendStream(action.group, ctx);
         break;
       case "tcp-close":
         ctx.trace("action", "sys", `[사용자] 연결 해제 ${action.conn.split("-")[1] ?? action.conn}`, { ...action });

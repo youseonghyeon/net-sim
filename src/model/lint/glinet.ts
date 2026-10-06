@@ -8,6 +8,11 @@ export function glinetRules({ t, add }: LintContext): void {
     if (!r) continue;
     if (r.admin?.enabled && r.admin.remote)
       add({ deviceId: d.id, severity: "warn", code: "admin.remote-open", message: `관리 화면(HTTP·HTTPS${r.admin.ssh ? "·SSH" : ""})을 WAN(인터넷)에도 열었음 → 누구나 로그인 화면에 닿아 비밀번호 대입 공격을 받는다`, fix: `${d.name} → 보안 → 관리 접근 → WAN 접근 끄기 (원격 관리는 GoodCloud 나 VPN 으로)` });
+    if (r.samba?.enabled && r.samba.wan)
+      add({ deviceId: d.id, severity: "error", code: "samba.wan-open", message: `네트워크 저장소(SMB, TCP 445)를 WAN(인터넷)에 열었음 → 랜섬웨어(WannaCry 등)·비밀번호 대입이 노리는 포트`, fix: `${d.name} → 앱 → 네트워크 저장소 → WAN 접근 끄기 (밖에서는 VPN 으로 집에 붙어 쓰기)` });
+    const smbFwd = (r.forwards ?? []).find((f) => (f.proto ?? "tcp") === "tcp" && (f.publicPort === 445 || f.publicPort === 139));
+    if (smbFwd)
+      add({ deviceId: d.id, severity: "warn", code: "nat.forward-smb", message: `포트 포워딩으로 SMB(TCP ${smbFwd.publicPort})를 ${smbFwd.lanIp} 에 열었음 → 파일 공유를 인터넷에 내놓으면 랜섬웨어가 노린다`, fix: `${d.name} → 보안 → 포트 포워딩에서 ${smbFwd.publicPort} 규칙 지우기 (밖에서는 VPN 으로)` });
     if (r.dropIn && r.wan?.ipMode !== "static")
       add({ deviceId: d.id, severity: "warn", code: "dropin.wan-dhcp", message: `드롭인 게이트웨이인데 WAN 주소가 자동(DHCP)임 → 주소가 바뀌면 이 공유기를 게이트웨이로 적은 기기들이 나가지 못함`, fix: `${d.name} → 인터넷 → WAN 을 수동 주소로 (기존 공유기 LAN 안의 쓰지 않는 주소)` });
   }

@@ -127,6 +127,7 @@ export class NetworkSync {
         // 이중화는 시작할 때 광고·타이머가 필요해 만든 뒤에 켠다
         if (node instanceof L3Node && d.l3?.ha?.enabled) node.setHa(effectiveL3(d).ha, net.contextFor(d.id));
         if (node instanceof Switch && d.switch?.stp?.enabled) node.setStp(effectiveStp(d), d.mac, net.contextFor(d.id));
+        if (node instanceof Switch && d.switch?.igmpSnooping) node.setIgmp(true, net.contextFor(d.id));
         if (node instanceof L3Node && d.l3?.ra?.enabled) node.setRa(effectiveL3(d).ra, net.contextFor(d.id));
         if (node instanceof Host && d.host?.ra?.enabled) node.setRemoteVpn(effectiveRaClient(d)!, net.contextFor(d.id));
         if (node instanceof Router && (d.router?.wgServer?.enabled || d.router?.wgClient?.enabled)) {
@@ -139,10 +140,12 @@ export class NetworkSync {
         if (node instanceof Router && d.router?.dpi?.enabled) node.setDpi(effectiveRouter(d).dpi, net.contextFor(d.id));
         if (node instanceof Router && d.router?.ovpnServer?.enabled) node.ovpn.setConfig(effectiveRouter(d).ovpnServer, net.contextFor(d.id));
         if (node instanceof Router && d.router?.mesh?.enabled) node.setMesh(effectiveRouter(d).mesh, net.contextFor(d.id));
-        if (node instanceof Router && (d.router?.admin?.enabled || d.router?.cloud || d.router?.blocked?.length || d.router?.dropIn)) {
+        if (node instanceof Router && (d.router?.admin?.enabled || d.router?.cloud || d.router?.blocked?.length || d.router?.dropIn || d.router?.samba?.enabled || d.router?.igmpSnooping)) {
           const r = effectiveRouter(d);
           const c = net.contextFor(d.id);
+          node.igmp.setEnabled(r.igmpSnooping, c, "공유기 내부 스위치");
           node.setDropIn(r.dropIn, c);
+          node.admin.setSamba(r.samba, c);
           node.admin.setConfig(r.admin, c);
           node.cloud.setEnabled(r.cloud, c);
           node.setBlocked(r.blocked, c);
@@ -494,6 +497,8 @@ export function effectiveRouter(d: Device, current?: Router) {
     admin: { enabled: r.admin?.enabled === true, remote: r.admin?.remote === true, allow: parseCidrList(r.admin?.allow), ssh: r.admin?.ssh !== false },
     cloud: r.cloud === true,
     dropIn: r.dropIn === true,
+    samba: { enabled: r.samba?.enabled === true, wan: r.samba?.wan === true },
+    igmpSnooping: r.igmpSnooping === true,
     blocked: (r.blocked ?? []).map((m) => m.trim().toLowerCase()).filter((m) => /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(m)),
     ovpnServer: (() => {
       const o = r.ovpnServer;
@@ -673,7 +678,7 @@ export function effectiveApSsid(d: Device): string {
 export function configKey(d: Device): string {
   if (d.kind === "ap") return JSON.stringify({ mac: d.mac, ssid: effectiveApSsid(d) });
   if (d.kind === "firewall") return JSON.stringify({ mac: d.mac, fw: effectiveFirewall(d.firewall) });
-  if (d.kind === "switch") return JSON.stringify({ mac: d.mac, vlans: [...effectiveSwitchVlans(d).entries()], stp: effectiveStp(d) });
+  if (d.kind === "switch") return JSON.stringify({ mac: d.mac, vlans: [...effectiveSwitchVlans(d).entries()], stp: effectiveStp(d), igmp: d.switch?.igmpSnooping === true });
   if (d.host) return JSON.stringify({ mac: d.mac, host: effectiveHost(d) });
   if (d.router) return JSON.stringify({ mac: d.mac, router: effectiveRouter(d) });
   if (DEVICE_SPECS[d.kind].role === "l3") return JSON.stringify({ mac: d.mac, l3: effectiveL3(d) });
@@ -722,6 +727,7 @@ export function applyConfig(net: Network, d: Device): void {
   else if (node instanceof Switch) {
     node.setVlans(effectiveSwitchVlans(d), net.contextFor(d.id));
     node.setStp(effectiveStp(d), d.mac, net.contextFor(d.id));
+    node.setIgmp(d.switch?.igmpSnooping === true, net.contextFor(d.id));
   }
   else if (node instanceof FirewallBridge) node.configure(effectiveFirewall(d.firewall), net.contextFor(d.id));
   else if (node instanceof AccessPoint) {

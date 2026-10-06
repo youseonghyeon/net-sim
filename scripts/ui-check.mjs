@@ -1648,6 +1648,29 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForTimeout(800);
   console.log("cloud manage row:", (await cm.locator(".toggle-row").first().innerText()).replace(/\s+/g, " "));
 }
+// IGMP 스누핑: TV 가 가입하고 서버가 송출 — 스위치 설정의 스누핑 토글, 진단 탭의 멀티캐스트 칸
+{
+  await loadEx("igmp");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitAddr("거실 TV", /^192\.168\.0\.1\d\d/);
+  await clickDevice("거실 스위치");
+  await goTab("설정");
+  const ig = page.locator(".inspector section", { has: page.locator("h3", { hasText: "IGMP 스누핑" }) });
+  await ig.locator(".toggle").first().click();
+  await clickDevice("거실 TV");
+  await goTab("진단");
+  const mc = page.locator(".inspector section", { has: page.locator("h3", { hasText: "멀티캐스트" }) });
+  await mc.locator("button", { hasText: "가입" }).click();
+  await page.waitForTimeout(500);
+  await clickDevice("IPTV 서버");
+  await goTab("진단");
+  await page.locator(".inspector section", { has: page.locator("h3", { hasText: "멀티캐스트" }) }).locator("button", { hasText: "송출" }).click();
+  await page.waitForTimeout(1500);
+  await clickDevice("거실 TV");
+  await goTab("진단");
+  console.log("igmp tv:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "멀티캐스트" }) }).locator("p.note").first().textContent())?.trim());
+  await page.screenshot({ path: `${OUT}/109-igmp.png` });
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

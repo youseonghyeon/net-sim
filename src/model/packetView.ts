@@ -39,6 +39,7 @@ function l4Length(p: Ipv4Packet["payload"]): number {
   if (p.kind === "esp") return espLength(p);
   if (p.kind === "vrrp") return 12; // VRRPv3 머리 8 + 가상 주소 4
   if (p.kind === "pfsync") return 12 + (p.nat.length + p.flows.length) * 64; // 머리 + 상태 하나당 대략
+  if (p.kind === "igmp") return 8; // IGMPv2
   return 8 + appLength(p);
 }
 /** ICMPv6·TCP·UDP 길이 (IPv6 헤더 40 은 빼고) */
@@ -74,6 +75,8 @@ function appLength(u: UdpPacket): number {
   if (m.kind === "ddns") return 60 + m.hostname.length; // 실제는 HTTPS 요청 — 대략의 크기
   if (m.kind === "ovpn") return ovpnLength(m, m.inner ? 20 + l4Length(m.inner.payload) : 0);
   if (m.kind === "cloud") return 60 + (m.status ? 40 : 0);
+  if (m.kind === "mcast") return 1316; // RTP/MPEG-TS 7개
+
   if (m.kind === "ts") {
     const inner = m.inner ?? m.msg?.inner;
     return tsLength(m, inner ? 20 + l4Length(inner.payload) : 0);
@@ -118,6 +121,7 @@ function ipLine(pkt: Ipv4Packet): string {
   if (p.kind === "esp") return `IP ${pkt.src} > ${pkt.dst}: ${espText(p)}, length ${espLength(p)}`;
   if (p.kind === "pfsync") return `IP ${pkt.src} > ${pkt.dst}: pfsync${p.bulk ? " (bulk update)" : ""}, INS ST count ${p.nat.length + p.flows.length}, length ${l4Length(p)}`;
   if (p.kind === "vrrp") return `IP ${pkt.src} > ${pkt.dst}: VRRPv3, Advertisement, vrid ${p.vrid}, prio ${p.priority}, intvl 100cs, length 12`;
+  if (p.kind === "igmp") return `IP ${pkt.src} > ${pkt.dst}: igmp ${p.type === "report" ? "v2 report" : "leave"} ${p.group}`;
   return `IP ${pkt.src}.${p.srcPort} > ${pkt.dst}.${p.dstPort}: ${udpText(p)}`;
 }
 
@@ -168,7 +172,8 @@ function tcpText(t: TcpSegment): string {
   parts.push(`length ${t.len}`);
   let s = parts.join(", ");
   // SSH(22)·TLS(HTTPS)는 암호화되어 tcpdump 가 내용을 풀지 않는다
-  if (t.len > 0 && t.data && !t.tls && t.srcPort !== 22 && t.dstPort !== 22) s += `: HTTP: ${/^(GET|CONNECT) /.test(t.data) ? `${t.data} HTTP/1.1` : t.data.replace(/ \(\d+\/\d+\)$/, "").replace(/^HTTP (\d+)/, "HTTP/1.1 $1")}`;
+  if (t.len > 0 && (t.srcPort === 445 || t.dstPort === 445)) s += ": SMB-over-TCP packet:(raw data)";
+  else if (t.len > 0 && t.data && !t.tls && t.srcPort !== 22 && t.dstPort !== 22) s += `: HTTP: ${/^(GET|CONNECT) /.test(t.data) ? `${t.data} HTTP/1.1` : t.data.replace(/ \(\d+\/\d+\)$/, "").replace(/^HTTP (\d+)/, "HTTP/1.1 $1")}`;
   return s;
 }
 
@@ -213,6 +218,7 @@ function udpText(u: UdpPacket): string {
   // Tailscale·ZeroTier 도 tcpdump 는 길이만 (WireGuard·암호화)
   if (m.kind === "ts") return `UDP, length ${appLength(u)}`;
   if (m.kind === "cloud") return `UDP, length ${appLength(u)}`;
+  if (m.kind === "mcast") return `UDP, length ${appLength(u)}`;
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
 }
 
@@ -378,6 +384,15 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
         ["가상 라우터 번호 (VRID)", `${l4.vrid} → 가상 MAC 00:00:5e:00:01:${l4.vrid.toString(16).padStart(2, "0")}`],
         ["우선순위", `${l4.priority}${l4.priority === 0 ? " (master 가 물러남 — backup 이 곧 이어받음)" : ""}`],
         ["가상 주소", l4.vip],
+      ],
+    });
+  else if (l4.kind === "igmp")
+    layers.push({
+      title: "IGMP",
+      rows: [
+        ["종류", l4.type === "report" ? "0x16 (v2 Membership Report — 이 그룹을 받겠다)" : "0x17 (Leave Group — 그만 받겠다)"],
+        ["그룹", l4.group],
+        ["스누핑", "IGMP 스누핑 스위치는 이것을 엿들어 그룹마다 받을 포트를 배운다"],
       ],
     });
   else {
@@ -617,7 +632,7 @@ function tcpLayers(t: TcpSegment): HeaderLayer[] {
 function tcpLayer(t: TcpSegment): HeaderLayer {
   const rows: [string, string][] = [
     ["출발지 포트", String(t.srcPort)],
-    ["목적지 포트", `${t.dstPort}${t.dstPort === 80 ? " (HTTP)" : t.dstPort === 443 ? " (HTTPS)" : t.dstPort === 22 ? " (SSH)" : t.dstPort === 3128 ? " (HTTP 프록시)" : ""}`],
+    ["목적지 포트", `${t.dstPort}${t.dstPort === 80 ? " (HTTP)" : t.dstPort === 443 ? " (HTTPS)" : t.dstPort === 22 ? " (SSH)" : t.dstPort === 3128 ? " (HTTP 프록시)" : t.dstPort === 445 ? " (SMB 파일 공유)" : ""}`],
     ["순서 번호 (seq)", String(t.seq)],
     ["확인 번호 (ack)", t.ackFlag ? String(t.ack) : "- (ACK 플래그 없음)"],
     ["플래그", `${tcpFlags(t)} [${tcpFlagChars(t)}]`],
@@ -673,6 +688,7 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
     return [udp, { title: "DNS (앱)", rows }];
   }
   if (m.kind === "vpn" || m.kind === "esp" || m.kind === "wg" || m.kind === "ovpn" || m.kind === "ts") return [udp];
+  if (m.kind === "mcast") return [udp, { title: "멀티캐스트 스트림 (앱)", rows: [["채널", m.name], ["그룹", m.group], ["순번", `${m.seq}/${m.total}`]] }];
   if (m.kind === "cloud")
     return [
       udp,

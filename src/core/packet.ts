@@ -55,7 +55,43 @@ export interface Ipv4Packet {
   src: Ip;
   dst: Ip;
   ttl: number;
-  payload: IcmpPacket | UdpPacket | TcpSegment | EspPacket | VrrpPacket | PfsyncPacket;
+  payload: IcmpPacket | UdpPacket | TcpSegment | EspPacket | VrrpPacket | PfsyncPacket | IgmpPacket;
+}
+
+/**
+ * IGMP (IPv4 멀티캐스트 그룹 가입): 호스트가 "그룹 G 를 받고 싶다"(Membership Report, 목적지 = 그 그룹)·"그만 받겠다"(Leave, 224.0.0.2)를 알린다.
+ * IGMP 스누핑 스위치는 이것을 엿들어 그룹마다 받을 포트를 배우고, 멀티캐스트를 그 포트로만 보낸다. 쿼리어·만료는 생략
+ */
+export interface IgmpPacket {
+  kind: "igmp";
+  type: "report" | "leave";
+  group: Ip;
+}
+
+/** 멀티캐스트 스트림 (IPTV 흉내): UDP 로 그룹 주소에 보낸다 */
+export interface McastData {
+  kind: "mcast";
+  group: Ip;
+  seq: number;
+  total: number;
+  /** 채널 이름 */
+  name: string;
+}
+
+export const MCAST_PORT = 5004;
+export const ALL_ROUTERS_IP: Ip = "224.0.0.2";
+
+/** IPv4 멀티캐스트 주소 → MAC (01:00:5e + 주소의 아래 23비트) */
+export function mcastMac(ip: Ip): Mac {
+  const [, b, c, d] = ip.split(".").map(Number) as [number, number, number, number];
+  const h = (n: number) => n.toString(16).padStart(2, "0");
+  return `01:00:5e:${h(b & 0x7f)}:${h(c)}:${h(d)}`;
+}
+
+/** 224.0.0.0/4 */
+export function isMcastIp(ip: Ip): boolean {
+  const a = Number(ip.split(".")[0]);
+  return a >= 224 && a <= 239;
 }
 
 /** IPv4 안에 실리는 것 (프로토콜 번호로 구분) */
@@ -245,6 +281,7 @@ export const IP_PROTO: Record<IpPayload["kind"], { num: number; label: string }>
   esp: { num: 50, label: "ESP — 포트 없음" },
   vrrp: { num: 112, label: "VRRP" },
   pfsync: { num: 240, label: "pfsync" },
+  igmp: { num: 2, label: "IGMP" },
 };
 
 /** 포트가 있는 전송 계층 (TCP·UDP) — NAT 가 포트로 구분하고, 방화벽 규칙의 포트 칸이 뜻을 가진다 */
@@ -253,8 +290,8 @@ export function hasPorts(p: IpPayload | Ipv6Payload): p is TcpSegment | UdpPacke
 }
 
 /** 라우터끼리만 주고받는 제어 멀티캐스트 (VRRP·pfsync): 호스트·공유기·인터넷은 조용히 거르고, NAT·ICMP 오류와 무관 */
-export function isControl(p: IpPayload): p is VrrpPacket | PfsyncPacket {
-  return p.kind === "vrrp" || p.kind === "pfsync";
+export function isControl(p: IpPayload): p is VrrpPacket | PfsyncPacket | IgmpPacket {
+  return p.kind === "vrrp" || p.kind === "pfsync" || p.kind === "igmp";
 }
 
 export interface TcpSegment {
@@ -406,7 +443,7 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage | OvpnMessage | TsMessage | CloudMessage;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage | OvpnMessage | TsMessage | CloudMessage | McastData;
 }
 
 /** STUN·TURN (UDP 3478) */
@@ -969,6 +1006,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (inner.kind === "esp") return ESP_LABEL(inner);
   if (inner.kind === "pfsync") return `세션 동기화 (pfsync${inner.bulk ? " 전체" : ""}: NAT 매핑 ${inner.nat.length}개, 흐름 ${inner.flows.length}개)`;
   if (inner.kind === "vrrp") return `VRRP 광고 (그룹 ${inner.vrid}, 우선순위 ${inner.priority}${inner.priority === 0 ? " — 물러남" : ""}, 가상 주소 ${inner.vip})`;
+  if (inner.kind === "igmp") return inner.type === "report" ? `IGMP Membership Report (그룹 ${inner.group} 가입)` : `IGMP Leave (그룹 ${inner.group} 탈퇴)`;
   const d = inner.payload;
   if (d.kind === "esp") return `UDP 4500 (NAT-T) · ${ESP_LABEL(d)}`;
   if (d.kind === "ike") return IKE_LABEL(d);
@@ -980,6 +1018,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (d.kind === "ovpn") return ovpnLabel(d);
   if (d.kind === "ts") return tsLabel(d);
   if (d.kind === "cloud") return cloudLabel(d);
+  if (d.kind === "mcast") return `멀티캐스트 ${d.name} ${d.seq}/${d.total} → 그룹 ${d.group}`;
   if (d.kind === "dhcp6") return dhcp6Label(d);
   if (d.kind === "l2tp") return `L2TP${l2tpPartLabel(d)}`;
   if (d.kind === "stun") return stunLabel(d);
@@ -1071,6 +1110,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
   if (inner.kind === "pfsync") return "세션 동기화";
   if (inner.kind === "vrrp") return inner.priority === 0 ? "VRRP 물러남" : `VRRP ${inner.priority}`;
+  if (inner.kind === "igmp") return inner.type === "report" ? "IGMP 가입" : "IGMP 탈퇴";
   if (inner.kind === "esp" || inner.payload.kind === "esp") return "ESP 터널";
   if (inner.payload.kind === "ike") {
     const m = inner.payload;
@@ -1083,6 +1123,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "vpn") return "VPN 터널";
   if (inner.payload.kind === "ts") return inner.payload.net === "zerotier" ? "ZeroTier" : "Tailscale";
   if (inner.payload.kind === "cloud") return "GoodCloud";
+  if (inner.payload.kind === "mcast") return "멀티캐스트";
   if (inner.payload.kind === "ovpn") return inner.payload.op === "data" ? "OpenVPN" : "OpenVPN 제어";
   if (inner.payload.kind === "ddns") return inner.payload.op === "update" ? "DDNS 갱신" : inner.payload.op === "release" ? "DDNS 내려놓기" : "DDNS 응답";
   if (inner.payload.kind === "wg") return inner.payload.obf || inner.payload.type === "junk" ? "UDP" : inner.payload.type === "data" ? (inner.payload.inner ? "WireGuard" : "keepalive") : "WG 핸드셰이크";

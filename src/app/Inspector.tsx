@@ -26,6 +26,7 @@ import { cableAt, DEFAULT_FIREWALL_SETTINGS, defaultL3, peerOf, specOf, type Dev
 import { Icon } from "./Icons";
 import { CloudManageSection, DiagSection, InternetDiagSection, IspRenumberSection, LiveTables, StatusSection } from "./inspector/diag";
 import { MeshSection } from "./inspector/mesh";
+import { IgmpSection, McastSection } from "./inspector/mcast";
 import { HostSection, HttpProxySection, Ipv6Section, LbSection, P2pSection, ServiceSection, WifiBaseSection, WifiClientSection, RemoteVpnSection } from "./inspector/host";
 import { L3Section, StpSection, VlanSection } from "./inspector/l3";
 import { CablePanel, CablesPanel, LintSection, MultiPanel, NetworkPanel, ZonePanel, deviceName, portName } from "./inspector/panels";
@@ -230,6 +231,7 @@ function DevicePanel({ d }: { d: Device }) {
             <FirewallSection value={d.firewall ?? { ...DEFAULT_FIREWALL_SETTINGS, enabled: true }} onChange={(v) => updateDevice(d.id, (x) => ({ ...x, firewall: v }))} uplinkName="outside" />
           )}
           {d.kind === "switch" && <StpSection d={d} />}
+          {d.kind === "switch" && <IgmpSection d={d} />}
           {d.kind === "switch" && <VlanSection d={d} />}
           {d.host && <HostSection d={d} h={d.host} />}
           {d.host && <Ipv6Section d={d} h={d.host} />}
@@ -245,6 +247,7 @@ function DevicePanel({ d }: { d: Device }) {
       {tab === "diag" && (
         <>
           {d.host && <DiagSection d={d} />}
+          {d.host && d.kind !== "lb" && <McastSection d={d} />}
           {spec.role === "internet" && <InternetDiagSection d={d} />}
           {spec.role === "internet" && <IspRenumberSection d={d} />}
           {spec.role === "internet" && <CloudManageSection d={d} />}

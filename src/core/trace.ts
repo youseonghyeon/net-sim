@@ -248,6 +248,11 @@ export type TraceKind =
   | "cloud.register"
   | "cloud.manage"
   | "cloud.server"
+  /** IGMP·멀티캐스트: 스위치의 스누핑(가입 학습·전달), 호스트의 가입·탈퇴·송출·수신 */
+  | "igmp.snoop"
+  | "igmp.join"
+  | "mcast.send"
+  | "mcast.recv"
   | "ha.config"
   | "ha.state"
   | "ha.advert"

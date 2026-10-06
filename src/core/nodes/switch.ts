@@ -1,3 +1,4 @@
+import { IgmpSnoop } from "./igmp";
 import { isBroadcastMac, isMulticastMac, type Mac } from "../addr";
 import { describeFrame, MAX_L2_HOPS, type EthernetFrame } from "../packet";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
@@ -48,6 +49,13 @@ export class Switch implements SimNode {
     this.id = id;
     this.portNames = typeof ports === "number" ? Array.from({ length: ports }, (_, i) => `port ${i}`) : ports;
     this.portCount = this.portNames.length;
+  }
+
+  /** IGMP 스누핑 */
+  readonly igmp = new IgmpSnoop();
+
+  setIgmp(on: boolean, ctx: NodeContext): void {
+    this.igmp.setEnabled(on, ctx, "스위치");
   }
 
   setStp(cfg: StpConfig, mac: string, ctx: NodeContext): void {
@@ -143,7 +151,12 @@ export class Switch implements SimNode {
     }
     // 멀티캐스트 MAC 은 출발지로 쓰이지 않아 학습되는 일이 없다 — MLD·IGMP 스누핑이 없는 스위치는 브로드캐스트처럼 뿌린다
     if (isMulticastMac(frame.dst)) {
-      this.flood(port, vlan, frame, ctx, `멀티캐스트 ${frame.dst} (스누핑 없는 스위치는 브로드캐스트처럼)`);
+      const only = this.igmp.observe(port, vlan, frame, ctx, (p) => this.portName(p));
+      if (only) {
+        for (const p of only) if (ctx.isPortConnected(p) && this.stp.forwarding(p) && (this.vlanOf(p) === "trunk" || this.vlanOf(p) === vlan)) this.sendOut(p, vlan, frame, ctx);
+        return;
+      }
+      this.flood(port, vlan, frame, ctx, `멀티캐스트 ${frame.dst} (${this.igmp.enabled ? "링크 로컬 제어·IGMP" : "스누핑 없는 스위치는 브로드캐스트처럼"})`);
       return;
     }
     const entry = this.macTable.get(this.key(vlan, frame.dst));
@@ -198,6 +211,7 @@ export class Switch implements SimNode {
     if (up) this.up.add(port);
     else this.up.delete(port);
     if (!up) {
+      this.igmp.linkDown(port);
       for (const [k, e] of this.macTable) if (e.port === port) this.macTable.delete(k);
       ctx.trace("link.down", "L1", `${this.portName(port)} 링크 다운 → 그 포트의 MAC 학습 정보 삭제`, { port });
     }
@@ -231,6 +245,7 @@ export class Switch implements SimNode {
           : []),
       ],
       tables: [
+        ...(this.igmp.enabled ? [{ title: "IGMP 스누핑 (그룹 → 포트)", columns: ["그룹", "VLAN", "포트"], rows: this.igmp.rows((p) => this.portName(p)) }] : []),
         ...(this.stp.config.enabled ? [{ title: "STP 포트", columns: ["포트", "역할", "건너편 스위치"], rows: this.stp.rows() }] : []),
         {
           title: "MAC 테이블",

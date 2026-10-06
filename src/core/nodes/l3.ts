@@ -871,6 +871,7 @@ export class L3Node implements SimNode {
         ctx.trace("vpn.drop", "L3", `ESP(IPsec) 수신 (from ${pkt.src}) → 이 장치는 IPsec VPN 을 켜지 않아 드롭`, { from: pkt.src }, frameId);
         return;
       }
+      if (pkt.payload.kind === "igmp") return;
       this.handleIcmp(mine, pkt, pkt.payload, frameId, ctx);
       return;
     }

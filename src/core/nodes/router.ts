@@ -1,7 +1,8 @@
 import { OVPN_PORT, OvpnServer, shortFp, type OvpnServerConfig } from "./openvpn";
 import { MESH_SERVERS, MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
-import { CLOUD_TIMER_TAG, CloudAgent, RouterAdmin, type AdminConfig } from "./glinet";
+import { CLOUD_TIMER_TAG, CloudAgent, RouterAdmin, type AdminConfig, type SambaConfig } from "./glinet";
 import { TCP_TIMER_TAG } from "./tcp";
+import { IgmpSnoop } from "./igmp";
 import { BROADCAST_MAC, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
 import { ALL_NODES, formatIp6, isIpv6, isLinkLocal6, isMulticast6, parseIp6, sameSubnet6, UNSPECIFIED6 } from "../addr6";
 import {
@@ -219,6 +220,8 @@ export class Router implements SimNode {
   readonly cloud: CloudAgent;
   /** 인터넷을 막은 LAN 기기 (MAC) */
   blocked = new Set<string>();
+  /** 내부 스위치의 IGMP 스누핑 */
+  readonly igmp = new IgmpSnoop();
   /** DDNS 클라이언트 */
   readonly ddns: DdnsClient;
   /** 멀티 WAN: lan4 를 WAN2 로 쓰는지 */
@@ -842,6 +845,8 @@ export class Router implements SimNode {
       cloud?: boolean;
       blocked?: string[];
       dropIn?: boolean;
+      samba?: SambaConfig;
+      igmpSnooping?: boolean;
     },
     ctx: NodeContext,
   ): void {
@@ -933,6 +938,8 @@ export class Router implements SimNode {
     if (cfg.cloud !== undefined) this.cloud.setEnabled(cfg.cloud, ctx);
     if (cfg.blocked) this.setBlocked(cfg.blocked, ctx);
     if (cfg.dropIn !== undefined) this.setDropIn(cfg.dropIn, ctx);
+    if (cfg.samba) this.admin.setSamba(cfg.samba, ctx);
+    if (cfg.igmpSnooping !== undefined) this.igmp.setEnabled(cfg.igmpSnooping, ctx, "공유기 내부 스위치");
   }
 
   /** 인터넷을 막을 LAN 기기 (MAC) */
@@ -1058,6 +1065,11 @@ export class Router implements SimNode {
     }
     // 멀티캐스트는 내부 스위치가 모든 LAN 포트로 뿌리고, 공유기 LAN IPv6 가 가입한 그룹(모든 노드·모든 라우터·solicited-node)이면 공유기도 받는다
     if (isMulticastMac(frame.dst)) {
+      const only = this.igmp.observe(port, 1, frame, ctx, (p) => Router.portName(p));
+      if (only) {
+        for (const p of only) if (ctx.isPortConnected(p) && this.bridgePorts().includes(p)) ctx.send(p, frame);
+        return;
+      }
       this.floodLan(port, frame, ctx, `${frame.dst} 는 MAC 테이블에 없음`);
       if (this.lan6.accepts(frame.dst) && frame.payload.kind === "ipv6") this.handleLan6(frame.payload, frame, ctx);
       return;
@@ -2082,6 +2094,7 @@ export class Router implements SimNode {
         ...(this.mesh.config.enabled ? ([[this.mesh.brand, this.mesh.summary()!]] as [string, string][]) : []),
         ...(this.admin.config.enabled ? ([["관리 화면", `HTTP 80·HTTPS 443${this.admin.config.ssh ? "·SSH 22" : ""} · ${this.admin.config.allow.length ? "허용 목록만" : "LAN"}${this.admin.config.remote ? " + WAN(원격)" : ""}`]] as [string, string][]) : []),
         ...(this.cloud.enabled ? ([["GoodCloud", this.cloud.summary()!]] as [string, string][]) : []),
+        ...(this.admin.samba.enabled ? ([["네트워크 저장소", `SMB (TCP 445) · ${this.admin.samba.wan ? "LAN + WAN (위험)" : "LAN 만"}`]] as [string, string][]) : []),
         ...(this.dropIn ? ([["드롭인 게이트웨이", `켜짐 · WAN 쪽 LAN 기기의 게이트웨이 ${this.wan.ip ?? "?"}`]] as [string, string][]) : []),
         ...(this.blocked.size ? ([["기기 차단", [...this.blocked].join(", ")]] as [string, string][]) : []),
         ...(this.ovpn.enabled
@@ -2115,7 +2128,8 @@ export class Router implements SimNode {
           : []),
         ...(this.vpnServer.config.enabled ? [{ title: "VPN 접속", columns: ["사용자", "할당 IP", "접속 주소", "방식"], rows: this.vpnServer.rows() }] : []),
         ...(this.wgServerCfg?.enabled ? [{ title: "WireGuard 서버 피어 (wg show)", columns: ["피어", "공개 키", "엔드포인트", "AllowedIPs", "최근 핸드셰이크", "전송"], rows: this.wgs.rows() }] : []),
-        ...(this.admin.config.enabled ? [{ title: "관리 화면 연결", columns: ["연결", "상태", "보냄 / 받음"], rows: this.admin.rows() }] : []),
+        ...(this.igmp.enabled ? [{ title: "IGMP 스누핑 (그룹 → 포트)", columns: ["그룹", "VLAN", "포트"], rows: this.igmp.rows((p) => Router.portName(p)) }] : []),
+        ...(this.admin.config.enabled || this.admin.samba.enabled ? [{ title: "관리 화면·저장소 연결", columns: ["연결", "상태", "보냄 / 받음"], rows: this.admin.rows() }] : []),
         ...(this.mesh.config.enabled ? [{ title: `${this.mesh.brand} 피어 (${this.mesh.config.net === "zerotier" ? "zerotier-cli peers" : "tailscale status"})`, columns: ["이름", "메시 주소", "경로", "알린 대역", "패킷"], rows: this.mesh.rows() }] : []),
         ...(this.ovpn.enabled ? [{ title: "OpenVPN 클라이언트 (status)", columns: ["인증서 CN", "실제 주소", "가상 주소", "계정", "상태"], rows: this.ovpn.rows() }] : []),
         ...(this.wgClientCfg?.enabled ? [{ title: "WireGuard 클라이언트 (wg show)", columns: ["피어", "공개 키", "엔드포인트", "AllowedIPs", "최근 핸드셰이크", "전송"], rows: this.wgc.rows() }] : []),

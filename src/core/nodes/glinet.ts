@@ -7,7 +7,7 @@
 import { sameSubnet, type Ip } from "../addr";
 import { CLOUD_PORT, CLOUD_SERVER, type CloudMessage, type Endpoint, type Ipv4Packet, type TcpSegment } from "../packet";
 import type { NodeContext } from "./node";
-import { TcpStack } from "./tcp";
+import { SMB_PORT, TcpStack } from "./tcp";
 
 export const CLOUD_TIMER_TAG = "cloud";
 /** 클라우드 연결 유지 간격 (배경 타이머 — 시간이 흐를 때만) */
@@ -26,10 +26,18 @@ export interface AdminConfig {
 
 export const DEFAULT_ADMIN: AdminConfig = { enabled: false, remote: false, allow: [], ssh: true };
 
-const label = (port: number) => (port === 22 ? "SSH" : port === 443 ? "관리 화면 (HTTPS)" : "관리 화면 (HTTP)");
+const label = (port: number) => (port === 22 ? "SSH" : port === 443 ? "관리 화면 (HTTPS)" : port === 445 ? "네트워크 저장소 (SMB)" : "관리 화면 (HTTP)");
+
+/** 네트워크 저장소 (GL.iNet 의 Samba — 공유기에 꽂은 USB 디스크를 SMB 로 공유) */
+export interface SambaConfig {
+  enabled: boolean;
+  /** WAN(인터넷)에서도 접근 허용 — 랜섬웨어가 노리는 포트라 위험 */
+  wan: boolean;
+}
 
 export class RouterAdmin {
   config: AdminConfig = { ...DEFAULT_ADMIN, allow: [] };
+  samba: SambaConfig = { enabled: false, wan: false };
   readonly tcp: TcpStack;
 
   constructor(send: (pkt: Ipv4Packet, ctx: NodeContext) => void) {
@@ -39,16 +47,9 @@ export class RouterAdmin {
   setConfig(cfg: AdminConfig, ctx: NodeContext): void {
     if (JSON.stringify(cfg) === JSON.stringify(this.config)) return;
     this.config = { ...cfg, allow: cfg.allow.map((a) => ({ ...a })) };
-    this.tcp.listening.clear();
-    this.tcp.tlsPorts.clear();
-    if (cfg.enabled) {
-      this.tcp.listening.add(80);
-      this.tcp.listening.add(443);
-      this.tcp.tlsPorts.add(443);
-      if (cfg.ssh) this.tcp.listening.add(22);
-    }
+    this.syncPorts();
     // 열려 있던 관리 연결은 새 규칙과 상관없이 정리 (세션은 다시 열면 된다)
-    this.tcp.abortAll("관리 접근 설정 변경", ctx);
+    this.tcp.abortAll("관리 접근 설정 변경", ctx, (c) => c.localPort !== SMB_PORT);
     ctx.trace(
       "ip.config",
       "sys",
@@ -59,9 +60,30 @@ export class RouterAdmin {
     );
   }
 
-  /** 관리 포트인가 */
+  private syncPorts(): void {
+    const c = this.config;
+    this.tcp.listening.clear();
+    this.tcp.tlsPorts.clear();
+    if (c.enabled) {
+      this.tcp.listening.add(80);
+      this.tcp.listening.add(443);
+      this.tcp.tlsPorts.add(443);
+      if (c.ssh) this.tcp.listening.add(22);
+    }
+    if (this.samba.enabled) this.tcp.listening.add(SMB_PORT);
+  }
+
+  setSamba(cfg: SambaConfig, ctx: NodeContext): void {
+    if (cfg.enabled === this.samba.enabled && cfg.wan === this.samba.wan) return;
+    this.samba = { ...cfg };
+    this.syncPorts();
+    this.tcp.abortAll("네트워크 저장소 설정 변경", ctx, (c) => c.localPort === SMB_PORT);
+    ctx.trace("ip.config", "sys", cfg.enabled ? `네트워크 저장소 (Samba): SMB(TCP 445)로 공유 — ${cfg.wan ? "WAN(인터넷)에서도 열림 (랜섬웨어·대입 공격이 노리는 포트)" : "LAN 만"}` : "네트워크 저장소 꺼짐", { samba: cfg.enabled });
+  }
+
+  /** 관리 포트(또는 SMB)인가 */
   isAdminPort(port: number): boolean {
-    return this.config.enabled && this.tcp.listening.has(port);
+    return this.tcp.listening.has(port);
   }
 
   /**
@@ -73,7 +95,13 @@ export class RouterAdmin {
     const c = this.config;
     // 이미 열린 연결의 세그먼트는 그대로 (SYN 만 검사 — 연결 단위 허용)
     const known = [...this.tcp.conns.values()].some((x) => x.remoteIp === pkt.src && x.remotePort === seg.srcPort && x.localPort === seg.dstPort && x.state !== "CLOSED" && x.state !== "FAILED");
-    if (!known && seg.syn) {
+    if (!known && seg.syn && seg.dstPort === SMB_PORT) {
+      if (from === "wan" && !this.samba.wan) {
+        ctx.trace("fw.deny", "L4", `네트워크 저장소: 인터넷의 ${pkt.src} 가 SMB(TCP 445)에 접속 → WAN 접근이 꺼져 있어 드롭 (파일 공유는 LAN 이나 VPN 으로)`, { src: pkt.src, port: seg.dstPort }, frameId);
+        return true;
+      }
+      ctx.trace("fw.allow", "L4", `네트워크 저장소: ${pkt.src} → SMB(TCP 445) 허용 (${from === "wan" ? "WAN 접근 켜짐" : "LAN"})`, { src: pkt.src, port: seg.dstPort }, frameId);
+    } else if (!known && seg.syn) {
       if (from === "wan" && !c.remote) {
         ctx.trace("fw.deny", "L4", `관리 접근 제어: 인터넷의 ${pkt.src} 가 ${label(seg.dstPort)} (TCP ${seg.dstPort}) 에 접속 → WAN 에서의 관리 접근이 꺼져 있어 드롭 (원격 관리는 GoodCloud 처럼 공유기가 먼저 연 연결로)`, { src: pkt.src, port: seg.dstPort }, frameId);
         return true;

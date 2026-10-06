@@ -26,7 +26,8 @@ import { WAN_LABEL } from "../../core/nodes/mwan";
 import { DdnsSection, WgClientSection, WgServerSection } from "./wg";
 import { OvpnServerSection } from "./ovpn";
 import { MeshSection } from "./mesh";
-import { AdminSection, BlockSection, CloudSection, DropInSection } from "./system";
+import { IgmpSection } from "./mcast";
+import { AdminSection, BlockSection, CloudSection, DropInSection, SambaSection } from "./system";
 import { AdguardSection, DpiSection } from "./apps";
 
 /** LAN 주소/서브넷이 바뀔 때, 기존 범위가 옛 서브넷 안에 있었다면 호스트 부분을 유지한 채 새 서브넷으로 옮긴다 */
@@ -104,6 +105,7 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
       </Section>
       <RouterDnsSection d={d} r={r} />
       <WifiBaseSection d={d} />
+      <IgmpSection d={d} />
     </>
   );
   return (
@@ -142,12 +144,13 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         {
           id: "apps",
           label: "앱",
-          on: r.adguard?.enabled === true || r.dpi?.enabled === true || r.cloud === true,
+          on: r.adguard?.enabled === true || r.dpi?.enabled === true || r.cloud === true || r.samba?.enabled === true,
           content: (
             <>
               <AdguardSection d={d} r={r} />
               <DpiSection d={d} r={r} />
               <CloudSection d={d} r={r} />
+              <SambaSection d={d} r={r} />
             </>
           ),
         },

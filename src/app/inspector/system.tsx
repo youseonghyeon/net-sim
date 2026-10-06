@@ -106,6 +106,31 @@ export function CloudSection({ d, r }: { d: Device; r: RouterSettings }) {
   );
 }
 
+export function SambaSection({ d, r }: { d: Device; r: RouterSettings }) {
+  const s = r.samba ?? { enabled: false, wan: false };
+  const set = (patch: Partial<typeof s>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, samba: { ...(x.router!.samba ?? { enabled: false, wan: false }), ...patch } } }));
+  return (
+    <Section title="네트워크 저장소">
+      <label class="toggle-row">
+        <span>
+          {s.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">SMB · TCP 445</span>
+        </span>
+        <Toggle on={s.enabled} onToggle={() => set({ enabled: !s.enabled })} />
+      </label>
+      {s.enabled && (
+        <label class="toggle-row">
+          <span>
+            WAN 에서도 접근 허용
+            <small class="muted">인터넷에 SMB — 매우 위험</small>
+          </span>
+          <Toggle on={s.wan} onToggle={() => set({ wan: !s.wan })} />
+        </label>
+      )}
+      <p class="note">공유기에 꽂은 USB 디스크를 SMB(Windows 파일 공유)로 나눕니다. LAN 기기에서 이 공유기 주소의 TCP 445 로 접속해 보세요. 인터넷에는 열지 않습니다 — 밖에서는 VPN 으로 집에 붙어 씁니다.</p>
+    </Section>
+  );
+}
+
 export function DropInSection({ d, r }: { d: Device; r: RouterSettings }) {
   return (
     <Section title="드롭인 게이트웨이">

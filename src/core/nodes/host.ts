@@ -35,6 +35,10 @@ import { P2P_TIMER_TAG, P2pAgent, type P2pConfig } from "./p2p";
 import { RA_DPD_TAG, RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
 import { WG_TIMER_TAG, WgClient } from "./wg";
 import { OVPN_TIMER_TAG, OvpnClient } from "./openvpn";
+import { ALL_ROUTERS_IP, isMcastIp, MCAST_PORT, mcastMac } from "../packet";
+
+/** 스트림 송출 한 번의 패킷 수 */
+const STREAM_PACKETS = 5;
 import { MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, NUD_TIMER_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
@@ -305,6 +309,54 @@ export class Host implements SimNode {
 
   setMesh(cfg: MeshConfig, ctx: NodeContext): void {
     this.mesh.setConfig(cfg, ctx);
+  }
+
+  // ---------- 멀티캐스트 (IGMP·IPTV 흉내) ----------
+
+  /** 가입한 멀티캐스트 그룹 */
+  readonly groups = new Set<Ip>();
+  /** 받은 스트림 패킷 수 (그룹마다) */
+  readonly streamRx = new Map<Ip, number>();
+  private streamSeq = 0;
+
+  joinGroup(group: Ip, ctx: NodeContext): void {
+    if (!isMcastIp(group)) {
+      ctx.trace("igmp.join", "app", `${group} 는 멀티캐스트 주소(224.0.0.0~239.255.255.255)가 아님 → 가입하지 않음`, { group });
+      return;
+    }
+    if (!this.iface.ip) {
+      ctx.trace("ip.no-address", "L3", `IP 주소가 없어 IGMP 가입을 알릴 수 없음`, { group });
+      return;
+    }
+    this.groups.add(group);
+    ctx.trace("igmp.join", "app", `멀티캐스트 그룹 ${group} 가입 → IGMP Membership Report 를 그 그룹 주소(MAC ${mcastMac(group)})로 알리고, NIC 가 이 MAC 의 프레임을 받기 시작`, { group });
+    this.iface.sendToMac(mcastMac(group), { kind: "ipv4", src: this.iface.ip, dst: group, ttl: 1, payload: { kind: "igmp", type: "report", group } }, ctx, this.emit(ctx));
+  }
+
+  leaveGroup(group: Ip, ctx: NodeContext): void {
+    if (!this.groups.delete(group)) {
+      ctx.trace("igmp.join", "app", `그룹 ${group} 에 가입해 있지 않음`, { group });
+      return;
+    }
+    ctx.trace("igmp.join", "app", `멀티캐스트 그룹 ${group} 탈퇴 → IGMP Leave 를 모든 라우터 주소(${ALL_ROUTERS_IP})로 알림`, { group });
+    if (this.iface.ip) this.iface.sendToMac(mcastMac(ALL_ROUTERS_IP), { kind: "ipv4", src: this.iface.ip, dst: ALL_ROUTERS_IP, ttl: 1, payload: { kind: "igmp", type: "leave", group } }, ctx, this.emit(ctx));
+  }
+
+  /** 스트림 송출: 그룹 주소로 UDP 5개 (100ms 간격 — 영상 조각 흉내) */
+  sendStream(group: Ip, ctx: NodeContext): void {
+    if (!isMcastIp(group) || !this.iface.ip) {
+      ctx.trace("mcast.send", "app", `${!this.iface.ip ? "IP 주소가 없어" : `${group} 는 멀티캐스트 주소가 아니라`} 송출하지 않음`, { group });
+      return;
+    }
+    const id = ++this.streamSeq;
+    ctx.trace("mcast.send", "app", `IPTV 송출 시작: 그룹 ${group} 로 영상 조각 ${STREAM_PACKETS}개 (받을 기기를 모른다 — 스위치가 누구에게 줄지 정한다)`, { group });
+    this.streamStep(group, id, 1, ctx);
+  }
+
+  private streamStep(group: Ip, id: number, seq: number, ctx: NodeContext): void {
+    if (!this.iface.ip) return;
+    this.iface.sendToMac(mcastMac(group), { kind: "ipv4", src: this.iface.ip, dst: group, ttl: 4, payload: { kind: "udp", srcPort: MCAST_PORT, dstPort: MCAST_PORT, payload: { kind: "mcast", group, seq, total: STREAM_PACKETS, name: `채널 ${group}` } } }, ctx, this.emit(ctx));
+    if (seq < STREAM_PACKETS) ctx.timer(100, "mcast-stream", { group, id, seq: seq + 1 });
   }
 
   setRemoteVpn(cfg: RaClientConfig, ctx: NodeContext): void {
@@ -1118,7 +1170,7 @@ export class Host implements SimNode {
       return;
     }
     // 가입하지 않은 멀티캐스트(예: 라우터끼리 주고받는 RIP)는 NIC 가 하드웨어에서 조용히 거른다. IPv6 는 모든 노드·내 solicited-node 그룹에 가입한다
-    const v6Group = this.v6.accepts(frame.dst);
+    const v6Group = this.v6.accepts(frame.dst) || [...this.groups].some((g) => mcastMac(g) === frame.dst);
     if (isMulticastMac(frame.dst) && !v6Group) return;
     if (!this.iface.accepts(frame) && !v6Group) {
       ctx.trace("frame.drop", "L2", `목적지 MAC ${frame.dst} 가 내 MAC(${this.iface.mac}) 아님 → 드롭`, { dst: frame.dst }, frame.id);
@@ -1209,6 +1261,15 @@ export class Host implements SimNode {
   }
 
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    // 멀티캐스트 스트림: 가입한 그룹이면 받는다 (NIC 가 그 MAC 을 들여보냈다)
+    if (isMcastIp(pkt.dst) && pkt.payload.kind === "udp" && pkt.payload.payload.kind === "mcast") {
+      const m = pkt.payload.payload;
+      if (!this.groups.has(pkt.dst)) return;
+      const n = (this.streamRx.get(pkt.dst) ?? 0) + 1;
+      this.streamRx.set(pkt.dst, n);
+      ctx.trace("mcast.recv", "app", `IPTV 수신: ${m.name} 조각 ${m.seq}/${m.total} (보낸 곳 ${pkt.src}, 이 그룹에서 받은 수 ${n})`, { group: pkt.dst, seq: m.seq }, frameId);
+      return;
+    }
     // 메시 VPN 앱 (Tailscale·ZeroTier): 내 포트로 온 메시 메시지와 그 STUN 응답
     if (pkt.dst === this.iface.ip && pkt.payload.kind === "udp" && this.mesh.ownsPort(pkt.payload.dstPort)) {
       const udp = pkt.payload;
@@ -1322,7 +1383,7 @@ export class Host implements SimNode {
       this.tcp.handle(pkt, pkt.payload, ctx);
       return;
     }
-    if (isControl(pkt.payload)) return; // 가입하지 않은 멀티캐스트
+    if (isControl(pkt.payload)) return; // 가입하지 않은 멀티캐스트, 다른 호스트의 IGMP 가입 알림
     if (pkt.payload.kind === "esp") {
       ctx.trace("ip.drop", "L3", `ESP(IPsec) 패킷 수신 → 호스트에는 IPsec VPN 이 없어 드롭`, {}, frameId);
       return;
@@ -1431,6 +1492,11 @@ export class Host implements SimNode {
       case TS_TIMER_TAG:
         this.mesh.onTimer(data, ctx);
         return;
+      case "mcast-stream": {
+        const d = data as { group: Ip; id: number; seq: number };
+        this.streamStep(d.group, d.id, d.seq, ctx);
+        return;
+      }
       case WG_TIMER_TAG:
         if (this.ra instanceof WgClient) this.ra.onTimer(data, ctx);
         return;
@@ -1516,6 +1582,7 @@ export class Host implements SimNode {
         ...(this.ra.config.enabled ? [[this.ra instanceof L2tpClient ? "VPN (L2TP/IPsec)" : this.ra instanceof WgClient ? "WireGuard" : this.ra instanceof OvpnClient ? "OpenVPN" : "원격 접속 VPN", this.ra.summary()!] as [string, string]] : []),
         ...(this.p2p.config.enabled ? [["P2P 앱", this.p2p.summary()!] as [string, string]] : []),
         ...(this.mesh.config.enabled ? [[this.mesh.brand, this.mesh.summary()!] as [string, string]] : []),
+        ...(this.groups.size ? [["멀티캐스트 그룹", [...this.groups].map((g) => `${g} (받음 ${this.streamRx.get(g) ?? 0})`).join(", ")] as [string, string]] : []),
         ...(this.dhcpServer.config.enabled
           ? [["DHCP 서버", `켜짐 · ${this.dhcpServer.config.start} ~ ${this.dhcpServer.config.end}`] as [string, string]]
           : []),

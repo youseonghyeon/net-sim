@@ -98,3 +98,17 @@ describe("구성 검사 (공유기 관리)", () => {
   });
 });
 
+
+describe("네트워크 저장소 (Samba)", () => {
+  it("LAN 의 NAS 가 공유기 SMB(445)에 접속하고, 인터넷에서는 막힌다, WAN 을 열면 구성 검사 samba.wan-open", () => {
+    const t = router(exampleWireguardTopology(), HOME, { samba: { enabled: true, wan: false } });
+    const L = loadTopology(t);
+    const tr = L.act({ kind: "tcp-connect", nodeId: L.id(NAS), dst: "192.168.8.1", port: 445 });
+    expect(L.lastConn(NAS).state).toBe("CLOSED");
+    expect(tr.some((e) => e.summary.includes("SMB 파일 목록"))).toBe(true);
+    const tr2 = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.30", port: 445 });
+    expect(tr2.some((e) => e.kind === "fw.deny" && e.summary.includes("SMB"))).toBe(true);
+    expect(lintTopology(router(t, HOME, { samba: { enabled: true, wan: true } })).map((i) => i.code)).toContain("samba.wan-open");
+    expect(lintTopology(router(t, HOME, { forwards: [{ publicPort: 445, lanIp: "192.168.8.20", lanPort: 445 }] })).map((i) => i.code)).toContain("nat.forward-smb");
+  });
+});

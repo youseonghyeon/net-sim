@@ -31,6 +31,9 @@ export const TCP_STATE_LABEL: Record<TcpState, string> = {
 export const TCP_RTO = 400;
 export const TCP_MAX_RETRIES = 3;
 export const TCP_TIMER_TAG = "tcp-rto";
+/** SMB (Windows 파일 공유·Samba) — 요청·응답의 내용 이름만 다르고 앱 흐름은 HTTP 흉내와 같다 */
+export const SMB_PORT = 445;
+export const SMB_REQUEST = "SMB Negotiate·Session Setup·Tree Connect \\\\공유";
 /** 요청을 보낸 뒤 응답 첫 바이트를 기다리는 시간 (HTTP 클라이언트의 read timeout). 중간 로드밸런서가 끊겨도 영원히 기다리지 않게 */
 export const TCP_READ_TIMEOUT = 10_000;
 export const CLIENT_ISS = 1000;
@@ -580,7 +583,7 @@ export class TcpStack {
       }
       // 앱: 요청을 받았으니 응답 세그먼트를 연달아 보내고 FIN
       const n = conn.responseSegments;
-      this.respond(conn, Array.from({ length: n }, (_, k) => ({ len: RESPONSE_SEGMENT_BYTES, data: `HTTP 200 (${k + 1}/${n})` })), ctx);
+      this.respond(conn, Array.from({ length: n }, (_, k) => ({ len: RESPONSE_SEGMENT_BYTES, data: conn.localPort === SMB_PORT ? `SMB 파일 목록 (${k + 1}/${n})` : `HTTP 200 (${k + 1}/${n})` })), ctx);
       return;
     }
     this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
@@ -628,7 +631,7 @@ export class TcpStack {
     const tls = conn.tls?.done === true;
     // 프록시에게 대신 받아 달라는 요청만 절대 URI. CONNECT 터널 안의 요청은 대상 서버에게 직접 하는 요청이다
     const absolute = conn.target !== undefined && conn.method !== "CONNECT";
-    const line = absolute ? `GET http://${conn.target!.replace(/:80$/, "")}/` : "GET /";
+    const line = absolute ? `GET http://${conn.target!.replace(/:80$/, "")}/` : conn.remotePort === SMB_PORT ? SMB_REQUEST : "GET /";
     const notes = [
       absolute ? `프록시에게 ${conn.target} 를 대신 받아 달라고 부탁 (요청 줄이 절대 URI)` : "",
       conn.via ? `로드밸런서·프록시 ${conn.via}개 거침 (Via)` : "",

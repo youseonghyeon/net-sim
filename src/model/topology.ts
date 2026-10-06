@@ -563,6 +563,8 @@ export interface SwitchSettings {
   vlans: Record<number, number | "trunk">;
   /** 스패닝 트리. 없으면 꺼짐 (실제 스위치는 기본으로 켜져 있지만, 여기서는 켜야 BPDU 가 오간다) */
   stp?: { enabled: boolean; priority: number };
+  /** IGMP 스누핑. 없으면 꺼짐 (멀티캐스트를 모든 포트로) */
+  igmpSnooping?: boolean;
 }
 
 export interface WanSettings {
@@ -643,6 +645,10 @@ export interface RouterSettings {
   blocked?: string[];
   /** 드롭인 게이트웨이: WAN 쪽 LAN 기기의 게이트웨이가 되어 준다 (한 팔 라우터). 없으면 꺼짐 */
   dropIn?: boolean;
+  /** 네트워크 저장소 (Samba — SMB TCP 445). 없으면 꺼짐 */
+  samba?: { enabled: boolean; wan: boolean };
+  /** 내부 스위치의 IGMP 스누핑. 없으면 꺼짐 */
+  igmpSnooping?: boolean;
 }
 
 export interface RouterAdminSettings {
@@ -1485,6 +1491,7 @@ export function normalizeTopology(t: Topology): Topology {
     if (spec.role === "ap" && !fixed.ap) fixed.ap = { ...DEFAULT_WIFI_BASE };
     if (spec.role === "firewall") fixed.firewall = fixed.firewall ? { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.firewall, rules: fixed.firewall.rules ?? [] } : { ...DEFAULT_FIREWALL_SETTINGS, enabled: true, rules: [] };
     if (spec.role === "switch" && !fixed.switch) fixed.switch = { vlans: {} };
+    if (fixed.switch && fixed.switch.igmpSnooping !== undefined) fixed.switch = { ...fixed.switch, igmpSnooping: fixed.switch.igmpSnooping === true };
     if (fixed.switch?.stp) {
       const st = fixed.switch.stp as Partial<{ enabled: boolean; priority: number }>;
       const prio = typeof st.priority === "number" && Number.isInteger(st.priority) && st.priority >= 0 && st.priority <= 61440 ? st.priority - (st.priority % 4096) : 32768;
@@ -1541,6 +1548,8 @@ export function normalizeTopology(t: Topology): Topology {
             : {}),
           ...(r.cloud === true ? { cloud: true } : {}),
           ...(r.dropIn === true ? { dropIn: true } : {}),
+          ...(r.igmpSnooping === true ? { igmpSnooping: true } : {}),
+          ...(r.samba && typeof r.samba === "object" ? { samba: { enabled: r.samba.enabled === true, wan: r.samba.wan === true } } : {}),
           ...(Array.isArray(r.blocked) ? { blocked: r.blocked.filter((x): x is string => typeof x === "string") } : {}),
           ...(r.wan2 ? { wan2: normalizeWan2(r.wan2) } : {}),
           ...(r.adguard ? { adguard: normalizeAdguard(r.adguard) } : {}),
