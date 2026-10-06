@@ -5,7 +5,8 @@
 //   공유기의 관리 포트를 인터넷에 열지 않고도 원격 관리 — "들어오는 연결" 대신 "먼저 나간 연결" 을 쓴다
 // 줄인 것: 로그인·비밀번호(관리 화면은 응답만), 클라우드의 TLS·WebSocket(UDP 로), 원격으로 설정 바꾸기(상태 조회만)
 import { sameSubnet, type Ip } from "../addr";
-import { CLOUD_PORT, CLOUD_SERVER, type CloudMessage, type Endpoint, type Ipv4Packet, type TcpSegment } from "../packet";
+import { CLOUD_PORT, CLOUD_SERVER, type CloudMessage, type Endpoint, type IpPacket, type Ipv4Packet, type TcpSegment } from "../packet";
+import { isIpv6 } from "../addr6";
 import type { NodeContext } from "./node";
 import { SMB_PORT, TcpStack } from "./tcp";
 
@@ -40,16 +41,16 @@ export class RouterAdmin {
   samba: SambaConfig = { enabled: false, wan: false };
   readonly tcp: TcpStack;
 
-  constructor(send: (pkt: Ipv4Packet, ctx: NodeContext) => void) {
-    this.tcp = new TcpStack({ send: (pkt, ctx) => send(pkt as Ipv4Packet, ctx) });
+  constructor(send: (pkt: IpPacket, ctx: NodeContext) => void) {
+    this.tcp = new TcpStack({ send: (pkt, ctx) => send(pkt, ctx) });
   }
 
   setConfig(cfg: AdminConfig, ctx: NodeContext): void {
     if (JSON.stringify(cfg) === JSON.stringify(this.config)) return;
     this.config = { ...cfg, allow: cfg.allow.map((a) => ({ ...a })) };
     this.syncPorts();
-    // 열려 있던 관리 연결은 새 규칙과 상관없이 정리 (세션은 다시 열면 된다)
-    this.tcp.abortAll("관리 접근 설정 변경", ctx, (c) => c.localPort !== SMB_PORT);
+    // 규칙은 새 연결부터 (열려 있는 세션은 그대로 — 방화벽의 conntrack 처럼). 관리 화면을 끄면 열린 연결에 RST 를 보내 끊는다
+    if (!cfg.enabled) for (const c of [...this.tcp.conns.values()]) if (c.localPort !== SMB_PORT && c.state !== "CLOSED" && c.state !== "FAILED") this.tcp.reset(c, "관리 화면 꺼짐", ctx);
     ctx.trace(
       "ip.config",
       "sys",
@@ -77,7 +78,7 @@ export class RouterAdmin {
     if (cfg.enabled === this.samba.enabled && cfg.wan === this.samba.wan) return;
     this.samba = { ...cfg };
     this.syncPorts();
-    this.tcp.abortAll("네트워크 저장소 설정 변경", ctx, (c) => c.localPort === SMB_PORT);
+    if (!cfg.enabled) for (const c of [...this.tcp.conns.values()]) if (c.localPort === SMB_PORT && c.state !== "CLOSED" && c.state !== "FAILED") this.tcp.reset(c, "네트워크 저장소 꺼짐", ctx);
     ctx.trace("ip.config", "sys", cfg.enabled ? `네트워크 저장소 (Samba): SMB(TCP 445)로 공유 — ${cfg.wan ? "WAN(인터넷)에서도 열림 (랜섬웨어·대입 공격이 노리는 포트)" : "LAN 만"}` : "네트워크 저장소 꺼짐", { samba: cfg.enabled });
   }
 
@@ -90,7 +91,7 @@ export class RouterAdmin {
    * 관리 포트로 온 TCP: 접근 제어를 보고 받거나 드롭한다. 처리했으면 true (관리 포트가 아니면 false — 호출한 쪽이 이어서 처리)
    * from: lan = LAN 에서 공유기 주소로, wan = 인터넷에서 공인 주소로
    */
-  handle(pkt: Ipv4Packet, seg: TcpSegment, from: "lan" | "wan", lan: { ip: Ip; prefix: number } | undefined, ctx: NodeContext, frameId: number): boolean {
+  handle(pkt: IpPacket, seg: TcpSegment, from: "lan" | "wan", lan: { ip: Ip; prefix: number } | undefined, ctx: NodeContext, frameId: number): boolean {
     if (!this.isAdminPort(seg.dstPort)) return false;
     const c = this.config;
     // 이미 열린 연결의 세그먼트는 그대로 (SYN 만 검사 — 연결 단위 허용)
@@ -106,11 +107,11 @@ export class RouterAdmin {
         ctx.trace("fw.deny", "L4", `관리 접근 제어: 인터넷의 ${pkt.src} 가 ${label(seg.dstPort)} (TCP ${seg.dstPort}) 에 접속 → WAN 에서의 관리 접근이 꺼져 있어 드롭 (원격 관리는 GoodCloud 처럼 공유기가 먼저 연 연결로)`, { src: pkt.src, port: seg.dstPort }, frameId);
         return true;
       }
-      if (from === "lan" && c.allow.length && !c.allow.some((a) => sameSubnet(pkt.src, a.dest, a.prefix))) {
+      if (from === "lan" && c.allow.length && (isIpv6(pkt.src) || !c.allow.some((a) => sameSubnet(pkt.src, a.dest, a.prefix)))) {
         ctx.trace("fw.deny", "L4", `관리 접근 제어: ${pkt.src} 는 관리 화면 허용 목록(${c.allow.map((a) => `${a.dest}/${a.prefix}`).join(", ")})에 없음 → ${label(seg.dstPort)} 접속 드롭`, { src: pkt.src, port: seg.dstPort }, frameId);
         return true;
       }
-      if (from === "lan" && lan && !sameSubnet(pkt.src, lan.ip, lan.prefix) && !c.remote) {
+      if (from === "lan" && lan && !isIpv6(pkt.src) && !sameSubnet(pkt.src, lan.ip, lan.prefix) && !c.remote) {
         ctx.trace("fw.deny", "L4", `관리 접근 제어: ${pkt.src} 는 LAN(${lan.ip}/${lan.prefix}) 밖의 주소 (VPN 으로 붙은 기기 등) → ${label(seg.dstPort)} 접속 드롭 (LAN 만 허용)`, { src: pkt.src, port: seg.dstPort }, frameId);
         return true;
       }

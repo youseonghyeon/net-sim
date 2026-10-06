@@ -494,7 +494,12 @@ export function effectiveRouter(d: Device, current?: Router) {
       };
     })(),
     mesh: effectiveMesh(d),
-    admin: { enabled: r.admin?.enabled === true, remote: r.admin?.remote === true, allow: parseCidrList(r.admin?.allow), ssh: r.admin?.ssh !== false },
+    admin: (() => {
+      const allow = parseCidrList(r.admin?.allow);
+      // 허용 목록에 적었는데 쓸 수 있는 항목이 없으면 아무도 허용하지 않는다 (비운 것으로 보면 모두에게 열린다 — fail-open 금지)
+      const closed = !!r.admin?.allow?.trim() && allow.length === 0;
+      return { enabled: r.admin?.enabled === true, remote: r.admin?.remote === true, allow: closed ? [{ dest: "0.0.0.0", prefix: 32 }] : allow, ssh: r.admin?.ssh !== false };
+    })(),
     cloud: r.cloud === true,
     dropIn: r.dropIn === true,
     samba: { enabled: r.samba?.enabled === true, wan: r.samba?.wan === true },

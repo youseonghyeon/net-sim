@@ -64,7 +64,8 @@ export function BlockSection({ d, r }: { d: Device; r: RouterSettings }) {
   const leaseMacs = new Set(node instanceof Router ? node.dhcpServer.rows().map((row) => row[1]!.toLowerCase()) : []);
   // 드롭인 게이트웨이면 이 공유기의 WAN 주소를 게이트웨이로 적은 기기도
   const dropInGw = r.dropIn && r.wan?.ipMode === "static" ? r.wan.ip : undefined;
-  const lanDevices = topology.value.devices.filter((x) => x.host && (leaseMacs.has(x.mac.toLowerCase()) || (x.host.ipMode === "static" && (x.host.gateway === r.lanIp || (!!dropInGw && x.host.gateway === dropInGw)))));
+  const wlan = (mac: string) => mac.toLowerCase().replace(/^02:00:00:00/, "02:00:00:02");
+  const lanDevices = topology.value.devices.filter((x) => x.host && (leaseMacs.has(x.mac.toLowerCase()) || leaseMacs.has(wlan(x.mac)) || (x.host.ipMode === "static" && (x.host.gateway === r.lanIp || (!!dropInGw && x.host.gateway === dropInGw)))));
   const toggle = (mac: string) => {
     const m = mac.toLowerCase();
     updateDevice(d.id, (x) => {

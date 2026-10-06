@@ -6,6 +6,12 @@ export function glinetRules({ t, add }: LintContext): void {
   for (const d of t.devices) {
     const r = d.router;
     if (!r) continue;
+    const badAllow = (r.admin?.allow ?? "").split(/[,\s]+/).filter(Boolean).filter((x) => {
+      const [ip, p] = x.split("/");
+      return !/^\d+\.\d+\.\d+\.\d+$/.test(ip ?? "") || (ip ?? "").split(".").some((n) => Number(n) > 255) || (p !== undefined && !(/^\d{1,2}$/.test(p) && Number(p) <= 32));
+    });
+    if (r.admin?.enabled && badAllow.length)
+      add({ deviceId: d.id, severity: "error", code: "admin.allow-invalid", message: `관리 화면 허용 목록의 ${badAllow.join(", ")} 은(는) 주소가 아님 → 그 항목은 쓰지 않음${badAllow.length === (r.admin.allow.split(/[,\s]+/).filter(Boolean).length) ? " (쓸 수 있는 항목이 없어 아무도 열 수 없음)" : ""}`, fix: `${d.name} → 보안 → 관리 접근 → 허용 목록 (예: 192.168.8.50, 192.168.8.0/24)` });
     if (r.admin?.enabled && r.admin.remote)
       add({ deviceId: d.id, severity: "warn", code: "admin.remote-open", message: `관리 화면(HTTP·HTTPS${r.admin.ssh ? "·SSH" : ""})을 WAN(인터넷)에도 열었음 → 누구나 로그인 화면에 닿아 비밀번호 대입 공격을 받는다`, fix: `${d.name} → 보안 → 관리 접근 → WAN 접근 끄기 (원격 관리는 GoodCloud 나 VPN 으로)` });
     if (r.samba?.enabled && r.samba.wan)

@@ -153,7 +153,7 @@ export function dhcpServiceRules({ t, m, add: addNow }: LintContext): void {
           fix: `게이트웨이/NAT 박스나 공유기를 이 스위치에 연결하고 그 인터페이스 주소를 ${router} 로 맞추거나, DHCP 서비스의 게이트웨이 칸을 비우기`,
         });
       }
-      if (!m.stranded.has(key) && gatewayMismatch(gws, router)) {
+      if (!m.stranded.has(key) && gatewayMismatch(gws, router) && !dropInGateway(t, m, key, router)) {
         const pick = pickGw(gws, validIp(srv.start) ?? ownIp)!;
         const own = subnetOf(ownIp, h.prefix);
         add({
@@ -195,7 +195,7 @@ export function dhcpServiceRules({ t, m, add: addNow }: LintContext): void {
         // 이 풀을 받는 단말의 세그먼트 = 주소가 풀 서브넷 안인 라우터 인터페이스(릴레이 giaddr 가 될 곳)가 있는 세그먼트
         const relays = m.allGws.filter((g) => g.ip && contains(poolNet, g.ip) && m.linked.has(g.key) && !m.stranded.has(g.key));
         const segGws = [...new Map(relays.flatMap((g) => m.gwsOf(g.key)).map((g) => [g.key, g])).values()];
-        if (relays.length === 0 || !gatewayMismatch(segGws, poolRouter)) return;
+        if (relays.length === 0 || !gatewayMismatch(segGws, poolRouter) || relays.some((g) => dropInGateway(t, m, g.key, poolRouter))) return;
         const pick = pickGw(segGws, start)!;
         add({
           deviceId: d.id,

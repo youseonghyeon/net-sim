@@ -278,6 +278,7 @@ export class Router implements SimNode {
         const ip = to === "wan" ? this.wan.ip : this.wan2.ip;
         ctx.trace("mwan.switch", "L3", `멀티 WAN: ${why} → ${WAN_LABEL[from]} 에서 ${WAN_LABEL[to]} 로 전환. 새 연결은 ${WAN_LABEL[to]} 의 주소 ${ip ?? "?"} 로 NAT 되어 나간다 — 진행 중이던 연결은 출발지 주소가 바뀌어 상대에게 다른 연결로 보여 끊긴다`, { from, to });
         this.ddns.onWanAddress(ctx); // DDNS 는 지금 쓰는 회선의 주소로
+        this.cloud.onWanAddress(ctx); // GoodCloud 도 지금 회선으로 다시 등록 (클라우드가 새 주소로 연락하게)
       },
     });
     this.firewall = new Firewall(cfg.firewall);
@@ -371,12 +372,40 @@ export class Router implements SimNode {
       else wgIo.send(outer, ctx);
     };
     // 공유기 자신의 관리 화면: 답은 받은 주소에서 (LAN 이면 LAN, 공인 주소면 그 회선)
-    this.admin = new RouterAdmin((pkt, ctx) => ovpnSend(pkt, ctx));
+    this.admin = new RouterAdmin((pkt, ctx) => {
+      if (pkt.kind === "ipv6") {
+        this.lan6.send(pkt, ctx, this.emitLan(ctx));
+        return;
+      }
+      // VPN 으로 붙은 기기의 관리 연결은 그 터널로 (WireGuard·OpenVPN·메시 피어, L2TP 클라이언트)
+      if (this.isTunnelPeer(pkt.dst)) {
+        this.toTunnelPeer(pkt, ctx);
+        return;
+      }
+      if (this.wan.ip && this.vpnServer.owns(pkt.dst)) {
+        this.vpnServer.sendTo(pkt, this.wan.ip, ctx);
+        return;
+      }
+      ovpnSend(pkt, ctx);
+    });
     this.cloud = new CloudAgent(
       {
         wanIp: () => wgIo.source(),
         send: (pkt, ctx) => ovpnSend(pkt, ctx),
-        status: () => ({ wan: wgIo.source() ?? "없음", clients: this.dhcpServer.rows().length, vpn: this.wgc.connected > 0 ? "WireGuard 연결됨" : this.ovpn.enabled ? `OpenVPN 서버 ${this.ovpn.connected}` : this.mesh.up ? this.mesh.brand : "없음" }),
+        status: () => ({
+          wan: wgIo.source() ?? "없음",
+          clients: this.dhcpServer.rows().length,
+          vpn:
+            [
+              this.wgClientCfg?.enabled ? (this.wgc.connected > 0 ? "WireGuard 클라이언트 연결됨" : "WireGuard 클라이언트 끊김") : "",
+              this.wgServerCfg?.enabled ? `WireGuard 서버 ${this.wgs.connected}` : "",
+              this.ovpn.enabled ? `OpenVPN 서버 ${this.ovpn.connected}` : "",
+              this.vpnServer.config.enabled ? `L2TP 서버 ${this.vpnServer.connected.length}` : "",
+              this.mesh.up ? this.mesh.brand : "",
+            ]
+              .filter(Boolean)
+              .join(", ") || "없음",
+        }),
       },
       cfg.wanMac,
       `GL-${cfg.wanMac.slice(-5).replace(":", "").toUpperCase()}`,
@@ -399,6 +428,12 @@ export class Router implements SimNode {
       return { ...(zero ? { answer: qtype === "AAAA" ? "::" : "0.0.0.0" } : { rcode: "NXDOMAIN" as const }), why: `${v.list} 규칙 ${v.rule} 에 걸림 (AdGuard Home)` };
     };
     this.dnsForwarder.onAnswer = (name, ip) => this.dpi.learnDns(name, ip);
+    // 드롭인 기기(WAN 쪽 LAN)가 내 WAN 주소를 DNS 로 쓰면 답은 WAN 으로
+    this.dnsForwarder.replyVia = (pkt, ctx) => {
+      if (!this.fromDropIn(pkt.dst)) return false;
+      this.wan.sendIp({ ...pkt, src: pkt.src === this.lan.ip ? this.wan.ip! : pkt.src }, ctx, this.emitWan(ctx));
+      return true;
+    };
     if (cfg.dpi) this.dpi.config = { ...cfg.dpi, blockApps: [...cfg.dpi.blockApps], blockCategories: [...cfg.dpi.blockCategories] };
     if (cfg.adguard) this.adguard.config = { ...cfg.adguard, custom: [...cfg.adguard.custom], allow: [...cfg.adguard.allow], parental: cfg.adguard.parental.map((p) => ({ ...p, categories: [...p.categories] })) };
     if (cfg.wgServer) this.wgServerCfg = cfg.wgServer;
@@ -531,7 +566,8 @@ export class Router implements SimNode {
         this.lan6.send({ kind: "ipv6", src: r, dst: c, hopLimit: 64, payload: rstToClient }, ctx, this.emitLan(ctx));
         if (!p.syn) this.wan6.send({ kind: "ipv6", src: c, dst: r, hopLimit: 64, payload: rstToRemote }, ctx, this.emitWan(ctx));
       } else {
-        this.lan.sendIp({ kind: "ipv4", src: r, dst: c, ttl: 64, payload: rstToClient }, ctx, this.emitLan(ctx));
+        const side = this.insideOf(c, ctx);
+        side.iface.sendIp({ kind: "ipv4", src: r, dst: c, ttl: 64, payload: rstToClient }, ctx, side.emit);
         // 서버 쪽: 연결이 이미 열렸으면(SYN 이 아니면) 그 흐름의 NAT 로 바꿔 보낸다
         if (!p.syn) {
           const out: Ipv4Packet = { kind: "ipv4", src: c, dst: r, ttl: 64, payload: rstToRemote };
@@ -623,7 +659,8 @@ export class Router implements SimNode {
   private policyApplies(src: Ip): boolean {
     const c = this.wgClientCfg;
     if (!c?.enabled || !this.wgc.enabled) return false;
-    if (!this.lan.ip || !sameSubnet(src, this.lan.ip, this.lan.prefix)) return false;
+    const inside = (!!this.lan.ip && sameSubnet(src, this.lan.ip, this.lan.prefix)) || this.fromDropIn(src);
+    if (!inside) return false;
     if (c.policy.mode === "exclude") return !c.policy.devices.includes(src);
     if (c.policy.mode === "only") return c.policy.devices.includes(src);
     return true;
@@ -944,7 +981,8 @@ export class Router implements SimNode {
 
   /** 인터넷을 막을 LAN 기기 (MAC) */
   setBlocked(list: string[], ctx: NodeContext): void {
-    const next = new Set(list.map((m) => m.toLowerCase()));
+    // 노트북의 Wi-Fi NIC(wlan0)는 MAC 이 다르다 (유선 MAC 의 4번째 옥텟 02) — 같은 기기라 함께 막는다
+    const next = new Set(list.flatMap((m) => [m.toLowerCase(), m.toLowerCase().replace(/^02:00:00:00/, "02:00:00:02")]));
     if ([...next].join() === [...this.blocked].join()) return;
     this.blocked = next;
     ctx.trace("ip.config", "sys", next.size ? `기기 차단: ${[...next].join(", ")} 의 인터넷을 막음 (LAN 안·공유기 자신과는 통신된다)` : "기기 차단 없음", { blocked: next.size });
@@ -1206,6 +1244,12 @@ export class Router implements SimNode {
     // 꺼져 있어도 켜져 있던 동안 시작한 흐름은 끝까지 잇는다 (새 연결만 설정을 본다)
     this.hairpinNat.rules = [];
     if (this.hairpinNat.handle(0, pkt, frameId, ctx)) return true;
+    // 포트 포워딩(DNAT)은 바깥에서 온 연결에만 — 안에서 내 공인 주소로 온 관리 포트는 공유기 자신(관리 화면)이 받는다 ("공유기 로그인 화면이 뜬다")
+    if (pkt.dst === this.wan.ip && this.admin.isAdminPort(seg.dstPort)) {
+      if (rules.some((r) => r.publicPort === seg.dstPort) && seg.syn && !seg.ackFlag)
+        ctx.trace("ip.forward", "L4", `헤어핀 NAT 꺼짐: 안쪽 ${pkt.src} 가 내 공인 주소 ${pkt.dst}:${seg.dstPort} 로 접속 → 포트 포워딩은 바깥에서 온 연결에만 적용돼 공유기 자신(관리 화면)이 받음 (포워딩 대상에 가려면 헤어핀 NAT 를 켜거나 안쪽 주소로)`, { port: seg.dstPort, hairpin: false }, frameId);
+      return this.admin.handle(pkt, seg, "lan", this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined, ctx, frameId);
+    }
     const rule = pkt.dst === this.wan.ip ? rules.find((r) => r.publicPort === seg.dstPort) : undefined;
     if (!rule) return false;
     ctx.trace(
@@ -1237,6 +1281,7 @@ export class Router implements SimNode {
       via.send({ kind: "ipv6", src, dst: pkt.src, hopLimit: 64, payload: { kind: "icmp6", type: "echo-reply", id: p.id, seq: p.seq } }, ctx, emit);
       return;
     }
+    if (p.kind === "tcp" && via === this.lan6 && this.admin.handle(pkt, p, "lan", undefined, ctx, frameId)) return;
     if (p.kind === "udp" && p.payload.kind === "dns" && p.dstPort === DNS_PORT && via === this.lan6) {
       if (this.dnsForwarder.config.enabled || p.payload.op === "response") this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frameId, ctx, emit);
       else ctx.trace("dns.nxdomain", "app", `DNS 포워더가 꺼져 있음 → IPv6 로 온 질의에 응답하지 않음`, {}, frameId);
@@ -1406,7 +1451,13 @@ export class Router implements SimNode {
     // GoodCloud: 클라우드가 내 연결로 보낸 것
     if (pkt.payload.kind === "udp" && pkt.payload.payload.kind === "cloud" && pkt.payload.dstPort === this.cloud.port && this.cloud.handle(pkt, pkt.payload.payload, ctx, frameId)) return;
     // 관리 화면: 그 포트에 포트 포워딩 규칙이 없으면 공유기 자신이 받는다 (접근 제어가 WAN 을 막으면 드롭)
-    if (pkt.payload.kind === "tcp" && !this.nat.forwards.some((r) => (r.proto ?? "tcp") === "tcp" && r.publicPort === (pkt.payload as { dstPort: number }).dstPort) && this.admin.handle(pkt, pkt.payload, "wan", undefined, ctx, frameId)) return;
+    if (
+      pkt.payload.kind === "tcp" &&
+      !this.nat.forwards.some((r) => (r.proto ?? "tcp") === "tcp" && r.publicPort === (pkt.payload as { dstPort: number }).dstPort) &&
+      // 드롭인 게이트웨이면 WAN 쪽 LAN 기기는 안쪽 기기 (관리 화면은 WAN 주소로 연다)
+      this.admin.handle(pkt, pkt.payload, this.fromDropIn(pkt.src) ? "lan" : "wan", this.fromDropIn(pkt.src) ? { ip: this.wan.ip!, prefix: this.wan.prefix } : undefined, ctx, frameId)
+    )
+      return;
     // UDP 포트 포워딩 규칙이 있는 포트(예: 53 → 안쪽 DNS 서버)는 내가 받지 않고 아래 NAT 역변환으로 안에 넘긴다
     const udpForwarded = pkt.payload.kind === "udp" && this.nat.forwards.some((r) => r.proto === "udp" && r.publicPort === (pkt.payload as { dstPort: number }).dstPort);
     if (!udpForwarded && pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dns" && pkt.payload.dstPort === DNS_PORT) {
@@ -1452,6 +1503,16 @@ export class Router implements SimNode {
     if (on === this.dropIn) return;
     this.dropIn = on;
     ctx.trace("ip.config", "sys", on ? `드롭인 게이트웨이 켜짐: WAN 쪽 LAN(${this.wan.ip ?? "?"}/${this.wan.prefix})의 기기가 이 공유기를 게이트웨이로 쓰면 받아 VPN·DPI·방화벽을 거쳐 기존 공유기로 내보낸다 (WAN 하나로 들어오고 나가는 한 팔 라우터 — 응답이 돌아오게 NAT)` : "드롭인 게이트웨이 꺼짐", { dropIn: on });
+  }
+
+  /** 드롭인으로 들어온 기기(WAN 쪽 LAN)인가 */
+  private fromDropIn(src: Ip): boolean {
+    return this.dropIn && !!this.wan.ip && sameSubnet(src, this.wan.ip, this.wan.prefix) && !(this.lan.ip && sameSubnet(src, this.lan.ip, this.lan.prefix));
+  }
+
+  /** 안쪽 기기에게 보낼 인터페이스: 드롭인 기기면 WAN, 아니면 LAN */
+  private insideOf(ip: Ip, ctx: NodeContext): { iface: NetInterface; emit: Emit } {
+    return this.fromDropIn(ip) ? { iface: this.wan, emit: this.emitWan(ctx) } : { iface: this.lan, emit: this.emitLan(ctx) };
   }
 
   /** WAN 쪽 기기가 나를 게이트웨이로 보낸 패킷: LAN 기기처럼 인터넷으로 (VPN 클라이언트 터널·DPI·방화벽·NAT) */
@@ -1506,6 +1567,7 @@ export class Router implements SimNode {
         this.handleIcmp(pkt, p, frameId, ctx, this.lan, emit, pkt.dst);
         return;
       }
+      if (p.kind === "tcp" && this.admin.handle(pkt, p, "lan", this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined, ctx, frameId)) return;
       ctx.trace("ip.drop", "L4", `공유기 자신에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frameId);
       return;
     }
@@ -1704,6 +1766,8 @@ export class Router implements SimNode {
     if (u.kind === "udp" && u.payload.kind === "wg" && this.handleWanWg(pkt, frame.id, ctx)) return;
     if (this.handleWanOvpn(pkt, frame.id, ctx)) return;
     if (this.handleWanMesh(pkt, frame.id, ctx)) return;
+    if (u.kind === "udp" && u.payload.kind === "cloud" && u.dstPort === this.cloud.port && this.cloud.handle(pkt, u.payload, ctx, frame.id)) return;
+    if (u.kind === "tcp" && !this.nat2.forwards.some((r) => (r.proto ?? "tcp") === "tcp" && r.publicPort === u.dstPort) && this.admin.handle(pkt, u, "wan", undefined, ctx, frame.id)) return;
     const forwarded = u.kind === "udp" && this.nat2.forwards.some((r) => r.proto === "udp" && r.publicPort === u.dstPort);
     if (!forwarded && u.kind === "udp" && u.payload.kind === "dns" && u.dstPort === DNS_PORT) {
       this.dnsForwarder.handle(pkt, u.srcPort, u.payload, frame.id, ctx, this.emitLan(ctx));
@@ -1821,6 +1885,7 @@ export class Router implements SimNode {
         this.handleIcmp(pkt, p, frameId, ctx, this.lan, emit, pkt.dst);
         return;
       }
+      if (p.kind === "tcp" && this.admin.handle(pkt, p, "lan", this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined, ctx, frameId)) return;
       ctx.trace("ip.drop", "L4", `공유기 자신에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frameId);
       return;
     }
@@ -1877,8 +1942,9 @@ export class Router implements SimNode {
       ctx.trace("vpn.killswitch", "L3", `킬 스위치: VPN 이 끊겨 있어 ${pkt.src} → ${pkt.dst} 를 WAN 으로 내보내지 않음 → 터널이 다시 맺어지기를 기다림`, { src: pkt.src, dst: pkt.dst, killSwitch: true }, frameId);
     }
     if (pkt.ttl <= 1) {
-      const notice = this.lan.timeExceeded(pkt, ctx, frameId);
-      if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
+      const side = this.insideOf(pkt.src, ctx);
+      const notice = side.iface.timeExceeded(pkt, ctx, frameId);
+      if (notice) side.iface.sendIp(notice, ctx, side.emit);
       return true;
     }
     if (!this.firewall.check(pkt, "out", ctx, frameId)) return true;

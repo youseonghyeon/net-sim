@@ -437,6 +437,9 @@ export class DnsServer {
   }
 
   /** 질의가 온 IP 버전으로 답한다 */
+  /** 답을 다른 인터페이스로 보내야 할 때 (공유기 드롭인: WAN 쪽 기기의 질의). 보냈으면 true */
+  replyVia: ((pkt: Ipv4Packet, ctx: NodeContext) => boolean) | undefined;
+
   private respond(to: Ip, toPort: number, msg: DnsMessage, ctx: NodeContext, emit: Emit, from?: Ip): void {
     if (isIpv6(to)) {
       const src = from ?? this.v6?.sourceFor(to);
@@ -445,6 +448,7 @@ export class DnsServer {
       return;
     }
     const pkt: Ipv4Packet = { kind: "ipv4", src: from ?? this.iface.ip!, dst: to, ttl: 64, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } };
+    if (this.replyVia?.(pkt, ctx)) return;
     this.iface.sendIp(pkt, ctx, emit);
   }
 
