@@ -212,7 +212,10 @@ export class Host implements SimNode {
     this.lb = new LoadBalancer(this.tcp, () => this.iface.ip);
     this.tcp.reservedPort = (p) => this.lb.usesNatPort(p);
     if (cfg.lb) this.lb.config = { ...cfg.lb, backends: cfg.lb.backends.map((b) => ({ ...b })) };
-    this.proxy = new ForwardProxy(this.tcp, () => this.iface.ip, (name, ctx, done) => this.resolver.resolve(name, ctx, this.emit(ctx), done));
+    // 프록시도 0.0.0.0·:: 답(DNS 필터가 막은 이름)은 그 주소로 연결하지 않는다
+    this.proxy = new ForwardProxy(this.tcp, () => this.iface.ip, (name, ctx, done) =>
+      this.resolver.resolve(name, ctx, this.emit(ctx), (ip, err) => (ip === "0.0.0.0" || ip === "::" ? done(undefined, `DNS 가 막은 이름 (${ip})`) : done(ip, err))),
+    );
     if (cfg.proxy) this.proxy.config = { ...cfg.proxy, deny: [...cfg.proxy.deny] };
     this.httpProxy = cfg.httpProxy ? { ...cfg.httpProxy } : undefined;
     this.services = [...(cfg.services ?? [])];
@@ -942,8 +945,8 @@ export class Host implements SimNode {
     // 0.0.0.0·:: 답은 DNS 필터(AdGuard 등)가 막은 이름 — 그 주소로 보내지 않는다 (브라우저도 바로 실패)
     const done = (ip: Ip | undefined, error?: string) => {
       if (ip === "0.0.0.0" || ip === "::") {
-        ctx.trace("dns.resolved", "app", `${name} = ${ip} → DNS 가 막은 이름 (광고 차단·자녀 보호가 0.0.0.0 으로 답함) — 접속하지 않음`, { name, blocked: true });
-        done0(undefined, "DNS 가 막은 이름 (0.0.0.0)");
+        ctx.trace("dns.resolved", "app", `${name} = ${ip} → DNS 가 막은 이름 (광고 차단·자녀 보호가 ${ip} 로 답함) — 접속하지 않음`, { name, blocked: true });
+        done0(undefined, `DNS 가 막은 이름 (${ip})`);
         return;
       }
       done0(ip, error);
@@ -965,6 +968,10 @@ export class Host implements SimNode {
           ctx.trace("dns.resolved", "app", `${name}: ${why} → IPv4 주소(A)로 다시 묻는다`, { name, fallback: "A" });
           this.resolver.resolve(name, ctx, this.emit(ctx), (ip, err) => done(ip, err));
         };
+        if (ip6 === "::") {
+          done(ip6); // DNS 필터가 막은 이름 — A 로 다시 묻지 않는다
+          return;
+        }
         if (ip6) {
           // RFC 6724 규칙 1: 갈 수 없는 목적지는 뒤로 — IPv6 기본 게이트웨이가 없고 같은 링크도 아니면 IPv4 로
           if (this.iface.ip && !this.v6.onLink(ip6) && !this.v6.defaultRouter) {

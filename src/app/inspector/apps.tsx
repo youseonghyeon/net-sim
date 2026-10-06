@@ -5,7 +5,19 @@ import { topology, updateDevice } from "../../model/store";
 import { DEFAULT_ADGUARD_SETTINGS, type Device, type ParentalCategorySetting, type RouterAdguardSettings, type RouterDpiSettings, type RouterSettings } from "../../model/topology";
 import { APPS, type AppId, type DpiCategory } from "../../core/nodes/dpi";
 import { Icon } from "../Icons";
+import { useEffect, useState } from "preact/hooks";
 import { Field, Section, Toggle, ipError, validIp } from "./ui";
+
+/**
+ * 한 줄에 하나인 규칙 목록 칸: 치는 동안은 원문 그대로 두고(Enter·쉼표가 사라지지 않게), 칸을 떠날 때 목록으로 바꿔 저장한다.
+ * 다른 곳에서 목록이 바뀌면(되돌리기·다른 장치) 원문도 따라간다
+ */
+function RuleList({ value, placeholder, rows, onChange }: { value: string[]; placeholder: string; rows: number; onChange: (list: string[]) => void }) {
+  const joined = value.join("\n");
+  const [text, setText] = useState(joined);
+  useEffect(() => setText(joined), [joined]);
+  return <textarea class="input mono area" rows={rows} value={text} placeholder={placeholder} onInput={(e) => setText(e.currentTarget.value)} onBlur={() => onChange(lines(text))} />;
+}
 
 const CATEGORY_LABEL: Record<ParentalCategorySetting, string> = { sns: "SNS", game: "게임", video: "동영상" };
 
@@ -67,10 +79,10 @@ export function AdguardSection({ d, r }: { d: Device; r: RouterSettings }) {
             <Toggle on={a.forceDns} onToggle={() => set({ forceDns: !a.forceDns })} />
           </label>
           <Field label="차단 규칙" hint="한 줄에 하나" error={ruleError(a.custom)}>
-            <textarea class="input mono area" rows={3} value={a.custom.join("\n")} placeholder="ads.example.com" onInput={(e) => set({ custom: lines(e.currentTarget.value) })} />
+            <RuleList value={a.custom} rows={3} placeholder="ads.example.com" onChange={(custom) => set({ custom })} />
           </Field>
           <Field label="예외" hint="차단보다 먼저" error={ruleError(a.allow)}>
-            <textarea class="input mono area" rows={2} value={a.allow.join("\n")} placeholder="www.example.com" onInput={(e) => set({ allow: lines(e.currentTarget.value) })} />
+            <RuleList value={a.allow} rows={2} placeholder="www.example.com" onChange={(allow) => set({ allow })} />
           </Field>
           <h4 class="sub-head">자녀 보호 (기기마다 막을 카테고리)</h4>
           {a.parental.map((p, i) => {

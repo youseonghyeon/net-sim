@@ -1,5 +1,5 @@
 import { BROADCAST_MAC, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
-import { ALL_NODES, formatIp6, isLinkLocal6, isMulticast6, parseIp6, sameSubnet6, UNSPECIFIED6 } from "../addr6";
+import { ALL_NODES, formatIp6, isIpv6, isLinkLocal6, isMulticast6, parseIp6, sameSubnet6, UNSPECIFIED6 } from "../addr6";
 import {
   DHCP_CLIENT_PORT,
   DHCP_SERVER_PORT,
@@ -201,6 +201,8 @@ export class Router implements SimNode {
   /** WAN2 쪽 NAT (회선마다 공인 주소가 달라 매핑도 따로) */
   readonly nat2 = new NatTable();
   readonly mwan: MultiWan;
+  /** LAN 에서 본 MAC → IPv4 (ARP·IPv4 프레임의 출발지 — 자녀 보호가 IPv6 로 묻는 기기를 IPv4 주소로 알아보게) */
+  private readonly lanSeen = new Map<Mac, Ip>();
   /** AdGuard Home·자녀 보호: DNS 포워더 앞의 필터 */
   readonly adguard = new Adguard();
   /** DPI: 지나가는 흐름의 앱을 알아보고 세고 막는다 */
@@ -328,7 +330,7 @@ export class Router implements SimNode {
     // AdGuard Home·자녀 보호: 이름을 업스트림에 묻기 전에 거른다
     this.dnsForwarder.filter = (name, qtype, client, ctx) => {
       if (!this.adguard.config.enabled) return undefined;
-      const v = this.adguard.check(name, client);
+      const v = this.adguard.check(name, this.clientV4(client));
       this.adguard.record(ctx.now, client, name, qtype, v ? `차단 · ${v.list} ${v.rule}` : "허용", !!v);
       if (!v) return undefined;
       const zero = this.adguard.config.mode === "zero";
@@ -406,7 +408,18 @@ export class Router implements SimNode {
   /** DNS 가로채기 대상인지: AdGuard 의 "모든 기기의 DNS 를 공유기로" 가 켜져 있고 LAN 밖의 DNS 서버 */
   private hijacks(dst: Ip): boolean {
     const c = this.adguard.config;
-    return c.enabled && c.forceDns && this.dnsForwarder.config.enabled && !!this.lan.ip && !sameSubnet(dst, this.lan.ip, this.lan.prefix);
+    if (!c.enabled || !c.forceDns || !this.dnsForwarder.config.enabled) return false;
+    if (isIpv6(dst)) return !this.lan6.owns(dst) && !this.lan6.onLink(dst) && !isLinkLocal6(dst);
+    return !!this.lan.ip && !sameSubnet(dst, this.lan.ip, this.lan.prefix);
+  }
+
+  /** 자녀 보호용 기기 식별: IPv6 로 물었으면 그 기기의 IPv4 주소 (이웃 캐시 → MAC → ARP 캐시) */
+  private clientV4(client: Ip): Ip {
+    if (!isIpv6(client)) return client;
+    const mac = this.lan6.neighbors.get(client)?.mac;
+    if (!mac) return client;
+    for (const [ip, e] of this.lan.arpCache) if (e.mac === mac) return ip;
+    return this.lanSeen.get(mac) ?? client;
   }
 
   /** DPI 설정 */
@@ -922,6 +935,13 @@ export class Router implements SimNode {
 
   private deliverLan(frame: EthernetFrame, ctx: NodeContext): void {
     const emit = this.emitLan(ctx);
+    const f = frame.payload;
+    const seenIp = f.kind === "arp" ? f.senderIp : f.kind === "ipv4" ? f.src : undefined;
+    const seenMac = f.kind === "arp" ? f.senderMac : frame.src;
+    if (seenIp && this.lan.ip && seenIp !== "0.0.0.0" && sameSubnet(seenIp, this.lan.ip, this.lan.prefix)) {
+      this.lanSeen.set(seenMac, seenIp);
+      if (this.lanSeen.size > 512) this.lanSeen.delete(this.lanSeen.keys().next().value!);
+    }
     if (frame.payload.kind === "arp") {
       this.lan.handleArp(frame.payload, frame.id, ctx, emit);
       return;
@@ -1056,6 +1076,12 @@ export class Router implements SimNode {
     }
     if (this.lan6.owns(pkt.dst) || this.wan6.owns(pkt.dst) || pkt.dst === ALL_NODES) {
       this.local6(pkt, this.lan6, emit, frame.id, ctx);
+      return;
+    }
+    // DNS 가로채기 (ip6tables REDIRECT): IPv6 로 바깥 DNS 에 직접 묻는 질의도 공유기가 받는다
+    if (p.kind === "udp" && p.payload.kind === "dns" && p.payload.op === "query" && p.dstPort === DNS_PORT && this.hijacks(pkt.dst)) {
+      ctx.trace("dns.hijack", "L4", `DNS 가로채기: ${pkt.src} 가 ${pkt.dst} 에 IPv6 로 직접 묻는 질의 "${p.payload.name}" → 내보내지 않고 공유기 DNS 포워더가 받음 (AdGuard 필터를 거치게)`, { from: pkt.src, to: pkt.dst }, frame.id);
+      this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frame.id, ctx, emit);
       return;
     }
     if (isMulticast6(pkt.dst)) return;

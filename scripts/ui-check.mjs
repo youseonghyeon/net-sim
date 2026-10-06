@@ -1537,6 +1537,15 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   const ag = page.locator(".inspector section", { has: page.locator("h3", { hasText: "AdGuard Home" }) });
   console.log("adguard stats:", (await ag.locator(".stat-row b").textContent())?.trim(), "| kid rows:", await ag.locator(".kid-row").count());
   await page.screenshot({ path: `${OUT}/102-adguard.png` });
+  // 규칙 칸: Enter 로 두 줄을 친 뒤 칸을 떠나면 규칙 두 개 (치는 동안 줄바꿈이 사라지지 않아야 한다)
+  const ruleBox = ag.locator("textarea").first();
+  await ruleBox.click();
+  await page.keyboard.type("ads.example.com");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("track.example.net");
+  await ruleBox.evaluate((el) => el.blur());
+  await page.waitForTimeout(100);
+  console.log("adguard rules:", JSON.stringify(await page.evaluate(() => JSON.parse(localStorage.getItem("net-sim.topology.v1")).devices.find((d) => d.name === "집 Brume 3").router.adguard.custom)));
   await goTab("표");
   console.log("adguard log rows:", await page.locator(".inspector section", { has: page.locator("h3", { hasText: "AdGuard 쿼리 로그" }) }).locator("tbody tr").count());
 }

@@ -344,7 +344,7 @@ export class DnsServer {
       ctx.trace("dns.nxdomain", "app", `${this.label} 가 꺼져 있음 → 응답하지 않음`, { name }, frameId);
       return;
     }
-    const replyFrom = pkt.kind === "ipv4" && pkt.dst !== this.iface.ip && this.answersAt?.(pkt.dst) ? pkt.dst : undefined;
+    const replyFrom = pkt.dst !== this.iface.ip && !this.v6?.owns(pkt.dst) && this.answersAt?.(pkt.dst) ? pkt.dst : undefined;
     const answer = (m: Omit<DnsMessage, "kind" | "id" | "op" | "name">): DnsMessage => ({ kind: "dns", id: msg.id, op: "response", name: msg.name, ...(qtype === "AAAA" ? { qtype } : {}), ...m });
     const blocked = this.filter?.(name, qtype, pkt.src, ctx);
     if (blocked) {
@@ -439,7 +439,7 @@ export class DnsServer {
   /** 질의가 온 IP 버전으로 답한다 */
   private respond(to: Ip, toPort: number, msg: DnsMessage, ctx: NodeContext, emit: Emit, from?: Ip): void {
     if (isIpv6(to)) {
-      const src = this.v6?.sourceFor(to);
+      const src = from ?? this.v6?.sourceFor(to);
       if (!src) return;
       this.v6!.send({ kind: "ipv6", src, dst: to, hopLimit: 64, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } }, ctx, emit);
       return;

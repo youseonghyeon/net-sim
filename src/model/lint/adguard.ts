@@ -15,15 +15,24 @@ export function adguardRules({ t, m, add }: LintContext): void {
       add({ deviceId: d.id, severity: "error", code: "adguard.dns-off", message: "AdGuard Home 은 DNS 포워더로 오는 질의를 거르는데 DNS 포워더가 꺼져 있음 → 아무것도 걸러지지 않음", fix: `${d.name} → 네트워크 → DNS 포워더 켜기` });
       continue;
     }
+    // DNS 가 같은 LAN 의 DNS 서버이고 그 서버가 공유기에 되묻으면 광고 차단은 걸린다 (질의 출발지가 그 서버라 자녀 보호만 빠진다)
+    const relays = (dns: string) => t.devices.some((x) => x.host?.dnsServer?.enabled && x.host.ipMode === "static" && x.host.ip === dns && validIp(x.host.dnsServer.upstream?.trim()) === lanIp);
+    const kidsOn = a.parental.some((p) => p.categories.length > 0);
     const dhcpDns = validIp(r.dhcp.dns?.trim());
-    if (r.dhcp.enabled && dhcpDns && dhcpDns !== lanIp && !a.forceDns) {
+    if (r.dhcp.enabled && dhcpDns && dhcpDns !== lanIp && !a.forceDns && (!relays(dhcpDns) || kidsOn)) {
       add({ deviceId: d.id, severity: "warn", code: "adguard.dhcp-dns", message: `DHCP 가 DNS 서버로 ${dhcpDns} 를 안내해 자동(DHCP) 기기들은 공유기를 거치지 않음 → AdGuard 가 거르지 못함`, fix: `${d.name} → 네트워크 → DHCP 의 DNS 서버를 비우기(공유기 자신), 또는 AdGuard 의 DNS 가로채기 켜기` });
     }
     if (a.forceDns) continue;
     const seg = m.membersOf(routerLanKey(d));
     for (const h of seg?.hosts ?? []) {
-      const dns = h.device.host?.ipMode === "static" ? validIp(h.device.host.dns?.trim()) : undefined;
-      if (!dns || dns === lanIp) continue;
+      const host = h.device.host!;
+      const dns4 = host.ipMode === "static" ? validIp(host.dns?.trim()) : undefined;
+      // IPv6 로 바깥 DNS 를 직접 적은 기기도 (가로채기가 꺼져 있으면) 거치지 않는다
+      const dns6 = host.ipv6?.enabled && host.ipv6.dns?.trim() ? host.ipv6.dns.trim() : undefined;
+      // IPv4 DNS 가 있으면(수동이든 DHCP 로 받은 공유기든) 리졸버는 그쪽에 묻는다 — IPv6 DNS 는 IPv4 DNS 가 없을 때만
+      const noV4Dns = host.ipMode === "static" && !host.dns?.trim();
+      const dns = dns4 && dns4 !== lanIp && !relays(dns4) ? dns4 : noV4Dns && dns6 ? dns6 : undefined;
+      if (!dns) continue;
       add({ deviceId: h.device.id, severity: "warn", code: "adguard.bypass", message: `DNS 를 ${dns} 로 직접 적어 ${d.name} 의 AdGuard Home 을 거치지 않음 → 광고 차단·자녀 보호가 이 기기에 걸리지 않음`, fix: `${d.name} → 앱 → AdGuard → DNS 가로채기 켜기, 또는 ${h.device.name} 의 DNS 를 ${lanIp ?? "공유기 LAN 주소"} 로`, related: [d.id] });
     }
   }
