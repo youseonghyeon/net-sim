@@ -23,6 +23,7 @@ import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServ
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, type DnsServerConfig } from "./dns";
 import { DDNS_TIMER_TAG, DdnsClient, type DdnsConfig } from "./ddns";
 import { MWAN_ICMP_ID, MWAN_TIMER_TAG, MultiWan, WAN_LABEL, type WanName } from "./mwan";
+import { Adguard, PARENTAL_CATEGORIES, type AdguardConfig } from "./adguard";
 import { Firewall, type FirewallConfig } from "./firewall";
 import { L2tpServer, type L2tpServerConfig } from "./l2tp";
 import { PortPublish } from "./publish";
@@ -75,6 +76,8 @@ export interface RouterConfig {
   wan2?: Wan2Config;
   /** WAN2 인터페이스 MAC (없으면 WAN MAC 의 4번째 옥텟을 03 으로) */
   wan2Mac?: Mac;
+  /** AdGuard Home·자녀 보호 (없으면 꺼짐) */
+  adguard?: AdguardConfig;
 }
 
 /** 멀티 WAN 페일오버: lan4 = WAN2 (예비 회선), 추적 주소 */
@@ -191,6 +194,8 @@ export class Router implements SimNode {
   /** WAN2 쪽 NAT (회선마다 공인 주소가 달라 매핑도 따로) */
   readonly nat2 = new NatTable();
   readonly mwan: MultiWan;
+  /** AdGuard Home·자녀 보호: DNS 포워더 앞의 필터 */
+  readonly adguard = new Adguard();
   /** 공유기 자신의 이름 해석 (VPN 서버 이름 등) — WAN 으로 DNS 포워더의 업스트림에 직접 묻는다 */
   readonly resolver: DnsResolver;
   /** VPN 클라이언트 쪽 NAT: LAN 기기의 출발지를 내 터널 주소로 (서버는 이 주소 하나만 안다 — AllowedIPs) */
@@ -309,8 +314,18 @@ export class Router implements SimNode {
     this.natVpn.why = "VPN 서버는 이 공유기를 터널 주소 하나로만 안다(AllowedIPs) — LAN 기기 주소를 터널 주소로 바꾸고 테이블에 기록";
     // VPN 클라이언트가 켜져 있으면 DNS 포워더는 VPN 이 알려 준 DNS 에 터널로 묻는다 (DNS 유출 방지)
     this.dnsForwarder.upstreamFor = (client) => (this.dnsViaVpn(client) ? (this.wgClientCfg?.dns ?? undefined) : undefined);
-    // 서버의 터널 주소(10.0.0.1)로 온 질의에는 그 주소로 답한다
-    this.dnsForwarder.answersAt = (dst) => !!this.wgServerCfg?.enabled && dst === this.wgServerCfg.address?.ip;
+    // 서버의 터널 주소(10.0.0.1)로 온 질의에는 그 주소로 답한다. DNS 가로채기로 받은 질의는 원래 물으려던 서버 주소로 (기기는 그 서버가 답한 줄 안다)
+    this.dnsForwarder.answersAt = (dst) => (!!this.wgServerCfg?.enabled && dst === this.wgServerCfg.address?.ip) || this.hijacks(dst);
+    // AdGuard Home·자녀 보호: 이름을 업스트림에 묻기 전에 거른다
+    this.dnsForwarder.filter = (name, qtype, client, ctx) => {
+      if (!this.adguard.config.enabled) return undefined;
+      const v = this.adguard.check(name, client);
+      this.adguard.record(ctx.now, client, name, qtype, v ? `차단 · ${v.list} ${v.rule}` : "허용", !!v);
+      if (!v) return undefined;
+      const zero = this.adguard.config.mode === "zero";
+      return { ...(zero ? { answer: qtype === "AAAA" ? "::" : "0.0.0.0" } : { rcode: "NXDOMAIN" as const }), why: `${v.list} 규칙 ${v.rule} 에 걸림 (AdGuard Home)` };
+    };
+    if (cfg.adguard) this.adguard.config = { ...cfg.adguard, custom: [...cfg.adguard.custom], allow: [...cfg.adguard.allow], parental: cfg.adguard.parental.map((p) => ({ ...p, categories: [...p.categories] })) };
     if (cfg.wgServer) this.wgServerCfg = cfg.wgServer;
     if (cfg.wgClient) this.wgClientCfg = cfg.wgClient;
     // DDNS 는 지금 인터넷으로 내보내는 회선의 주소로 (멀티 WAN 이 넘어가면 따라간다)
@@ -376,6 +391,30 @@ export class Router implements SimNode {
 
   /** WireGuard 클라이언트의 바깥 UDP 포트 (설정에 ListenPort 가 없으면 임의 포트 — 여기서는 장치마다 고정) */
   readonly wgcPort: number;
+
+  /** DNS 가로채기 대상인지: AdGuard 의 "모든 기기의 DNS 를 공유기로" 가 켜져 있고 LAN 밖의 DNS 서버 */
+  private hijacks(dst: Ip): boolean {
+    const c = this.adguard.config;
+    return c.enabled && c.forceDns && this.dnsForwarder.config.enabled && !!this.lan.ip && !sameSubnet(dst, this.lan.ip, this.lan.prefix);
+  }
+
+  /** AdGuard Home·자녀 보호 설정 */
+  setAdguard(cfg: AdguardConfig, ctx: NodeContext): void {
+    if (JSON.stringify(cfg) === JSON.stringify(this.adguard.config)) return;
+    const was = this.adguard.config.enabled;
+    this.adguard.config = { ...cfg, custom: [...cfg.custom], allow: [...cfg.allow], parental: cfg.parental.map((p) => ({ ...p, categories: [...p.categories] })) };
+    if (!cfg.enabled) {
+      if (was) ctx.trace("ip.config", "sys", `AdGuard Home 꺼짐 — 이름을 거르지 않음`, { adguard: false });
+      return;
+    }
+    const kids = cfg.parental.filter((p) => p.categories.length);
+    ctx.trace(
+      "ip.config",
+      "sys",
+      `AdGuard Home: DNS 포워더 앞에서 이름을 거른다 — ${[cfg.ads ? "광고·추적 목록" : "", cfg.custom.length ? `사용자 규칙 ${cfg.custom.length}개` : "", kids.length ? `자녀 보호 ${kids.map((k) => `${k.ip}(${k.categories.map((c) => PARENTAL_CATEGORIES[c].label).join("·")})`).join(", ")}` : ""].filter(Boolean).join(", ") || "규칙 없음"}${cfg.allow.length ? `, 예외 ${cfg.allow.length}개` : ""}. 막으면 ${cfg.mode === "zero" ? "0.0.0.0" : "NXDOMAIN"} 으로 답함${cfg.forceDns ? ". DNS 가로채기 켜짐: 다른 DNS 로 가는 질의도 공유기가 받는다" : ""}${this.dnsForwarder.config.enabled ? "" : " — 그런데 DNS 포워더가 꺼져 있어 거를 질의가 오지 않음"}`,
+      { adguard: true },
+    );
+  }
 
   /** WireGuard 서버·클라이언트 설정 (만든 직후·설정 변경) */
   setWg(server: RouterWgServerConfig | undefined, client: RouterWgClientConfig | undefined, ctx: NodeContext): void {
@@ -602,9 +641,11 @@ export class Router implements SimNode {
       wgClient?: RouterWgClientConfig;
       ddns?: DdnsConfig;
       wan2?: Wan2Config;
+      adguard?: AdguardConfig;
     },
     ctx: NodeContext,
   ): void {
+    if (cfg.adguard) this.setAdguard(cfg.adguard, ctx);
     if (cfg.ddns) this.ddns.setConfig(cfg.ddns, ctx);
     if (cfg.wan2) this.setWan2(cfg.wan2, ctx);
     if (cfg.wgServer || cfg.wgClient) this.setWg(cfg.wgServer, cfg.wgClient, ctx);
@@ -865,7 +906,11 @@ export class Router implements SimNode {
         if (this.dnsForwarder.config.enabled || m.op === "response") this.dnsForwarder.handle(pkt, udp.srcPort, m, frame.id, ctx, emit);
         else ctx.trace("dns.nxdomain", "app", `DNS 포워더가 꺼져 있음 → 질의에 응답하지 않음 (라우터 설정에서 켜거나 호스트 DNS 를 바꾸세요)`, {}, frame.id);
       } else if (pkt.dst === this.lan.ip) ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frame.id);
-      else this.forwardToWan(pkt, frame.id, ctx);
+      else if (m.kind === "dns" && m.op === "query" && udp.dstPort === DNS_PORT && this.hijacks(pkt.dst)) {
+        // DNS 가로채기 (iptables REDIRECT): 8.8.8.8 처럼 직접 적은 DNS 로 가던 질의를 공유기가 받아 걸러서, 그 서버가 답한 것처럼 돌려준다
+        ctx.trace("dns.hijack", "L4", `DNS 가로채기: ${pkt.src} 가 ${pkt.dst} 에 직접 묻는 질의 "${m.name}" → 내보내지 않고 공유기 DNS 포워더가 받음 (AdGuard 필터를 거치게)`, { from: pkt.src, to: pkt.dst }, frame.id);
+        this.dnsForwarder.handle(pkt, udp.srcPort, m, frame.id, ctx, emit);
+      } else this.forwardToWan(pkt, frame.id, ctx);
       return;
     }
     if (pkt.dst === this.lan.ip || (this.wan.ip && pkt.dst === this.wan.ip) || (this.wan2On && this.wan2.ip && pkt.dst === this.wan2.ip)) {
@@ -1666,6 +1711,7 @@ export class Router implements SimNode {
           : []),
         ...(this.wgClientCfg?.enabled ? ([["WireGuard 클라이언트", this.wgClientSummary()!]] as [string, string][]) : []),
         ...(this.ddns.config.enabled ? ([["DDNS", this.ddns.summary()!]] as [string, string][]) : []),
+        ...(this.adguard.config.enabled ? ([["AdGuard Home", `${this.adguard.summary()}${this.adguard.config.forceDns ? " · DNS 가로채기" : ""}`]] as [string, string][]) : []),
         ...(this.wan2On
           ? ([
               ["WAN2 (lan4)", this.wan2.ip ? `${this.wan2.ip}/${this.wan2.prefix}` : !this.wan2LinkUp ? "없음 (링크 다운)" : this.wan2Mode === "dhcp" ? `없음 (DHCP: ${DHCP_STATE_LABEL[this.wan2Client.state]})` : "없음 (수동 입력 필요)"],
@@ -1676,6 +1722,7 @@ export class Router implements SimNode {
       tables: [
         { title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
         ...(this.dnsForwarder.cache.size > 0 ? [{ title: "DNS 캐시", columns: ["이름", "IP", "출처"], rows: this.dnsForwarder.rows() }] : []),
+        ...(this.adguard.config.enabled ? [{ title: "AdGuard 쿼리 로그", columns: ["시각", "기기", "질의", "결과"], rows: this.adguard.rows() }] : []),
         { title: this.wan2On ? "NAT 테이블 (WAN1)" : "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(this.wan.ip) },
         ...(this.wan2On
           ? [

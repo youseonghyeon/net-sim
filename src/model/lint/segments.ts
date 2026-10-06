@@ -118,7 +118,7 @@ export function portName(d: Device, port: number): string {
   return specOf(d).ports[port]?.name ?? `포트 ${port}`;
 }
 
-function routerLanKey(d: Device): string {
+export function routerLanKey(d: Device): string {
   return `${d.id}:1`;
 }
 

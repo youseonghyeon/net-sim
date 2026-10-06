@@ -1251,6 +1251,36 @@ select.btn.example {
   align-items: center;
   font-size: 12px;
 }
+/* 여러 줄 입력 (AdGuard 규칙) */
+.input.area {
+  height: auto;
+  padding: 6px 8px;
+  resize: vertical;
+  line-height: 1.4;
+}
+/* 자녀 보호 한 줄: 주소 · 카테고리 칩 · 삭제 */
+.kid-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 30px;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.kid-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.kid-name {
+  grid-column: 1 / -1;
+  font-size: 11px;
+}
+.kid-row .route-error {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
 .sub-head {
   margin: 10px 0 4px;
   font-size: 12px;

@@ -24,6 +24,7 @@ import { Icon } from "../Icons";
 import { ConfigGroups, Field, IfaceFields, Section, Toggle, ipError, validIp } from "./ui";
 import { WAN_LABEL } from "../../core/nodes/mwan";
 import { DdnsSection, WgClientSection, WgServerSection } from "./wg";
+import { AdguardSection } from "./apps";
 
 /** LAN 주소/서브넷이 바뀔 때, 기존 범위가 옛 서브넷 안에 있었다면 호스트 부분을 유지한 채 새 서브넷으로 옮긴다 */
 export function remapRange(oldIp: string, oldPrefix: number, newIp: string, newPrefix: number, range: { start: string; end: string }): { start: string; end: string } | null {
@@ -131,6 +132,12 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
               <RouterVpnSection d={d} r={r} />
             </>
           ),
+        },
+        {
+          id: "apps",
+          label: "앱",
+          on: r.adguard?.enabled === true,
+          content: <AdguardSection d={d} r={r} />,
         },
         {
           id: "security",

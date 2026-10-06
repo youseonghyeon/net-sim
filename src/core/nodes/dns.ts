@@ -297,8 +297,13 @@ export class DnsServer {
   private idSeq = 0x7000;
   /** 지금 물어볼 업스트림을 바꿔야 할 때 (공유기 VPN 클라이언트가 연결되면 VPN 의 DNS — DNS 유출 방지). 없거나 undefined 면 설정값 */
   upstreamFor: ((client: Ip) => Ip | undefined) | undefined;
-  /** 질의를 받은 주소가 이 인터페이스 주소가 아니어도 그 주소로 답해야 할 때 (VPN 터널 주소로 온 질의) */
+  /** 질의를 받은 주소가 이 인터페이스 주소가 아니어도 그 주소로 답해야 할 때 (VPN 터널 주소로 온 질의, DNS 가로채기) */
   answersAt: ((dst: Ip) => boolean) | undefined;
+  /**
+   * 질의 필터 (AdGuard Home·자녀 보호): 막으면 답할 내용(0.0.0.0·:: 또는 NXDOMAIN)과 이유. 내 레코드·캐시보다 먼저 본다.
+   * 질의마다 (막았든 아니든) note 로 알린다 — 쿼리 로그
+   */
+  filter: ((name: string, qtype: QType, client: Ip, ctx: NodeContext) => { answer?: Ip; rcode?: "NXDOMAIN"; why: string } | undefined) | undefined;
 
   constructor(
     public config: DnsServerConfig,
@@ -339,6 +344,12 @@ export class DnsServer {
     }
     const replyFrom = pkt.kind === "ipv4" && pkt.dst !== this.iface.ip && this.answersAt?.(pkt.dst) ? pkt.dst : undefined;
     const answer = (m: Omit<DnsMessage, "kind" | "id" | "op" | "name">): DnsMessage => ({ kind: "dns", id: msg.id, op: "response", name: msg.name, ...(qtype === "AAAA" ? { qtype } : {}), ...m });
+    const blocked = this.filter?.(name, qtype, pkt.src, ctx);
+    if (blocked) {
+      ctx.trace("dns.blocked", "app", `${this.label}: ${name}${tq} 은(는) ${blocked.why} → 업스트림에 묻지 않고 ${blocked.answer ?? blocked.rcode} 로 답함 → ${pkt.src}`, { name, to: pkt.src, qtype, blocked: true }, frameId);
+      this.respond(pkt.src, srcPort, answer(blocked.answer ? { answer: blocked.answer } : { rcode: blocked.rcode ?? "NXDOMAIN" }), ctx, emit, replyFrom);
+      return;
+    }
     const ip = this.lookup(name, ctx.now, qtype);
     if (ip) {
       const fromCache = !this.config.records.some((r) => normalizeName(r.name) === name && qtypeOf(r.ip) === qtype);

@@ -192,3 +192,35 @@ export function exampleDockerTopology(): Topology {
   ];
   return t;
 }
+
+/**
+ * 광고 차단·자녀 보호 (AdGuard Home — GL.iNet 공유기의 앱):
+ * - 집 Brume 3 의 DNS 포워더 앞에서 이름을 거른다: 광고·추적 목록(doubleclick.net 등)은 0.0.0.0 으로 답해 접속 자체를 하지 않는다
+ * - 자녀 보호: 아이 태블릿(192.168.8.50)은 SNS·게임 이름을 막는다 (동영상은 허용)
+ * - 스마트 TV 는 DNS 를 8.8.8.8 로 직접 적었다. "DNS 가로채기" 가 켜져 있어 공유기가 그 질의를 대신 받아 거른다 (끄면 TV 는 걸러지지 않는다 — 구성 검사가 짚음)
+ */
+export function exampleAdguardTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -232, "internet-1");
+  const home = add("router", 344, -64, "집 Brume 3");
+  home.router = {
+    ...home.router!,
+    lanIp: "192.168.8.1",
+    lanPrefix: 24,
+    dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
+    wifi: { enabled: true, ssid: "home" },
+    adguard: { enabled: true, ads: true, mode: "zero", custom: [], allow: [], forceDns: true, parental: [{ ip: "192.168.8.50", categories: ["sns", "game"] }] },
+  };
+  const sw = add("switch", 344, 104, "거실 스위치");
+  const pc = add("pc", 168, 248, "아빠 PC");
+  const tv = add("pc", 520, 248, "스마트 TV");
+  // 제조사가 DNS 를 8.8.8.8 로 박아 둔 기기 (공유기의 DNS 를 쓰지 않는다)
+  tv.host = { ipMode: "static", ip: "192.168.8.60", prefix: 24, gateway: "192.168.8.1", dns: "8.8.8.8", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const tablet = add("phone", 600, -48, "아이 태블릿");
+  tablet.wifi = { ssid: "home" };
+  tablet.host = { ipMode: "static", ip: "192.168.8.50", prefix: 24, gateway: "192.168.8.1", dns: "192.168.8.1", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const cables: Cable[] = [cable(home, 0, inet, 0), cable(home, 1, sw, 0), cable(sw, 1, pc, 0), cable(sw, 2, tv, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [{ id: newId("zone"), label: "집 192.168.8.0/24 · AdGuard Home", tint: "blue", ...zoneAround(t, [home.id, sw.id, pc.id, tv.id, tablet.id], 48)! }];
+  return t;
+}

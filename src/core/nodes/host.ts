@@ -938,7 +938,16 @@ export class Host implements SimNode {
    * 묻지 못하면 IPv4 주소가 있을 때 A 로 다시. 없는 이름(NXDOMAIN)이면 A 도 없으니 다시 묻지 않는다.
    * IPv6 글로벌 주소가 없으면 예전처럼 A 만 (쓸 수 없는 주소 종류는 묻지 않는다 — AI_ADDRCONFIG)
    */
-  private resolveName(name: string, ctx: NodeContext, done: (ip: Ip | undefined, error?: string) => void, alive: () => boolean = () => true): void {
+  private resolveName(name: string, ctx: NodeContext, done0: (ip: Ip | undefined, error?: string) => void, alive: () => boolean = () => true): void {
+    // 0.0.0.0·:: 답은 DNS 필터(AdGuard 등)가 막은 이름 — 그 주소로 보내지 않는다 (브라우저도 바로 실패)
+    const done = (ip: Ip | undefined, error?: string) => {
+      if (ip === "0.0.0.0" || ip === "::") {
+        ctx.trace("dns.resolved", "app", `${name} = ${ip} → DNS 가 막은 이름 (광고 차단·자녀 보호가 0.0.0.0 으로 답함) — 접속하지 않음`, { name, blocked: true });
+        done0(undefined, "DNS 가 막은 이름 (0.0.0.0)");
+        return;
+      }
+      done0(ip, error);
+    };
     if (!this.hasV6Global()) {
       this.resolver.resolve(name, ctx, this.emit(ctx), (ip, err) => done(ip, err));
       return;

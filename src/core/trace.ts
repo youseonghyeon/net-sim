@@ -204,6 +204,10 @@ export type TraceKind =
   | "vpn.eap"
   /** DPD (Dead Peer Detection): 빈 INFORMATIONAL 요청·응답, 상대가 살아 있음 */
   | "vpn.dpd"
+  /** DNS 필터(AdGuard Home·자녀 보호)가 이름을 막음 */
+  | "dns.blocked"
+  /** DNS 가로채기: 다른 DNS 서버로 가던 질의를 공유기가 대신 받음 */
+  | "dns.hijack"
   /** 멀티 WAN: 설정·추적 ping·회선 살아남/끊김·전환 */
   | "mwan.config"
   | "mwan.check"

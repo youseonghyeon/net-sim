@@ -797,6 +797,15 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       if (ip && sent) out.push({ tool: "시스코 debug ip nat", line: `NAT*: s=${ip.src}, d=${ip.dst}->${sent.dst} [${detail(ev, "publicId") ?? ""}]` });
       break;
     }
+    case "dns.blocked": {
+      // AdGuard Home 쿼리 로그 (웹 화면의 한 줄을 텍스트로)
+      const why = /은\(는\) (.+) → 업스트림/.exec(ev.summary)?.[1] ?? "";
+      out.push({ tool: "AdGuard Home 쿼리 로그", line: `${detail(ev, "to") ?? "?"}  ${detail(ev, "qtype") ?? "A"} ${detail(ev, "name") ?? "?"}  Blocked — ${why}` });
+      break;
+    }
+    case "dns.hijack":
+      out.push({ tool: "iptables -t nat (PREROUTING)", line: `REDIRECT udp -- ${detail(ev, "from") ?? "0.0.0.0/0"} ${detail(ev, "to") ?? "0.0.0.0/0"} udp dpt:53 redir ports 53` });
+      break;
     case "ddns.update":
       // OpenWrt ddns-scripts (GL.iNet 도 이것) 의 로그
       if (!detail(ev, "late")) out.push({ tool: "OpenWrt ddns-scripts", line: `: Update needed - L: '${ip?.src ?? "?"}' <> R: (DNS 에 등록된 주소)` });

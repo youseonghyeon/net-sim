@@ -130,6 +130,7 @@ export class NetworkSync {
         }
         if (node instanceof Router && d.router?.ddns?.enabled) node.ddns.setConfig(effectiveRouter(d).ddns, net.contextFor(d.id));
         if (node instanceof Router && d.router?.wan2?.enabled) node.setWan2(effectiveRouter(d).wan2, net.contextFor(d.id));
+        if (node instanceof Router && d.router?.adguard?.enabled) node.setAdguard(effectiveRouter(d).adguard, net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -432,6 +433,19 @@ export function effectiveRouter(d: Device, current?: Router) {
         enabled: w2?.enabled === true,
         ...(w2?.ipMode === "static" ? { mode: "static" as const, ip: validIp(w2.ip), prefix: w2.prefix, gateway: validIp(w2.gateway) } : { mode: "dhcp" as const }),
         ...(validIp(w2?.track?.trim()) ? { track: w2!.track.trim() } : {}),
+      };
+    })(),
+    adguard: (() => {
+      const a = r.adguard;
+      const names = (l: string[] | undefined) => (l ?? []).map((x) => x.trim().toLowerCase().replace(/^\|\|/, "").replace(/\^$/, "")).filter((x) => /^[a-z0-9.-]+$/.test(x) && x.includes("."));
+      return {
+        enabled: a?.enabled === true,
+        ads: a?.ads !== false,
+        mode: a?.mode === "nxdomain" ? ("nxdomain" as const) : ("zero" as const),
+        custom: names(a?.custom),
+        allow: names(a?.allow),
+        forceDns: a?.forceDns === true,
+        parental: (a?.parental ?? []).filter((p) => validIp(p.ip.trim()) && p.categories.length > 0).map((p) => ({ ip: p.ip.trim(), categories: [...p.categories] })),
       };
     })(),
     ddns: { enabled: r.ddns?.enabled === true && !!ddnsHostname(r.ddns.name), hostname: ddnsHostname(r.ddns?.name) ?? "" },

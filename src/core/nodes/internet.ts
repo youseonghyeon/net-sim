@@ -32,6 +32,7 @@ import { DhcpServer } from "./dhcp";
 import { SIGNAL_SERVER, STUN_SERVERS, TURN_SERVER } from "./p2p";
 import { normalizeName, PUBLIC_ZONE, PUBLIC_ZONE6 } from "./dns";
 import { DDNS_SERVER, DDNS_TTL, DDNS_ZONE, DdnsService } from "./ddns";
+import { FILTER_ZONE } from "./adguard";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RA_PERIODIC_TAG } from "./ipv6";
 import { NetInterface, type Emit } from "./iface";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
@@ -559,7 +560,8 @@ export class Internet implements SimNode {
         reply(msg);
         return;
       }
-      const rec = PUBLIC_ZONE.find((r) => r.name === normalizeName(name));
+      // 광고·SNS·게임·동영상 이름 (AdGuard·자녀 보호 실험용 — 자동완성 목록에는 없다)
+      const rec = PUBLIC_ZONE.find((r) => r.name === normalizeName(name)) ?? FILTER_ZONE.find((r) => r.name === normalizeName(name));
       if (qtype === "AAAA") {
         // 공개 이름의 IPv6 주소: 있으면 AAAA, 이름만 있으면 NODATA (github.com·naver.com 은 실제로도 아직 IPv6 가 없다)
         const rec6 = PUBLIC_ZONE6.find((r) => r.name === normalizeName(name));

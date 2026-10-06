@@ -7,7 +7,7 @@ import { examplePartsTopology } from "./examples/parts";
 import { exampleTwoGatewaysTopology, exampleBackboneTopology, exampleRipTopology } from "./examples/routing";
 import { exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
 import { exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
-import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology } from "./examples/services";
+import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology, exampleAdguardTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology, exampleMultiWanTopology } from "./examples/internet";
 import { exampleDdnsTopology, exampleWireguardTopology } from "./examples/vpn";
 import { exampleRoamingTopology } from "./examples/wireless";
@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "lb" | "proxy" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "firewall" | "fwbox" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "lb" | "proxy" | "adguard" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -137,6 +137,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "포워드 프록시 (프록시로만 나가는 사무실)",
     blurb: "공유기 방화벽은 proxy-1 만 인터넷으로 내보냅니다. pc-1 에서 example.com 으로 TCP 연결(80)을 보내면 프록시 설정(http_proxy)에 따라 proxy-1 에게 부탁하고, proxy-1 이 이름을 찾아 대신 받아 옵니다. 같은 요청을 laptop-1 에서 보내면 설정이 없어 직접 나가다 방화벽에 막혀 timeout 입니다. pc-1 에서 8.8.8.8 로 ping 해 보세요 — 프록시는 웹만 대신하므로 막힙니다. naver.com 은 proxy-1 의 차단 목록에 있어 403 을 받습니다. 포트를 443 으로 바꿔 github.com 에 HTTPS 연결을 보내면 CONNECT 로 터널만 열고 TLS 는 github.com 과 직접 합니다 — proxy-1 의 기록에는 이름(CONNECT github.com:443)만 남고 요청·응답 내용은 없습니다. proxy-1 의 표 탭에서 요청 기록(access.log)을 봅니다.",
     build: exampleProxyTopology,
+  },
+  adguard: {
+    id: "adguard",
+    group: "서비스",
+    label: "광고 차단·자녀 보호 (AdGuard Home)",
+    blurb: "집 Brume 3 의 AdGuard Home 이 DNS 포워더 앞에서 이름을 거릅니다. 아빠 PC 에서 doubleclick.net 으로 ping 하면 0.0.0.0 답을 받아 접속하지 않습니다(표 탭의 AdGuard 쿼리 로그). 아이 태블릿은 자녀 보호로 instagram.com·roblox.com 이 막히고 youtube.com 은 됩니다. 스마트 TV 는 DNS 를 8.8.8.8 로 직접 적었지만 \"DNS 가로채기\" 가 켜져 있어 공유기가 그 질의를 대신 받아 막습니다(TV 는 8.8.8.8 이 답한 줄 압니다). 공유기 설정 → 앱 → AdGuard Home 에서 DNS 가로채기를 끄면 TV 의 doubleclick.net 이 그대로 되고, 구성 검사가 TV 를 짚습니다.",
+    build: exampleAdguardTopology,
   },
   docker: {
     id: "docker",

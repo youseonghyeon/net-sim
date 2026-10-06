@@ -1521,6 +1521,25 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   for (let i = 0; i < 50 && !/WAN2/.test((await device("사무실 Brume 3").locator("text.uplink").textContent()) ?? ""); i++) await page.waitForTimeout(100);
   console.log("after wan1 removed:", await device("사무실 Brume 3").locator("text.uplink").textContent(), "| badge:", await device("사무실 Brume 3").locator(".badge", { hasText: "WAN2 사용 중" }).count());
 }
+// AdGuard Home: 아빠 PC 의 광고 이름 차단, 공유기 "앱" 묶음, 쿼리 로그
+{
+  await loadEx("adguard");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitAddr("아빠 PC", /^192\.168\.8\.1\d\d/);
+  await clickDevice("아빠 PC");
+  await page.fill(".ping-row .input", "doubleclick.net");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("adguard ping ad:", (await page.locator(".ping-log li").first().innerText()).replace(/\s+/g, " "));
+  await clickDevice("집 Brume 3");
+  await goTab("설정");
+  await goGroup("앱");
+  const ag = page.locator(".inspector section", { has: page.locator("h3", { hasText: "AdGuard Home" }) });
+  console.log("adguard stats:", (await ag.locator(".stat-row b").textContent())?.trim(), "| kid rows:", await ag.locator(".kid-row").count());
+  await page.screenshot({ path: `${OUT}/102-adguard.png` });
+  await goTab("표");
+  console.log("adguard log rows:", await page.locator(".inspector section", { has: page.locator("h3", { hasText: "AdGuard 쿼리 로그" }) }).locator("tbody tr").count());
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

@@ -606,6 +606,46 @@ export interface RouterSettings {
   ddns?: RouterDdnsSettings;
   /** 멀티 WAN 페일오버: lan4 를 WAN2(예비 회선)로. 없으면 꺼짐 */
   wan2?: RouterWan2Settings;
+  /** AdGuard Home·자녀 보호 (DNS 필터). 없으면 꺼짐 */
+  adguard?: RouterAdguardSettings;
+}
+
+export type ParentalCategorySetting = "sns" | "game" | "video";
+
+export interface RouterAdguardSettings {
+  enabled: boolean;
+  /** 광고·추적 차단 목록 */
+  ads: boolean;
+  /** 막은 이름에 0.0.0.0 으로(기본) 또는 NXDOMAIN 으로 */
+  mode: "zero" | "nxdomain";
+  /** 사용자 차단 규칙 (이름 — 하위 이름도) */
+  custom: string[];
+  /** 예외 */
+  allow: string[];
+  /** DNS 가로채기: 다른 DNS 로 가는 질의도 공유기가 받아 거른다 */
+  forceDns: boolean;
+  /** 자녀 보호: 기기(LAN 주소)마다 막을 카테고리 */
+  parental: { ip: string; categories: ParentalCategorySetting[] }[];
+}
+
+export const DEFAULT_ADGUARD_SETTINGS: RouterAdguardSettings = { enabled: true, ads: true, mode: "zero", custom: [], allow: [], forceDns: false, parental: [] };
+
+const PARENTAL_CATS: ParentalCategorySetting[] = ["sns", "game", "video"];
+
+function normalizeAdguard(v: Partial<RouterAdguardSettings>): RouterAdguardSettings {
+  const list = (x: unknown) => (Array.isArray(x) ? x.filter((y): y is string => typeof y === "string") : []);
+  const parental = Array.isArray(v.parental) ? (v.parental as unknown[]) : [];
+  return {
+    enabled: v.enabled === true,
+    ads: v.ads !== false,
+    mode: v.mode === "nxdomain" ? "nxdomain" : "zero",
+    custom: list(v.custom),
+    allow: list(v.allow),
+    forceDns: v.forceDns === true,
+    parental: parental
+      .filter((p): p is Record<string, unknown> => !!p && typeof p === "object")
+      .map((p) => ({ ip: typeof p.ip === "string" ? p.ip : "", categories: list(p.categories).filter((c): c is ParentalCategorySetting => PARENTAL_CATS.includes(c as ParentalCategorySetting)) })),
+  };
 }
 
 export interface RouterWan2Settings extends WanSettings {
@@ -1344,6 +1384,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.wgServer ? { wgServer: normalizeWgServer(r.wgServer) } : {}),
           ...(r.wgClient ? { wgClient: normalizeWgClient(r.wgClient) } : {}),
           ...(r.wan2 ? { wan2: normalizeWan2(r.wan2) } : {}),
+          ...(r.adguard ? { adguard: normalizeAdguard(r.adguard) } : {}),
           ...(r.ddns ? { ddns: { enabled: (r.ddns as Partial<RouterDdnsSettings>).enabled === true, name: typeof (r.ddns as Partial<RouterDdnsSettings>).name === "string" ? r.ddns.name : "" } } : {}),
           natType: natTypeOf(r.natType),
           hairpin: r.hairpin === true ? true : undefined,
