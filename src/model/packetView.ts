@@ -387,13 +387,24 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
     if (l4.payload.kind === "wg") {
       const m = l4.payload;
       layers.push(wgLayer(m));
-      if (m.inner) layers.push(...ipLayers(m.inner, true));
+      if (m.inner && !m.obf) layers.push(...ipLayers(m.inner, true));
     }
   }
   return inTunnel ? layers.map((l) => ({ ...l, title: `터널 안 · ${l.title}` })) : layers;
 }
 
 function wgLayer(m: WgMessage): HeaderLayer {
+  // 난독화: 밖(중간 장비·tcpdump)에서는 모양을 알아볼 수 없다 — 두 끝만 WireGuard 로 푼다
+  if (m.type === "junk")
+    return { title: "UDP 내용 (난독화)", rows: [["모양", "알아볼 수 없음 — 핸드셰이크 앞에 섞은 쓰레기 패킷 (AmneziaWG 식). 받는 쪽은 버린다"]] };
+  if (m.obf)
+    return {
+      title: "UDP 내용 (난독화)",
+      rows: [
+        ["모양", "알아볼 수 없음 — 머리·크기를 흐트러뜨려 DPI 가 WireGuard 로 알아보지 못한다"],
+        ["두 끝이 풀면", m.type === "initiation" ? "WireGuard 핸드셰이크 시작 (Initiation)" : m.type === "response" ? "WireGuard 핸드셰이크 응답 (Response)" : m.inner ? `WireGuard 데이터 (안: ${m.inner.src} → ${m.inner.dst})` : "WireGuard keepalive"],
+      ],
+    };
   if (m.type === "initiation")
     return {
       title: "WireGuard",

@@ -16,6 +16,7 @@ import {
   type IcmpPacket,
   type Ipv4Packet,
   type Ipv6Packet,
+  type IpPacket,
 } from "../packet";
 import { DHCP6_STATE_LABEL, DHCP6_TIMER_TAG, Dhcp6PdClient } from "./dhcp6";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, RA_PERIODIC_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG } from "./ipv6";
@@ -438,25 +439,40 @@ export class Router implements SimNode {
 
   /**
    * DPI 검사: 지나가는 패킷의 앱을 알아보고(처음·근거가 바뀔 때 기록) 막을 앱이면 끊는다. 통과면 true.
-   * dir out = LAN → 밖 (client = 출발지), in = 밖 → LAN (client = 목적지)
+   * dir out = LAN → 밖 (client = 출발지), in = 밖 → LAN (client = 목적지). IPv4·IPv6 모두
    */
-  private dpiCheck(pkt: Ipv4Packet, dir: "out" | "in", frameId: number, ctx: NodeContext): boolean {
+  private dpiCheck(pkt: IpPacket, dir: "out" | "in", frameId: number, ctx: NodeContext): boolean {
     const client = dir === "out" ? pkt.src : pkt.dst;
-    const v = this.dpi.inspect(pkt, dir, client);
+    const v = this.dpi.inspect(pkt, dir, client, ctx.now);
     if (!v) return true;
     const remote = dir === "out" ? pkt.dst : pkt.src;
     if (v.fresh && !v.block) ctx.trace("dpi.app", "app", `DPI: ${client} ↔ ${remote} 흐름은 ${APPS[v.app].label} (${APPS[v.app].category}) — 근거: ${v.why}`, { app: v.app, client }, frameId);
     if (!v.block) return true;
+    const what = `${client} ↔ ${remote} 는 ${APPS[v.app].label} (${APPS[v.app].category}, ${v.why})`;
     const p = pkt.payload;
-    if (p.kind === "tcp" && !p.rst) {
-      // 양쪽에 RST 를 넣어 끊는다 (기기 쪽만 그려도 기기는 연결이 끊긴 것을 안다)
-      ctx.trace("dpi.block", "app", `DPI 차단: ${client} ↔ ${remote} 는 ${APPS[v.app].label} (${APPS[v.app].category}, ${v.why}) → 드롭하고 기기에 RST 를 넣어 연결을 끊음`, { app: v.app, client, rst: true }, frameId);
-      const toClient: Ipv4Packet =
-        dir === "out"
-          ? { kind: "ipv4", src: pkt.dst, dst: pkt.src, ttl: 64, payload: { kind: "tcp", srcPort: p.dstPort, dstPort: p.srcPort, seq: p.ack, ack: p.seq + p.len + (p.syn ? 1 : 0) + (p.fin ? 1 : 0), rst: true, ackFlag: true, len: 0 } }
-          : { kind: "ipv4", src: pkt.src, dst: pkt.dst, ttl: 64, payload: { kind: "tcp", srcPort: p.srcPort, dstPort: p.dstPort, seq: p.seq + p.len, ack: p.ack, rst: true, ackFlag: true, len: 0 } };
-      this.lan.sendIp(toClient, ctx, this.emitLan(ctx));
-    } else if (v.fresh) ctx.trace("dpi.block", "app", `DPI 차단: ${client} ↔ ${remote} 는 ${APPS[v.app].label} (${APPS[v.app].category}, ${v.why}) → 드롭`, { app: v.app, client }, frameId);
+    // 기기가 시작한 TCP 흐름이면 양쪽에 RST 를 넣어 끊는다 (기기는 바로 알고, 서버도 반쯤 열린 채 남지 않게). 바깥에서 시작한 흐름·UDP 는 드롭만
+    if (p.kind === "tcp" && !p.rst && v.from === "lan") {
+      if (v.fresh) ctx.trace("dpi.block", "app", `DPI 차단: ${what} → 드롭하고 양쪽에 RST 를 넣어 연결을 끊음`, { app: v.app, client, rst: true }, frameId);
+      const [c, r, cp, rp] = dir === "out" ? [pkt.src, pkt.dst, p.srcPort, p.dstPort] : [pkt.dst, pkt.src, p.dstPort, p.srcPort];
+      // 기기가 받을 RST: 상대가 보낸 것처럼
+      const cSeq = dir === "out" ? p.ack : p.seq + p.len;
+      const cAck = dir === "out" ? p.seq + p.len + (p.syn ? 1 : 0) + (p.fin ? 1 : 0) : p.ack;
+      const rstToClient = { kind: "tcp" as const, srcPort: rp, dstPort: cp, seq: cSeq, ack: cAck, rst: true, ackFlag: true, len: 0 };
+      const rstToRemote = { kind: "tcp" as const, srcPort: cp, dstPort: rp, seq: cAck, ack: cSeq, rst: true, ackFlag: true, len: 0 };
+      if (pkt.kind === "ipv6") {
+        this.lan6.send({ kind: "ipv6", src: r, dst: c, hopLimit: 64, payload: rstToClient }, ctx, this.emitLan(ctx));
+        if (!p.syn) this.wan6.send({ kind: "ipv6", src: c, dst: r, hopLimit: 64, payload: rstToRemote }, ctx, this.emitWan(ctx));
+      } else {
+        this.lan.sendIp({ kind: "ipv4", src: r, dst: c, ttl: 64, payload: rstToClient }, ctx, this.emitLan(ctx));
+        // 서버 쪽: 연결이 이미 열렸으면(SYN 이 아니면) 그 흐름의 NAT 로 바꿔 보낸다
+        if (!p.syn) {
+          const out: Ipv4Packet = { kind: "ipv4", src: c, dst: r, ttl: 64, payload: rstToRemote };
+          const o = this.outFor(out, ctx);
+          const t = o.iface.ip && o.nat.carries(out) ? o.nat.translate(out, o.iface.ip, ctx) : undefined;
+          if (t) o.iface.sendIp(t, ctx, o.emit);
+        }
+      }
+    } else if (v.fresh) ctx.trace("dpi.block", "app", `DPI 차단: ${what} → 드롭${v.from === "wan" ? " (바깥에서 시작한 흐름)" : ""}`, { app: v.app, client }, frameId);
     return false;
   }
 
@@ -1111,6 +1127,7 @@ export class Router implements SimNode {
       if (notice) this.lan6.send(notice, ctx, emit);
       return;
     }
+    if (!this.dpiCheck(pkt, "out", frame.id, ctx)) return;
     if (!this.firewall.check(pkt, "out", ctx, frame.id)) return;
     this.inbound6.remember(pkt, ctx); // 나가는 흐름을 기억해 돌아오는 응답을 들인다
     const out: Ipv6Packet = { ...pkt, hopLimit: pkt.hopLimit - 1 };
@@ -1153,6 +1170,7 @@ export class Router implements SimNode {
       if (notice) this.wan6.send(notice, ctx, emit);
       return;
     }
+    if (!this.dpiCheck(pkt, "in", frame.id, ctx)) return;
     if (!this.firewall.check(pkt, "in", ctx, frame.id)) return;
     // 공유기 방화벽에 이 연결을 허용하는 인바운드 규칙이 있으면 그것이 핀홀: 기본 차단을 건너뛴다
     if (!this.firewall.allowsByRule(pkt, "in") && !this.inbound6.check(pkt, "in", ctx, frame.id)) return;
@@ -1338,6 +1356,8 @@ export class Router implements SimNode {
       if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
       return;
     }
+    // DPI 는 LAN 쪽에서 본다 — VPN 클라이언트 터널로 가는 흐름도
+    if (!this.dpiCheck(pkt, "out", frameId, ctx)) return;
     if (this.policyApplies(pkt.src) && this.toWgClient(pkt, frameId, ctx)) return;
     const o = this.outFor(pkt, ctx);
     if (!o.iface.ip) {
@@ -1346,7 +1366,6 @@ export class Router implements SimNode {
       if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
       return;
     }
-    if (!this.dpiCheck(pkt, "out", frameId, ctx)) return;
     if (!this.firewall.check(pkt, "out", ctx, frameId)) return;
     const translated = o.nat.translate({ ...pkt, ttl: pkt.ttl - 1 }, o.iface.ip, ctx, frameId);
     if (!translated) return;
@@ -1493,12 +1512,13 @@ export class Router implements SimNode {
     }
     // 포워딩 규칙도 NAT 매핑도 없는 포트로 온 핸드셰이크: 서버가 꺼져 있다고 알려 준다 (아래 NAT 역변환은 "테이블에 없음" 만 남긴다)
     const forwarded = this.nat.forwards.some((r) => r.proto === "udp" && r.publicPort === u.dstPort);
+    const kindLabel = m.type === "junk" || m.obf ? "알아볼 수 없는 UDP" : `WireGuard ${m.type === "data" ? "데이터" : m.type === "response" ? "Response" : "Initiation"}`;
     if (u.dstPort === this.wgcPort && !forwarded) {
-      ctx.trace("vpn.drop", "L4", `WireGuard ${m.type === "data" ? "데이터" : m.type === "response" ? "Response" : "Initiation"} (from ${pkt.src}) → 이 공유기의 WireGuard 클라이언트가 꺼진 뒤 늦게 온 패킷 → 무시`, { from: pkt.src, late: true }, frameId);
+      ctx.trace("vpn.drop", "L4", `${kindLabel} (from ${pkt.src}) → 이 공유기의 WireGuard 클라이언트가 꺼진 뒤 늦게 온 패킷 → 무시`, { from: pkt.src, late: true }, frameId);
       return true;
     }
-    if (m.type !== "initiation" && !forwarded && u.dstPort === (this.wgServerCfg?.listenPort ?? WG_PORT)) {
-      ctx.trace("vpn.drop", "L4", `WireGuard ${m.type === "data" ? "데이터" : "Response"} (from ${pkt.src}) → 이 공유기의 WireGuard 서버가 꺼져 있음 → 무시 (상대는 답이 없으면 새로 핸드셰이크한다)`, { from: pkt.src, late: true }, frameId);
+    if ((m.type !== "initiation" || m.obf) && !forwarded && u.dstPort === (this.wgServerCfg?.listenPort ?? WG_PORT)) {
+      ctx.trace("vpn.drop", "L4", `${kindLabel} (from ${pkt.src}) → 이 공유기의 WireGuard 서버가 꺼져 있음 → 무시 (상대는 답이 없으면 새로 핸드셰이크한다)`, { from: pkt.src, late: true }, frameId);
       return true;
     }
     if (m.type === "initiation" && !forwarded && u.dstPort === (this.wgServerCfg?.listenPort ?? WG_PORT)) {

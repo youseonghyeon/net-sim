@@ -14,7 +14,7 @@ Brume 3(GL-MT5000)는 OpenWrt 기반 VPN 보안 게이트웨이다. 공식 문�
 2. ✅ (2026-10-07) **DDNS** — WAN 주소가 바뀌면 DDNS 서비스(인터넷 노드)에 갱신, 클라이언트는 이름으로 접속. ISP 주소 바꾸기(FORCERENEW), DNS TTL, WireGuard 이름 엔드포인트·실패 시 다시 풀기
 3. ✅ (2026-10-07) **멀티 WAN 페일오버** — LAN 포트 하나를 WAN2 로(테더링·셀룰러 흉내), 추적 ping 으로 장애 감지 → 넘어감, NAT 세션이 끊기는 이유
 4. ✅ (2026-10-07) **AdGuard Home·자녀 보호** — DNS 차단 목록(0.0.0.0/NXDOMAIN), 쿼리 로그·차단 통계, DNS 가로채기(53 리디렉션), 기기별 차단
-5. ✅ (2026-10-07) **DPI·VPN 난독화** — SNI·DNS·포트로 앱 분류, 앱별 통계·차단, VPN 탐지 차단을 TCP 443 위장으로 통과
+5. ✅ (2026-10-07) **DPI·VPN 난독화** — SNI·DNS·모양·포트로 앱 분류, 앱별 통계·차단(RST 주입), VPN 탐지 차단을 WireGuard 난독화(AmneziaWG 식 — 모양 흐트러뜨리기·쓰레기 패킷)로 통과. TCP 443 위장은 OpenVPN(6단계)의 TCP 모드로
 6. **OpenVPN** — UDP/TCP 1194, TLS 핸드셰이크·인증서
 7. **Tailscale·ZeroTier** — 조정 서버, P2P 메시(기존 홀 펀칭 재사용), DERP 릴레이, 서브넷 라우터
 8. **드롭인 게이트웨이·관리 접근 제어·클라이언트 차단·GoodCloud 원격 관리**
