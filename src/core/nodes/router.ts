@@ -1,5 +1,5 @@
 import { OVPN_PORT, OvpnServer, shortFp, type OvpnServerConfig } from "./openvpn";
-import { MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
+import { MESH_SERVERS, MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
 import { BROADCAST_MAC, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
 import { ALL_NODES, formatIp6, isIpv6, isLinkLocal6, isMulticast6, parseIp6, sameSubnet6, UNSPECIFIED6 } from "../addr6";
 import {
@@ -307,8 +307,9 @@ export class Router implements SimNode {
     }
     if (cfg.natType) this.nat.type = this.nat2.type = cfg.natType;
     // 헤어핀 NAT 가 쓰는 프록시 포트는 NAT 공인 포트로 고르지 않는다
-    this.nat.reserved = (port) => this.hairpinNat.usesProxyPort(port);
-    this.nat2.reserved = (port) => this.hairpinNat.usesProxyPort(port);
+    // NAT 는 공유기 자신이 쓰는 포트(헤어핀 프록시·메시 VPN)를 공인 포트로 고르지 않는다
+    this.nat.reserved = (port) => this.hairpinNat.usesProxyPort(port) || (this.mesh?.config.enabled === true && port === this.mesh.port);
+    this.nat2.reserved = (port) => this.hairpinNat.usesProxyPort(port) || (this.mesh?.config.enabled === true && port === this.mesh.port);
     this.hairpin = cfg.hairpin === true;
     this.vpnServer = new L2tpServer({
       // 공유기 자신이 만든 바깥 패킷이라 NAT·방화벽을 거치지 않는다
@@ -647,6 +648,18 @@ export class Router implements SimNode {
     return p && (p.info.ip === dst || p.info.routes.some((r) => sameSubnet(dst, r.dest, r.prefix))) ? p : undefined;
   }
 
+  /** 메시 VPN 포트를 LAN 기기로 포워딩하면 공유기 자신의 메시 앱은 다음 포트를 쓴다 (같은 포트를 둘이 받을 수 없다) */
+  private meshPortCheck(ctx: NodeContext): void {
+    const base = MESH_SERVERS[this.mesh.config.net].port;
+    const want = this.nat.forwards.some((r) => r.proto === "udp" && r.publicPort === base) ? base + 1 : undefined;
+    if (want === this.mesh.portOverride) return;
+    this.mesh.portOverride = want;
+    if (!this.mesh.config.enabled) return;
+    ctx.trace("mesh.login", "app", `${this.mesh.brand}: UDP ${base} 를 LAN 기기로 포워딩하므로 공유기 자신은 UDP ${want ?? base} 를 씀 → 다시 로그인`, { mesh: this.mesh.config.net });
+    this.mesh.lost();
+    this.mesh.onAddress(ctx);
+  }
+
   /** 내 공인 주소로 온 메시 VPN (내 포트) 과 그 STUN 응답. 처리했으면 true */
   private handleWanMesh(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): boolean {
     const u = pkt.payload;
@@ -807,7 +820,7 @@ export class Router implements SimNode {
     if (cfg.wan2) this.setWan2(cfg.wan2, ctx);
     if (cfg.wgServer || cfg.wgClient) this.setWg(cfg.wgServer, cfg.wgClient, ctx);
     if (cfg.ovpnServer) this.ovpn.setConfig(cfg.ovpnServer, ctx);
-    if (cfg.mesh) this.mesh.setConfig(cfg.mesh, ctx);
+
     if (cfg.hairpin !== undefined && cfg.hairpin !== this.hairpin) {
       this.hairpin = cfg.hairpin;
       ctx.trace("ip.config", "sys", cfg.hairpin ? `헤어핀 NAT 켜짐: 안에서 내 공인 주소의 포워딩 포트로 접속하면 안쪽 서버로 되돌려 준다 (도메인으로 집 서버에 접속하기)` : `헤어핀 NAT 꺼짐`, { hairpin: cfg.hairpin });
@@ -883,6 +896,14 @@ export class Router implements SimNode {
         this.dnsForwarder.config = { ...cfg.dns, records: [] };
       }
     }
+    // 메시 VPN 은 포트 포워딩을 본 뒤에 (그 포트를 LAN 기기로 넘기면 공유기 자신은 다른 포트)
+    if (cfg.mesh) this.setMesh(cfg.mesh, ctx);
+  }
+
+  /** 메시 VPN 설정 (만든 직후·설정 변경) */
+  setMesh(cfg: MeshConfig, ctx: NodeContext): void {
+    this.mesh.setConfig(cfg, ctx);
+    this.meshPortCheck(ctx);
   }
 
   onRemove(ctx: NodeContext): void {
@@ -1051,7 +1072,7 @@ export class Router implements SimNode {
     if (pkt.dst === this.wan.ip && pkt.payload.kind === "udp" && pkt.payload.payload.kind === "wg" && this.handleWanWg(pkt, frame.id, ctx)) return;
     if (pkt.dst === this.wan.ip && this.handleWanOvpn(pkt, frame.id, ctx)) return;
     // 서버의 터널 주소(10.0.0.1)는 공유기 자신
-    if ((this.wgServerCfg?.enabled && pkt.dst === this.wgServerCfg.address?.ip) || (this.ovpn.address && pkt.dst === this.ovpn.address)) {
+    if ((this.wgServerCfg?.enabled && pkt.dst === this.wgServerCfg.address?.ip) || (this.ovpn.address && pkt.dst === this.ovpn.address) || (this.mesh.up && pkt.dst === this.mesh.self!.ip)) {
       const p = pkt.payload;
       if (p.kind === "icmp") {
         this.handleIcmp(pkt, p, frame.id, ctx, this.lan, emit, pkt.dst);
@@ -1061,7 +1082,7 @@ export class Router implements SimNode {
         if (this.dnsForwarder.config.enabled) this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frame.id, ctx, emit);
         return;
       }
-      ctx.trace("ip.drop", "L4", `공유기 자신(${pkt.dst === this.ovpn.address ? "OpenVPN" : "WireGuard"} 터널 주소 ${pkt.dst})에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frame.id);
+      ctx.trace("ip.drop", "L4", `공유기 자신(${pkt.dst === this.ovpn.address ? "OpenVPN" : pkt.dst === this.mesh.self?.ip ? this.mesh.brand : "WireGuard"} 터널 주소 ${pkt.dst})에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frame.id);
       return;
     }
     if (pkt.payload.kind === "udp") {

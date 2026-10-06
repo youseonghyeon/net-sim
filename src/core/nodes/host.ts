@@ -240,6 +240,8 @@ export class Host implements SimNode {
         myIp: () => (this.iface.usable && !this.iface.probing ? this.iface.ip : undefined),
         local: (dst) => !!this.iface.ip && sameSubnet(dst, this.iface.ip, this.iface.prefix),
         send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)),
+        // 내 메시 주소(내 MagicDNS 이름)로 가는 것은 나 자신 — 실제 주소로 바꿔 루프백
+        loopback: (pkt, ctx) => this.iface.sendIp({ ...pkt, dst: this.iface.ip! }, ctx, this.emit(ctx)),
       },
       cfg.id,
     );
@@ -248,7 +250,8 @@ export class Host implements SimNode {
     this.ra = this.makeVpnClient(cfg.ra?.type);
     if (cfg.ra) this.ra.config = { ...cfg.ra };
     // 사내 대역으로 가는 패킷은 원격 접속 터널로 (연결돼 있을 때만. L2TP/IPsec 은 모두)
-    this.iface.outbound = (pkt, ctx) => this.ra.intercept(pkt, ctx) || this.mesh.intercept(pkt, ctx);
+    // 메시 피어·알린 대역은 원격 접속 VPN 보다 먼저 (더 구체적인 경로가 이긴다), exit node 는 원격 접속 VPN 뒤
+    this.iface.outbound = (pkt, ctx) => this.mesh.intercept(pkt, ctx, false) || this.ra.intercept(pkt, ctx) || this.mesh.intercept(pkt, ctx);
     // L2TP/IPsec 이 연결돼 있으면 집 공유기가 알려 준 DNS(IPCP)로 묻는다
     // WireGuard 는 켜져 있으면 설정 파일의 DNS 를 쓴다 (핸드셰이크 전에도 — 인터페이스가 올라가면 resolv.conf 가 바뀐다)
     // OpenVPN 은 연결되면 서버가 PUSH 로 알려 준 DNS

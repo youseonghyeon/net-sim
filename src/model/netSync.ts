@@ -138,7 +138,7 @@ export class NetworkSync {
         if (node instanceof Router && d.router?.adguard?.enabled) node.setAdguard(effectiveRouter(d).adguard, net.contextFor(d.id));
         if (node instanceof Router && d.router?.dpi?.enabled) node.setDpi(effectiveRouter(d).dpi, net.contextFor(d.id));
         if (node instanceof Router && d.router?.ovpnServer?.enabled) node.ovpn.setConfig(effectiveRouter(d).ovpnServer, net.contextFor(d.id));
-        if (node instanceof Router && d.router?.mesh?.enabled) node.mesh.setConfig(effectiveRouter(d).mesh, net.contextFor(d.id));
+        if (node instanceof Router && d.router?.mesh?.enabled) node.setMesh(effectiveRouter(d).mesh, net.contextFor(d.id));
         if (node instanceof Host && d.host?.mesh?.enabled) node.setMesh(effectiveMesh(d), net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
@@ -283,7 +283,7 @@ export function effectiveP2p(d: Device) {
 /** 메시 VPN (Tailscale·ZeroTier) 설정: 노드 키는 장치마다, 이름은 비우면 장치 이름에서, 서브넷 라우터는 공유기 LAN */
 export function effectiveMesh(d: Device): MeshConfig {
   const m = d.host?.mesh ?? d.router?.mesh;
-  const name = m?.name.trim() || meshHostname(d.name) || `${d.kind}-${d.id.slice(-4)}`;
+  const name = meshHostname(m?.name.trim() || d.name) || `${d.kind}-${d.id.slice(-4)}`;
   const lan = d.router && validIp(d.router.lanIp) ? parseCidr(`${d.router.lanIp}/${d.router.lanPrefix}`, 24) : undefined;
   const net = (ip: string, prefix: number) => {
     const n = ip.split(".").map(Number);
@@ -298,7 +298,7 @@ export function effectiveMesh(d: Device): MeshConfig {
     key: wgPublicKey(wgPrivateKey(`${d.id}:mesh`)),
     routes: d.router && m?.advertiseLan && lan ? [{ dest: net(lan.ip, lan.prefix), prefix: lan.prefix }] : [],
     exitNode: !!d.router && m?.exitNode === true,
-    ...(d.host && m?.useExitNode?.trim() ? { useExitNode: m.useExitNode.trim() } : {}),
+    ...(d.host && m?.useExitNode?.trim() ? { useExitNode: meshHostname(m.useExitNode) } : {}),
   };
 }
 

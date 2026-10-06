@@ -34,6 +34,12 @@ const RETRIES = 2;
 const LOGIN_RETRY = 10_000;
 const DISCO_INTERVAL = 200;
 const DISCO_TRIES = 5;
+/** 직접 경로를 믿는 시간: 이만큼 확인(pong·받은 데이터)이 없으면 보낼 때 릴레이로도 보내며 다시 확인한다 (magicsock trustUDPAddrDuration 흉내) */
+const PATH_TRUST = 6500;
+/** 직접 경로를 못 찾은 뒤 다시 홀 펀칭해 보는 간격 */
+const RELAY_RETRY = 10_000;
+/** 조정 서버·릴레이 연결 유지와 바깥 주소 다시 확인 (배경 타이머 — 시간이 흐를 때만) */
+const REFRESH = 25_000;
 
 export interface MeshConfig {
   enabled: boolean;
@@ -60,12 +66,18 @@ export interface MeshIo {
   /** 직접 붙은 서브넷인지 */
   local(dst: Ip): boolean;
   send(pkt: Ipv4Packet, ctx: NodeContext): void;
+  /** 내 메시 주소로 가는 것 (자기 자신 — 호스트만) */
+  loopback?(pkt: Ipv4Packet, ctx: NodeContext): void;
 }
 
 interface PeerState {
   info: TsPeerInfo;
   /** 직접 경로 (disco pong 으로 확인한 상대 주소) */
   path?: Endpoint;
+  /** 직접 경로를 마지막으로 확인한 시각 */
+  pathAt?: number;
+  /** 직접 경로를 못 찾은 시각 */
+  relayOnlyAt?: number;
   disco?: { txids: number[]; tries: number; tok: number };
   /** 직접 경로를 끝내 못 찾음 (릴레이로 계속) */
   relayOnly?: boolean;
@@ -98,6 +110,8 @@ export class MeshAgent {
   endpoints: Endpoint[] = [];
   private loginTries = 0;
   private loginTok = 0;
+  /** 주기 확인(refresh) 타이머 — 로그인할 때마다 새로 (옛 타이머는 무시) */
+  private refreshTok = 0;
   private stunTx = 0;
   private nextTx: number;
   private tok = 0;
@@ -119,8 +133,11 @@ export class MeshAgent {
     return this.srv.brand;
   }
 
+  /** 내 UDP 포트 (기본 41641·9993. 공유기는 그 포트를 LAN 기기로 포워딩하면 다른 포트를 쓴다) */
+  portOverride: number | undefined;
+
   get port(): number {
-    return this.srv.port;
+    return this.portOverride ?? this.srv.port;
   }
 
   get up(): boolean {
@@ -129,7 +146,7 @@ export class MeshAgent {
 
   /** 이 메시지가 내 것인가 (UDP 목적지 포트) */
   ownsPort(port: number): boolean {
-    return this.config.enabled && port === this.srv.port;
+    return this.config.enabled && port === this.port;
   }
 
   /** 기다리는 STUN 응답인가 */
@@ -190,19 +207,19 @@ export class MeshAgent {
   private toControl(m: TsMessage, ctx: NodeContext): void {
     const me = this.io.myIp();
     if (!me) return;
-    this.io.send({ kind: "ipv4", src: me, dst: this.srv.control, ttl: 64, payload: { kind: "udp", srcPort: this.srv.port, dstPort: this.srv.controlPort, payload: m } }, ctx);
+    this.io.send({ kind: "ipv4", src: me, dst: this.srv.control, ttl: 64, payload: { kind: "udp", srcPort: this.port, dstPort: this.srv.controlPort, payload: m } }, ctx);
   }
 
   private toRelay(m: TsMessage, ctx: NodeContext): void {
     const me = this.io.myIp();
     if (!me) return;
-    this.io.send({ kind: "ipv4", src: me, dst: this.srv.relay, ttl: 64, payload: { kind: "udp", srcPort: this.srv.port, dstPort: this.srv.relayPort, payload: m } }, ctx);
+    this.io.send({ kind: "ipv4", src: me, dst: this.srv.relay, ttl: 64, payload: { kind: "udp", srcPort: this.port, dstPort: this.srv.relayPort, payload: m } }, ctx);
   }
 
   private toPeer(to: Endpoint, m: TsMessage, ctx: NodeContext): void {
     const me = this.io.myIp();
     if (!me) return;
-    this.io.send({ kind: "ipv4", src: me, dst: to.ip, ttl: 64, payload: { kind: "udp", srcPort: this.srv.port, dstPort: to.port, payload: m } }, ctx);
+    this.io.send({ kind: "ipv4", src: me, dst: to.ip, ttl: 64, payload: { kind: "udp", srcPort: this.port, dstPort: to.port, payload: m } }, ctx);
   }
 
   private login(ctx: NodeContext): void {
@@ -212,8 +229,8 @@ export class MeshAgent {
     this.phase = "login";
     this.loginTries = 1;
     const tok = ++this.loginTok;
-    this.endpoints = [{ ip: me, port: this.srv.port }];
-    ctx.trace("mesh.login", "app", `${this.brand}: ${this.srv.controlName} ${this.srv.control} 에 로그인 (노드 키 ${c.key.slice(0, 8)}…, 후보 ${me}:${this.srv.port})`, { mesh: c.net });
+    this.endpoints = [{ ip: me, port: this.port }];
+    ctx.trace("mesh.login", "app", `${this.brand}: ${this.srv.controlName} ${this.srv.control} 에 로그인 (노드 키 ${c.key.slice(0, 8)}…, 후보 ${me}:${this.port})`, { mesh: c.net });
     this.toControl({ kind: "ts", net: c.net, op: "login", network: c.network, name: c.name, key: c.key, endpoints: this.endpoints, routes: c.routes, exitNode: c.exitNode }, ctx);
     ctx.timer(WAIT, TS_TIMER_TAG, { mesh: "login", tok });
     this.stunTx = 0;
@@ -228,7 +245,7 @@ export class MeshAgent {
     this.toRelay({ kind: "ts", net: c.net, op: "derp-hello", key: c.key }, ctx);
     if (this.endpoints.length > 1) return;
     this.stunTx = this.nextTx++;
-    this.io.send({ kind: "ipv4", src: me, dst: STUN_SERVERS[0]!, ttl: 64, payload: { kind: "udp", srcPort: this.srv.port, dstPort: STUN_PORT, payload: { kind: "stun", op: "binding-request", txid: this.stunTx } } }, ctx);
+    this.io.send({ kind: "ipv4", src: me, dst: STUN_SERVERS[0]!, ttl: 64, payload: { kind: "udp", srcPort: this.port, dstPort: STUN_PORT, payload: { kind: "stun", op: "binding-request", txid: this.stunTx } } }, ctx);
   }
 
   /** 내 포트로 온 STUN 응답: 바깥 주소를 후보에 더해 조정 서버에 알린다 */
@@ -237,7 +254,7 @@ export class MeshAgent {
     if (!m.mapped) return;
     const mapped = m.mapped;
     if (this.endpoints.some((e) => sameEp(e, mapped))) {
-      ctx.trace("mesh.endpoint", "app", `${this.brand}: STUN 이 본 내 주소 ${ep(mapped)} = 내 주소 (NAT 없음)`, { mesh: this.config.net }, frameId);
+      if (mapped.ip === this.io.myIp()) ctx.trace("mesh.endpoint", "app", `${this.brand}: STUN 이 본 내 주소 ${ep(mapped)} = 내 주소 (NAT 없음)`, { mesh: this.config.net }, frameId);
       return;
     }
     this.endpoints = [...this.endpoints.filter((e) => this.io.local(e.ip) || e.ip === this.io.myIp()), mapped];
@@ -275,6 +292,7 @@ export class MeshAgent {
     const first = this.phase !== "up";
     this.phase = "up";
     this.loginTok++;
+    if (first) ctx.timer(REFRESH, TS_TIMER_TAG, { mesh: "refresh", tok: ++this.refreshTok }, true);
     if (m.self) this.self = { ...m.self };
     const seen = new Set<string>();
     for (const info of m.peers ?? []) {
@@ -300,7 +318,7 @@ export class MeshAgent {
       { mesh: c.net, peers: online.length },
       frameId,
     );
-    if (c.useExitNode && !online.some((p) => p.info.name === c.useExitNode && p.info.exitNode))
+    if (c.useExitNode && !online.some((p) => meshHostname(p.info.name) === meshHostname(c.useExitNode!) && p.info.exitNode))
       ctx.trace("mesh.drop", "app", `${this.brand}: exit node "${c.useExitNode}" 이(가) netmap 에 없거나 exit node 를 내주지 않음 → 인터넷은 평소처럼`, { mesh: c.net }, frameId);
   }
 
@@ -343,7 +361,11 @@ export class MeshAgent {
       }
       p.rx++;
       // 직접 받은 데이터: 상대 주소가 바뀌었으면 따라간다 (로밍)
-      if (from && !sameEp(p.path, from)) p.path = from;
+      if (from) {
+        p.path = from;
+        p.pathAt = ctx.now;
+        p.relayOnly = undefined;
+      }
       ctx.trace("mesh.decap", "L3", `${this.brand}: ${p.info.name} 에게서 (${via}) ${inner.src} → ${inner.dst} 를 꺼냄`, { mesh: c.net }, frameId);
       return inner;
     }
@@ -353,6 +375,7 @@ export class MeshAgent {
   private setPath(p: PeerState, at: Endpoint, ctx: NodeContext, frameId?: number): void {
     const had = p.path;
     p.path = at;
+    p.pathAt = ctx.now;
     p.relayOnly = undefined;
     if (p.disco) p.disco = undefined;
     if (!sameEp(had, at))
@@ -389,7 +412,7 @@ export class MeshAgent {
   }
 
   /** 이 목적지를 맡을 피어 (메시 주소 → 알린 대역 중 가장 긴 것 → exit node) */
-  route(dst: Ip): PeerState | undefined {
+  route(dst: Ip, exit = true): PeerState | undefined {
     if (!this.up) return undefined;
     const online = [...this.peers.values()].filter((p) => p.info.online);
     const exact = online.find((p) => p.info.ip === dst);
@@ -403,8 +426,8 @@ export class MeshAgent {
           bestLen = r.prefix;
         }
     if (best) return best;
-    const exit = this.config.useExitNode;
-    if (exit) return online.find((p) => p.info.name === exit && p.info.exitNode);
+    const want = this.config.useExitNode;
+    if (exit && want) return online.find((p) => meshHostname(p.info.name) === meshHostname(want) && p.info.exitNode);
     return undefined;
   }
 
@@ -418,6 +441,18 @@ export class MeshAgent {
     const c = this.config;
     const data: TsMessage = { kind: "ts", net: c.net, op: "data", key: c.key, inner };
     p.tx++;
+    if (p.relayOnly && p.relayOnlyAt !== undefined && ctx.now - p.relayOnlyAt >= RELAY_RETRY) p.relayOnly = undefined;
+    if (p.path && ctx.now - (p.pathAt ?? 0) > PATH_TRUST) {
+      // 오래 확인하지 못한 직접 경로: 그대로 보내되 릴레이로도 보내고 다시 확인한다 (그 사이 NAT·주소가 바뀌었을 수 있다)
+      ctx.trace("mesh.encap", "L3", `${this.brand}: ${inner.src} → ${inner.dst} 를 ${p.info.name} 에게 — 직접 경로 ${ep(p.path)} 를 ${PATH_TRUST / 1000}초 넘게 확인하지 못해 ${this.srv.relayName}로 보내며 다시 확인`, { mesh: c.net, direct: false }, frameId);
+      const stale = p.path;
+      p.path = undefined;
+      p.relayed++;
+      this.toRelay({ kind: "ts", net: c.net, op: "derp-send", key: c.key, to: p.info.key, msg: data }, ctx);
+      if (!p.info.endpoints.some((e) => sameEp(e, stale))) p.info = { ...p.info, endpoints: [...p.info.endpoints, stale] };
+      this.startDisco(p, ctx, true);
+      return;
+    }
     if (p.path) {
       ctx.trace("mesh.encap", "L3", `${this.brand}: ${inner.src} → ${inner.dst} 를 ${p.info.name} 에게 직접 (${ep(p.path)})`, { mesh: c.net, direct: true }, frameId);
       this.toPeer(p.path, data, ctx);
@@ -430,14 +465,18 @@ export class MeshAgent {
   }
 
   /** 기기(호스트)가 내보낼 패킷: 메시로 갈 목적지면 출발지를 메시 주소로 바꿔 보낸다. 가로챘으면 true */
-  intercept(pkt: Ipv4Packet, ctx: NodeContext): boolean {
+  intercept(pkt: Ipv4Packet, ctx: NodeContext, exit = true): boolean {
     if (!this.up) return false;
     const p0 = pkt.payload;
     if (p0.kind === "udp" && (p0.payload.kind === "ts" || p0.payload.kind === "dhcp" || p0.payload.kind === "stun")) return false;
     if (pkt.dst === "255.255.255.255" || this.io.local(pkt.dst)) return false;
     const s = this.srv;
     if (pkt.dst === s.control || pkt.dst === s.relay || STUN_SERVERS.includes(pkt.dst)) return false;
-    const peer = this.route(pkt.dst);
+    if (pkt.dst === this.self!.ip && this.io.loopback) {
+      this.io.loopback(pkt, ctx);
+      return true;
+    }
+    const peer = this.route(pkt.dst, exit);
     if (!peer) return false;
     // 피어의 바깥 주소로 가는 것(터널 자신)은 터널로 넣지 않는다
     if (peer.info.endpoints.some((e) => e.ip === pkt.dst) && pkt.dst !== peer.info.ip) return false;
@@ -452,7 +491,7 @@ export class MeshAgent {
     const suffix = `.${meshHostname(this.config.network)}.ts.net`;
     const short = n.endsWith(suffix) ? n.slice(0, -suffix.length) : n.includes(".") ? undefined : n;
     if (!short) return undefined;
-    if (short === meshHostname(this.config.name)) return this.self!.ip;
+    if (short === meshHostname(this.self!.name)) return this.self!.ip;
     return [...this.peers.values()].find((p) => p.info.online && meshHostname(p.info.name) === short)?.info.ip;
   }
 
@@ -478,13 +517,27 @@ export class MeshAgent {
       ctx.timer(LOGIN_RETRY, TS_TIMER_TAG, { mesh: "login-bg", tok: d.tok }, true);
       return;
     }
+    if (d.mesh === "refresh") {
+      if (d.tok !== this.refreshTok || this.phase !== "up") return;
+      // 조정 서버·릴레이 연결 유지(내 바깥 주소가 바뀌었으면 거기로 다시 잡힌다)와 STUN 으로 바깥 주소 다시 확인
+      const me = this.io.myIp();
+      if (me) {
+        this.toControl({ kind: "ts", net: c.net, op: "endpoints", network: c.network, key: c.key, endpoints: this.endpoints, routes: c.routes, exitNode: c.exitNode }, ctx);
+        this.toRelay({ kind: "ts", net: c.net, op: "derp-hello", key: c.key }, ctx);
+        this.stunTx = this.nextTx++;
+        this.io.send({ kind: "ipv4", src: me, dst: STUN_SERVERS[0]!, ttl: 64, payload: { kind: "udp", srcPort: this.port, dstPort: STUN_PORT, payload: { kind: "stun", op: "binding-request", txid: this.stunTx } } }, ctx);
+      }
+      ctx.timer(REFRESH, TS_TIMER_TAG, { mesh: "refresh", tok: d.tok }, true);
+      return;
+    }
     if (d.mesh === "disco" && d.key) {
       const p = this.peers.get(d.key);
       if (!p?.disco || p.disco.tok !== d.tok) return;
       if (p.disco.tries >= DISCO_TRIES) {
         p.disco = undefined;
         p.relayOnly = true;
-        ctx.trace("mesh.relay", "app", `${this.brand}: ${p.info.name} 과(와) 직접 경로를 찾지 못함 (disco ping ${DISCO_TRIES}번에 pong 없음 — 양쪽 NAT 가 직접 받지 않음, 대개 한쪽이 symmetric) → ${this.srv.relayName}로 계속 (느리지만 늘 된다)`, { mesh: c.net, peer: p.info.name });
+        p.relayOnlyAt = ctx.now;
+        ctx.trace("mesh.relay", "app", `${this.brand}: ${p.info.name} 과(와) 직접 경로를 찾지 못함 (disco ping ${DISCO_TRIES}번에 pong 없음 — 양쪽 NAT 가 직접 받지 않거나(대개 한쪽이 symmetric) 방화벽이 UDP 를 막음) → ${this.srv.relayName}로 계속 (느리지만 늘 된다, ${RELAY_RETRY / 1000}초 뒤 보낼 때 다시 시도)`, { mesh: c.net, peer: p.info.name });
         return;
       }
       this.discoRound(p, ctx);
@@ -528,6 +581,8 @@ function isPrivate(ip: Ip): boolean {
 
 interface NodeRec {
   name: string;
+  /** 기기가 알려 온 이름 (겹치면 name 은 -1·-2 를 붙인 것) */
+  want: string;
   key: string;
   ip: Ip;
   endpoints: Endpoint[];
@@ -578,14 +633,21 @@ export class MeshCoordinator {
       const net = this.netOf(m.net, network);
       let rec = net.nodes.get(m.key ?? "");
       const prefix = MESH_SUBNET[m.net];
+      const want = m.name ?? "device";
+      // 같은 이름이 이미 있으면 뒤에 -1, -2 … 를 붙인다 (Tailscale 의 기기 이름 규칙)
+      const unique = (self: string) => {
+        const taken = (x: string) => [...net.nodes.values()].some((o) => o.key !== self && meshHostname(o.name) === meshHostname(x));
+        if (!taken(want)) return want;
+        for (let i = 1; ; i++) if (!taken(`${want}-${i}`)) return `${want}-${i}`;
+      };
       if (!rec) {
         const n = net.next++;
         const ip = m.net === "tailscale" ? `100.64.${Math.floor(n / 254)}.${(n % 254) + 1}` : `${prefix.base}.${n + 1}`;
-        // 같은 이름이 이미 있으면 뒤에 -1 을 붙인다 (Tailscale 의 기기 이름 규칙)
-        let name = m.name ?? "device";
-        if ([...net.nodes.values()].some((x) => meshHostname(x.name) === meshHostname(name))) name = `${name}-1`;
-        rec = { name, key: m.key ?? "", ip, endpoints: [], routes: [], exitNode: false, online: true, ctl: from };
+        rec = { name: unique(m.key ?? ""), want, key: m.key ?? "", ip, endpoints: [], routes: [], exitNode: false, online: true, ctl: from };
         net.nodes.set(rec.key, rec);
+      } else if (rec.want !== want) {
+        rec.want = want;
+        rec.name = unique(rec.key);
       }
       rec.online = true;
       rec.ctl = from;
