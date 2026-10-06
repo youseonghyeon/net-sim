@@ -19,7 +19,8 @@ import { sim, simVersion } from "../../model/sim";
 import { WifiBaseSection } from "./host";
 import { FirewallSection, ForwardSection, NatTypeSection } from "./rules";
 import { Icon } from "../Icons";
-import { Field, Section, Toggle, ipError, validIp } from "./ui";
+import { ConfigGroups, Field, Section, Toggle, ipError, validIp } from "./ui";
+import { WgClientSection, WgServerSection } from "./wg";
 
 /** LAN 주소/서브넷이 바뀔 때, 기존 범위가 옛 서브넷 안에 있었다면 호스트 부분을 유지한 채 새 서브넷으로 옮긴다 */
 export function remapRange(oldIp: string, oldPrefix: number, newIp: string, newPrefix: number, range: { start: string; end: string }): { start: string; end: string } | null {
@@ -47,7 +48,7 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
     const moved = remapRange(r.lanIp, r.lanPrefix, lanIp, lanPrefix, r.dhcp);
     set({ lanIp, lanPrefix, dhcp: moved ? { ...r.dhcp, ...moved } : r.dhcp });
   };
-  return (
+  const network = (
     <>
       <Section title="LAN 인터페이스">
         <Field label="IP 주소" error={ipError(r.lanIp, true)}>
@@ -94,15 +95,52 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
           <p class="note">꺼져 있으면 호스트는 주소를 받지 못합니다. 각 호스트에서 IP 를 수동으로 설정해야 통신할 수 있습니다.</p>
         )}
       </Section>
-      <WanSection d={d} w={r.wan ?? DEFAULT_WAN} />
-      <WifiBaseSection d={d} />
       <RouterDnsSection d={d} r={r} />
-      <RouterIpv6Section d={d} r={r} />
-      <RouterVpnSection d={d} r={r} />
-      <ForwardSection rules={r.forwards ?? []} onChange={(forwards) => set({ forwards })} lanHint="예: 공인 :80 → 192.168.0.20:80 (LAN 의 웹 서버)." />
-      <NatTypeSection natType={r.natType ?? "full-cone"} hairpin={r.hairpin === true} onChange={(patch) => set(patch)} />
-      <FirewallSection value={r.firewall ?? DEFAULT_FIREWALL_SETTINGS} onChange={(firewall) => set({ firewall })} uplinkName="WAN" />
+      <WifiBaseSection d={d} />
     </>
+  );
+  return (
+    <ConfigGroups
+      scope="router"
+      groups={[
+        { id: "network", label: "네트워크", content: network },
+        {
+          id: "internet",
+          label: "인터넷",
+          on: r.ipv6?.enabled === true,
+          content: (
+            <>
+              <WanSection d={d} w={r.wan ?? DEFAULT_WAN} />
+              <RouterIpv6Section d={d} r={r} />
+            </>
+          ),
+        },
+        {
+          id: "vpn",
+          label: "VPN",
+          on: r.wgServer?.enabled === true || r.wgClient?.enabled === true || r.vpnServer?.enabled === true,
+          content: (
+            <>
+              <WgServerSection d={d} r={r} />
+              <WgClientSection d={d} r={r} />
+              <RouterVpnSection d={d} r={r} />
+            </>
+          ),
+        },
+        {
+          id: "security",
+          label: "보안",
+          on: r.firewall?.enabled === true || (r.forwards?.length ?? 0) > 0 || r.hairpin === true,
+          content: (
+            <>
+              <FirewallSection value={r.firewall ?? DEFAULT_FIREWALL_SETTINGS} onChange={(firewall) => set({ firewall })} uplinkName="WAN" />
+              <ForwardSection rules={r.forwards ?? []} onChange={(forwards) => set({ forwards })} lanHint="예: 공인 :80 → 192.168.0.20:80 (LAN 의 웹 서버)." />
+              <NatTypeSection natType={r.natType ?? "full-cone"} hairpin={r.hairpin === true} onChange={(patch) => set(patch)} />
+            </>
+          ),
+        },
+      ]}
+    />
   );
 }
 
@@ -172,7 +210,7 @@ export function RouterVpnSection({ d, r }: { d: Device; r: RouterSettings }) {
   const node = sim.node(d.id);
   const connected = node instanceof Router ? node.vpnServer.connected : [];
   return (
-    <Section title="VPN 서버">
+    <Section title="VPN 서버 (L2TP/IPsec)">
       <label class="toggle-row">
         <span>
           {v.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">L2TP/IPsec · UDP 500·4500·1701</span>

@@ -75,6 +75,8 @@ export class NatTable {
   onNew?: (e: NatEntry, ctx: NodeContext) => void;
   /** NAT 종류 (매핑·필터링 방식) */
   type: NatType = "full-cone";
+  /** 변환 로그의 "왜" (기본: 사설 → 공인). VPN 터널 쪽 NAT 처럼 바뀌는 주소가 공인 주소가 아닐 때 */
+  why = "사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록";
 
   /** 다른 장비(이중화 master)가 만든 매핑을 공인 id 그대로 받아 둔다. 이후 이 장비가 할당할 id 와 겹치지 않게 한다 */
   importEntry(e: Pick<NatEntry, "proto" | "lanIp" | "innerId" | "publicId" | "dest">, now: number): void {
@@ -168,7 +170,7 @@ export class NatTable {
     ctx.trace(
       "nat.translate",
       "L3",
-      `NAT 변환: ${pkt.src} (${unit} ${innerId}) → ${publicIp} (${unit} ${entry.publicId}) — 사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록`,
+      `NAT 변환: ${pkt.src} (${unit} ${innerId}) → ${publicIp} (${unit} ${entry.publicId}) — ${this.why}`,
       { proto, lanIp: pkt.src, innerId, publicId: entry.publicId },
       frameId,
     );

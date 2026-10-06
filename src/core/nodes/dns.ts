@@ -266,6 +266,8 @@ export interface DnsServerConfig {
 }
 
 interface PendingUpstream {
+  /** 클라이언트가 질의를 보낸 주소가 인터페이스 주소가 아니면 그 주소 (거기서 답한다) */
+  replyFrom?: Ip;
   clientIp: Ip;
   clientPort: number;
   clientId: number;
@@ -279,6 +281,10 @@ export class DnsServer {
   readonly cache = new Map<string, { ip: Ip; at: number }>();
   private readonly pendingUpstream = new Map<number, PendingUpstream>();
   private idSeq = 0x7000;
+  /** 지금 물어볼 업스트림을 바꿔야 할 때 (공유기 VPN 클라이언트가 연결되면 VPN 의 DNS — DNS 유출 방지). 없거나 undefined 면 설정값 */
+  upstreamFor: (() => Ip | undefined) | undefined;
+  /** 질의를 받은 주소가 이 인터페이스 주소가 아니어도 그 주소로 답해야 할 때 (VPN 터널 주소로 온 질의) */
+  answersAt: ((dst: Ip) => boolean) | undefined;
 
   constructor(
     public config: DnsServerConfig,
@@ -316,32 +322,33 @@ export class DnsServer {
       ctx.trace("dns.nxdomain", "app", `${this.label} 가 꺼져 있음 → 응답하지 않음`, { name }, frameId);
       return;
     }
+    const replyFrom = pkt.kind === "ipv4" && pkt.dst !== this.iface.ip && this.answersAt?.(pkt.dst) ? pkt.dst : undefined;
     const answer = (m: Omit<DnsMessage, "kind" | "id" | "op" | "name">): DnsMessage => ({ kind: "dns", id: msg.id, op: "response", name: msg.name, ...(qtype === "AAAA" ? { qtype } : {}), ...m });
     const ip = this.lookup(name, ctx.now, qtype);
     if (ip) {
       const fromCache = !this.config.records.some((r) => normalizeName(r.name) === name && qtypeOf(r.ip) === qtype);
       ctx.trace("dns.response.sent", "app", `${this.label}: ${name}${tq} = ${ip} 응답 (${fromCache ? "업스트림 서버 답 캐시" : "내 레코드"}) → ${pkt.src}`, { name, ip, to: pkt.src, qtype });
-      this.respond(pkt.src, srcPort, answer({ answer: ip }), ctx, emit);
+      this.respond(pkt.src, srcPort, answer({ answer: ip }), ctx, emit, replyFrom);
       return;
     }
     // 내 레코드에 이름은 있는데 그 종류가 없다: 이 이름의 주인이므로 업스트림에 묻지 않고 "없음(NODATA)"
     if (this.config.records.some((r) => normalizeName(r.name) === name)) {
       ctx.trace("dns.response.sent", "app", `${this.label}: ${name} 은(는) 내 레코드에 있지만 ${qtype} 레코드는 없음 → NOERROR, 답 0개 (NODATA) 응답 → ${pkt.src}`, { name, to: pkt.src, qtype, nodata: true });
-      this.respond(pkt.src, srcPort, answer({ rcode: "NODATA" }), ctx, emit);
+      this.respond(pkt.src, srcPort, answer({ rcode: "NODATA" }), ctx, emit, replyFrom);
       return;
     }
     const hops = msg.hops ?? 0;
-    const up = this.config.upstream;
+    const up = this.upstreamFor?.() ?? this.config.upstream;
     const upIsMe = !!up && (up === this.iface.ip || !!this.v6?.owns(up));
     if (up && !upIsMe && hops >= DNS_MAX_HOPS) {
       ctx.trace("dns.timeout", "app", `${this.label}: ${name} 질의가 서버 ${DNS_MAX_HOPS}대를 넘게 돌았음 → 서버들이 서로를 업스트림으로 가리키는 루프로 보고 SERVFAIL`, { name, hops });
-      this.respond(pkt.src, srcPort, answer({ rcode: "SERVFAIL" }), ctx, emit);
+      this.respond(pkt.src, srcPort, answer({ rcode: "SERVFAIL" }), ctx, emit, replyFrom);
       return;
     }
     if (up && !upIsMe) {
       const id = ++this.idSeq;
       const timer = ctx.timer(DNS_UPSTREAM_TIMEOUT, DNS_UPSTREAM_TIMER_TAG, { id });
-      this.pendingUpstream.set(id, { clientIp: pkt.src, clientPort: srcPort, clientId: msg.id, name, qtype, timer });
+      this.pendingUpstream.set(id, { ...(replyFrom ? { replyFrom } : {}), clientIp: pkt.src, clientPort: srcPort, clientId: msg.id, name, qtype, timer });
       ctx.trace("dns.forward", "app", `${this.label}: ${name}${tq} 은(는) 내 레코드에 없음 → 업스트림 DNS ${up} 에 대신 물어봄 (재귀 질의)`, { name, upstream: up });
       const up6 = isIpv6(up);
       const src = up6 ? this.v6?.sourceFor(up) : (this.upstreamPath?.srcIp() ?? this.iface.ip);
@@ -349,7 +356,7 @@ export class DnsServer {
         ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS 에 물어볼 인터페이스에 주소가 없음 → SERVFAIL`, { name });
         this.pendingUpstream.delete(id);
         timer.cancel();
-        this.respond(pkt.src, srcPort, answer({ rcode: "SERVFAIL" }), ctx, emit);
+        this.respond(pkt.src, srcPort, answer({ rcode: "SERVFAIL" }), ctx, emit, replyFrom);
         return;
       }
       const m: DnsMessage = { kind: "dns", id, op: "query", name, ...(qtype === "AAAA" ? { qtype } : {}), hops: hops + 1 };
@@ -363,7 +370,7 @@ export class DnsServer {
       return;
     }
     ctx.trace("dns.nxdomain", "app", `${this.label}: ${name} 은(는) 내 레코드에 없고 업스트림 DNS 도 없음 → NXDOMAIN 응답`, { name });
-    this.respond(pkt.src, srcPort, answer({ rcode: "NXDOMAIN" }), ctx, emit);
+    this.respond(pkt.src, srcPort, answer({ rcode: "NXDOMAIN" }), ctx, emit, replyFrom);
   }
 
   private handleUpstreamResponse(pkt: IpPacket, msg: DnsMessage, frameId: number, ctx: NodeContext, emit: Emit): void {
@@ -384,7 +391,7 @@ export class DnsServer {
     } else {
       ctx.trace("dns.nxdomain", "app", `${this.label}: 업스트림 DNS 도 ${p.name} 을(를) 모름 (${msg.rcode ?? "NXDOMAIN"}) → 클라이언트 ${p.clientIp} 에게 그대로 전달`, { name: p.name }, frameId);
     }
-    this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, ...(p.qtype === "AAAA" ? { qtype: p.qtype } : {}), answer: msg.answer, rcode: msg.rcode }, ctx, emit);
+    this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, ...(p.qtype === "AAAA" ? { qtype: p.qtype } : {}), answer: msg.answer, rcode: msg.rcode }, ctx, emit, p.replyFrom);
   }
 
   onTimeout(data: unknown, ctx: NodeContext, emit: Emit): void {
@@ -392,19 +399,19 @@ export class DnsServer {
     const p = this.pendingUpstream.get(id);
     if (!p) return;
     this.pendingUpstream.delete(id);
-    ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS ${this.config.upstream} timeout (응답 없음) → 클라이언트에게 SERVFAIL`, { name: p.name });
-    this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, ...(p.qtype === "AAAA" ? { qtype: p.qtype } : {}), rcode: "SERVFAIL" }, ctx, emit);
+    ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS ${this.upstreamFor?.() ?? this.config.upstream} timeout (응답 없음) → 클라이언트에게 SERVFAIL`, { name: p.name });
+    this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, ...(p.qtype === "AAAA" ? { qtype: p.qtype } : {}), rcode: "SERVFAIL" }, ctx, emit, p.replyFrom);
   }
 
   /** 질의가 온 IP 버전으로 답한다 */
-  private respond(to: Ip, toPort: number, msg: DnsMessage, ctx: NodeContext, emit: Emit): void {
+  private respond(to: Ip, toPort: number, msg: DnsMessage, ctx: NodeContext, emit: Emit, from?: Ip): void {
     if (isIpv6(to)) {
       const src = this.v6?.sourceFor(to);
       if (!src) return;
       this.v6!.send({ kind: "ipv6", src, dst: to, hopLimit: 64, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } }, ctx, emit);
       return;
     }
-    const pkt: Ipv4Packet = { kind: "ipv4", src: this.iface.ip!, dst: to, ttl: 64, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } };
+    const pkt: Ipv4Packet = { kind: "ipv4", src: from ?? this.iface.ip!, dst: to, ttl: 64, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: toPort, payload: msg } };
     this.iface.sendIp(pkt, ctx, emit);
   }
 

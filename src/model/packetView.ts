@@ -3,8 +3,8 @@
 // - headerLayers: 이더넷 → ARP/IPv4 → ICMP/TCP/UDP → DHCP/DNS/RIP 필드를 실제 번호(타입·코드·옵션)와 함께
 // - practitionerLines: 장치가 내린 판단을 실무 명령의 출력(시스코 debug, iptables LOG, dhclient, ping, curl …)으로
 // 시뮬레이터에 없는 필드(체크섬, 윈도우 크기, IP ID 등)는 넣지 않고, 길이는 근사값이다.
-import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, L2tpPacket, P2pMessage, StunMessage, TcpSegment, UdpPacket } from "../core/packet";
-import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE } from "../core/packet";
+import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, L2tpPacket, P2pMessage, StunMessage, TcpSegment, UdpPacket, WgMessage } from "../core/packet";
+import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE, wgLength } from "../core/packet";
 import { scopeLabel6 } from "../core/addr6";
 import type { TraceEvent } from "../core/trace";
 
@@ -69,6 +69,7 @@ function appLength(u: UdpPacket): number {
   if (m.kind === "l2tp") return 12 + pppLength(m.ppp); // L2TP 머리 + PPP
   if (m.kind === "stun") return 20 + (m.mapped ? 12 : 0) + (m.relayed ? 12 : 0) + (m.peer ? 12 : 0) + (m.data ? 4 + p2pLength(m.data) : 0); // 머리 20 + 속성
   if (m.kind === "p2p") return p2pLength(m);
+  if (m.kind === "wg") return wgLength(m, m.inner ? 20 + l4Length(m.inner.payload) : 0);
   return 4 + m.entries.length * 20; // RIP
 }
 
@@ -196,6 +197,8 @@ function udpText(u: UdpPacket): string {
   if (m.kind === "l2tp") return `l2tp:[${m.control ? "TLS" : "LS"}](${m.tunnelId}/${m.sessionId})${m.control ? ` *MSGTYPE(${m.control})` : m.ppp ? ` {${m.ppp.proto === "ip" ? "IP" : `${m.ppp.proto.toUpperCase()} ${m.ppp.code}`}}` : ""}`;
   // tcpdump 는 STUN·앱 메시지를 풀지 않는다
   if (m.kind === "stun" || m.kind === "p2p") return `UDP, length ${appLength(u)}`;
+  // WireGuard 도 암호화돼 tcpdump 는 길이만 (148 = Initiation, 92 = Response, 32 = keepalive)
+  if (m.kind === "wg") return `UDP, length ${appLength(u)}`;
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
 }
 
@@ -378,8 +381,50 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
       });
       layers.push(...ipLayers(inner, true));
     }
+    if (l4.payload.kind === "wg") {
+      const m = l4.payload;
+      layers.push(wgLayer(m));
+      if (m.inner) layers.push(...ipLayers(m.inner, true));
+    }
   }
   return inTunnel ? layers.map((l) => ({ ...l, title: `터널 안 · ${l.title}` })) : layers;
+}
+
+function wgLayer(m: WgMessage): HeaderLayer {
+  if (m.type === "initiation")
+    return {
+      title: "WireGuard",
+      rows: [
+        ["종류", "1 (Handshake Initiation, 148바이트)"],
+        ["보낸 세션 번호 (sender)", String(m.sender)],
+        ["정적 공개 키", `${m.static ?? "?"} — 상대 공개 키로 암호화돼 상대만 읽음`],
+        ["mac1", `받는 쪽 공개 키 ${m.to ?? "?"} 로 만든 값 — 받는 쪽은 이것부터 확인하고 맞지 않으면 답하지 않는다`],
+      ],
+    };
+  if (m.type === "response")
+    return {
+      title: "WireGuard",
+      rows: [
+        ["종류", "2 (Handshake Response, 92바이트)"],
+        ["보낸 세션 번호 (sender)", String(m.sender)],
+        ["받는 세션 번호 (receiver)", `${m.receiver} — 시작한 쪽이 Initiation 에 적은 번호`],
+        ["결과", "세션 키 생성 (1-RTT). 이제 양쪽이 데이터를 암호화해 주고받는다"],
+      ],
+    };
+  return {
+    title: "WireGuard",
+    rows: [
+      ["종류", m.inner ? "4 (Transport Data)" : "4 (Transport Data, 빈 내용 = keepalive)"],
+      ["받는 세션 번호 (receiver)", String(m.receiver)],
+      ["counter", `${m.counter ?? 0} (재전송 공격 방지)`],
+      ...(m.inner
+        ? ([
+            ["안쪽", "암호화됨 — 인터넷 위의 장비는 아래 원래 패킷을 볼 수 없다"],
+            ["원래 패킷 (복호화하면)", `${m.inner.src} → ${m.inner.dst}`],
+          ] as [string, string][])
+        : ([["안쪽", "없음 — 받았다는 표시(keepalive)"]] as [string, string][])),
+    ],
+  };
 }
 
 function espLayer(e: EspPacket, natT: boolean): HeaderLayer {
@@ -536,7 +581,7 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
       ]);
     return [udp, { title: "DNS (앱)", rows }];
   }
-  if (m.kind === "vpn" || m.kind === "esp") return [udp];
+  if (m.kind === "vpn" || m.kind === "esp" || m.kind === "wg") return [udp];
   if (m.kind === "ike") return [udp, ikeLayer(m)];
   if (m.kind === "dhcp6") {
     const TYPE: Record<typeof m.type, string> = { solicit: "1 (Solicit)", advertise: "2 (Advertise)", request: "3 (Request)", reply: "7 (Reply)", release: "8 (Release)" };
@@ -698,6 +743,7 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
   // 공유기 VPN (L2TP/IPsec): IKEv2 원격 접속의 strongSwan 줄 대신 IKEv1 charon·xl2tpd·pppd 줄
   const l2tp = ev.kind.startsWith("vpn.") && (detail(ev, "l2tp") !== undefined || detail(ev, "ppp") !== undefined);
   if (l2tp) l2tpLines(ev, ip, out);
+  else if (ev.kind.startsWith("vpn.") && detail(ev, "wg") !== undefined) wgLines(ev, frames, out);
   else switch (ev.kind) {
     case "ip.forward":
       if (ip) out.push({ tool: "시스코 debug ip packet", line: `IP: s=${ip.src}, d=${ip.dst} (${detail(ev, "out") ?? "?"}), len ${len}, forward` });
@@ -938,6 +984,50 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
  * 공유기 VPN (L2TP/IPsec) 트레이스의 실무 로그: 리눅스로 같은 서버·클라이언트를 만들면 쓰는 strongSwan(IKEv1)·xl2tpd·pppd 의 줄.
  * 서버 쪽 트레이스는 요약이 "VPN 서버" 로 시작한다
  */
+/**
+ * WireGuard: 리눅스 커널 모듈의 디버그 로그 (echo module wireguard +p > /sys/kernel/debug/dynamic_debug/control 로 켠다 — dmesg).
+ * 피어 번호는 장치마다 1부터 (여기서는 피어를 하나로 보고 1)
+ */
+function wgLines(ev: TraceEvent, frames: { received?: EthernetFrame; sent?: EthernetFrame }, out: PractitionerLine[]): void {
+  const tool = "리눅스 커널 로그 (wireguard dyndbg)";
+  const ep = (f: EthernetFrame | undefined, dir: "src" | "dst") => {
+    if (!f || f.payload.kind !== "ipv4" || f.payload.payload.kind !== "udp") return "?";
+    const u = f.payload.payload;
+    return dir === "src" ? `${f.payload.src}:${u.srcPort}` : `${f.payload.dst}:${u.dstPort}`;
+  };
+  const from = ep(frames.received, "src");
+  const to = ep(frames.sent, "dst");
+  const line = (l: string) => out.push({ tool, line: `wireguard: wg0: ${l}` });
+  switch (ev.kind) {
+    case "vpn.handshake":
+      if (detail(ev, "from") !== undefined) {
+        line(`Receiving handshake initiation from peer 1 (${from})`);
+        line(`Sending handshake response to peer 1 (${from})`);
+        line(`Keypair ${detail(ev, "local") ?? 1} created for peer 1`);
+      } else {
+        const tries = Number(detail(ev, "tries") ?? 1);
+        if (ev.summary.includes("받지 못함")) line(`Retrying handshake with peer 1 (${to}) because we stopped hearing back after 15 seconds`);
+        else if (tries > 1) line(`Handshake for peer 1 (${to}) did not complete after 5 seconds, retrying (try ${tries})`);
+        line(`Sending handshake initiation to peer 1 (${to})`);
+      }
+      break;
+    case "vpn.up":
+      line(`Receiving handshake response from peer 1 (${from})`);
+      line(`Keypair 1 created for peer 1`);
+      break;
+    case "vpn.keepalive":
+      if (detail(ev, "from") !== undefined) line(`Receiving keepalive packet from peer 1 (${from})`);
+      else line(`Sending keepalive packet to peer 1 (${to})`);
+      break;
+    case "vpn.drop":
+      if (detail(ev, "reason") === "mac1") line(`Invalid MAC of handshake, dropping packet from ${from}`);
+      else if (detail(ev, "reason") === "unknown-key") line(`Invalid handshake initiation from ${from}`);
+      else if (detail(ev, "src") !== undefined) line(`Packet has unallowed src IP (${detail(ev, "src")}) from peer 1 (${from})`);
+      else if (detail(ev, "failed") === "true") line(`Handshake for peer 1 did not complete after 3 attempts, giving up`);
+      break;
+  }
+}
+
 function l2tpLines(ev: TraceEvent, ip: Ipv4Packet | undefined, out: PractitionerLine[]): void {
   const server = ev.summary.startsWith("VPN 서버");
   const from = detail(ev, "from") ?? ip?.src ?? "?";

@@ -5,6 +5,7 @@ import type { TraceEvent, TraceKind } from "./trace";
 import { Host } from "./nodes/host";
 import { Internet } from "./nodes/internet";
 import { L3Node } from "./nodes/l3";
+import { Router } from "./nodes/router";
 import type { NodeContext, SimNode, TimerHandle } from "./nodes/node";
 
 export interface Endpoint {
@@ -372,8 +373,9 @@ export class Network {
         this.getHost(action.nodeId).p2p.connect(action.peer, ctx);
         break;
       case "ra-reconnect":
-        ctx.trace("action", "sys", `[사용자] 원격 접속 VPN 다시 연결`, { ...action });
-        this.getHost(action.nodeId).ra.reconnect(ctx);
+        ctx.trace("action", "sys", `[사용자] ${node instanceof Router ? "VPN 클라이언트" : "원격 접속 VPN"} 다시 연결`, { ...action });
+        if (node instanceof Router) node.wgReconnect(ctx);
+        else this.getHost(action.nodeId).ra.reconnect(ctx);
         break;
       case "vpn-dpd":
         ctx.trace("action", "sys", `[사용자] VPN 상대 확인 (DPD)`, { ...action });

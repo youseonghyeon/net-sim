@@ -21,7 +21,7 @@ import {
 } from "../../model/topology";
 import { Icon } from "../Icons";
 import { FirewallSection, ForwardSection, NatTypeSection } from "./rules";
-import { Field, IfaceFields, Section, Toggle, ip6Error, ipError, validIp } from "./ui";
+import { ConfigGroups, Field, IfaceFields, Section, Toggle, ip6Error, ipError, validIp } from "./ui";
 
 /** 다른 수동 인터페이스와 서브넷이 겹치면 그 인터페이스 이름 */
 export function subnetClash(l3: L3Settings, names: string[], i: number): string | undefined {
@@ -55,7 +55,7 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
       return { ...x, l3: { ...cur, interfaces } };
     });
   const setRoutes = (routes: L3Settings["routes"]) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), routes } }));
-  return (
+  const interfaces = (
     <>
       {spec.ports.map((p, i) => {
         const v = l3.interfaces[i] ?? { ipMode: "static" as const, ip: "", prefix: 24, gateway: "" };
@@ -84,6 +84,10 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
         );
       })}
       {!isNat && <SubIfaceSection d={d} l3={l3} />}
+    </>
+  );
+  const routing = (
+    <>
       <Section title="스태틱 라우팅">
         {l3.routes.length === 0 && <p class="note">연결된 서브넷과 디폴트 라우트 외에 알아야 할 경로가 있으면 추가합니다. {isNat ? "안쪽에 라우터가 또 있으면 그 뒤 서브넷(예: 192.168.0.0/16)을 안쪽 라우터로 보내는 경로가 필요합니다." : ""}</p>}
         {l3.routes.map((r, i) => (
@@ -105,11 +109,12 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
           경로 추가
         </button>
       </Section>
-      <Ipv6L3Section d={d} l3={l3} />
       <RipSection d={d} l3={l3} />
-      <VpnSection d={d} l3={l3} />
-      <RaServerSection d={d} l3={l3} />
-      <HaSection d={d} l3={l3} />
+      <Ipv6L3Section d={d} l3={l3} />
+    </>
+  );
+  const security = (
+    <>
       {d.kind === "gateway" && <GatewayNatSection d={d} l3={l3} />}
       {natOn(d) && (
         <ForwardSection
@@ -132,6 +137,28 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
       />
       <PublishSection d={d} l3={l3} />
     </>
+  );
+  return (
+    <ConfigGroups
+      scope={d.kind}
+      groups={[
+        { id: "interfaces", label: "인터페이스", content: interfaces },
+        { id: "routing", label: "라우팅", on: l3.rip?.enabled === true || l3.ipv6?.enabled === true, content: routing },
+        { id: "security", label: isNat ? "NAT·보안" : "보안·NAT", on: (!isNat && natOn(d)) || l3.firewall?.enabled === true || (l3.publish?.length ?? 0) > 0, content: security },
+        {
+          id: "vpn",
+          label: "VPN",
+          on: l3.vpn?.enabled === true || l3.ra?.enabled === true,
+          content: (
+            <>
+              <VpnSection d={d} l3={l3} />
+              <RaServerSection d={d} l3={l3} />
+            </>
+          ),
+        },
+        { id: "ha", label: "이중화", on: l3.ha?.enabled === true, content: <HaSection d={d} l3={l3} /> },
+      ]}
+    />
   );
 }
 

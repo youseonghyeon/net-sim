@@ -204,6 +204,16 @@ export type TraceKind =
   | "vpn.eap"
   /** DPD (Dead Peer Detection): 빈 INFORMATIONAL 요청·응답, 상대가 살아 있음 */
   | "vpn.dpd"
+  /** WireGuard 핸드셰이크 (Initiation·Response) */
+  | "vpn.handshake"
+  /** WireGuard keepalive (빈 데이터) */
+  | "vpn.keepalive"
+  /** WireGuard 엔드포인트 로밍 (피어의 바깥 주소가 바뀜) */
+  | "vpn.roam"
+  /** VPN 이 끊겨 킬 스위치가 꺼진 공유기가 WAN 으로 바로 내보냄 (실제 주소 노출) */
+  | "vpn.leak"
+  /** 킬 스위치가 VPN 밖으로 나가는 것을 막음 */
+  | "vpn.killswitch"
   | "ha.config"
   | "ha.state"
   | "ha.advert"
@@ -281,5 +291,6 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "lb.down",
   "lb.fail",
   "vpn.drop",
+  "vpn.leak",
   "p2p.failed",
 ]);

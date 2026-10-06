@@ -404,7 +404,7 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage;
 }
 
 /** STUN·TURN (UDP 3478) */
@@ -493,6 +493,45 @@ export interface VpnMessage {
 }
 
 export const VPN_PORT = 51820;
+
+/**
+ * WireGuard (UDP, 기본 51820): 공개 키로 서로를 알아보는 VPN. 메시지는 네 가지뿐이다.
+ * - initiation (148바이트): 시작한 쪽이 보낸다. 자기 정적 공개 키는 응답자 공개 키로 암호화돼 응답자만 읽을 수 있고,
+ *   mac1 은 응답자 공개 키로 만든다 — 응답자 공개 키를 잘못 알고 있으면 응답자는 읽지도 않고 버린다
+ * - response (92바이트): 응답자가 보낸다. 이것으로 세션 키가 생긴다 (1-RTT)
+ * - data (32바이트 + 암호화된 원래 패킷): receiver = 받는 쪽이 정한 세션 번호. inner 가 없으면 keepalive (32바이트)
+ * 시뮬레이터는 암호화하지 않고 키 문자열을 그대로 싣는다 (화면에는 "암호화됨" 으로만 보인다)
+ */
+export interface WgMessage {
+  kind: "wg";
+  type: "initiation" | "response" | "data";
+  /** 보낸 쪽이 정한 자기 세션 번호 (sender index) */
+  sender?: number;
+  /** 받는 쪽의 세션 번호 (response·data) */
+  receiver?: number;
+  /** initiation: 시작한 쪽의 정적 공개 키 (실제로는 암호화돼 응답자만 읽음) */
+  static?: string;
+  /** initiation: 시작한 쪽이 알고 있는 응답자 공개 키 (실제로는 이 키로 만든 mac1) */
+  to?: string;
+  /** data: 일련번호 (재전송 공격 방지) */
+  counter?: number;
+  /** data: 복호화했을 때의 원래 패킷. 없으면 keepalive */
+  inner?: Ipv4Packet;
+}
+
+/** WireGuard 메시지의 UDP 길이 (실제 형식의 크기) */
+export function wgLength(m: WgMessage, innerLength: number): number {
+  if (m.type === "initiation") return 148;
+  if (m.type === "response") return 92;
+  // data: 머리 16 + 암호화된 원래 패킷(16바이트 단위로 채움) + 인증 태그 16
+  return 32 + (m.inner ? Math.ceil(innerLength / 16) * 16 : 0);
+}
+
+export function wgLabel(m: WgMessage): string {
+  if (m.type === "initiation") return `WireGuard 핸드셰이크 시작 (Initiation, 보낸 세션 ${m.sender})`;
+  if (m.type === "response") return `WireGuard 핸드셰이크 응답 (Response, 세션 ${m.sender} ↔ ${m.receiver})`;
+  return m.inner ? `WireGuard 데이터 (세션 ${m.receiver} · 암호화됨 · 안: ${m.inner.src} → ${m.inner.dst})` : `WireGuard keepalive (세션 ${m.receiver})`;
+}
 
 /**
  * IPsec ESP (IP 프로토콜 50): 원래 IP 패킷을 암호화해 담는다. 포트가 없어서 NAT 가 변환할 수 없다 —
@@ -739,6 +778,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (d.kind === "dns") return d.op === "query" ? `DNS 질의 (${d.name}${d.qtype === "AAAA" ? " AAAA" : ""}?)` : `DNS 응답 (${d.name}${d.qtype === "AAAA" ? " AAAA" : ""} = ${d.answer ?? (d.rcode === "NODATA" ? "레코드 없음" : d.rcode)})`;
   if (d.kind === "rip") return d.command === "request" ? "RIP Request (전체 경로 요청)" : `RIP Response (경로 ${d.entries.length}개)`;
   if (d.kind === "vpn") return `VPN 터널 (암호화됨 · 안: ${d.inner.src} → ${d.inner.dst})`;
+  if (d.kind === "wg") return wgLabel(d);
   if (d.kind === "dhcp6") return dhcp6Label(d);
   if (d.kind === "l2tp") return `L2TP${l2tpPartLabel(d)}`;
   if (d.kind === "stun") return stunLabel(d);
@@ -840,6 +880,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";
+  if (inner.payload.kind === "wg") return inner.payload.type === "data" ? (inner.payload.inner ? "WireGuard" : "keepalive") : "WG 핸드셰이크";
   if (inner.payload.kind === "dhcp6") return `DHCPv6 ${DHCP6_LABEL[inner.payload.type]}`;
   if (inner.payload.kind === "l2tp") return "L2TP";
   if (inner.payload.kind === "stun") return inner.payload.op.startsWith("binding") ? "STUN" : "TURN";
@@ -865,5 +906,5 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.payload.kind === "esp") return "vpn";
   if (isControl(p.payload)) return "vrrp";
   const k = p.payload.payload.kind;
-  return k === "dns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" ? "vpn" : "dhcp";
+  return k === "dns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" || k === "wg" ? "vpn" : "dhcp";
 }

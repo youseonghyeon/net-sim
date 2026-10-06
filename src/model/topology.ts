@@ -1,4 +1,5 @@
 // 편집 가능한 토폴로지 모델. 시뮬레이션 코어(src/core)와 분리되어 있고, 실행 시 코어 Network 로 변환된다.
+import { wgPrivateKey, wgPublicKey } from "../core/nodes/wg";
 
 export type DeviceKind = "pc" | "laptop" | "phone" | "server" | "lb" | "switch" | "hub" | "ap" | "router" | "gateway" | "nat" | "firewall" | "internet";
 export type Role = "host" | "switch" | "hub" | "ap" | "router" | "l3" | "internet" | "firewall";
@@ -343,8 +344,10 @@ export interface RaClientSettings {
   password?: string;
   /** 주기 DPD (없으면 꺼짐) */
   dpd?: boolean;
-  /** VPN 종류: 없으면 회사 VPN 장비(IKEv2), "l2tp" 면 공유기 VPN 서버(L2TP/IPsec) */
-  type?: "l2tp";
+  /** VPN 종류: 없으면 회사 VPN 장비(IKEv2), "l2tp" 면 공유기 VPN 서버(L2TP/IPsec), "wireguard" 면 WireGuard 앱 (server = 엔드포인트) */
+  type?: "l2tp" | "wireguard";
+  /** WireGuard 설정 파일 (type 이 wireguard 일 때) */
+  wg?: WgClientSettings;
 }
 
 export interface HaSettings {
@@ -457,7 +460,8 @@ function normalizeRaClient(r: Partial<RaClientSettings>): RaClientSettings {
     psk: str(r.psk, ""),
     ...(user !== undefined ? { user, password: accountText(r.password) ?? "" } : {}),
     ...(r.dpd === true ? { dpd: true } : {}),
-    ...(r.type === "l2tp" ? { type: "l2tp" as const } : {}),
+    ...(r.type === "l2tp" ? { type: "l2tp" as const } : r.type === "wireguard" ? { type: "wireguard" as const } : {}),
+    ...(r.wg && typeof r.wg === "object" ? { wg: normalizeWgFields(r.wg) } : {}),
   };
 }
 
@@ -594,6 +598,104 @@ export interface RouterSettings {
   natType?: NatTypeSetting;
   /** 헤어핀 NAT (NAT 루프백). 없으면 꺼짐 */
   hairpin?: boolean;
+  /** WireGuard 서버 (GL.iNet 식). 없으면 꺼짐 */
+  wgServer?: RouterWgServerSettings;
+  /** WireGuard 클라이언트 (LAN 전체를 VPN 으로 — 킬 스위치·VPN 정책). 없으면 꺼짐 */
+  wgClient?: RouterWgClientSettings;
+}
+
+/** WireGuard 설정 파일 한 장의 클라이언트 쪽 ([Interface] Address·DNS + [Peer] PublicKey·Endpoint 포트·AllowedIPs) */
+export interface WgClientSettings {
+  /** 개인 키. 비우면 장치마다 정해진 키 */
+  privateKey?: string;
+  /** 내 터널 주소 (서버 관리자가 정해 준 것, 예: 10.0.0.2/32) */
+  address: string;
+  /** 서버 포트 (Endpoint 의 포트) */
+  port: number;
+  /** 서버의 공개 키 */
+  serverKey: string;
+  /** 터널로 보낼 목적지, 쉼표로 (0.0.0.0/0 = 전부) */
+  allowedIps: string;
+  /** 연결된 동안 쓸 DNS (비우면 그대로) */
+  dns: string;
+}
+
+export interface RouterWgServerSettings {
+  enabled: boolean;
+  /** 개인 키. 비우면 장치마다 정해진 키 */
+  privateKey?: string;
+  /** 서버의 터널 주소 (예: 10.0.0.1/24) */
+  address: string;
+  port: number;
+  /** 등록한 클라이언트: 이름·공개 키·터널 주소 */
+  peers: { name: string; publicKey: string; ip: string }[];
+  /** 클라이언트가 집 LAN 에 접근해도 되는지 */
+  lanAccess: boolean;
+}
+
+export interface RouterWgClientSettings extends WgClientSettings {
+  enabled: boolean;
+  /** 서버 주소 (Endpoint) */
+  server: string;
+  /** 킬 스위치: VPN 이 끊기면 인터넷 차단 */
+  killSwitch: boolean;
+  /** VPN 정책: 모든 기기 / 목록의 기기만 빼고 / 목록의 기기만 (목록은 LAN 주소) */
+  policy: { mode: "all" | "exclude" | "only"; devices: string[] };
+}
+
+export const DEFAULT_WG_SERVER: RouterWgServerSettings = { enabled: true, address: "10.0.0.1/24", port: 51820, peers: [], lanAccess: true };
+export const DEFAULT_WG_CLIENT_FIELDS: WgClientSettings = { address: "", port: 51820, serverKey: "", allowedIps: "0.0.0.0/0", dns: "" };
+export const DEFAULT_ROUTER_WG_CLIENT: RouterWgClientSettings = { enabled: true, server: "", ...DEFAULT_WG_CLIENT_FIELDS, killSwitch: false, policy: { mode: "all", devices: [] } };
+
+/** 장치의 WireGuard 개인 키: 설정에 있으면 그것, 없으면 장치 id 에서 (역할마다 다른 키) */
+export function wgKeyOf(d: Device, role: "server" | "client" | "host"): string {
+  const set = role === "server" ? d.router?.wgServer?.privateKey : role === "client" ? d.router?.wgClient?.privateKey : d.host?.ra?.wg?.privateKey;
+  return set?.trim() || wgPrivateKey(`${d.id}:${role}`);
+}
+
+/** 그 장치(역할)의 WireGuard 공개 키 */
+export function wgPublicKeyOf(d: Device, role: "server" | "client" | "host"): string {
+  return wgPublicKey(wgKeyOf(d, role));
+}
+
+function normalizeWgFields(v: Partial<WgClientSettings>): WgClientSettings {
+  const str = (x: unknown, dflt = "") => (typeof x === "string" ? x : dflt);
+  return {
+    ...(typeof v.privateKey === "string" && v.privateKey ? { privateKey: v.privateKey } : {}),
+    address: str(v.address),
+    port: typeof v.port === "number" && Number.isInteger(v.port) && v.port >= 1 && v.port <= 65535 ? v.port : 51820,
+    serverKey: str(v.serverKey),
+    allowedIps: str(v.allowedIps, "0.0.0.0/0"),
+    dns: str(v.dns),
+  };
+}
+
+function normalizeWgServer(v: Partial<RouterWgServerSettings>): RouterWgServerSettings {
+  const peers = Array.isArray(v.peers) ? (v.peers as unknown[]) : [];
+  return {
+    enabled: v.enabled === true,
+    ...(typeof v.privateKey === "string" && v.privateKey ? { privateKey: v.privateKey } : {}),
+    address: typeof v.address === "string" ? v.address : "10.0.0.1/24",
+    port: typeof v.port === "number" && Number.isInteger(v.port) && v.port >= 1 && v.port <= 65535 ? v.port : 51820,
+    peers: peers
+      .filter((p): p is Record<string, unknown> => !!p && typeof p === "object")
+      .map((p) => ({ name: typeof p.name === "string" ? p.name : "", publicKey: typeof p.publicKey === "string" ? p.publicKey : "", ip: typeof p.ip === "string" ? p.ip : "" })),
+    lanAccess: v.lanAccess !== false,
+  };
+}
+
+function normalizeWgClient(v: Partial<RouterWgClientSettings>): RouterWgClientSettings {
+  const pol = (v.policy && typeof v.policy === "object" ? v.policy : {}) as Partial<RouterWgClientSettings["policy"]>;
+  return {
+    enabled: v.enabled === true,
+    server: typeof v.server === "string" ? v.server : "",
+    ...normalizeWgFields(v),
+    killSwitch: v.killSwitch === true,
+    policy: {
+      mode: pol.mode === "exclude" || pol.mode === "only" ? pol.mode : "all",
+      devices: Array.isArray(pol.devices) ? pol.devices.filter((x): x is string => typeof x === "string") : [],
+    },
+  };
 }
 
 /** NAT 종류 (core/nodes/nat.ts NatType 과 같은 값) */
@@ -1182,6 +1284,8 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.firewall ? { firewall: { ...DEFAULT_FIREWALL_SETTINGS, ...r.firewall, rules: r.firewall.rules ?? [] } } : {}),
           ...(r.ipv6 ? { ipv6: { enabled: (r.ipv6 as Partial<RouterIpv6Settings>).enabled === true, inboundBlock: (r.ipv6 as Partial<RouterIpv6Settings>).inboundBlock !== false } } : {}),
           ...(r.vpnServer ? { vpnServer: normalizeRouterVpn(r.vpnServer) } : {}),
+          ...(r.wgServer ? { wgServer: normalizeWgServer(r.wgServer) } : {}),
+          ...(r.wgClient ? { wgClient: normalizeWgClient(r.wgClient) } : {}),
           natType: natTypeOf(r.natType),
           hairpin: r.hairpin === true ? true : undefined,
         };

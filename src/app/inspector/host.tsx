@@ -9,6 +9,7 @@ import {
   DEFAULT_LB_SETTINGS,
   DEFAULT_PROXY_SETTINGS,
   DEFAULT_ROUTER_WIFI,
+  DEFAULT_WG_CLIENT_FIELDS,
   DEFAULT_WIFI_BASE,
   type Device,
   type HostSettings,
@@ -21,6 +22,7 @@ import { Field, Section, Toggle, anyIpError, ip6Error, ipError, validIp } from "
 import { linkLocalOf } from "../../core/addr6";
 import { sim, simVersion } from "../../model/sim";
 import { Host } from "../../core/nodes/host";
+import { HostWgFields } from "./wg";
 
 export function HostSection({ d, h }: { d: Device; h: HostSettings }) {
   const set = (patch: Partial<HostSettings>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ...patch } }));
@@ -601,32 +603,39 @@ export function RemoteVpnSection({ d, h }: { d: Device; h: HostSettings }) {
   const node = sim.node(d.id);
   const status = node instanceof Host ? node.ra.summary() : undefined;
   const l2tp = ra.type === "l2tp";
+  const wg = ra.type === "wireguard";
   return (
     <Section title="원격 접속 VPN">
       <label class="toggle-row">
         <span>
-          {ra.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">{l2tp ? "공유기 VPN" : "회사 VPN"}</span>
+          {ra.enabled ? "켜짐" : "꺼짐"} <span class="mono muted">{wg ? "WireGuard" : l2tp ? "공유기 VPN" : "회사 VPN"}</span>
         </span>
         <Toggle on={ra.enabled} onToggle={() => set({ enabled: !ra.enabled })} />
       </label>
       <Field label="종류">
         <div class="segmented" role="radiogroup">
-          <button class={!l2tp ? "on" : ""} onClick={() => set({ type: undefined })} title="회사 VPN 장비에 IKEv2 로 — 사내 대역만 터널로 (split tunnel)">
+          <button class={!l2tp && !wg ? "on" : ""} onClick={() => set({ type: undefined })} title="회사 VPN 장비에 IKEv2 로 — 사내 대역만 터널로 (split tunnel)">
             IKEv2
           </button>
           <button class={l2tp ? "on" : ""} onClick={() => set({ type: "l2tp", dpd: undefined })} title="집 공유기(ipTIME 등)의 VPN 서버에 L2TP/IPsec 으로 — 모든 트래픽을 집으로 (full tunnel)">
             L2TP/IPsec
           </button>
+          <button class={wg ? "on" : ""} onClick={() => set({ type: "wireguard", dpd: undefined, wg: ra.wg ?? { ...DEFAULT_WG_CLIENT_FIELDS } })} title="GL.iNet 등의 WireGuard 서버에 — 공개 키로 붙고, AllowedIPs 로 터널로 보낼 곳을 정한다">
+            WireGuard
+          </button>
         </div>
       </Field>
       {!ra.enabled && (
         <p class="note">
-          {l2tp
+          {wg
+            ? "켜면 WireGuard 앱처럼 서버와 공개 키로 핸드셰이크하고, AllowedIPs 로 가는 패킷을 터널로 보냅니다. 서버 화면에 이 기기의 공개 키를 등록해야 붙습니다."
+            : l2tp
             ? "켜면 집 공유기의 VPN 서버에 붙어 집 LAN 주소를 하나 받고, 모든 트래픽을 집으로 보냅니다(full tunnel). Windows 의 \"L2TP/IPsec 및 미리 공유한 키\" 와 같습니다."
             : "켜면 회사 VPN 장비에 IPsec 으로 붙어 가상 주소를 받고, 회사가 알려 준 사내 대역으로 가는 패킷만 터널로 보냅니다(나머지는 평소처럼). 재택근무 노트북이 회사 내부 서버에 접속하는 방식입니다."}
         </p>
       )}
-      {ra.enabled && (
+      {ra.enabled && wg && <HostWgFields d={d} />}
+      {ra.enabled && !wg && (
         <>
           <Field label="VPN 서버 (공인 주소)" error={ipError(ra.server, true)}>
             <input class="input mono" value={ra.server} placeholder={l2tp ? "203.0.113.20" : "203.0.113.11"} onInput={(e) => set({ server: e.currentTarget.value })} />

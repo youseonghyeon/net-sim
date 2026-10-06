@@ -14,6 +14,7 @@ import { relayRouteRule, returnRouteRule, uplinkDefaultRule } from "./lint/routi
 import { analyze } from "./lint/segments";
 import { forwardClosedRule, httpProxyRule, proxyPortClashRule, routerDnsRule } from "./lint/services";
 import { remoteAccessRules, routerVpnRules, siteVpnRules } from "./lint/vpn";
+import { wireguardRules } from "./lint/wg";
 
 export type { LintIssue } from "./lint/context";
 
@@ -48,6 +49,7 @@ const RULES: ((ctx: LintContext) => void)[] = [
   loopStpRule, // 19
   remoteAccessRules, // 20
   routerVpnRules, // 20b
+  wireguardRules, // 20c
   httpProxyRule, // 21
   proxyPortClashRule, // 21b
   ipv6Rules, // 22 (IPv6)

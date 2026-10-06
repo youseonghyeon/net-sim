@@ -128,6 +128,12 @@ export const inspectorOpen = signal<boolean>(load<boolean>("net-sim.inspector.op
 export const inspectorWidth = signal<number>(clampWidth(load<number>("net-sim.inspector.width") ?? INSPECTOR_DEFAULT));
 /** 접어 둔 섹션 키 (제목 또는 명시한 id) */
 export const collapsedSections = signal<string[]>(load<string[]>("net-sim.inspector.collapsed") ?? []);
+/** 설정 탭에서 마지막으로 본 묶음 (장치 종류별: 공유기는 "VPN", 게이트웨이는 "라우팅" 처럼) */
+export const configGroups = signal<Record<string, string>>(load<Record<string, string>>("net-sim.inspector.groups") ?? {});
+
+export function setConfigGroup(scope: string, group: string): void {
+  configGroups.value = { ...configGroups.value, [scope]: group };
+}
 
 function clampWidth(w: number): number {
   return Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, Math.round(Number.isFinite(w) ? w : INSPECTOR_DEFAULT)));
@@ -291,6 +297,7 @@ effect(() => save(TOPOLOGY_KEY, topology.value));
 effect(() => save("net-sim.inspector.open", inspectorOpen.value));
 effect(() => save("net-sim.inspector.width", inspectorWidth.value));
 effect(() => save("net-sim.inspector.collapsed", collapsedSections.value));
+effect(() => save("net-sim.inspector.groups", configGroups.value));
 effect(() => save("net-sim.log.height", logHeight.value));
 effect(() => {
   save(THEME_KEY, theme.value);

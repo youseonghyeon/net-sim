@@ -2,7 +2,7 @@
 import type { ComponentChildren } from "preact";
 import { ipToInt, prefixToMask, intToIp } from "../../core/addr";
 import { isIpv6, isLinkLocal6 } from "../../core/addr6";
-import { collapsedSections, toggleSection } from "../../model/store";
+import { collapsedSections, configGroups, setConfigGroup, toggleSection } from "../../model/store";
 import { type IfaceSettings } from "../../model/topology";
 import { Icon } from "../Icons";
 
@@ -32,6 +32,36 @@ export function Section({ title, id, children }: { title?: string; id?: string; 
       </h3>
       {!collapsed && children}
     </section>
+  );
+}
+
+export interface ConfigGroup {
+  id: string;
+  label: string;
+  /** 이 묶음에 켜 둔 기능이 있으면 칩에 점 (다른 묶음을 보고 있어도 무엇이 켜져 있는지 보이게) */
+  on?: boolean;
+  content: ComponentChildren;
+}
+
+/**
+ * 설정 탭의 묶음: 섹션이 많은 장치(공유기·게이트웨이)는 GL.iNet 관리 화면처럼 묶음 칩으로 나눠 한 번에 한 묶음만 보인다.
+ * 고른 묶음은 장치 종류(scope)별로 기억한다
+ */
+export function ConfigGroups({ scope, groups }: { scope: string; groups: ConfigGroup[] }) {
+  const want = configGroups.value[scope];
+  const cur = groups.find((g) => g.id === want) ?? groups[0]!;
+  return (
+    <>
+      <nav class="config-groups" role="tablist" aria-label="설정 묶음">
+        {groups.map((g) => (
+          <button key={g.id} role="tab" aria-selected={g === cur} class={g === cur ? "on" : ""} data-group={g.id} onClick={() => setConfigGroup(scope, g.id)} title={g.on ? `${g.label} — 켜 둔 기능이 있습니다` : g.label}>
+            {g.label}
+            {g.on && <span class="group-dot" />}
+          </button>
+        ))}
+      </nav>
+      {cur.content}
+    </>
   );
 }
 

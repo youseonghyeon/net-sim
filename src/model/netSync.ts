@@ -26,6 +26,7 @@ import { DEFAULT_LB_SETTINGS, DEFAULT_PROXY_SETTINGS,
   DEFAULT_WIFI_BASE,
   DEVICE_SPECS,
   defaultL3,
+  wgKeyOf,
   wirelessLinks,
   type Device,
   type FirewallSettings,
@@ -122,6 +123,10 @@ export class NetworkSync {
         if (node instanceof Switch && d.switch?.stp?.enabled) node.setStp(effectiveStp(d), d.mac, net.contextFor(d.id));
         if (node instanceof L3Node && d.l3?.ra?.enabled) node.setRa(effectiveL3(d).ra, net.contextFor(d.id));
         if (node instanceof Host && d.host?.ra?.enabled) node.setRemoteVpn(effectiveRaClient(d)!, net.contextFor(d.id));
+        if (node instanceof Router && (d.router?.wgServer?.enabled || d.router?.wgClient?.enabled)) {
+          const r = effectiveRouter(d);
+          node.setWg(r.wgServer, r.wgClient, net.contextFor(d.id));
+        }
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -272,8 +277,39 @@ export function effectiveRaClient(d: Device): RaClientConfig | undefined {
     ...(server ? { server } : {}),
     psk: r.psk,
     ...(user ? { user, password: r.password ?? "" } : {}),
-    ...(r.dpd === true && r.type !== "l2tp" ? { dpd: true } : {}),
+    ...(r.dpd === true && r.type !== "l2tp" && r.type !== "wireguard" ? { dpd: true } : {}),
     ...(r.type === "l2tp" ? { type: "l2tp" as const } : {}),
+    ...(r.type === "wireguard" ? { type: "wireguard" as const, wg: effectiveWgFields(r.wg, wgKeyOf(d, "host")) } : {}),
+  };
+}
+
+/** "10.0.0.2/32" 같은 주소/프리픽스 (프리픽스가 없으면 dflt). 올바르지 않으면 undefined */
+export function parseCidr(text: string | undefined, dflt: number): { ip: string; prefix: number } | undefined {
+  const m = /^\s*([0-9.]+)\s*(?:\/\s*(\d{1,2}))?\s*$/.exec(text ?? "");
+  if (!m || !validIp(m[1])) return undefined;
+  const prefix = m[2] === undefined ? dflt : Number(m[2]);
+  return prefix >= 0 && prefix <= 32 ? { ip: m[1]!, prefix } : undefined;
+}
+
+/** 쉼표로 적은 AllowedIPs: 올바른 것만, 네트워크 주소로 */
+export function parseCidrList(text: string | undefined): { dest: string; prefix: number }[] {
+  return (text ?? "")
+    .split(/[,\s]+/)
+    .map((x) => parseCidr(x, 32))
+    .filter((x): x is { ip: string; prefix: number } => !!x)
+    .map((x) => ({ dest: x.ip, prefix: x.prefix }));
+}
+
+/** WireGuard 설정 파일 칸 → 코어 설정 */
+export function effectiveWgFields(w: Partial<import("./topology").WgClientSettings> | undefined, privateKey: string) {
+  const port = w?.port;
+  return {
+    privateKey,
+    ...(parseCidr(w?.address, 32) ? { address: parseCidr(w?.address, 32)! } : {}),
+    port: typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 51820,
+    serverKey: (w?.serverKey ?? "").trim(),
+    allowedIps: parseCidrList(w?.allowedIps),
+    ...(validIp(w?.dns) ? { dns: w!.dns!.trim() } : {}),
   };
 }
 
@@ -368,6 +404,33 @@ export function effectiveRouter(d: Device, current?: Router) {
     ipv6: { enabled: r.ipv6?.enabled === true, inboundBlock: r.ipv6?.inboundBlock !== false },
     natType: natTypeOf(r.natType) ?? "full-cone",
     hairpin: r.hairpin === true,
+    wgServer: {
+      enabled: r.wgServer?.enabled === true,
+      privateKey: wgKeyOf(d, "server"),
+      ...(parseCidr(r.wgServer?.address, 24) ? { address: parseCidr(r.wgServer?.address, 24)! } : {}),
+      listenPort: Number.isInteger(r.wgServer?.port) && r.wgServer!.port >= 1 && r.wgServer!.port <= 65535 ? r.wgServer!.port : 51820,
+      // 공개 키·주소가 빈 줄(편집 중)은 뺀다. 같은 키가 둘이면 앞의 것만
+      peers: (r.wgServer?.peers ?? [])
+        .map((p) => ({ name: p.name.trim(), publicKey: p.publicKey.trim(), ip: p.ip.trim() }))
+        .filter((p, i, all) => p.publicKey !== "" && validIp(p.ip) && all.findIndex((x) => x.publicKey === p.publicKey) === i),
+      lanAccess: r.wgServer?.lanAccess !== false,
+    },
+    wgClient: (() => {
+      const c = r.wgClient;
+      const f = effectiveWgFields(c, wgKeyOf(d, "client"));
+      const server = validIp(c?.server) ? c!.server.trim() : undefined;
+      return {
+        enabled: c?.enabled === true,
+        privateKey: f.privateKey,
+        ...(f.address ? { address: f.address } : {}),
+        ...(server ? { server: { ip: server, port: f.port } } : {}),
+        serverKey: f.serverKey,
+        allowedIps: f.allowedIps,
+        ...(f.dns ? { dns: f.dns } : {}),
+        killSwitch: c?.killSwitch === true,
+        policy: { mode: c?.policy.mode ?? ("all" as const), devices: (c?.policy.devices ?? []).map((x) => x.trim()).filter((x) => validIp(x)) },
+      };
+    })(),
     vpnServer: {
       enabled: r.vpnServer?.enabled === true,
       psk: r.vpnServer?.psk ?? "",

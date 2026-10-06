@@ -39,8 +39,25 @@ export interface RaClientConfig {
   password?: string;
   /** 주기 DPD: 서버에게서 10초 동안 받은 것이 없으면 DPD (배경 타이머) */
   dpd?: boolean;
-  /** VPN 종류: 회사 VPN 장비(IKEv2, 없으면 이것) 또는 공유기 VPN 서버(L2TP/IPsec — ipTIME 식, nodes/l2tp.ts) */
-  type?: "ikev2" | "l2tp";
+  /** VPN 종류: 회사 VPN 장비(IKEv2, 없으면 이것), 공유기 VPN 서버(L2TP/IPsec — ipTIME 식, nodes/l2tp.ts), WireGuard (nodes/wg.ts) */
+  type?: "ikev2" | "l2tp" | "wireguard";
+  /** WireGuard 설정 (type 이 wireguard 일 때). server 는 엔드포인트 주소 */
+  wg?: WgClientFields;
+}
+
+/** WireGuard 앱의 설정 파일 한 장 ([Interface] + [Peer]) */
+export interface WgClientFields {
+  privateKey: string;
+  /** [Interface] Address — 서버 관리자가 정해 준 내 터널 주소 */
+  address?: { ip: Ip; prefix: number };
+  /** [Peer] Endpoint 의 포트 */
+  port: number;
+  /** [Peer] PublicKey — 서버의 공개 키 */
+  serverKey: string;
+  /** [Peer] AllowedIPs — 터널로 보낼 목적지 (0.0.0.0/0 = 전부) */
+  allowedIps: { dest: Ip; prefix: number }[];
+  /** [Interface] DNS */
+  dns?: Ip;
 }
 
 export const DEFAULT_RA_CLIENT: RaClientConfig = { enabled: false, psk: "" };

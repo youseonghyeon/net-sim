@@ -33,6 +33,7 @@ import { endpoint, HTTPS_PORT, TCP_TIMER_TAG, TcpStack, type TcpConn } from "./t
 import { L2tpClient } from "./l2tp";
 import { P2P_TIMER_TAG, P2pAgent, type P2pConfig } from "./p2p";
 import { RA_DPD_TAG, RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
+import { WG_TIMER_TAG, WgClient } from "./wg";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, NUD_TIMER_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
 export type IpMode = "dhcp" | "static";
@@ -157,7 +158,7 @@ export class Host implements SimNode {
   readonly proxy: ForwardProxy;
   httpProxy: HttpProxySetting | undefined;
   /** 원격 접속 VPN 클라이언트: 회사 VPN 장비(IKEv2) 또는 공유기 VPN 서버(L2TP/IPsec) — 설정의 종류에 따라 바꿔 낀다 */
-  ra: RaClient | L2tpClient;
+  ra: RaClient | L2tpClient | WgClient;
   /** IPv6 (IPv4 인터페이스와 나란히, 같은 MAC) */
   readonly v6: Ipv6Interface;
   /** 웹 등 직접 응답하는 TCP 포트. 실제로 듣는 포트는 여기에 LB 포트를 더한 것 */
@@ -232,10 +233,11 @@ export class Host implements SimNode {
     // 사내 대역으로 가는 패킷은 원격 접속 터널로 (연결돼 있을 때만. L2TP/IPsec 은 모두)
     this.iface.outbound = (pkt, ctx) => this.ra.intercept(pkt, ctx);
     // L2TP/IPsec 이 연결돼 있으면 집 공유기가 알려 준 DNS(IPCP)로 묻는다
-    this.resolver.vpnDns = () => (this.ra instanceof L2tpClient && this.ra.state === "up" ? this.ra.dns : undefined);
+    // WireGuard 는 켜져 있으면 설정 파일의 DNS 를 쓴다 (핸드셰이크 전에도 — 인터페이스가 올라가면 resolv.conf 가 바뀐다)
+    this.resolver.vpnDns = () => (this.ra instanceof L2tpClient && this.ra.state === "up" ? this.ra.dns : this.ra instanceof WgClient ? this.ra.dns : undefined);
   }
 
-  private makeVpnClient(type: RaClientConfig["type"]): RaClient | L2tpClient {
+  private makeVpnClient(type: RaClientConfig["type"]): RaClient | L2tpClient | WgClient {
     const io = {
       source: () => this.iface.ip,
       send: (outer: Ipv4Packet, ctx: NodeContext) => this.iface.sendIp(outer, ctx, this.emit(ctx)),
@@ -244,6 +246,7 @@ export class Host implements SimNode {
     };
     // 클라이언트 식별은 유선 NIC 의 MAC (노트북이 Wi-Fi 로 넘어가 있어도 같은 기기 — 서버가 같은 가상 주소를 준다)
     const cid = this.nics[0]!.mac;
+    if (type === "wireguard") return new WgClient({ myIp: io.myIp, send: io.send, local: io.local }, this.id, 49152 + (Math.abs(hashCode(`${this.id}:wg`)) % 16000));
     return type === "l2tp" ? new L2tpClient(io, cid) : new RaClient(io, cid);
   }
 
@@ -252,8 +255,8 @@ export class Host implements SimNode {
   }
 
   setRemoteVpn(cfg: RaClientConfig, ctx: NodeContext): void {
-    const want = cfg.type === "l2tp" ? "l2tp" : "ikev2";
-    const have = this.ra instanceof L2tpClient ? "l2tp" : "ikev2";
+    const want = cfg.type === "l2tp" || cfg.type === "wireguard" ? cfg.type : "ikev2";
+    const have = this.ra instanceof L2tpClient ? "l2tp" : this.ra instanceof WgClient ? "wireguard" : "ikev2";
     if (want !== have) {
       // VPN 종류가 바뀜: 붙어 있던 연결을 끊고(서버에 알림) 다른 클라이언트로 바꿔 낀다
       if (this.ra.state === "up") this.ra.disconnect(ctx, "VPN 종류가 바뀜");
@@ -1128,6 +1131,15 @@ export class Host implements SimNode {
   }
 
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    // WireGuard 앱: 내 포트로 온 WireGuard 메시지
+    if (this.ra instanceof WgClient && this.ra.config.enabled && pkt.dst === this.iface.ip) {
+      const p = pkt.payload;
+      if (p.kind === "udp" && p.payload.kind === "wg" && p.dstPort === this.ra.listenPort) {
+        const inner = this.ra.handleWg(pkt, p.srcPort, p.payload, ctx, frameId);
+        if (inner) this.handleIp(inner, frameId, ctx);
+        return;
+      }
+    }
     // 원격 접속 VPN: 서버의 IKE 응답, 터널로 온 ESP (NAT-T 면 UDP 4500 안)
     if (this.ra.config.enabled && pkt.dst === this.iface.ip) {
       const p = pkt.payload;
@@ -1144,8 +1156,8 @@ export class Host implements SimNode {
     // 호스트로 넘기면 "UDP 포트를 듣는 프로그램 없음" + ICMP Port Unreachable 이 서버로 샌다 (OS 의 IPsec 서비스는 VPN 을 꺼도 500·4500 을 쥐고 있다)
     if (pkt.dst === this.iface.ip) {
       const p = pkt.payload;
-      if (p.kind === "esp" || (p.kind === "udp" && (p.payload.kind === "ike" || p.payload.kind === "esp"))) {
-        ctx.trace("vpn.drop", "L3", `${p.kind === "udp" && p.payload.kind === "ike" ? `IKE ${p.payload.exchange}` : "ESP"} 수신 (from ${pkt.src}) → 지금 VPN 연결의 것이 아님 (끊었거나 종류를 바꾼 뒤 늦게 온 패킷) → 무시`, { from: pkt.src, late: true }, frameId);
+      if (p.kind === "esp" || (p.kind === "udp" && (p.payload.kind === "ike" || p.payload.kind === "esp" || p.payload.kind === "wg"))) {
+        ctx.trace("vpn.drop", "L3", `${p.kind === "udp" && p.payload.kind === "ike" ? `IKE ${p.payload.exchange}` : p.kind === "udp" && p.payload.kind === "wg" ? "WireGuard" : "ESP"} 수신 (from ${pkt.src}) → 지금 VPN 연결의 것이 아님 (끊었거나 종류를 바꾼 뒤 늦게 온 패킷) → 무시`, { from: pkt.src, late: true }, frameId);
         return;
       }
     }
@@ -1301,6 +1313,9 @@ export class Host implements SimNode {
       case RA_DPD_TAG:
         this.ra.onDpdTick(data, ctx);
         return;
+      case WG_TIMER_TAG:
+        if (this.ra instanceof WgClient) this.ra.onTimer(data, ctx);
+        return;
       case "arp-timeout": {
         const { ip: nextHop } = data as { ip: Ip };
         const dropped = this.iface.onArpTimeout(data, ctx);
@@ -1377,7 +1392,7 @@ export class Host implements SimNode {
             ] as [string, string][])
           : []),
         ["TCP 서비스", this.tcp.listening.size ? [...this.tcp.listening].map((p) => `포트 ${p}`).join(", ") : "없음"],
-        ...(this.ra.config.enabled ? [[this.ra instanceof L2tpClient ? "VPN (L2TP/IPsec)" : "원격 접속 VPN", this.ra.summary()!] as [string, string]] : []),
+        ...(this.ra.config.enabled ? [[this.ra instanceof L2tpClient ? "VPN (L2TP/IPsec)" : this.ra instanceof WgClient ? "WireGuard" : "원격 접속 VPN", this.ra.summary()!] as [string, string]] : []),
         ...(this.p2p.config.enabled ? [["P2P 앱", this.p2p.summary()!] as [string, string]] : []),
         ...(this.dhcpServer.config.enabled
           ? [["DHCP 서버", `켜짐 · ${this.dhcpServer.config.start} ~ ${this.dhcpServer.config.end}`] as [string, string]]

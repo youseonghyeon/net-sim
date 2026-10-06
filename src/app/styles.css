@@ -1215,6 +1215,40 @@ select.btn.example {
   grid-column: 1 / -1;
   margin-top: 0;
 }
+/* WireGuard: 공개 키 한 줄 (칸 + 복사 + 다시 만들기) */
+.key-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px 28px;
+  gap: 4px;
+  align-items: center;
+}
+.key-row .input {
+  font-size: 11px;
+}
+/* WireGuard 피어 한 개: 이름·터널 주소·삭제 줄 + 공개 키 줄 */
+.wg-peer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px 30px;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.wg-peer .key {
+  grid-column: 1 / -1;
+  font-size: 11px;
+}
+.wg-peer .route-error {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+.sub-head {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
 .route-row .prefix-in {
   padding: 0 6px;
 }
@@ -2235,6 +2269,43 @@ select.btn.example {
   bottom: -1px;
   height: 2px;
   border-radius: 2px;
+  background: var(--accent);
+}
+/* 설정 탭의 묶음 칩 (공유기·게이트웨이): 탭 줄 아래 한 줄, 고른 것만 바탕을 채운다 */
+.config-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 10px 12px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.config-groups button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.config-groups button:hover {
+  color: var(--ink);
+}
+.config-groups button.on {
+  border-color: transparent;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: 600;
+}
+.group-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
   background: var(--accent);
 }
 .tab-count {

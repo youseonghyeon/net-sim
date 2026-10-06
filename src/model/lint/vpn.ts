@@ -156,6 +156,7 @@ export function remoteAccessRules({ t, m, add }: LintContext): void {
       l2tpClientRules(d, server, t.devices, add);
       continue;
     }
+    if (c.type === "wireguard") continue; // lint/wg.ts
     // IKEv2 클라이언트가 공유기 VPN 서버(L2TP/IPsec)를 가리킴 — 공유기가 UDP 500 을 안쪽으로 포워딩하면 IKEv2 는 그쪽이 받는다 (공유기는 L2TP 의 IKE 만 가로챔)
     const router = t.devices.find((x) => x !== d && routerWanIp(x) === server);
     if (router?.router?.vpnServer?.enabled && !udpForward(router, IKE_PORT)) {

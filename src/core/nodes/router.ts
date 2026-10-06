@@ -28,6 +28,7 @@ import { NetInterface, type Emit } from "./iface";
 import { NAT_ID_START, NAT_TYPE_LABEL, NatTable, type NatType, type PortForward } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { guardLoop } from "./switch";
+import { DEFAULT_WG, WG_PORT, WG_TIMER_TAG, WgInterface, prefixesLabel, shortKey, type WgPeerState, type WgPrefix } from "./wg";
 
 export type { DhcpServerConfig } from "./dhcp";
 export type { NatEntry, PortForward } from "./nat";
@@ -61,7 +62,45 @@ export interface RouterConfig {
   natType?: NatType;
   /** 헤어핀 NAT (NAT 루프백): 안에서 내 공인 주소의 포워딩 포트로 접속하면 안쪽 서버로 되돌려 준다. 없으면 꺼짐 */
   hairpin?: boolean;
+  /** WireGuard 서버 (GL.iNet 식, 없으면 꺼짐) */
+  wgServer?: RouterWgServerConfig;
+  /** WireGuard 클라이언트 (LAN 전체를 VPN 으로, 없으면 꺼짐) */
+  wgClient?: RouterWgClientConfig;
 }
+
+/** 공유기 WireGuard 서버: 밖의 노트북·폰·다른 공유기가 공개 키로 붙는다 */
+export interface RouterWgServerConfig {
+  enabled: boolean;
+  privateKey: string;
+  /** 서버의 터널 주소 (예: 10.0.0.1/24) */
+  address?: { ip: Ip; prefix: number };
+  listenPort: number;
+  /** 피어 = 등록한 클라이언트 (공개 키 + 그 클라이언트의 터널 주소) */
+  peers: { name: string; publicKey: string; ip: Ip }[];
+  /** 클라이언트가 집 LAN 에 접근해도 되는지 (GL.iNet "Remote Access LAN") */
+  lanAccess: boolean;
+}
+
+/** 공유기 WireGuard 클라이언트: LAN 기기들의 트래픽을 VPN 서버로 */
+export interface RouterWgClientConfig {
+  enabled: boolean;
+  privateKey: string;
+  /** 서버가 정해 준 내 터널 주소 */
+  address?: { ip: Ip; prefix: number };
+  /** 서버 주소·포트 (엔드포인트) */
+  server?: { ip: Ip; port: number };
+  serverKey: string;
+  /** 터널로 보낼 목적지 (0.0.0.0/0 = 전부) */
+  allowedIps: WgPrefix[];
+  /** VPN 이 알려 준 DNS: 연결되면 DNS 포워더가 이쪽으로 터널을 통해 묻는다 (DNS 유출 방지) */
+  dns?: Ip;
+  /** 킬 스위치: VPN 이 끊기면 WAN 으로 바로 내보내지 않는다 (GL.iNet "Block Non-VPN Traffic") */
+  killSwitch: boolean;
+  /** VPN 정책: 모든 기기 / 목록의 기기만 빼고 / 목록의 기기만 */
+  policy: { mode: "all" | "exclude" | "only"; devices: Ip[] };
+}
+
+export const WG_POLICY_LABEL: Record<RouterWgClientConfig["policy"]["mode"], string> = { all: "모든 기기", exclude: "목록의 기기는 VPN 을 쓰지 않음", only: "목록의 기기만 VPN" };
 
 export interface RouterIpv6Config {
   enabled: boolean;
@@ -115,6 +154,14 @@ export class Router implements SimNode {
   readonly vpnServer: L2tpServer;
   /** 헤어핀 NAT (켜져 있을 때만 쓴다) — 포트 포워딩 규칙을 안쪽 클라이언트에게도 적용 (FULLNAT) */
   hairpin = false;
+  /** WireGuard 서버 (wg0) */
+  readonly wgs: WgInterface;
+  /** WireGuard 클라이언트 (wgc) */
+  readonly wgc: WgInterface;
+  wgServerCfg: RouterWgServerConfig | undefined;
+  wgClientCfg: RouterWgClientConfig | undefined;
+  /** VPN 클라이언트 쪽 NAT: LAN 기기의 출발지를 내 터널 주소로 (서버는 이 주소 하나만 안다 — AllowedIPs) */
+  readonly natVpn = new NatTable();
   private readonly hairpinNat = new PortPublish(
     {
       owns: (ip) => ip === this.wan.ip,
@@ -157,9 +204,13 @@ export class Router implements SimNode {
       this.lan,
       "DNS 포워더",
       {
-        // 업스트림 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
-        srcIp: () => (this.upstreamInLan() ? this.lan.ip : this.wan.ip),
-        send: (pkt, ctx) => (this.upstreamInLan() ? this.lan.sendIp(pkt, ctx, this.emitLan(ctx)) : this.wan.sendIp(pkt, ctx, this.emitWan(ctx))),
+        // VPN 클라이언트가 켜져 있으면 터널로(출발지 = 내 터널 주소), 업스트림 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
+        srcIp: () => (this.dnsViaVpn() ? this.wgClientCfg!.address!.ip : this.upstreamInLan() ? this.lan.ip : this.wan.ip),
+        send: (pkt, ctx) => {
+          if (this.dnsViaVpn()) this.dnsToVpn(pkt, ctx);
+          else if (this.upstreamInLan()) this.lan.sendIp(pkt, ctx, this.emitLan(ctx));
+          else this.wan.sendIp(pkt, ctx, this.emitWan(ctx));
+        },
       },
       this.lan6, // LAN 호스트가 IPv6(RA 의 RDNSS = 공유기 LAN 주소)로 물어도 답한다
     );
@@ -178,7 +229,113 @@ export class Router implements SimNode {
     if (cfg.vpnServer) this.vpnServer.config = { ...cfg.vpnServer, users: cfg.vpnServer.users.map((u) => ({ ...u })) };
     this.lan.proxyArp = (ip) => this.vpnServer.owns(ip);
     // LAN 으로 내보내려는 패킷의 목적지가 VPN 클라이언트면 LAN 대신 터널로 (DNS 포워더·ping 응답·NAT 역변환한 인터넷 응답)
-    this.lan.outbound = (pkt, ctx) => !!this.wan.ip && this.vpnServer.owns(pkt.dst) && this.vpnServer.sendTo(pkt, this.wan.ip, ctx);
+    this.lan.outbound = (pkt, ctx) => (!!this.wan.ip && this.vpnServer.owns(pkt.dst) && this.vpnServer.sendTo(pkt, this.wan.ip, ctx)) || this.toWgPeer(pkt, ctx);
+    // WireGuard: 공유기 자신이 만든 바깥 UDP 라 NAT·방화벽을 거치지 않고 WAN 으로
+    const wgIo = {
+      source: () => this.wan.ip,
+      send: (outer: Ipv4Packet, ctx: NodeContext) => this.wan.sendIp(outer, ctx, this.emitWan(ctx)),
+    };
+    this.wgs = new WgInterface(wgIo, "WireGuard 서버", `${cfg.id}:server`);
+    this.wgc = new WgInterface(wgIo, "WireGuard 클라이언트", `${cfg.id}:client`);
+    this.wgcPort = 49152 + (Math.abs(hashCode(`${cfg.id}:wgc`)) % 16000);
+    this.natVpn.why = "VPN 서버는 이 공유기를 터널 주소 하나로만 안다(AllowedIPs) — LAN 기기 주소를 터널 주소로 바꾸고 테이블에 기록";
+    // VPN 클라이언트가 켜져 있으면 DNS 포워더는 VPN 이 알려 준 DNS 에 터널로 묻는다 (DNS 유출 방지)
+    this.dnsForwarder.upstreamFor = () => (this.dnsViaVpn() ? (this.wgClientCfg?.dns ?? undefined) : undefined);
+    // 서버의 터널 주소(10.0.0.1)로 온 질의에는 그 주소로 답한다
+    this.dnsForwarder.answersAt = (dst) => !!this.wgServerCfg?.enabled && dst === this.wgServerCfg.address?.ip;
+    if (cfg.wgServer) this.wgServerCfg = cfg.wgServer;
+    if (cfg.wgClient) this.wgClientCfg = cfg.wgClient;
+  }
+
+  /** WireGuard 클라이언트의 바깥 UDP 포트 (설정에 ListenPort 가 없으면 임의 포트 — 여기서는 장치마다 고정) */
+  readonly wgcPort: number;
+
+  /** WireGuard 서버·클라이언트 설정 (만든 직후·설정 변경) */
+  setWg(server: RouterWgServerConfig | undefined, client: RouterWgClientConfig | undefined, ctx: NodeContext): void {
+    this.wgServerCfg = server;
+    this.wgClientCfg = client;
+    this.applyWg(ctx);
+  }
+
+  private applyWg(ctx: NodeContext): void {
+    const s = this.wgServerCfg;
+    this.wgs.setConfig(
+      s
+        ? {
+            enabled: s.enabled,
+            privateKey: s.privateKey,
+            ...(s.address ? { address: s.address } : {}),
+            listenPort: s.listenPort,
+            peers: s.peers.map((p) => ({ name: p.name, publicKey: p.publicKey, allowedIps: [{ dest: p.ip, prefix: 32 }] })),
+          }
+        : { ...DEFAULT_WG, peers: [] },
+      ctx,
+    );
+    const c = this.wgClientCfg;
+    const changed = this.wgc.setConfig(
+      c
+        ? {
+            enabled: c.enabled,
+            privateKey: c.privateKey,
+            ...(c.address ? { address: c.address } : {}),
+            listenPort: this.wgcPort,
+            peers: [{ name: "VPN 서버", publicKey: c.serverKey, ...(c.server ? { endpoint: c.server } : {}), allowedIps: c.allowedIps }],
+          }
+        : { ...DEFAULT_WG, peers: [] },
+      ctx,
+    );
+    if (changed && c?.enabled) {
+      ctx.trace("vpn.config", "sys", `WireGuard 클라이언트: ${WG_POLICY_LABEL[c.policy.mode]}${c.policy.mode !== "all" ? ` (${c.policy.devices.join(", ") || "목록 비어 있음"})` : ""} → ${prefixesLabel(c.allowedIps)} 로 가는 LAN 트래픽을 터널로. 킬 스위치 ${c.killSwitch ? "켜짐 (VPN 이 끊기면 인터넷 차단)" : "꺼짐 (VPN 이 끊기면 WAN 으로 바로 — 실제 주소가 드러남)"}${c.dns ? `, DNS 는 ${c.dns} 에 터널로` : ""}`, { wg: true, killSwitch: c.killSwitch, policy: c.policy.mode });
+      if (this.wan.ip) this.wgc.connect(ctx);
+    }
+  }
+
+  /** 클라이언트 쪽 피어 (서버 하나) */
+  private get wgcPeer(): WgPeerState | undefined {
+    return this.wgc.peers.values().next().value;
+  }
+
+  /** VPN 클라이언트가 끊겨(핸드셰이크 실패) 쉬는 중인지 — 킬 스위치가 꺼져 있으면 이때 WAN 으로 바로 나간다 */
+  private wgcDown(): boolean {
+    const p = this.wgcPeer;
+    return !p || (!!p.failed && !p.pending && !p.session);
+  }
+
+  /** 이 LAN 기기의 트래픽을 VPN 클라이언트로 보내는지 (VPN 정책) */
+  private policyApplies(src: Ip): boolean {
+    const c = this.wgClientCfg;
+    if (!c?.enabled || !this.wgc.enabled) return false;
+    if (!this.lan.ip || !sameSubnet(src, this.lan.ip, this.lan.prefix)) return false;
+    if (c.policy.mode === "exclude") return !c.policy.devices.includes(src);
+    if (c.policy.mode === "only") return c.policy.devices.includes(src);
+    return true;
+  }
+
+  /** DNS 포워더의 업스트림 질의를 VPN 터널로 보내는지 */
+  private dnsViaVpn(): boolean {
+    const c = this.wgClientCfg;
+    if (!c?.enabled || !this.wgc.enabled || !c.address) return false;
+    const up = c.dns ?? this.dnsForwarder.config.upstream;
+    if (!up || !this.wgc.route(up)) return false;
+    return !(this.wgcDown() && !c.killSwitch);
+  }
+
+  /** DNS 포워더의 업스트림 질의를 VPN 클라이언트 터널로 (끊겨 있으면 킬 스위치가 붙잡는다 — DNS 유출 방지) */
+  private dnsToVpn(pkt: Ipv4Packet, ctx: NodeContext): void {
+    const peer = this.wgc.route(pkt.dst);
+    if (!peer) return;
+    if (this.wgcDown()) ctx.trace("vpn.killswitch", "L3", `킬 스위치: VPN 이 끊겨 있어 DNS 질의(${pkt.dst})를 WAN 으로 내보내지 않음 → 터널이 다시 맺어지기를 기다림 (DNS 유출 방지)`, { dst: pkt.dst, killSwitch: true });
+    ctx.trace("ip.forward", "L3", `DNS 포워더: 업스트림 ${pkt.dst} 질의를 VPN 터널로 (출발지 = 내 터널 주소 ${pkt.src}) — 호텔·통신사 DNS 가 내 질의를 보지 못한다`, { dst: pkt.dst, wg: true });
+    this.wgc.send(peer, pkt, ctx);
+  }
+
+  /** 목적지가 WireGuard 서버의 피어(붙은 노트북 등)면 그 터널로. 보냈으면 true */
+  private toWgPeer(pkt: Ipv4Packet, ctx: NodeContext, frameId?: number): boolean {
+    if (!this.wgServerCfg?.enabled) return false;
+    const peer = this.wgs.route(pkt.dst);
+    if (!peer) return false;
+    this.wgs.send(peer, pkt, ctx, frameId);
+    return true;
   }
 
   /** 위임받은 프리픽스가 생기거나 사라짐: LAN 에 그 첫 /64 를 주소로 두고 RA 로 알린다 (사라지면 거둠 RA) */
@@ -277,9 +434,12 @@ export class Router implements SimNode {
       vpnServer?: L2tpServerConfig;
       natType?: NatType;
       hairpin?: boolean;
+      wgServer?: RouterWgServerConfig;
+      wgClient?: RouterWgClientConfig;
     },
     ctx: NodeContext,
   ): void {
+    if (cfg.wgServer || cfg.wgClient) this.setWg(cfg.wgServer, cfg.wgClient, ctx);
     if (cfg.hairpin !== undefined && cfg.hairpin !== this.hairpin) {
       this.hairpin = cfg.hairpin;
       ctx.trace("ip.config", "sys", cfg.hairpin ? `헤어핀 NAT 켜짐: 안에서 내 공인 주소의 포워딩 포트로 접속하면 안쪽 서버로 되돌려 준다 (도메인으로 집 서버에 접속하기)` : `헤어핀 NAT 꺼짐`, { hairpin: cfg.hairpin });
@@ -685,7 +845,11 @@ export class Router implements SimNode {
     if (pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dhcp") {
       const udp = pkt.payload;
       const m = udp.payload as DhcpMessage;
-      if (udp.dstPort === DHCP_CLIENT_PORT) this.wanClient.handle(m, frameId, ctx, emit);
+      if (udp.dstPort === DHCP_CLIENT_PORT) {
+        this.wanClient.handle(m, frameId, ctx, emit);
+        // WAN 주소를 받았으면 VPN 클라이언트 연결 (GL.iNet 은 인터넷이 연결되면 VPN 을 자동으로 잇는다)
+        if (this.wan.ip && this.wgClientCfg?.enabled) this.wgc.connect(ctx);
+      }
       else if (udp.dstPort === DHCP_SERVER_PORT) ctx.trace("dhcp.ignore", "app", `[wan] 다른 장치의 DHCP ${m.op} → 무시`, {}, frameId);
       else ctx.trace("ip.drop", "L4", `[wan] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
       return;
@@ -694,6 +858,8 @@ export class Router implements SimNode {
       ctx.trace("ip.drop", "L3", `[wan] 목적지 ${pkt.dst} 는 내 공인 주소(${this.wan.ip ?? "없음"}) 아님 → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
+    // WireGuard: 내 서버·클라이언트의 포트로 온 WireGuard 메시지는 공유기 자신이 받는다 (그 밖의 포트는 아래 NAT 역변환 — 안쪽 기기의 WireGuard)
+    if (this.handleWanWg(pkt, frameId, ctx)) return;
     // VPN 서버 (L2TP/IPsec): IKE (UDP 500·4500) 와 내 SA 의 ESP 는 공유기 자신이 받는다 (포트 포워딩보다 먼저 — ipTIME 도 VPN 서버를 켜면 그 포트를 쓴다)
     if (this.vpnServer.config.enabled) {
       const p0 = pkt.payload;
@@ -726,6 +892,10 @@ export class Router implements SimNode {
     const restored = this.nat.restore(pkt, this.wan.ip, ctx, frameId);
     if (!restored) return;
     if (!this.firewall.check(restored, "in", ctx, frameId)) return;
+    if (this.wgServerCfg?.enabled && this.wgs.route(restored.dst)) {
+      this.toWgPeerFwd(restored, frameId, ctx); // WireGuard 로 붙은 기기의 인터넷 응답
+      return;
+    }
     if (this.vpnServer.owns(restored.dst)) {
       this.toVpnClient(restored, frameId, ctx); // VPN 으로 붙은 노트북의 인터넷 응답
       return;
@@ -800,6 +970,11 @@ export class Router implements SimNode {
   }
 
   private forwardToWan(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    // LAN 기기가 WireGuard 로 붙은 기기에게 (그 터널 주소는 LAN 밖이라 기본 게이트웨이인 공유기로 온다)
+    if (this.wgServerCfg?.enabled && this.wgs.route(pkt.dst)) {
+      this.toWgPeerFwd(pkt, frameId, ctx);
+      return;
+    }
     // LAN 기기가 VPN 클라이언트에게 (프록시 ARP 로 공유기 MAC 에 보냄)
     if (this.vpnServer.owns(pkt.dst)) {
       this.toVpnClient(pkt, frameId, ctx);
@@ -818,6 +993,7 @@ export class Router implements SimNode {
       if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
       return;
     }
+    if (this.policyApplies(pkt.src) && this.toWgClient(pkt, frameId, ctx)) return;
     if (!this.wan.ip) {
       ctx.trace("ip.no-route", "L3", `${pkt.dst} 는 외부 주소인데 WAN 에 공인 주소가 없음 → 인터넷으로 보낼 수 없음 (WAN 케이블과 DHCP 확인)`, { dst: pkt.dst }, frameId);
       const notice = this.lan.unreachable(pkt, "net", ctx, frameId);
@@ -829,6 +1005,167 @@ export class Router implements SimNode {
     if (!translated) return;
     ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 외부 → WAN 인터페이스로 전달 (TTL ${pkt.ttl} → ${translated.ttl})`, { dst: pkt.dst }, frameId);
     this.wan.sendIp(translated, ctx, this.emitWan(ctx));
+  }
+
+  // ---------- WireGuard ----------
+
+  /** WAN 으로 온 WireGuard 메시지: 내 서버·클라이언트 포트면 받는다. 처리했으면 true */
+  private handleWanWg(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): boolean {
+    const u = pkt.payload;
+    if (u.kind !== "udp" || u.payload.kind !== "wg") return false;
+    const m = u.payload;
+    if (this.wgServerCfg?.enabled && this.wgs.enabled && u.dstPort === this.wgs.config.listenPort) {
+      const inner = this.wgs.handle(pkt, u.srcPort, m, ctx, frameId);
+      if (inner) this.routeFromWg(inner, frameId, ctx);
+      return true;
+    }
+    if (this.wgClientCfg?.enabled && this.wgc.enabled && u.dstPort === this.wgc.config.listenPort) {
+      const inner = this.wgc.handle(pkt, u.srcPort, m, ctx, frameId);
+      if (inner) this.fromWgClient(inner, frameId, ctx);
+      return true;
+    }
+    // 포워딩 규칙도 NAT 매핑도 없는 포트로 온 핸드셰이크: 서버가 꺼져 있다고 알려 준다 (아래 NAT 역변환은 "테이블에 없음" 만 남긴다)
+    const forwarded = this.nat.forwards.some((r) => r.proto === "udp" && r.publicPort === u.dstPort);
+    if (m.type === "initiation" && !forwarded && u.dstPort === (this.wgServerCfg?.listenPort ?? WG_PORT)) {
+      ctx.trace("ip.drop", "L4", `WireGuard 핸드셰이크 (from ${pkt.src}) → 이 공유기의 WireGuard 서버가 꺼져 있어 받지 않음, 드롭 (설정의 "WireGuard 서버" 를 켜거나, 안쪽 서버로 UDP ${u.dstPort} 포트 포워딩)`, { from: pkt.src }, frameId);
+      return true;
+    }
+    return false;
+  }
+
+  /** WireGuard 서버의 피어에게 (TTL 을 줄여 그 터널로) — LAN 기기·인터넷 응답·다른 피어에게서 */
+  private toWgPeerFwd(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    if (pkt.ttl <= 1) {
+      const notice = this.lan.timeExceeded(pkt, ctx, frameId);
+      if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
+      return;
+    }
+    const inner: Ipv4Packet = { ...pkt, ttl: pkt.ttl - 1 };
+    ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 WireGuard 로 붙은 기기 → 그 터널로 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: pkt.dst, wg: true }, frameId);
+    this.toWgPeer(inner, ctx, frameId);
+  }
+
+  /** WireGuard 서버로 들어온 패킷 (붙은 기기가 보냄): 공유기 자신·다른 피어·집 LAN·인터넷 */
+  private routeFromWg(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    const emit = this.emitLan(ctx);
+    const s = this.wgServerCfg!;
+    const p = pkt.payload;
+    if (pkt.dst === this.lan.ip || pkt.dst === this.wan.ip || pkt.dst === s.address?.ip) {
+      if (p.kind === "udp" && p.payload.kind === "dns" && p.dstPort === DNS_PORT && pkt.dst !== this.wan.ip) {
+        if (this.dnsForwarder.config.enabled) this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frameId, ctx, emit);
+        else ctx.trace("dns.nxdomain", "app", `DNS 포워더가 꺼져 있음 → WireGuard 클라이언트의 질의에 응답하지 않음`, {}, frameId);
+        return;
+      }
+      if (p.kind === "icmp") {
+        this.handleIcmp(pkt, p, frameId, ctx, this.lan, emit, pkt.dst);
+        return;
+      }
+      ctx.trace("ip.drop", "L4", `공유기 자신에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frameId);
+      return;
+    }
+    if (pkt.dst === "255.255.255.255" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
+      ctx.trace("ip.drop", "L3", `WireGuard 클라이언트의 브로드캐스트/멀티캐스트 ${pkt.dst} → 넘기지 않음 (WireGuard 는 IP 만 나른다)`, { dst: pkt.dst }, frameId);
+      return;
+    }
+    if (this.wgs.route(pkt.dst)) {
+      this.toWgPeerFwd(pkt, frameId, ctx);
+      return;
+    }
+    if (this.lan.ip && sameSubnet(pkt.dst, this.lan.ip, this.lan.prefix)) {
+      if (!s.lanAccess) {
+        ctx.trace("fw.deny", "L3", `WireGuard 클라이언트 ${pkt.src} → 집 LAN ${pkt.dst}: "LAN 접근 허용" 이 꺼져 있음 → 드롭 (인터넷만 이 공유기로 나갈 수 있다)`, { src: pkt.src, dst: pkt.dst }, frameId);
+        return;
+      }
+      if (pkt.ttl <= 1) {
+        const notice = this.lan.timeExceeded(pkt, ctx, frameId);
+        if (notice) this.lan.sendIp(notice, ctx, emit);
+        return;
+      }
+      const inner: Ipv4Packet = { ...pkt, ttl: pkt.ttl - 1 };
+      ctx.trace("ip.forward", "L3", `라우팅: WireGuard 클라이언트 ${pkt.src} → ${pkt.dst} 는 집 LAN 안 → LAN 인터페이스로 전달 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: pkt.dst }, frameId);
+      this.lan.sendIp(inner, ctx, emit);
+      return;
+    }
+    // 인터넷: 집 LAN 기기처럼 방화벽·NAT 를 거쳐 공유기 공인 주소로 (클라이언트가 AllowedIPs 0.0.0.0/0 으로 전부 보낼 때)
+    this.forwardToWan(pkt, frameId, ctx);
+  }
+
+  /**
+   * LAN 기기의 패킷을 VPN 클라이언트 터널로: 출발지를 내 터널 주소로 바꿔(NAT) 서버에 보낸다. 보냈으면 true.
+   * VPN 이 끊겨 있으면 킬 스위치가 켜져 있을 때만 붙잡고(다시 핸드셰이크), 꺼져 있으면 false — WAN 으로 바로 나간다
+   */
+  private toWgClient(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): boolean {
+    const c = this.wgClientCfg!;
+    const peer = this.wgc.route(pkt.dst);
+    if (!peer || pkt.dst === c.server?.ip) return false;
+    if (!c.address) return false;
+    if (this.wgcDown()) {
+      if (!c.killSwitch) {
+        ctx.trace("vpn.leak", "L3", `VPN 이 끊겨 있음 (${peer.failed ?? "핸드셰이크 실패"}) → 킬 스위치가 꺼져 있어 ${pkt.src} → ${pkt.dst} 를 WAN 으로 바로 내보냄 — VPN 을 거치지 않아 실제 공인 주소가 드러난다. 다시 연결을 시도`, { src: pkt.src, dst: pkt.dst, killSwitch: false }, frameId);
+        this.wgc.connect(ctx);
+        return false;
+      }
+      ctx.trace("vpn.killswitch", "L3", `킬 스위치: VPN 이 끊겨 있어 ${pkt.src} → ${pkt.dst} 를 WAN 으로 내보내지 않음 → 터널이 다시 맺어지기를 기다림`, { src: pkt.src, dst: pkt.dst, killSwitch: true }, frameId);
+    }
+    if (pkt.ttl <= 1) {
+      const notice = this.lan.timeExceeded(pkt, ctx, frameId);
+      if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
+      return true;
+    }
+    if (!this.firewall.check(pkt, "out", ctx, frameId)) return true;
+    const translated = this.natVpn.translate({ ...pkt, ttl: pkt.ttl - 1 }, c.address.ip, ctx, frameId);
+    if (!translated) return true;
+    ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 VPN 정책 대상 → WireGuard 클라이언트 터널로 (출발지 ${pkt.src} → 내 터널 주소 ${c.address.ip}, TTL ${pkt.ttl} → ${translated.ttl})`, { dst: pkt.dst, wg: true }, frameId);
+    this.wgc.send(peer, translated, ctx, frameId);
+    return true;
+  }
+
+  /** VPN 클라이언트 터널로 들어온 패킷: 내 질의의 답(DNS)·나에게 온 ping, 아니면 NAT 역변환해 LAN 기기로 */
+  private fromWgClient(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    const c = this.wgClientCfg!;
+    const me = c.address?.ip;
+    if (!me || pkt.dst !== me) {
+      ctx.trace("vpn.drop", "L3", `WireGuard 클라이언트: 풀린 패킷의 목적지 ${pkt.dst} 가 내 터널 주소(${me ?? "없음"})가 아님 → 드롭`, { dst: pkt.dst }, frameId);
+      return;
+    }
+    const p = pkt.payload;
+    if (p.kind === "udp" && p.payload.kind === "dns" && p.payload.op === "response" && p.dstPort === DNS_PORT) {
+      this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frameId, ctx, this.emitLan(ctx));
+      return;
+    }
+    if (p.kind === "icmp" && p.type === "echo-request") {
+      ctx.trace("icmp.echo.received", "app", `ICMP Echo 요청 수신 (from ${pkt.src}, 터널로, seq=${p.seq})`, { from: pkt.src, seq: p.seq }, frameId);
+      const reply: Ipv4Packet = { kind: "ipv4", src: me, dst: pkt.src, ttl: 64, payload: { kind: "icmp", type: "echo-reply", id: p.id, seq: p.seq } };
+      const peer = this.wgc.route(pkt.src);
+      if (peer) this.wgc.send(peer, reply, ctx, frameId);
+      return;
+    }
+    const restored = this.natVpn.restore(pkt, me, ctx, frameId);
+    if (!restored) return;
+    if (!this.firewall.check(restored, "in", ctx, frameId)) return;
+    if (pkt.ttl <= 1) return;
+    const inner: Ipv4Packet = { ...restored, ttl: pkt.ttl - 1 };
+    ctx.trace("ip.forward", "L3", `라우팅: VPN 터널의 응답 → NAT 역변환해 LAN 의 ${inner.dst} 로 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: inner.dst, wg: true }, frameId);
+    this.lan.sendIp(inner, ctx, this.emitLan(ctx));
+  }
+
+  /** 사용자의 "다시 연결" (VPN 클라이언트) */
+  wgReconnect(ctx: NodeContext): void {
+    if (!this.wgClientCfg?.enabled) {
+      ctx.trace("vpn.drop", "L4", `WireGuard 클라이언트가 꺼져 있음 → 연결할 것이 없음`, {});
+      return;
+    }
+    this.wgc.reset();
+    this.wgc.connect(ctx);
+  }
+
+  /** 표시용 한 줄: VPN 클라이언트 상태 */
+  wgClientSummary(): string | undefined {
+    const c = this.wgClientCfg;
+    if (!c?.enabled) return undefined;
+    const p = this.wgcPeer;
+    const state = !p ? "설정 확인 필요" : p.session ? `연결됨 · 터널 주소 ${c.address?.ip ?? "?"}` : p.pending ? "연결 중 (핸드셰이크)" : p.failed ? `끊김 · ${c.killSwitch ? "킬 스위치로 인터넷 차단 중" : "WAN 으로 바로 나가는 중 (킬 스위치 꺼짐)"}` : "대기 (보낼 패킷이 생기면 연결)";
+    return `${state} · 서버 ${c.server ? `${c.server.ip}:${c.server.port}` : "없음"}`;
   }
 
   private handleIcmp(pkt: Ipv4Packet, icmp: IcmpPacket, frameId: number, ctx: NodeContext, iface: NetInterface, emit: Emit, replySrc?: Ip): void {
@@ -845,6 +1182,10 @@ export class Router implements SimNode {
   // ---------- 타이머 ----------
 
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
+    if (tag === WG_TIMER_TAG) {
+      if (!this.wgs.onTimer(data, ctx)) this.wgc.onTimer(data, ctx);
+      return;
+    }
     if (tag === DAD_TIMER_TAG) {
       if (!this.lan6.finishDad(data, ctx, this.emitLan(ctx))) this.wan6.finishDad(data, ctx, this.emitWan(ctx));
       return;
@@ -938,12 +1279,19 @@ export class Router implements SimNode {
         ...(this.vpnServer.config.enabled
           ? ([["VPN 서버", `켜짐 (L2TP/IPsec) · 할당 IP ${this.vpnServer.config.poolStart} ~ ${this.vpnServer.config.poolEnd} · ${this.vpnServer.clientsLabel()}`]] as [string, string][])
           : []),
+        ...(this.wgServerCfg?.enabled
+          ? ([["WireGuard 서버", `켜짐 · ${this.wgServerCfg.address ? `${this.wgServerCfg.address.ip}/${this.wgServerCfg.address.prefix}` : "터널 주소 없음"} · UDP ${this.wgServerCfg.listenPort} · 공개 키 ${shortKey(this.wgs.publicKey)} · 피어 ${this.wgServerCfg.peers.length}개 중 ${this.wgs.connected}개 연결`]] as [string, string][])
+          : []),
+        ...(this.wgClientCfg?.enabled ? ([["WireGuard 클라이언트", this.wgClientSummary()!]] as [string, string][]) : []),
       ],
       tables: [
         { title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
         ...(this.dnsForwarder.cache.size > 0 ? [{ title: "DNS 캐시", columns: ["이름", "IP", "출처"], rows: this.dnsForwarder.rows() }] : []),
         { title: "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.nat.rows(this.wan.ip) },
         ...(this.vpnServer.config.enabled ? [{ title: "VPN 접속", columns: ["사용자", "할당 IP", "접속 주소", "방식"], rows: this.vpnServer.rows() }] : []),
+        ...(this.wgServerCfg?.enabled ? [{ title: "WireGuard 서버 피어 (wg show)", columns: ["피어", "공개 키", "엔드포인트", "AllowedIPs", "최근 핸드셰이크", "전송"], rows: this.wgs.rows() }] : []),
+        ...(this.wgClientCfg?.enabled ? [{ title: "WireGuard 클라이언트 (wg show)", columns: ["피어", "공개 키", "엔드포인트", "AllowedIPs", "최근 핸드셰이크", "전송"], rows: this.wgc.rows() }] : []),
+        ...(this.wgClientCfg?.enabled ? [{ title: "NAT 테이블 (VPN 터널)", columns: ["내부", "→ 터널 주소", "시각"], rows: this.natVpn.rows(this.wgClientCfg.address?.ip) }] : []),
         { title: "포트 포워딩", columns: ["공인 포트", "내부"], rows: this.nat.forwardRows(this.wan.ip) },
         ...(this.firewall.config.enabled ? [{ title: "방화벽 규칙", columns: ["#", "규칙"], rows: this.firewall.rows() }] : []),
         {
