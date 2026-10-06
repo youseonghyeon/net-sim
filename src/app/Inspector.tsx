@@ -25,6 +25,7 @@ import {
 import { cableAt, DEFAULT_FIREWALL_SETTINGS, defaultL3, peerOf, specOf, type Device } from "../model/topology";
 import { Icon } from "./Icons";
 import { DiagSection, InternetDiagSection, IspRenumberSection, LiveTables, StatusSection } from "./inspector/diag";
+import { MeshSection } from "./inspector/mesh";
 import { HostSection, HttpProxySection, Ipv6Section, LbSection, P2pSection, ServiceSection, WifiBaseSection, WifiClientSection, RemoteVpnSection } from "./inspector/host";
 import { L3Section, StpSection, VlanSection } from "./inspector/l3";
 import { CablePanel, CablesPanel, LintSection, MultiPanel, NetworkPanel, ZonePanel, deviceName, portName } from "./inspector/panels";
@@ -236,6 +237,7 @@ function DevicePanel({ d }: { d: Device }) {
           {d.host && (d.kind === "pc" || d.kind === "laptop" || d.kind === "phone") && <RemoteVpnSection d={d} h={d.host} />}
           {d.host && d.kind !== "lb" && <HttpProxySection d={d} h={d.host} />}
           {d.host && d.kind !== "lb" && <P2pSection d={d} h={d.host} />}
+          {d.host && d.kind !== "lb" && <MeshSection d={d} />}
           {d.router && <RouterSection d={d} r={d.router} />}
           {spec.role === "l3" && <L3Section d={d} l3={d.l3 ?? defaultL3(d.kind)} />}
         </>

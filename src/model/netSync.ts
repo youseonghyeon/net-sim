@@ -14,6 +14,8 @@ import { Router } from "../core/nodes/router";
 import { APPS, type AppId, type DpiCategory } from "../core/nodes/dpi";
 import type { StpConfig } from "../core/nodes/stp";
 import type { RaClientConfig } from "../core/nodes/ravpn";
+import { meshHostname, type MeshConfig } from "../core/nodes/tailscale";
+import { wgPrivateKey, wgPublicKey } from "../core/nodes/wg";
 import { Switch, type PortVlan } from "../core/nodes/switch";
 import { validCidr } from "../core/nodes/firewall";
 import { DEFAULT_LB_SETTINGS, DEFAULT_PROXY_SETTINGS,
@@ -114,7 +116,7 @@ export class NetworkSync {
     for (const d of t.devices) {
       const key: SyncedDevice = {
         net: configKey(d),
-        services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d), q: effectiveP2p(d) }),
+        services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d), q: effectiveP2p(d), m: d.host ? effectiveMesh(d) : undefined }),
         v6: d.host ? JSON.stringify(effectiveHost6(d)) : "",
       };
       const prev = this.syncedConfig.get(d.id);
@@ -136,6 +138,8 @@ export class NetworkSync {
         if (node instanceof Router && d.router?.adguard?.enabled) node.setAdguard(effectiveRouter(d).adguard, net.contextFor(d.id));
         if (node instanceof Router && d.router?.dpi?.enabled) node.setDpi(effectiveRouter(d).dpi, net.contextFor(d.id));
         if (node instanceof Router && d.router?.ovpnServer?.enabled) node.ovpn.setConfig(effectiveRouter(d).ovpnServer, net.contextFor(d.id));
+        if (node instanceof Router && d.router?.mesh?.enabled) node.mesh.setConfig(effectiveRouter(d).mesh, net.contextFor(d.id));
+        if (node instanceof Host && d.host?.mesh?.enabled) node.setMesh(effectiveMesh(d), net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -162,6 +166,7 @@ export class NetworkSync {
             node.setHttpProxy(effectiveHttpProxy(d), net.contextFor(d.id));
             node.setRemoteVpn(effectiveRaClient(d) ?? { enabled: false, psk: "" }, net.contextFor(d.id));
             node.setP2p(effectiveP2p(d), net.contextFor(d.id));
+            node.setMesh(effectiveMesh(d), net.contextFor(d.id));
           }
         }
       }
@@ -273,6 +278,28 @@ export function effectiveHost(d: Device) {
 export function effectiveP2p(d: Device) {
   const p = d.host?.p2p;
   return { enabled: p?.enabled === true, name: p?.name?.trim() || d.name };
+}
+
+/** 메시 VPN (Tailscale·ZeroTier) 설정: 노드 키는 장치마다, 이름은 비우면 장치 이름에서, 서브넷 라우터는 공유기 LAN */
+export function effectiveMesh(d: Device): MeshConfig {
+  const m = d.host?.mesh ?? d.router?.mesh;
+  const name = m?.name.trim() || meshHostname(d.name) || `${d.kind}-${d.id.slice(-4)}`;
+  const lan = d.router && validIp(d.router.lanIp) ? parseCidr(`${d.router.lanIp}/${d.router.lanPrefix}`, 24) : undefined;
+  const net = (ip: string, prefix: number) => {
+    const n = ip.split(".").map(Number);
+    const v = (((n[0]! << 24) >>> 0) + (n[1]! << 16) + (n[2]! << 8) + n[3]!) & (prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0);
+    return [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255].join(".");
+  };
+  return {
+    enabled: m?.enabled === true,
+    net: m?.net === "zerotier" ? "zerotier" : "tailscale",
+    network: (m?.network ?? "").trim().toLowerCase(),
+    name,
+    key: wgPublicKey(wgPrivateKey(`${d.id}:mesh`)),
+    routes: d.router && m?.advertiseLan && lan ? [{ dest: net(lan.ip, lan.prefix), prefix: lan.prefix }] : [],
+    exitNode: !!d.router && m?.exitNode === true,
+    ...(d.host && m?.useExitNode?.trim() ? { useExitNode: m.useExitNode.trim() } : {}),
+  };
 }
 
 /** 원격 접속 VPN 클라이언트 설정 */
@@ -455,6 +482,7 @@ export function effectiveRouter(d: Device, current?: Router) {
         ...(validIp(w2?.track?.trim()) ? { track: w2!.track.trim() } : {}),
       };
     })(),
+    mesh: effectiveMesh(d),
     ovpnServer: (() => {
       const o = r.ovpnServer;
       const net = parseCidr(o?.subnet, 24);

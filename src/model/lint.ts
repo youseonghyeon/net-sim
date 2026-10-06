@@ -16,6 +16,7 @@ import { forwardClosedRule, httpProxyRule, proxyPortClashRule, routerDnsRule } f
 import { remoteAccessRules, routerVpnRules, siteVpnRules } from "./lint/vpn";
 import { ddnsRules, wireguardRules } from "./lint/wg";
 import { ovpnRules } from "./lint/ovpn";
+import { meshRules } from "./lint/mesh";
 import { adguardRules } from "./lint/adguard";
 
 export type { LintIssue } from "./lint/context";
@@ -54,6 +55,7 @@ const RULES: ((ctx: LintContext) => void)[] = [
   wireguardRules, // 20c
   ddnsRules, // 20d
   ovpnRules, // 20e
+  meshRules, // 20f
   httpProxyRule, // 21
   proxyPortClashRule, // 21b
   adguardRules, // 21c

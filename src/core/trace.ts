@@ -233,6 +233,17 @@ export type TraceKind =
   | "vpn.leak"
   /** 킬 스위치가 VPN 밖으로 나가는 것을 막음 */
   | "vpn.killswitch"
+  /** 메시 VPN (Tailscale·ZeroTier): 로그인·netmap·후보 주소·홀 펀칭(disco)·직접 경로·릴레이·터널 입출·실패, 조정 서버 쪽 처리 */
+  | "mesh.login"
+  | "mesh.netmap"
+  | "mesh.endpoint"
+  | "mesh.disco"
+  | "mesh.direct"
+  | "mesh.relay"
+  | "mesh.encap"
+  | "mesh.decap"
+  | "mesh.drop"
+  | "mesh.control"
   | "ha.config"
   | "ha.state"
   | "ha.advert"
@@ -315,4 +326,5 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "mwan.down",
   "dpi.block",
   "p2p.failed",
+  "mesh.drop",
 ]);

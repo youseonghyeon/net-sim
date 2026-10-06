@@ -35,6 +35,7 @@ import { P2P_TIMER_TAG, P2pAgent, type P2pConfig } from "./p2p";
 import { RA_DPD_TAG, RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
 import { WG_TIMER_TAG, WgClient } from "./wg";
 import { OVPN_TIMER_TAG, OvpnClient } from "./openvpn";
+import { MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, NUD_TIMER_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
 export type IpMode = "dhcp" | "static";
@@ -153,6 +154,8 @@ export class Host implements SimNode {
   readonly resolver: DnsResolver;
   /** P2P 앱 (STUN·시그널링·홀 펀칭·TURN) */
   readonly p2p: P2pAgent;
+  /** 메시 VPN 앱 (Tailscale·ZeroTier) */
+  readonly mesh: MeshAgent;
   readonly tcp: TcpStack;
   /** 로드밸런서 서비스 (꺼져 있으면 아무것도 안 함) */
   readonly lb: LoadBalancer;
@@ -230,12 +233,20 @@ export class Host implements SimNode {
       send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)),
     });
     if (cfg.p2p) this.p2p.config = { ...cfg.p2p };
+    this.mesh = new MeshAgent(
+      {
+        myIp: () => (this.iface.usable && !this.iface.probing ? this.iface.ip : undefined),
+        local: (dst) => !!this.iface.ip && sameSubnet(dst, this.iface.ip, this.iface.prefix),
+        send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)),
+      },
+      cfg.id,
+    );
     this.resolver.local = this.dnsServer;
     this.iface.loopback = (pkt, ctx) => this.loopback(pkt, ctx);
     this.ra = this.makeVpnClient(cfg.ra?.type);
     if (cfg.ra) this.ra.config = { ...cfg.ra };
     // 사내 대역으로 가는 패킷은 원격 접속 터널로 (연결돼 있을 때만. L2TP/IPsec 은 모두)
-    this.iface.outbound = (pkt, ctx) => this.ra.intercept(pkt, ctx);
+    this.iface.outbound = (pkt, ctx) => this.ra.intercept(pkt, ctx) || this.mesh.intercept(pkt, ctx);
     // L2TP/IPsec 이 연결돼 있으면 집 공유기가 알려 준 DNS(IPCP)로 묻는다
     // WireGuard 는 켜져 있으면 설정 파일의 DNS 를 쓴다 (핸드셰이크 전에도 — 인터페이스가 올라가면 resolv.conf 가 바뀐다)
     // OpenVPN 은 연결되면 서버가 PUSH 로 알려 준 DNS
@@ -285,6 +296,10 @@ export class Host implements SimNode {
 
   setP2p(cfg: P2pConfig, ctx: NodeContext): void {
     this.p2p.setConfig(cfg, ctx);
+  }
+
+  setMesh(cfg: MeshConfig, ctx: NodeContext): void {
+    this.mesh.setConfig(cfg, ctx);
   }
 
   setRemoteVpn(cfg: RaClientConfig, ctx: NodeContext): void {
@@ -427,6 +442,7 @@ export class Host implements SimNode {
         this.cancelTraceroute("주소 변경", ctx, (rec) => !isIpv6(rec.resolved ?? rec.dst));
         this.ra.lost(ctx, "주소 변경");
         this.p2p.lost();
+        this.mesh.lost();
         if (this.linkUp && this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
       }
       ctx.trace(
@@ -449,6 +465,7 @@ export class Host implements SimNode {
   }
 
   onRemove(ctx: NodeContext): void {
+    this.mesh.logout(ctx, "장치 제거");
     if (this.linkUp) this.dhcp.release(ctx, this.emit(ctx));
     // 지워지는 동안 케이블·무선이 차례로 끊긴다 — 그 사이 다른 NIC 로 넘어가 DHCP 를 보내지 않게
     this.removed = true;
@@ -546,6 +563,7 @@ export class Host implements SimNode {
     this.v6.linkDown();
     this.ra.lost(ctx, why);
     this.p2p.lost();
+    this.mesh.lost();
     this.iface.clearPending();
     this.tcp.abortAll(why, ctx);
     this.cancelTraceroute(why, ctx);
@@ -958,6 +976,13 @@ export class Host implements SimNode {
    * IPv6 글로벌 주소가 없으면 예전처럼 A 만 (쓸 수 없는 주소 종류는 묻지 않는다 — AI_ADDRCONFIG)
    */
   private resolveName(name: string, ctx: NodeContext, done0: (ip: Ip | undefined, error?: string) => void, alive: () => boolean = () => true): void {
+    // MagicDNS: 메시 피어의 이름은 기기 안(100.100.100.100)에서 바로 푼다 — DNS 서버에 묻지 않는다
+    const magic = this.mesh.resolve(name);
+    if (magic) {
+      ctx.trace("dns.resolved", "app", `${name} = ${magic} (MagicDNS — ${this.mesh.brand} netmap 의 피어 이름, DNS 서버에 묻지 않음)`, { name, ip: magic, magicDns: true });
+      done0(magic);
+      return;
+    }
     // 0.0.0.0·:: 답은 DNS 필터(AdGuard 등)가 막은 이름 — 그 주소로 보내지 않는다 (브라우저도 바로 실패)
     const done = (ip: Ip | undefined, error?: string) => {
       if (ip === "0.0.0.0" || ip === "::") {
@@ -1177,6 +1202,22 @@ export class Host implements SimNode {
   }
 
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    // 메시 VPN 앱 (Tailscale·ZeroTier): 내 포트로 온 메시 메시지와 그 STUN 응답
+    if (pkt.dst === this.iface.ip && pkt.payload.kind === "udp" && this.mesh.ownsPort(pkt.payload.dstPort)) {
+      const udp = pkt.payload;
+      if (udp.payload.kind === "ts") {
+        const inner = this.mesh.handle(pkt, udp, udp.payload, ctx, frameId);
+        if (inner) {
+          if (inner.dst !== this.mesh.self?.ip) ctx.trace("mesh.drop", "L3", `${this.mesh.brand}: 꺼낸 패킷의 목적지 ${inner.dst} 가 내 메시 주소(${this.mesh.self?.ip ?? "없음"})가 아님 → 드롭 (호스트는 서브넷 라우터가 아니다)`, { dst: inner.dst }, frameId);
+          else this.handleIp({ ...inner, dst: this.iface.ip }, frameId, ctx);
+        }
+        return;
+      }
+      if (udp.payload.kind === "stun" && this.mesh.ownsStun(udp.payload)) {
+        this.mesh.handleStun(udp.payload, ctx, frameId);
+        return;
+      }
+    }
     // OpenVPN 앱: 내 포트로 온 OpenVPN (UDP) 또는 내 OpenVPN TCP 연결의 세그먼트
     if (this.ra instanceof OvpnClient && pkt.dst === this.iface.ip) {
       const p = pkt.payload;
@@ -1217,8 +1258,8 @@ export class Host implements SimNode {
     // 호스트로 넘기면 "UDP 포트를 듣는 프로그램 없음" + ICMP Port Unreachable 이 서버로 샌다 (OS 의 IPsec 서비스는 VPN 을 꺼도 500·4500 을 쥐고 있다)
     if (pkt.dst === this.iface.ip) {
       const p = pkt.payload;
-      if (p.kind === "esp" || (p.kind === "tcp" && p.ovpn) || (p.kind === "udp" && (p.payload.kind === "ike" || p.payload.kind === "esp" || p.payload.kind === "wg" || p.payload.kind === "ovpn"))) {
-        ctx.trace("vpn.drop", "L3", `${p.kind === "udp" && p.payload.kind === "ike" ? `IKE ${p.payload.exchange}` : p.kind === "udp" && p.payload.kind === "wg" ? "WireGuard" : (p.kind === "udp" && p.payload.kind === "ovpn") || p.kind === "tcp" ? "OpenVPN" : "ESP"} 수신 (from ${pkt.src}) → 지금 VPN 연결의 것이 아님 (끊었거나 종류를 바꾼 뒤 늦게 온 패킷) → 무시`, { from: pkt.src, late: true }, frameId);
+      if (p.kind === "esp" || (p.kind === "tcp" && p.ovpn) || (p.kind === "udp" && (p.payload.kind === "ike" || p.payload.kind === "esp" || p.payload.kind === "wg" || p.payload.kind === "ovpn" || p.payload.kind === "ts"))) {
+        ctx.trace("vpn.drop", "L3", `${p.kind === "udp" && p.payload.kind === "ike" ? `IKE ${p.payload.exchange}` : p.kind === "udp" && p.payload.kind === "wg" ? "WireGuard" : p.kind === "udp" && p.payload.kind === "ts" ? "메시 VPN" : (p.kind === "udp" && p.payload.kind === "ovpn") || p.kind === "tcp" ? "OpenVPN" : "ESP"} 수신 (from ${pkt.src}) → 지금 VPN 연결의 것이 아님 (끊었거나 종류를 바꾼 뒤 늦게 온 패킷) → 무시`, { from: pkt.src, late: true }, frameId);
         return;
       }
     }
@@ -1229,6 +1270,7 @@ export class Host implements SimNode {
         this.dhcp.handle(m, frameId, ctx, this.emit(ctx));
         this.ra.connect(ctx); // 주소를 받았으면 원격 접속 VPN 접속
         this.p2p.onAddress(ctx); // P2P 앱은 시그널링 서버에 등록
+        this.mesh.onAddress(ctx); // 메시 VPN 은 조정 서버에 로그인
         return;
       }
       if (udp.dstPort === P2P_PORT && pkt.dst === this.iface.ip && this.p2p.handle(pkt, udp, ctx, frameId)) return;
@@ -1364,6 +1406,7 @@ export class Host implements SimNode {
         if ((data as { mac: string }).mac === this.iface.mac) this.iface.finishProbe(ctx, this.emit(ctx));
         this.ra.connect(ctx); // 고정 주소를 쓰기 시작 → 원격 접속 VPN 접속
         this.p2p.onAddress(ctx);
+        this.mesh.onAddress(ctx);
         return;
       case RA_TIMER_TAG:
         this.ra.onTimer(data, ctx);
@@ -1373,6 +1416,9 @@ export class Host implements SimNode {
         return;
       case RA_DPD_TAG:
         this.ra.onDpdTick(data, ctx);
+        return;
+      case TS_TIMER_TAG:
+        this.mesh.onTimer(data, ctx);
         return;
       case WG_TIMER_TAG:
         if (this.ra instanceof WgClient) this.ra.onTimer(data, ctx);
@@ -1458,6 +1504,7 @@ export class Host implements SimNode {
         ["TCP 서비스", this.tcp.listening.size ? [...this.tcp.listening].map((p) => `포트 ${p}`).join(", ") : "없음"],
         ...(this.ra.config.enabled ? [[this.ra instanceof L2tpClient ? "VPN (L2TP/IPsec)" : this.ra instanceof WgClient ? "WireGuard" : this.ra instanceof OvpnClient ? "OpenVPN" : "원격 접속 VPN", this.ra.summary()!] as [string, string]] : []),
         ...(this.p2p.config.enabled ? [["P2P 앱", this.p2p.summary()!] as [string, string]] : []),
+        ...(this.mesh.config.enabled ? [[this.mesh.brand, this.mesh.summary()!] as [string, string]] : []),
         ...(this.dhcpServer.config.enabled
           ? [["DHCP 서버", `켜짐 · ${this.dhcpServer.config.start} ~ ${this.dhcpServer.config.end}`] as [string, string]]
           : []),
@@ -1471,6 +1518,7 @@ export class Host implements SimNode {
           : []),
       ],
       tables: [
+        ...(this.mesh.config.enabled ? [{ title: `${this.mesh.brand} 피어 (${this.mesh.config.net === "zerotier" ? "zerotier-cli peers" : "tailscale status"})`, columns: ["이름", "메시 주소", "경로", "알린 대역", "패킷"], rows: this.mesh.rows() }] : []),
         ...(this.dhcpServer.config.enabled ? [{ title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() }] : []),
         ...(this.dnsServer.config.enabled ? [{ title: "DNS 레코드·캐시", columns: ["이름", "IP", "출처"], rows: this.dnsServer.rows() }] : []),
         ...(this.lb.config.enabled ? [{ title: "로드밸런서 백엔드", columns: ["백엔드", "상태", "처리", "실패"], rows: this.lb.rows(this.clock) }] : []),

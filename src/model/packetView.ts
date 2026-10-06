@@ -3,8 +3,8 @@
 // - headerLayers: 이더넷 → ARP/IPv4 → ICMP/TCP/UDP → DHCP/DNS/RIP 필드를 실제 번호(타입·코드·옵션)와 함께
 // - practitionerLines: 장치가 내린 판단을 실무 명령의 출력(시스코 debug, iptables LOG, dhclient, ping, curl …)으로
 // 시뮬레이터에 없는 필드(체크섬, 윈도우 크기, IP ID 등)는 넣지 않고, 길이는 근사값이다.
-import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, L2tpPacket, OvpnMessage, P2pMessage, StunMessage, TcpSegment, UdpPacket, WgMessage } from "../core/packet";
-import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE, ovpnLength, wgLength } from "../core/packet";
+import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, L2tpPacket, OvpnMessage, P2pMessage, StunMessage, TcpSegment, TsMessage, UdpPacket, WgMessage } from "../core/packet";
+import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE, ovpnLength, tsLabel, tsLength, wgLength } from "../core/packet";
 import { scopeLabel6 } from "../core/addr6";
 import type { TraceEvent } from "../core/trace";
 
@@ -73,6 +73,10 @@ function appLength(u: UdpPacket): number {
   if (m.kind === "wg") return wgLength(m, m.inner ? 20 + l4Length(m.inner.payload) : 0);
   if (m.kind === "ddns") return 60 + m.hostname.length; // 실제는 HTTPS 요청 — 대략의 크기
   if (m.kind === "ovpn") return ovpnLength(m, m.inner ? 20 + l4Length(m.inner.payload) : 0);
+  if (m.kind === "ts") {
+    const inner = m.inner ?? m.msg?.inner;
+    return tsLength(m, inner ? 20 + l4Length(inner.payload) : 0);
+  }
   return 4 + m.entries.length * 20; // RIP
 }
 
@@ -205,6 +209,8 @@ function udpText(u: UdpPacket): string {
   if (m.kind === "ddns") return `UDP, length ${appLength(u)}`;
   // OpenVPN 도 tcpdump 는 길이만 (제어 채널은 tls-crypt·TLS, 데이터는 암호화)
   if (m.kind === "ovpn") return `UDP, length ${appLength(u)}`;
+  // Tailscale·ZeroTier 도 tcpdump 는 길이만 (WireGuard·암호화)
+  if (m.kind === "ts") return `UDP, length ${appLength(u)}`;
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
 }
 
@@ -396,6 +402,13 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
       layers.push(ovpnLayer(l4.payload));
       if (l4.payload.inner) layers.push(...ipLayers(l4.payload.inner, true));
     }
+    if (l4.payload.kind === "ts") {
+      const m = l4.payload;
+      layers.push(tsLayer(m));
+      if (m.msg) layers.push(tsLayer(m.msg));
+      const inner = m.inner ?? m.msg?.inner;
+      if (inner) layers.push(...ipLayers(inner, true));
+    }
   }
   return inTunnel ? layers.map((l) => ({ ...l, title: `터널 안 · ${l.title}` })) : layers;
 }
@@ -414,6 +427,24 @@ const OVPN_OPCODE: Record<OvpnMessage["op"], string> = {
   ping: "9 (P_DATA_V2 — keepalive ping)",
   exit: "9 (P_DATA_V2 — EXIT / RESTART 알림)",
 };
+
+/** Tailscale·ZeroTier 층 */
+function tsLayer(m: TsMessage): HeaderLayer {
+  const brand = m.net === "zerotier" ? "ZeroTier" : "Tailscale";
+  const rows: [string, string][] = [["메시지", tsLabel(m).replace(`${brand} `, "")]];
+  if (m.network) rows.push([m.net === "zerotier" ? "네트워크 ID" : "tailnet", m.network]);
+  if (m.name) rows.push(["기기 이름", m.name]);
+  if (m.key) rows.push(["보낸 노드 키", `${m.key.slice(0, 8)}…`]);
+  if (m.to) rows.push(["받을 노드 키", `${m.to.slice(0, 8)}… — 릴레이는 이 키의 기기에게 전해 준다 (내용은 못 봄)`]);
+  if (m.endpoints?.length) rows.push(["후보 주소", m.endpoints.map((e) => `${e.ip}:${e.port}`).join(", ")]);
+  if (m.self) rows.push(["내 주소", `${m.self.ip}/${m.self.prefix} (${m.self.name})`]);
+  if (m.peers) rows.push(["피어", m.peers.map((p) => `${p.name} ${p.ip}${p.routes.length ? ` [${p.routes.map((r) => `${r.dest}/${r.prefix}`).join(", ")}]` : ""}${p.exitNode ? " exit" : ""}`).join(" · ") || "(없음)"]);
+  if (m.routes?.length) rows.push(["알린 대역 (서브넷 라우터)", m.routes.map((r) => `${r.dest}/${r.prefix}`).join(", ")]);
+  if (m.seen) rows.push(["내가 본 당신 주소", `${m.seen.ip}:${m.seen.port}`]);
+  if (m.reason) rows.push(["이유", m.reason]);
+  if (m.op === "data") rows.push(["안쪽", "WireGuard 로 암호화 — 두 끝만 아래 원래 패킷을 본다"]);
+  return { title: brand, rows };
+}
 
 /** OpenVPN 층: 바깥에서 보이는 opcode·세션 id 와, 두 끝이 풀면 보이는 내용 */
 function ovpnLayer(m: OvpnMessage): HeaderLayer {
@@ -639,7 +670,7 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
       ]);
     return [udp, { title: "DNS (앱)", rows }];
   }
-  if (m.kind === "vpn" || m.kind === "esp" || m.kind === "wg" || m.kind === "ovpn") return [udp];
+  if (m.kind === "vpn" || m.kind === "esp" || m.kind === "wg" || m.kind === "ovpn" || m.kind === "ts") return [udp];
   if (m.kind === "ddns")
     return [
       udp,
@@ -815,6 +846,7 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
   if (l2tp) l2tpLines(ev, ip, out);
   else if (ev.kind.startsWith("vpn.") && detail(ev, "wg") !== undefined) wgLines(ev, frames, out);
   else if (ev.kind.startsWith("vpn.") && detail(ev, "ovpn") !== undefined) ovpnLines(ev, frames, out);
+  else if (ev.kind.startsWith("mesh.")) meshLines(ev, out);
   else switch (ev.kind) {
     case "ip.forward":
       if (ip) out.push({ tool: "시스코 debug ip packet", line: `IP: s=${ip.src}, d=${ip.dst} (${detail(ev, "out") ?? "?"}), len ${len}, forward` });
@@ -1127,6 +1159,27 @@ function wgLines(ev: TraceEvent, frames: { received?: EthernetFrame; sent?: Ethe
       else if (detail(ev, "failed") === "true") line(`Handshake for peer 1 did not complete after 3 attempts, giving up`);
       break;
   }
+}
+
+/** 메시 VPN: tailscale ping / tailscaled 로그의 해당 줄 */
+function meshLines(ev: TraceEvent, out: PractitionerLine[]): void {
+  const zt = detail(ev, "mesh") === "zerotier";
+  const sm = ev.summary;
+  if (zt) {
+    if (ev.kind === "mesh.netmap") out.push({ tool: "zerotier-cli listnetworks", line: `200 listnetworks <nwid> <name> <mac> OK PRIVATE zt0 ${sm.match(/내 주소 ([0-9.]+)/)?.[1] ?? "?"}/24` });
+    return;
+  }
+  const peer = String(detail(ev, "peer") ?? "");
+  if (ev.kind === "mesh.direct") {
+    const at = sm.match(/직접 경로 ([0-9.]+:\d+)/)?.[1] ?? "?";
+    out.push({ tool: "tailscale ping", line: `pong from ${peer || "peer"} via ${at} in 20ms` });
+  } else if (ev.kind === "mesh.relay" && sm.includes("직접 경로를 찾지 못함")) {
+    out.push({ tool: "tailscale ping", line: `pong from ${peer || "peer"} via DERP(tok) in 60ms` });
+    out.push({ tool: "tailscale ping", line: "direct connection not established" });
+  } else if (ev.kind === "mesh.login" && sm.includes("로그인 (노드 키")) out.push({ tool: "tailscaled 로그", line: "control: client.Login(false, 0)" });
+  else if (ev.kind === "mesh.netmap") out.push({ tool: "tailscaled 로그", line: `netmap: self: ${sm.match(/내 주소 ([0-9.]+)/)?.[1] ?? "?"} peers: ${detail(ev, "peers") ?? 0}` });
+  else if (ev.kind === "mesh.endpoint") out.push({ tool: "tailscaled 로그", line: `magicsock: endpoints changed: ${sm.match(/([0-9.]+:\d+)/)?.[1] ?? "?"} (stun)` });
+  else if (ev.kind === "mesh.drop" && sm.includes("거절")) out.push({ tool: "tailscaled 로그", line: "control: login: 403 Forbidden" });
 }
 
 /** OpenVPN 로그 (verb 3) 의 해당 줄 — 서버·클라이언트 양쪽 (요약문으로 어느 단계인지 가린다) */

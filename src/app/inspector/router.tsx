@@ -25,6 +25,7 @@ import { ConfigGroups, Field, IfaceFields, Section, Toggle, ipError, validIp } f
 import { WAN_LABEL } from "../../core/nodes/mwan";
 import { DdnsSection, WgClientSection, WgServerSection } from "./wg";
 import { OvpnServerSection } from "./ovpn";
+import { MeshSection } from "./mesh";
 import { AdguardSection, DpiSection } from "./apps";
 
 /** LAN 주소/서브넷이 바뀔 때, 기존 범위가 옛 서브넷 안에 있었다면 호스트 부분을 유지한 채 새 서브넷으로 옮긴다 */
@@ -125,12 +126,13 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         {
           id: "vpn",
           label: "VPN",
-          on: r.wgServer?.enabled === true || r.wgClient?.enabled === true || r.vpnServer?.enabled === true || r.ovpnServer?.enabled === true,
+          on: r.wgServer?.enabled === true || r.wgClient?.enabled === true || r.vpnServer?.enabled === true || r.ovpnServer?.enabled === true || r.mesh?.enabled === true,
           content: (
             <>
               <WgServerSection d={d} r={r} />
               <WgClientSection d={d} r={r} />
               <OvpnServerSection d={d} r={r} />
+              <MeshSection d={d} />
               <RouterVpnSection d={d} r={r} />
             </>
           ),

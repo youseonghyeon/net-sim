@@ -1591,6 +1591,31 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("표");
   console.log("ovpn status rows:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "OpenVPN 클라이언트" }) }).locator("tbody tr").allInnerTexts()).map((x) => x.replace(/\s+/g, " ")).join(" | "));
 }
+// Tailscale: 셋이 tailnet 에 로그인, 노트북 → work-pc (MagicDNS·DERP), 공유기 VPN 묶음의 메시 VPN 섹션, 표의 피어 경로
+{
+  await loadEx("tailscale");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "회사 PC" && /Tailscale(?! 대기)/.test(el.textContent ?? "")), null, { timeout: 30000 });
+  await clickDevice("카페 노트북");
+  await page.fill(".ping-row .input", "work-pc");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 40000 });
+  console.log("ts laptop → work-pc:", (await page.locator(".ping-log li").first().innerText()).replace(/\s+/g, " "));
+  await goTab("표");
+  console.log("ts peers:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "Tailscale 피어" }) }).locator("tbody tr").allInnerTexts()).map((x) => x.replace(/\s+/g, " ")).join(" | "));
+  await goTab("설정");
+  const ms = page.locator(".inspector section", { has: page.locator("h3", { hasText: "메시 VPN" }) });
+  await ms.scrollIntoViewIfNeeded();
+  console.log("ts laptop status:", (await ms.locator("p.note").first().textContent())?.trim(), "| exit options:", await ms.locator("select option").count());
+  await page.screenshot({ path: `${OUT}/106-ts-laptop.png` });
+  await clickDevice("집 Brume 3");
+  await goTab("설정");
+  await goGroup("VPN");
+  const rs = page.locator(".inspector section", { has: page.locator("h3", { hasText: "메시 VPN" }) });
+  await rs.scrollIntoViewIfNeeded();
+  console.log("ts router toggles on:", await rs.locator(".toggle.on").count());
+  await page.screenshot({ path: `${OUT}/107-ts-router.png` });
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

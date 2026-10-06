@@ -193,6 +193,8 @@ export interface HostSettings {
   ipv6?: Ipv6HostSettings;
   /** P2P 앱 (화상 통화·게임처럼 NAT 너머 상대와 직접 잇기). 이름이 비면 장치 이름 */
   p2p?: { enabled: boolean; name?: string };
+  /** 메시 VPN 앱 (Tailscale·ZeroTier). 없으면 꺼짐 */
+  mesh?: MeshSettings;
 }
 
 /** 호스트의 IPv6 설정 */
@@ -436,6 +438,7 @@ function normalizeHostExtras(h: HostSettings): HostSettings {
     const p = h.p2p as { enabled?: unknown; name?: unknown };
     out.p2p = { enabled: p.enabled === true, ...(typeof p.name === "string" ? { name: p.name } : {}) };
   }
+  if (h.mesh && typeof h.mesh === "object") out.mesh = normalizeMesh(h.mesh as Partial<MeshSettings>);
   return out;
 }
 
@@ -630,6 +633,40 @@ export interface RouterSettings {
   dpi?: RouterDpiSettings;
   /** OpenVPN 서버. 없으면 꺼짐 */
   ovpnServer?: RouterOvpnServerSettings;
+  /** 메시 VPN (Tailscale·ZeroTier — 서브넷 라우터·exit node). 없으면 꺼짐 */
+  mesh?: MeshSettings;
+}
+
+/**
+ * 메시 VPN (Tailscale·ZeroTier) 앱 설정. 노트북·폰·공유기 공통 — advertiseLan·exitNode 는 공유기만, useExitNode 는 단말만
+ */
+export interface MeshSettings {
+  enabled: boolean;
+  net: "tailscale" | "zerotier";
+  /** tailnet 이름(계정) 또는 ZeroTier 네트워크 ID (16자리 16진수) */
+  network: string;
+  /** 기기 이름 (비우면 장치 이름에서 — MagicDNS 이름) */
+  name: string;
+  /** 서브넷 라우터: LAN 대역을 알림 (공유기) */
+  advertiseLan?: boolean;
+  /** exit node 를 내줌 (공유기) */
+  exitNode?: boolean;
+  /** 쓸 exit node 의 이름 (단말) */
+  useExitNode?: string;
+}
+
+export const DEFAULT_MESH_SETTINGS: MeshSettings = { enabled: true, net: "tailscale", network: "", name: "" };
+
+function normalizeMesh(v: Partial<MeshSettings>): MeshSettings {
+  return {
+    enabled: v.enabled === true,
+    net: v.net === "zerotier" ? "zerotier" : "tailscale",
+    network: typeof v.network === "string" ? v.network : "",
+    name: typeof v.name === "string" ? v.name : "",
+    ...(v.advertiseLan === true ? { advertiseLan: true } : {}),
+    ...(v.exitNode === true ? { exitNode: true } : {}),
+    ...(typeof v.useExitNode === "string" && v.useExitNode ? { useExitNode: v.useExitNode } : {}),
+  };
 }
 
 /** 공유기 OpenVPN 서버: CA·서버 인증서·tls-crypt 키는 장치마다 정해진 것 (ovpnCaOfDevice) */
@@ -1479,6 +1516,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.wgServer ? { wgServer: normalizeWgServer(r.wgServer) } : {}),
           ...(r.wgClient ? { wgClient: normalizeWgClient(r.wgClient) } : {}),
           ...(r.ovpnServer ? { ovpnServer: normalizeOvpnServer(r.ovpnServer) } : {}),
+          ...(r.mesh && typeof r.mesh === "object" ? { mesh: normalizeMesh(r.mesh) } : {}),
           ...(r.wan2 ? { wan2: normalizeWan2(r.wan2) } : {}),
           ...(r.adguard ? { adguard: normalizeAdguard(r.adguard) } : {}),
           ...(r.dpi ? { dpi: { enabled: (r.dpi as Partial<RouterDpiSettings>).enabled === true, blockApps: Array.isArray(r.dpi.blockApps) ? r.dpi.blockApps.filter((x): x is string => typeof x === "string") : [], blockCategories: Array.isArray(r.dpi.blockCategories) ? r.dpi.blockCategories.filter((x): x is string => typeof x === "string") : [] } } : {}),

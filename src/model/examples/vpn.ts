@@ -201,3 +201,41 @@ export function exampleOpenVpnTopology(): Topology {
   ];
   return t;
 }
+
+/**
+ * Tailscale (메시 VPN): 서로 다른 NAT 뒤의 기기들이 한 tailnet(family)에 로그인해 100.64.x.y 주소로 바로 통신한다.
+ * - 집 Brume 3: 공인 주소(NAT 없음) · 서브넷 라우터(집 LAN 192.168.8.0/24 를 알림) · exit node
+ * - 카페 노트북: port-restricted NAT 뒤 — 집과는 홀 펀칭으로 직접, 회사 PC 와는 직접이 안 돼 DERP 릴레이
+ * - 회사 PC: symmetric NAT 뒤 (상대마다 바깥 포트가 바뀜)
+ */
+export function exampleTailscaleTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 456, -296, "internet-1");
+  const isp = add("switch", 456, -168, "통신사 구간");
+  const cafe = add("router", 120, -24, "카페 공유기");
+  cafe.router = { ...cafe.router!, lanIp: "10.20.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "10.20.0.100", end: "10.20.0.199" }, natType: "port-restricted" };
+  const laptop = add("laptop", 120, 152, "카페 노트북");
+  laptop.host = { ...laptop.host!, mesh: { enabled: true, net: "tailscale", network: "family", name: "laptop" } };
+  const home = add("router", 456, -24, "집 Brume 3");
+  home.router = {
+    ...home.router!,
+    lanIp: "192.168.8.1",
+    lanPrefix: 24,
+    dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
+    mesh: { enabled: true, net: "tailscale", network: "family", name: "home-brume", advertiseLan: true, exitNode: true },
+  };
+  const nas = add("server", 456, 152, "집 NAS");
+  nas.host = { ipMode: "static", ip: "192.168.8.20", prefix: 24, gateway: "192.168.8.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const office = add("router", 792, -24, "회사 공유기");
+  office.router = { ...office.router!, lanIp: "10.30.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "10.30.0.100", end: "10.30.0.199" }, natType: "symmetric" };
+  const pc = add("pc", 792, 152, "회사 PC");
+  pc.host = { ...pc.host!, mesh: { enabled: true, net: "tailscale", network: "family", name: "work-pc" } };
+  const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, cafe, 0), cable(isp, 4, home, 0), cable(isp, 6, office, 0), cable(cafe, 1, laptop, 0), cable(home, 1, nas, 0), cable(office, 1, pc, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "카페 · port-restricted NAT", tint: "green", ...zoneAround(t, [cafe.id, laptop.id], 56)! },
+    { id: newId("zone"), label: "집 192.168.8.0/24 · 서브넷 라우터", tint: "blue", ...zoneAround(t, [home.id, nas.id], 56)! },
+    { id: newId("zone"), label: "회사 · symmetric NAT", tint: "amber", ...zoneAround(t, [office.id, pc.id], 56)! },
+  ];
+  return t;
+}

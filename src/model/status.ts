@@ -127,6 +127,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.proxy.config.enabled) out.push("프록시");
     if (node.ra.config.enabled) out.push(node.ra.state === "up" ? "VPN 연결됨" : "VPN");
     if (node.p2p.config.enabled) out.push(node.p2p.session?.phase === "connected" ? (node.p2p.session.via === "relay" ? "P2P 릴레이" : "P2P 직접") : "P2P");
+    if (node.mesh.config.enabled) out.push(node.mesh.up ? node.mesh.brand : `${node.mesh.brand} 대기`);
     if (node.v6.enabled) out.push("IPv6");
     if (node.nics.length > 1 && node.activeNic === 1) out.push("Wi-Fi");
   } else if (node instanceof Router) {
@@ -139,6 +140,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
     if (node.vpnServer.config.enabled) out.push(`VPN 서버 ${node.vpnServer.connected.length}`);
     if (node.wgServerCfg?.enabled) out.push(`WG 서버 ${node.wgs.connected}`);
     if (node.ovpn.enabled) out.push(`OpenVPN ${node.ovpn.connected}`);
+    if (node.mesh.config.enabled) out.push(node.mesh.up ? node.mesh.brand : `${node.mesh.brand} 대기`);
     if (node.adguard.config.enabled) out.push("AdGuard");
     if (node.dpi.config.enabled) out.push("DPI");
     if (node.wan2On) out.push(node.mwan.active === "wan2" ? "WAN2 사용 중" : "멀티 WAN");

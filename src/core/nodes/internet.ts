@@ -1,3 +1,4 @@
+import { MESH_SERVERS, MeshCoordinator } from "./tailscale";
 import { isMulticastMac, isPrivateIp, type Ip, type Mac } from "../addr";
 import { ALL_NODES, canonIp6, formatIp6, isGlobal6, isIpv6, isMulticast6, parseIp6, sameSubnet6 } from "../addr6";
 import {
@@ -97,6 +98,8 @@ export class Internet implements SimNode {
   readonly delegations = new Map<Ip, { client: Mac; via: Ip; at: number }>();
   /** DDNS 서비스 (glddns.com): 공유기가 갱신한 이름 → 주소. 공인 DNS 가 이 이름들도 답한다 */
   readonly ddns = new DdnsService();
+  /** Tailscale·ZeroTier 조정 서버와 릴레이 (DERP·root) */
+  readonly mesh = new MeshCoordinator({ send: (src, srcPort, to, m, ctx) => this.iface.sendIp({ kind: "ipv4", src, dst: to.ip, ttl: 54, payload: { kind: "udp", srcPort, dstPort: to.port, payload: m } }, ctx, this.emit(ctx)) });
 
   constructor(cfg: InternetConfig) {
     this.id = cfg.id;
@@ -435,6 +438,12 @@ export class Internet implements SimNode {
         }
         const reply = this.ddns.handle(pkt.src, m, ctx, frameId);
         this.serverSend(DDNS_SERVER, DDNS_PORT, { ip: pkt.src, port: udp.srcPort }, reply, ctx);
+      } else if (m.kind === "ts" && (pkt.dst === MESH_SERVERS[m.net].control || pkt.dst === MESH_SERVERS[m.net].relay)) {
+        if (isPrivateIp(pkt.src)) {
+          ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} → 응답을 돌려줄 수 없어 드롭 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
+          return;
+        }
+        if (!this.mesh.handle(pkt, udp, m, ctx, frameId)) ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
       } else if (this.p2pServers(pkt, udp, frameId, ctx)) return;
       else ctx.trace("ip.drop", "L4", `UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
       return;
@@ -615,6 +624,7 @@ export class Internet implements SimNode {
         { title: "IPv6 프리픽스 위임 (DHCPv6-PD)", columns: ["프리픽스", "고객", "넥스트 홉"], rows: [...this.delegations.entries()].map(([p, d]) => [`${p}/${Internet.PD_LENGTH}`, d.client, d.via]) },
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: this.iface.arpRows() },
         { title: "알려진 서버", columns: ["IP", "이름"], rows: Object.entries(KNOWN_SERVERS) },
+        ...(this.mesh.nets.size ? [{ title: "메시 VPN 조정 서버 (Tailscale·ZeroTier)", columns: ["tailnet·네트워크", "기기", "주소", "상태", "후보 주소"], rows: this.mesh.rows() }] : []),
       ],
     };
   }

@@ -1,4 +1,5 @@
 import { OVPN_PORT, OvpnServer, shortFp, type OvpnServerConfig } from "./openvpn";
+import { MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
 import { BROADCAST_MAC, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
 import { ALL_NODES, formatIp6, isIpv6, isLinkLocal6, isMulticast6, parseIp6, sameSubnet6, UNSPECIFIED6 } from "../addr6";
 import {
@@ -85,6 +86,8 @@ export interface RouterConfig {
   dpi?: DpiConfig;
   /** OpenVPN 서버 (없으면 꺼짐) */
   ovpnServer?: OvpnServerConfig;
+  /** 메시 VPN (없으면 꺼짐) */
+  mesh?: MeshConfig;
 }
 
 /** 멀티 WAN 페일오버: lan4 = WAN2 (예비 회선), 추적 주소 */
@@ -198,6 +201,10 @@ export class Router implements SimNode {
   readonly ovpn: OvpnServer;
   /** OpenVPN 서버가 마지막으로 본 WAN 주소 (바뀌면 세션을 비운다) */
   private ovpnWanIp: Ip | undefined;
+  /** 메시 VPN (Tailscale·ZeroTier 앱): 서브넷 라우터·exit node */
+  readonly mesh: MeshAgent;
+  /** 메시 VPN 이 로그인한 WAN 주소 (바뀌면 다시 로그인) */
+  private meshWanIp: Ip | undefined;
   /** DDNS 클라이언트 */
   readonly ddns: DdnsClient;
   /** 멀티 WAN: lan4 를 WAN2 로 쓰는지 */
@@ -330,6 +337,14 @@ export class Router implements SimNode {
     this.wgs = new WgInterface(wgIo, "WireGuard 서버", `${cfg.id}:server`);
     this.wgc = new WgInterface(wgIo, "WireGuard 클라이언트", `${cfg.id}:client`);
     // OpenVPN 서버: WireGuard 와 같은 바깥 경로 (공유기 자신이 만든 바깥 패킷이라 NAT·방화벽을 거치지 않는다)
+    this.mesh = new MeshAgent(
+      {
+        myIp: () => wgIo.source(),
+        local: (dst) => (!!this.lan.ip && sameSubnet(dst, this.lan.ip, this.lan.prefix)) || (!!this.wan.ip && sameSubnet(dst, this.wan.ip, this.wan.prefix)),
+        send: (outer, ctx) => wgIo.send(outer, ctx),
+      },
+      cfg.id,
+    );
     this.ovpn = new OvpnServer({ source: wgIo.source, send: (outer, ctx) => wgIo.send(outer, ctx), lan: () => (this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined) }, cfg.id);
     this.wgcPort = 49152 + (Math.abs(hashCode(`${cfg.id}:wgc`)) % 16000);
     this.natVpn.why = "VPN 서버는 이 공유기를 터널 주소 하나로만 안다(AllowedIPs) — LAN 기기 주소를 터널 주소로 바꾸고 테이블에 기록";
@@ -406,6 +421,11 @@ export class Router implements SimNode {
   private onWanAddress(ctx: NodeContext): void {
     this.mwan.onLine("wan", ctx);
     this.ovpnCheckWan(ctx);
+    if (this.wan.ip !== this.meshWanIp) {
+      if (this.meshWanIp) this.mesh.lost();
+      this.meshWanIp = this.wan.ip;
+    }
+    this.mesh.onAddress(ctx);
     if (!this.wan.ip) return;
     this.ddns.onWanAddress(ctx);
     if (!this.wgClientCfg?.enabled) return;
@@ -596,6 +616,11 @@ export class Router implements SimNode {
   /** 목적지가 WireGuard 서버의 피어·OpenVPN 서버의 클라이언트(붙은 노트북 등)면 그 터널로. 보냈으면 true */
   private toTunnelPeer(pkt: Ipv4Packet, ctx: NodeContext, frameId?: number): boolean {
     if (this.ovpn.send(pkt, ctx, frameId)) return true;
+    const mp = this.meshPeer(pkt.dst);
+    if (mp) {
+      this.mesh.send(mp, pkt, ctx, frameId);
+      return true;
+    }
     if (!this.wgServerCfg?.enabled) return false;
     const peer = this.wgs.route(pkt.dst);
     if (!peer) return false;
@@ -605,7 +630,32 @@ export class Router implements SimNode {
 
   /** 목적지가 터널로 붙은 기기인가 (WireGuard 피어·OpenVPN 클라이언트) */
   private isTunnelPeer(dst: Ip): boolean {
-    return (!!this.wgServerCfg?.enabled && !!this.wgs.route(dst)) || !!this.ovpn.owner(dst);
+    return (!!this.wgServerCfg?.enabled && !!this.wgs.route(dst)) || !!this.ovpn.owner(dst) || !!this.meshPeer(dst);
+  }
+
+  /** 메시 VPN 으로 보낼 피어 (메시 주소·다른 서브넷 라우터가 알린 대역 — 내 LAN 은 빼고, 공유기는 exit node 를 쓰지 않는다) */
+  private meshPeer(dst: Ip) {
+    if (!this.mesh.up || (this.lan.ip && sameSubnet(dst, this.lan.ip, this.lan.prefix))) return undefined;
+    const p = this.mesh.route(dst);
+    return p && (p.info.ip === dst || p.info.routes.some((r) => sameSubnet(dst, r.dest, r.prefix))) ? p : undefined;
+  }
+
+  /** 내 공인 주소로 온 메시 VPN (내 포트) 과 그 STUN 응답. 처리했으면 true */
+  private handleWanMesh(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): boolean {
+    const u = pkt.payload;
+    if (u.kind !== "udp" || !this.mesh.ownsPort(u.dstPort)) return false;
+    if (u.payload.kind === "stun" && this.mesh.ownsStun(u.payload)) {
+      this.mesh.handleStun(u.payload, ctx, frameId);
+      return true;
+    }
+    if (u.payload.kind !== "ts") return false;
+    const inner = this.mesh.handle(pkt, u, u.payload, ctx, frameId);
+    if (inner) {
+      const c = this.mesh.config;
+      const lanOn = !!this.lan.ip && c.routes.some((r) => sameSubnet(this.lan.ip!, r.dest, r.prefix));
+      this.routeFromWg(inner, frameId, ctx, { label: this.mesh.brand, lanAccess: lanOn, ...(this.mesh.self ? { address: this.mesh.self.ip } : {}), internet: c.exitNode });
+    }
+    return true;
   }
 
   /** 위임받은 프리픽스가 생기거나 사라짐: LAN 에 그 첫 /64 를 주소로 두고 RA 로 알린다 (사라지면 거둠 RA) */
@@ -740,6 +790,7 @@ export class Router implements SimNode {
       adguard?: AdguardConfig;
       dpi?: DpiConfig;
       ovpnServer?: OvpnServerConfig;
+      mesh?: MeshConfig;
     },
     ctx: NodeContext,
   ): void {
@@ -749,6 +800,7 @@ export class Router implements SimNode {
     if (cfg.wan2) this.setWan2(cfg.wan2, ctx);
     if (cfg.wgServer || cfg.wgClient) this.setWg(cfg.wgServer, cfg.wgClient, ctx);
     if (cfg.ovpnServer) this.ovpn.setConfig(cfg.ovpnServer, ctx);
+    if (cfg.mesh) this.mesh.setConfig(cfg.mesh, ctx);
     if (cfg.hairpin !== undefined && cfg.hairpin !== this.hairpin) {
       this.hairpin = cfg.hairpin;
       ctx.trace("ip.config", "sys", cfg.hairpin ? `헤어핀 NAT 켜짐: 안에서 내 공인 주소의 포워딩 포트로 접속하면 안쪽 서버로 되돌려 준다 (도메인으로 집 서버에 접속하기)` : `헤어핀 NAT 꺼짐`, { hairpin: cfg.hairpin });
@@ -827,6 +879,7 @@ export class Router implements SimNode {
   }
 
   onRemove(ctx: NodeContext): void {
+    this.mesh.logout(ctx, "공유기를 치움");
     this.vpnServer.clear();
     this.ddns.release(ctx, "공유기를 치움");
     if (this.ipv6Enabled) {
@@ -1234,6 +1287,7 @@ export class Router implements SimNode {
     }
     // WireGuard: 내 서버·클라이언트의 포트로 온 WireGuard 메시지는 공유기 자신이 받는다 (그 밖의 포트는 아래 NAT 역변환 — 안쪽 기기의 WireGuard)
     if (this.handleWanWg(pkt, frameId, ctx)) return;
+    if (this.handleWanMesh(pkt, frameId, ctx)) return;
     // OpenVPN 서버: 내 전송·포트로 온 것 (포트 포워딩보다 먼저 — TCP 443 으로 열면 그 포트는 OpenVPN 이 쓴다)
     if (this.handleWanOvpn(pkt, frameId, ctx)) return;
     // VPN 서버 (L2TP/IPsec): IKE (UDP 500·4500) 와 내 SA 의 ESP 는 공유기 자신이 받는다 (포트 포워딩보다 먼저 — ipTIME 도 VPN 서버를 켜면 그 포트를 쓴다)
@@ -1353,6 +1407,12 @@ export class Router implements SimNode {
       return;
     }
     const tun = this.wgServerCfg?.enabled ? this.wgServerCfg.address : undefined;
+    if (this.mesh.inMesh(pkt.dst)) {
+      ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 는 ${this.mesh.brand} 메시 대역이지만 netmap 에 그 주소의 온라인 피어가 없음 → 드롭하고 Destination Unreachable (net)`, { dst: pkt.dst }, frameId);
+      const notice = this.lan.unreachable(pkt, "net", ctx, frameId);
+      if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
+      return;
+    }
     const otun = this.ovpn.inSubnet(pkt.dst) ? this.ovpn.config.subnet : undefined;
     if (otun) {
       ctx.trace("ip.no-route", "L3", `No route: ${pkt.dst} 는 OpenVPN 터널 대역 ${otun.ip}/${otun.prefix} 안이지만 그 주소로 붙어 있는 클라이언트가 없음 → 드롭하고 Destination Unreachable (net)`, { dst: pkt.dst }, frameId);
@@ -1499,6 +1559,7 @@ export class Router implements SimNode {
     // WireGuard 클라이언트·서버 (멀티 WAN 이 WAN2 로 넘어가 있을 때 오가는 것)
     if (u.kind === "udp" && u.payload.kind === "wg" && this.handleWanWg(pkt, frame.id, ctx)) return;
     if (this.handleWanOvpn(pkt, frame.id, ctx)) return;
+    if (this.handleWanMesh(pkt, frame.id, ctx)) return;
     const forwarded = u.kind === "udp" && this.nat2.forwards.some((r) => r.proto === "udp" && r.publicPort === u.dstPort);
     if (!forwarded && u.kind === "udp" && u.payload.kind === "dns" && u.dstPort === DNS_PORT) {
       this.dnsForwarder.handle(pkt, u.srcPort, u.payload, frame.id, ctx, this.emitLan(ctx));
@@ -1598,12 +1659,12 @@ export class Router implements SimNode {
       return;
     }
     const inner: Ipv4Packet = { ...pkt, ttl: pkt.ttl - 1 };
-    ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 ${this.ovpn.owner(pkt.dst) ? "OpenVPN 으로" : "WireGuard 로"} 붙은 기기 → 그 터널로 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: pkt.dst, wg: true }, frameId);
+    ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 ${this.ovpn.owner(pkt.dst) ? "OpenVPN 으로" : this.meshPeer(pkt.dst) ? `${this.mesh.brand} 로` : "WireGuard 로"} 붙은 기기 → 그 터널로 (TTL ${pkt.ttl} → ${inner.ttl})`, { dst: pkt.dst, wg: true }, frameId);
     this.toTunnelPeer(inner, ctx, frameId);
   }
 
   /** WireGuard·OpenVPN 서버로 들어온 패킷 (붙은 기기가 보냄): 공유기 자신·다른 피어·집 LAN·인터넷 */
-  private routeFromWg(pkt: Ipv4Packet, frameId: number, ctx: NodeContext, vpn: { label: string; lanAccess: boolean; address?: Ip } = { label: "WireGuard", lanAccess: !!this.wgServerCfg?.lanAccess, ...(this.wgServerCfg?.address ? { address: this.wgServerCfg.address.ip } : {}) }): void {
+  private routeFromWg(pkt: Ipv4Packet, frameId: number, ctx: NodeContext, vpn: { label: string; lanAccess: boolean; address?: Ip; internet?: boolean } = { label: "WireGuard", lanAccess: !!this.wgServerCfg?.lanAccess, ...(this.wgServerCfg?.address ? { address: this.wgServerCfg.address.ip } : {}) }): void {
     const emit = this.emitLan(ctx);
     const p = pkt.payload;
     if (pkt.dst === this.lan.ip || pkt.dst === this.wan.ip || pkt.dst === vpn.address) {
@@ -1643,6 +1704,10 @@ export class Router implements SimNode {
       return;
     }
     // 인터넷: 집 LAN 기기처럼 방화벽·NAT 를 거쳐 공유기 공인 주소로 (클라이언트가 AllowedIPs 0.0.0.0/0 으로 전부 보낼 때)
+    if (vpn.internet === false) {
+      ctx.trace("mesh.drop", "L3", `${vpn.label} 피어 ${pkt.src} → ${pkt.dst}: 이 공유기는 exit node 를 내주지 않음 → 드롭 (인터넷으로 내보내지 않는다)`, { src: pkt.src, dst: pkt.dst }, frameId);
+      return;
+    }
     this.forwardToWan(pkt, frameId, ctx);
   }
 
@@ -1744,6 +1809,10 @@ export class Router implements SimNode {
   // ---------- 타이머 ----------
 
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
+    if (tag === TS_TIMER_TAG) {
+      this.mesh.onTimer(data, ctx);
+      return;
+    }
     if (tag === WG_TIMER_TAG) {
       if (!this.wgs.onTimer(data, ctx)) this.wgc.onTimer(data, ctx);
       return;
@@ -1869,6 +1938,7 @@ export class Router implements SimNode {
         ...(this.vpnServer.config.enabled
           ? ([["VPN 서버", `켜짐 (L2TP/IPsec) · 할당 IP ${this.vpnServer.config.poolStart} ~ ${this.vpnServer.config.poolEnd} · ${this.vpnServer.clientsLabel()}`]] as [string, string][])
           : []),
+        ...(this.mesh.config.enabled ? ([[this.mesh.brand, this.mesh.summary()!]] as [string, string][]) : []),
         ...(this.ovpn.enabled
           ? ([["OpenVPN 서버", `켜짐 · ${this.ovpn.config.proto.toUpperCase()} ${this.ovpn.config.port} · 터널 ${this.ovpn.config.subnet ? `${this.ovpn.config.subnet.ip}/${this.ovpn.config.subnet.prefix}` : "대역 없음"} · CA ${shortFp(this.ovpn.config.ca)}${this.ovpn.config.tlsCrypt ? " · tls-crypt" : ""} · ${this.ovpn.connected}개 연결`]] as [string, string][])
           : []),
@@ -1900,6 +1970,7 @@ export class Router implements SimNode {
           : []),
         ...(this.vpnServer.config.enabled ? [{ title: "VPN 접속", columns: ["사용자", "할당 IP", "접속 주소", "방식"], rows: this.vpnServer.rows() }] : []),
         ...(this.wgServerCfg?.enabled ? [{ title: "WireGuard 서버 피어 (wg show)", columns: ["피어", "공개 키", "엔드포인트", "AllowedIPs", "최근 핸드셰이크", "전송"], rows: this.wgs.rows() }] : []),
+        ...(this.mesh.config.enabled ? [{ title: `${this.mesh.brand} 피어 (${this.mesh.config.net === "zerotier" ? "zerotier-cli peers" : "tailscale status"})`, columns: ["이름", "메시 주소", "경로", "알린 대역", "패킷"], rows: this.mesh.rows() }] : []),
         ...(this.ovpn.enabled ? [{ title: "OpenVPN 클라이언트 (status)", columns: ["인증서 CN", "실제 주소", "가상 주소", "계정", "상태"], rows: this.ovpn.rows() }] : []),
         ...(this.wgClientCfg?.enabled ? [{ title: "WireGuard 클라이언트 (wg show)", columns: ["피어", "공개 키", "엔드포인트", "AllowedIPs", "최근 핸드셰이크", "전송"], rows: this.wgc.rows() }] : []),
         ...(this.wgClientCfg?.enabled ? [{ title: "NAT 테이블 (VPN 터널)", columns: ["내부", "→ 터널 주소", "시각"], rows: this.natVpn.rows(this.wgClientCfg.address?.ip) }] : []),

@@ -16,7 +16,7 @@ Brume 3(GL-MT5000)는 OpenWrt 기반 VPN 보안 게이트웨이다. 공식 문�
 4. ✅ (2026-10-07) **AdGuard Home·자녀 보호** — DNS 차단 목록(0.0.0.0/NXDOMAIN), 쿼리 로그·차단 통계, DNS 가로채기(53 리디렉션), 기기별 차단
 5. ✅ (2026-10-07) **DPI·VPN 난독화** — SNI·DNS·모양·포트로 앱 분류, 앱별 통계·차단(RST 주입), VPN 탐지 차단을 WireGuard 난독화(AmneziaWG 식 — 모양 흐트러뜨리기·쓰레기 패킷)로 통과. TCP 443 위장은 OpenVPN(6단계)의 TCP 모드로
 6. ✅ (2026-10-07) **OpenVPN** — 공유기 서버(CA·인증서 발급·폐기(CRL)·tls-crypt·계정·PUSH: 가상 주소·경로·DNS·redirect-gateway), 노트북·폰 앱(원격 접속 종류 "OpenVPN", 설정 파일 가져오기), UDP/TCP 전송(TCP 443 으로 웹만 허용한 방화벽 통과, DPI 는 모양으로 알아봄), keepalive·ping-restart, 서버 재시작 알림, duplicate-cn. 생략: 공유기 OpenVPN 클라이언트, 데이터 채널 키 교환·재협상, TAP
-7. **Tailscale·ZeroTier** — 조정 서버, P2P 메시(기존 홀 펀칭 재사용), DERP 릴레이, 서브넷 라우터
+7. ✅ (2026-10-07) **Tailscale·ZeroTier** — 조정 서버(로그인·netmap 배포)·DERP/root 릴레이를 인터넷 노드가 흉내, 기기는 STUN 으로 후보 주소를 알리고 disco ping·call-me-maybe 로 홀 펀칭(symmetric NAT 끼리는 릴레이에 남음), 공유기 서브넷 라우터·exit node, MagicDNS(Tailscale), ZeroTier 는 같은 엔진의 종류(네트워크 ID·10.147.17.x·DNS 없음). 생략: 데이터 평면 WireGuard 핸드셰이크, ACL·기기 승인·키 만료, ZeroTier 의 L2 브리지
 8. **드롭인 게이트웨이·관리 접근 제어·클라이언트 차단·GoodCloud 원격 관리**
 9. 후순위: SIP ALG, IGMP 스누핑, Tor, 네트워크 저장소(Samba)
 

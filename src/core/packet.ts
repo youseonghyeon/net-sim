@@ -406,7 +406,7 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage | OvpnMessage;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage | OvpnMessage | TsMessage;
 }
 
 /** STUN·TURN (UDP 3478) */
@@ -580,6 +580,88 @@ export interface OvpnMessage {
 }
 
 export const OVPN_PORT = 1194;
+
+/** 메시 VPN 의 피어 정보 (조정 서버가 netmap 으로 나눠 준다) */
+export interface TsPeerInfo {
+  name: string;
+  key: string;
+  ip: Ip;
+  /** 그 기기의 후보 주소 (LAN 주소:포트, STUN 으로 안 바깥 주소:포트) */
+  endpoints: Endpoint[];
+  /** 서브넷 라우터로 알린 대역 */
+  routes: { dest: Ip; prefix: number }[];
+  /** exit node 를 내주는지 */
+  exitNode: boolean;
+  online: boolean;
+}
+
+/**
+ * Tailscale·ZeroTier (메시 VPN): 조정 서버(control·controller)가 기기들의 키·주소·후보 주소를 나눠 주고(netmap),
+ * 기기끼리는 직접(UDP 홀 펀칭 — disco ping/pong) 또는 릴레이(DERP·ZeroTier root)를 거쳐 WireGuard 식으로 주고받는다.
+ * - login·netmap·endpoints·logout: 조정 서버와 (실제는 HTTPS·Noise — 여기서는 UDP 로 줄임)
+ * - derp-hello·derp-send·derp-recv: 릴레이 서버에 내 키로 자리를 잡고, 상대 키로 보내 달라고 맡긴다
+ * - call-me-maybe: 릴레이로 "내 후보 주소로 ping 해 달라" (양쪽이 동시에 보내야 NAT 구멍이 뚫린다)
+ * - disco-ping·disco-pong: 후보 주소로 직접 닿는지 확인 (pong 에 "내가 본 당신 주소")
+ * - data: 원래 IP 패킷 (WireGuard 로 암호화 — 두 끝만 푼다)
+ */
+export interface TsMessage {
+  kind: "ts";
+  net: "tailscale" | "zerotier";
+  op: "login" | "netmap" | "endpoints" | "logout" | "denied" | "derp-hello" | "derp-send" | "derp-recv" | "call-me-maybe" | "disco-ping" | "disco-pong" | "data";
+  /** tailnet 이름·ZeroTier 네트워크 ID */
+  network?: string;
+  name?: string;
+  /** 보낸 기기의 노드 키 */
+  key?: string;
+  /** 받을 기기의 노드 키 (DERP) */
+  to?: string;
+  endpoints?: Endpoint[];
+  routes?: { dest: Ip; prefix: number }[];
+  exitNode?: boolean;
+  self?: { ip: Ip; prefix: number; name: string };
+  peers?: TsPeerInfo[];
+  txid?: number;
+  /** disco-pong: ping 을 보낸 쪽 주소 (받은 쪽이 본 것) */
+  seen?: Endpoint;
+  reason?: string;
+  inner?: Ipv4Packet;
+  /** DERP 로 맡긴 메시지 */
+  msg?: TsMessage;
+}
+
+export const TS_PORT = 41641;
+export const ZT_PORT = 9993;
+
+export function tsLabel(m: TsMessage): string {
+  const brand = m.net === "zerotier" ? "ZeroTier" : "Tailscale";
+  const relay = m.net === "zerotier" ? "root 릴레이" : "DERP";
+  const op: Record<TsMessage["op"], string> = {
+    login: "로그인",
+    netmap: "netmap (피어 목록)",
+    endpoints: "후보 주소 알림",
+    logout: "로그아웃",
+    denied: "거절",
+    "derp-hello": `${relay} 접속`,
+    "derp-send": `${relay} 로 보냄`,
+    "derp-recv": `${relay} 가 전해 줌`,
+    "call-me-maybe": "call-me-maybe",
+    "disco-ping": "disco ping",
+    "disco-pong": "disco pong",
+    data: "데이터",
+  };
+  if (m.op === "data" && m.inner) return `${brand} 데이터 (암호화됨 · 안: ${m.inner.src} → ${m.inner.dst})`;
+  if ((m.op === "derp-send" || m.op === "derp-recv") && m.msg) return `${brand} ${op[m.op]} · ${tsLabel(m.msg).replace(`${brand} `, "")}`;
+  return `${brand} ${op[m.op]}`;
+}
+
+/** 메시 VPN 메시지의 UDP 길이 (근사) */
+export function tsLength(m: TsMessage, innerLength: number): number {
+  if (m.op === "data") return 32 + innerLength;
+  if (m.op === "derp-send" || m.op === "derp-recv") return 40 + (m.msg ? tsLength(m.msg, m.msg.inner ? innerLength : 0) : 0);
+  if (m.op === "netmap") return 120 + (m.peers?.length ?? 0) * 96;
+  if (m.op === "disco-ping" || m.op === "disco-pong") return 62;
+  return 80 + (m.endpoints?.length ?? 0) * 18;
+}
 
 export function ovpnLabel(m: OvpnMessage): string {
   const op: Record<OvpnMessage["op"], string> = {
@@ -874,6 +956,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (d.kind === "wg") return wgLabel(d);
   if (d.kind === "ddns") return ddnsLabel(d);
   if (d.kind === "ovpn") return ovpnLabel(d);
+  if (d.kind === "ts") return tsLabel(d);
   if (d.kind === "dhcp6") return dhcp6Label(d);
   if (d.kind === "l2tp") return `L2TP${l2tpPartLabel(d)}`;
   if (d.kind === "stun") return stunLabel(d);
@@ -975,6 +1058,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "dns") return inner.payload.op === "query" ? "DNS 질의" : "DNS 응답";
   if (inner.payload.kind === "rip") return inner.payload.command === "request" ? "RIP 요청" : "RIP 광고";
   if (inner.payload.kind === "vpn") return "VPN 터널";
+  if (inner.payload.kind === "ts") return inner.payload.net === "zerotier" ? "ZeroTier" : "Tailscale";
   if (inner.payload.kind === "ovpn") return inner.payload.op === "data" ? "OpenVPN" : "OpenVPN 제어";
   if (inner.payload.kind === "ddns") return inner.payload.op === "update" ? "DDNS 갱신" : inner.payload.op === "release" ? "DDNS 내려놓기" : "DDNS 응답";
   if (inner.payload.kind === "wg") return inner.payload.obf || inner.payload.type === "junk" ? "UDP" : inner.payload.type === "data" ? (inner.payload.inner ? "WireGuard" : "keepalive") : "WG 핸드셰이크";
@@ -1003,5 +1087,5 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
   if (p.payload.kind === "esp") return "vpn";
   if (isControl(p.payload)) return "vrrp";
   const k = p.payload.payload.kind;
-  return k === "dns" || k === "ddns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" || k === "wg" || k === "ovpn" ? "vpn" : "dhcp";
+  return k === "dns" || k === "ddns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" || k === "wg" || k === "ovpn" || k === "ts" ? "vpn" : "dhcp";
 }
