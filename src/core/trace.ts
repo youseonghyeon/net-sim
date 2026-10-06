@@ -259,6 +259,10 @@ export type TraceKind =
   | "sip.rtp"
   | "sip.server"
   | "sip.alg"
+  /** Tor: 회로 만들기·셀 나르기(릴레이마다 한 겹씩)·Tor 가 나르지 못해 버림 */
+  | "tor.circuit"
+  | "tor.relay"
+  | "tor.drop"
   | "ha.config"
   | "ha.state"
   | "ha.advert"

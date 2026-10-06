@@ -1,10 +1,11 @@
-import { isMcastIp } from "../packet";
+import { type TorCell, isMcastIp } from "../packet";
 import { OVPN_PORT, OvpnServer, shortFp, type OvpnServerConfig } from "./openvpn";
 import { MESH_SERVERS, MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
 import { CLOUD_TIMER_TAG, CloudAgent, RouterAdmin, type AdminConfig, type SambaConfig } from "./glinet";
 import { TCP_TIMER_TAG } from "./tcp";
 import { IgmpSnoop } from "./igmp";
 import { sipAlgRewrite } from "./sip";
+import { TOR_TIMER_TAG, TorClient } from "./tor";
 import { BROADCAST_MAC, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
 import { ALL_NODES, formatIp6, isIpv6, isLinkLocal6, isMulticast6, parseIp6, sameSubnet6, UNSPECIFIED6 } from "../addr6";
 import {
@@ -222,6 +223,8 @@ export class Router implements SimNode {
   readonly cloud: CloudAgent;
   /** 인터넷을 막은 LAN 기기 (MAC) */
   blocked = new Set<string>();
+  /** Tor (LAN 의 TCP·DNS 를 Tor 회로로) */
+  readonly tor: TorClient;
   /** 내부 스위치의 IGMP 스누핑 */
   readonly igmp = new IgmpSnoop();
   /** DDNS 클라이언트 */
@@ -311,7 +314,10 @@ export class Router implements SimNode {
         // VPN 클라이언트가 켜져 있으면 터널로(출발지 = 내 터널 주소), 업스트림 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
         srcIp: (client) => (this.dnsViaVpn(client) ? this.wgClientCfg!.address!.ip : this.upstreamInLan() ? this.lan.ip : this.wan2On && this.mwan.active === "wan2" ? this.wan2.ip : this.wan.ip),
         send: (pkt, ctx, client) => {
-          if (this.dnsViaVpn(client)) this.dnsToVpn(pkt, ctx);
+          if (this.tor.enabled && !this.dnsViaVpn(client) && !this.upstreamInLan()) {
+            ctx.trace("ip.forward", "L3", `DNS 포워더: 업스트림 ${pkt.dst} 질의를 Tor 회로로 (출구가 대신 풀어 준다 — 통신사·DNS 서버가 내 질의를 보지 못한다)`, { dst: pkt.dst, tor: true });
+            this.tor.sendInner(pkt, ctx);
+          } else if (this.dnsViaVpn(client)) this.dnsToVpn(pkt, ctx);
           else if (this.upstreamInLan()) this.lan.sendIp(pkt, ctx, this.emitLan(ctx));
           else {
             const o = this.out(ctx);
@@ -413,6 +419,7 @@ export class Router implements SimNode {
       `GL-${cfg.wanMac.slice(-5).replace(":", "").toUpperCase()}`,
       49152 + (Math.abs(hashCode(`${cfg.id}:cloud`)) % 16000),
     );
+    this.tor = new TorClient({ wanIp: () => wgIo.source(), send: (pkt, ctx) => ovpnSend(pkt, ctx) }, hashCode(`${cfg.id}:tor`), 49152 + (Math.abs(hashCode(`${cfg.id}:tor`)) % 16000));
     this.ovpn = new OvpnServer({ source: wgIo.source, send: (outer, ctx) => ovpnSend(outer, ctx), lan: () => (this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined) }, cfg.id);
     this.wgcPort = 49152 + (Math.abs(hashCode(`${cfg.id}:wgc`)) % 16000);
     this.natVpn.why = "VPN 서버는 이 공유기를 터널 주소 하나로만 안다(AllowedIPs) — LAN 기기 주소를 터널 주소로 바꾸고 테이블에 기록";
@@ -501,6 +508,7 @@ export class Router implements SimNode {
     }
     this.mesh.onAddress(ctx);
     this.cloud.onWanAddress(ctx);
+    this.tor.onWanAddress(ctx);
     if (!this.wan.ip) return;
     this.ddns.onWanAddress(ctx);
     if (!this.wgClientCfg?.enabled) return;
@@ -887,6 +895,7 @@ export class Router implements SimNode {
       samba?: SambaConfig;
       igmpSnooping?: boolean;
       sipAlg?: boolean;
+      tor?: boolean;
     },
     ctx: NodeContext,
   ): void {
@@ -981,6 +990,7 @@ export class Router implements SimNode {
     if (cfg.samba) this.admin.setSamba(cfg.samba, ctx);
     if (cfg.igmpSnooping !== undefined) this.setIgmp(cfg.igmpSnooping, ctx);
     if (cfg.sipAlg !== undefined) this.setSipAlg(cfg.sipAlg, ctx);
+    if (cfg.tor !== undefined) this.tor.setEnabled(cfg.tor, ctx);
   }
 
   /** 인터넷을 막을 LAN 기기 (MAC) */
@@ -1452,6 +1462,11 @@ export class Router implements SimNode {
         if (inner !== undefined) return;
       }
     } else if (this.vpnServerHint(pkt, frameId, ctx)) return;
+    // Tor: 가드에게서 온 셀 (내 포트)
+    if (pkt.payload.kind === "udp" && pkt.payload.payload.kind === "tor" && pkt.payload.dstPort === this.tor.port) {
+      this.fromTor(pkt, pkt.payload.payload, frameId, ctx);
+      return;
+    }
     // GoodCloud: 클라우드가 내 연결로 보낸 것
     if (pkt.payload.kind === "udp" && pkt.payload.payload.kind === "cloud" && pkt.payload.dstPort === this.cloud.port && this.cloud.handle(pkt, pkt.payload.payload, ctx, frameId)) return;
     // 관리 화면: 그 포트에 포트 포워딩 규칙이 없으면 공유기 자신이 받는다 (접근 제어가 WAN 을 막으면 드롭)
@@ -1506,6 +1521,21 @@ export class Router implements SimNode {
     ctx.trace("igmp.snoop", "L2", "IGMP 스누핑 켜짐 → General Query 를 LAN 포트로 (가입한 기기는 다시 알린다)", {});
     const q = IgmpSnoop.query(this.lan.mac, ctx);
     for (const p of this.bridgePorts()) if (ctx.isPortConnected(p)) ctx.send(p, q);
+  }
+
+  // ---------- Tor ----------
+
+  /** 회로로 돌아온 응답: 공유기 자신(DNS 포워더의 업스트림 답)이면 받고, 아니면 LAN 기기에게 */
+  private fromTor(pkt: Ipv4Packet, m: TorCell, frameId: number, ctx: NodeContext): void {
+    const inner = this.tor.handle(pkt, m, ctx, frameId);
+    if (!inner) return;
+    const p = inner.payload;
+    if (inner.dst === this.wan.ip || inner.dst === this.wan2.ip) {
+      if (p.kind === "udp" && p.payload.kind === "dns") this.dnsForwarder.handle(inner, p.srcPort, p.payload, frameId, ctx, this.emitLan(ctx));
+      return;
+    }
+    const side = this.insideOf(inner.dst, ctx);
+    side.iface.sendIp(inner, ctx, side.emit);
   }
 
   // ---------- SIP ALG ----------
@@ -1695,6 +1725,8 @@ export class Router implements SimNode {
     // DPI 는 LAN 쪽에서 본다 — VPN 클라이언트 터널로 가는 흐름도
     if (!this.dpiCheck(pkt, "out", frameId, ctx)) return;
     if (this.policyApplies(pkt.src) && this.toWgClient(pkt, frameId, ctx)) return;
+    // Tor: LAN 의 인터넷 트래픽은 모두 Tor 회로로 (나르지 못하는 것은 버림 — 밖으로 새지 않게)
+    if (this.tor.enabled && this.tor.sendInner({ ...pkt, ttl: pkt.ttl - 1 }, ctx, frameId)) return;
     const o = this.outFor(pkt, ctx);
     if (!o.iface.ip) {
       ctx.trace("ip.no-route", "L3", `${pkt.dst} 는 외부 주소인데 ${this.wan2On ? `${WAN_LABEL[o.name]}(지금 쓰는 회선)` : "WAN"} 에 공인 주소가 없음 → 인터넷으로 보낼 수 없음 (WAN 케이블과 DHCP 확인)`, { dst: pkt.dst }, frameId);
@@ -1810,6 +1842,10 @@ export class Router implements SimNode {
     if (this.handleWanOvpn(pkt, frame.id, ctx)) return;
     if (this.handleWanMesh(pkt, frame.id, ctx)) return;
     if (u.kind === "udp" && u.payload.kind === "cloud" && u.dstPort === this.cloud.port && this.cloud.handle(pkt, u.payload, ctx, frame.id)) return;
+    if (u.kind === "udp" && u.payload.kind === "tor" && u.dstPort === this.tor.port) {
+      this.fromTor(pkt, u.payload, frame.id, ctx);
+      return;
+    }
     if (u.kind === "tcp" && !this.nat2.forwards.some((r) => (r.proto ?? "tcp") === "tcp" && r.publicPort === u.dstPort) && this.admin.handle(pkt, u, "wan", undefined, ctx, frame.id)) return;
     const forwarded = u.kind === "udp" && this.nat2.forwards.some((r) => r.proto === "udp" && r.publicPort === u.dstPort);
     if (!forwarded && u.kind === "udp" && u.payload.kind === "dns" && u.dstPort === DNS_PORT) {
@@ -2067,6 +2103,10 @@ export class Router implements SimNode {
       this.admin.tcp.onTimer(data, ctx);
       return;
     }
+    if (tag === TOR_TIMER_TAG) {
+      this.tor.onTimer(data, ctx);
+      return;
+    }
     if (tag === CLOUD_TIMER_TAG) {
       this.cloud.onTimer(data, ctx);
       return;
@@ -2203,6 +2243,7 @@ export class Router implements SimNode {
         ...(this.mesh.config.enabled ? ([[this.mesh.brand, this.mesh.summary()!]] as [string, string][]) : []),
         ...(this.admin.config.enabled ? ([["관리 화면", `HTTP 80·HTTPS 443${this.admin.config.ssh ? "·SSH 22" : ""} · ${this.admin.config.allow.length ? "허용 목록만" : "LAN"}${this.admin.config.remote ? " + WAN(원격)" : ""}`]] as [string, string][]) : []),
         ...(this.cloud.enabled ? ([["GoodCloud", this.cloud.summary()!]] as [string, string][]) : []),
+        ...(this.tor.enabled ? ([["Tor", this.tor.summary()!]] as [string, string][]) : []),
         ...(this.admin.samba.enabled ? ([["네트워크 저장소", `SMB (TCP 445) · ${this.admin.samba.wan ? "LAN + WAN (위험)" : "LAN 만"}`]] as [string, string][]) : []),
         ...(this.dropIn ? ([["드롭인 게이트웨이", `켜짐 · WAN 쪽 LAN 기기의 게이트웨이 ${this.wan.ip ?? "?"}`]] as [string, string][]) : []),
         ...(this.blocked.size ? ([["기기 차단", [...this.blocked].join(", ")]] as [string, string][]) : []),

@@ -1691,6 +1691,19 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goGroup("보안");
   console.log("sip alg section:", await page.locator(".inspector section", { has: page.locator("h3", { hasText: "SIP ALG" }) }).count());
 }
+// Tor: 노트북 → 친구 웹 서버 (출구 주소로 보임), 공유기 VPN 묶음의 Tor 섹션
+{
+  await loadEx("tor");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "Brume 3 (Tor)" && /Tor(?! 대기)/.test(el.textContent ?? "")), null, { timeout: 30000 });
+  await clickDevice("Brume 3 (Tor)");
+  await goTab("설정");
+  await goGroup("VPN");
+  const ts = page.locator(".inspector section", { has: page.locator("h3", { hasText: /^Tor$/ }) });
+  await ts.scrollIntoViewIfNeeded();
+  console.log("tor status:", (await ts.locator("p.note").first().textContent())?.trim());
+  await page.screenshot({ path: `${OUT}/111-tor.png` });
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

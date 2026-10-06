@@ -1,9 +1,10 @@
 import { MESH_SERVERS, MeshCoordinator } from "./tailscale";
 import { CloudService } from "./glinet";
 import { SipServer } from "./sip";
-import { isMulticastMac, isPrivateIp, type Ip, type Mac } from "../addr";
+import { TorNetwork } from "./tor";
+import { isMulticastMac, isPrivateIp, sameSubnet, type Ip, type Mac } from "../addr";
 import { ALL_NODES, canonIp6, formatIp6, isGlobal6, isIpv6, isMulticast6, parseIp6, sameSubnet6 } from "../addr6";
-import { SIP_PORT, SIP_SERVER, CLOUD_PORT, CLOUD_SERVER,
+import { TOR_EXIT, TOR_GUARD, TOR_PORT, SIP_PORT, SIP_SERVER, CLOUD_PORT, CLOUD_SERVER,
   DHCP_CLIENT_PORT,
   DHCP_SERVER_PORT,
   DHCP6_MULTICAST_MAC,
@@ -100,6 +101,15 @@ export class Internet implements SimNode {
   readonly delegations = new Map<Ip, { client: Mac; via: Ip; at: number }>();
   /** DDNS 서비스 (glddns.com): 공유기가 갱신한 이름 → 주소. 공인 DNS 가 이 이름들도 답한다 */
   readonly ddns = new DdnsService();
+  /** Tor 릴레이 (가드·중간·출구) */
+  readonly tor = new TorNetwork({
+    toClient: (to, m, ctx) => this.iface.sendIp({ kind: "ipv4", src: TOR_GUARD, dst: to.ip, ttl: 54, payload: { kind: "udp", srcPort: TOR_PORT, dstPort: to.port, payload: m } }, ctx, this.emit(ctx)),
+    // 출구가 목적지로: 통신사 구간(같은 서브넷)의 장치면 선으로, 아니면 인터넷이 흉내 내는 서버
+    deliver: (pkt, ctx, frameId) => {
+      if (this.iface.ip && sameSubnet(pkt.dst, this.iface.ip, this.iface.prefix)) this.iface.sendIp(pkt, ctx, this.emit(ctx));
+      else this.handleIp(pkt, frameId, ctx);
+    },
+  });
   /** SIP 서버 (인터넷 전화의 등록·신호) */
   readonly sip = new SipServer((to, m, ctx) => this.iface.sendIp({ kind: "ipv4", src: SIP_SERVER, dst: to.ip, ttl: 54, payload: { kind: "udp", srcPort: SIP_PORT, dstPort: to.port, payload: m } }, ctx, this.emit(ctx)));
   /** GoodCloud (GL.iNet 원격 관리 클라우드) */
@@ -110,6 +120,8 @@ export class Internet implements SimNode {
   constructor(cfg: InternetConfig) {
     this.id = cfg.id;
     this.iface = new NetInterface(cfg.mac, { ip: cfg.ip ?? "203.0.113.1", prefix: cfg.prefix ?? 24 });
+    // Tor 출구 주소로 가는 답(인터넷이 흉내 내는 서버의 응답)은 회로로 감싸 돌려보낸다
+    this.iface.outbound = (pkt, ctx) => this.tor.back(pkt, ctx);
     this.dhcpServer = new DhcpServer({ enabled: true, ...(cfg.pool ?? { start: "203.0.113.100", end: "203.0.113.199" }) }, this.iface);
     this.tcp = new TcpStack({ send: (pkt, ctx) => ctx.timer(Internet.LATENCY * 2, "inet-send", { pkt }) });
     this.v6 = new Ipv6Interface(cfg.mac, true, "isp");
@@ -433,6 +445,7 @@ export class Internet implements SimNode {
 
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
     const emit = this.emit(ctx);
+    if (pkt.dst === TOR_EXIT && this.tor.back(pkt, ctx)) return;
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
       const m = udp.payload;
@@ -449,6 +462,9 @@ export class Internet implements SimNode {
         }
         const reply = this.ddns.handle(pkt.src, m, ctx, frameId);
         this.serverSend(DDNS_SERVER, DDNS_PORT, { ip: pkt.src, port: udp.srcPort }, reply, ctx);
+      } else if (m.kind === "tor" && pkt.dst === TOR_GUARD && udp.dstPort === TOR_PORT) {
+        if (isPrivateIp(pkt.src)) ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} → 응답을 돌려줄 수 없어 드롭 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
+        else this.tor.handle(pkt, udp.srcPort, m, ctx, frameId);
       } else if (m.kind === "sip" && pkt.dst === SIP_SERVER && udp.dstPort === SIP_PORT) {
         if (isPrivateIp(pkt.src)) ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} → 응답을 돌려줄 수 없어 드롭 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
         else this.sip.handle(pkt, udp.srcPort, m, ctx, frameId);

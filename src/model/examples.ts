@@ -9,7 +9,7 @@ import { exampleIgmpTopology, exampleHubTopology, exampleVlanTopology, exampleSt
 import { exampleDropInTopology, exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleSipTopology, exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology, exampleAdguardTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology, exampleMultiWanTopology } from "./examples/internet";
-import { exampleDdnsTopology, exampleDpiTopology, exampleOpenVpnTopology, exampleTailscaleTopology, exampleWireguardTopology } from "./examples/vpn";
+import { exampleDdnsTopology, exampleDpiTopology, exampleOpenVpnTopology, exampleTailscaleTopology, exampleTorTopology, exampleWireguardTopology } from "./examples/vpn";
 import { exampleRoamingTopology } from "./examples/wireless";
 import { exampleCompanyTopology } from "./examples/overview";
 import { exampleDualStackHomeTopology, exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "igmp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "dpi" | "lb" | "proxy" | "adguard" | "sip" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "igmp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "tor" | "dpi" | "lb" | "proxy" | "adguard" | "sip" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -249,6 +249,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "Tailscale (메시 VPN·홀 펀칭·DERP·서브넷 라우터)",
     blurb: "세 곳의 기기가 tailnet \"family\" 에 로그인해 100.64.x.y 주소를 받고, 조정 서버가 서로의 후보 주소를 나눠 줍니다(netmap). 카페 노트북에서 work-pc 로 ping 해 보세요 — 이름은 MagicDNS 가 풀고, 카페(port-restricted)와 회사(symmetric) NAT 사이는 홀 펀칭이 안 돼 DERP 릴레이를 거칩니다. home-brume 으로는 홀 펀칭이 성공해 직접 갑니다(표 탭의 경로). 집 Brume 3 은 서브넷 라우터라 노트북에서 집 NAS 192.168.8.20 에도 닿고, 노트북의 exit node 를 home-brume 으로 하면 인터넷도 집을 거칩니다.",
     build: exampleTailscaleTopology,
+  },
+  tor: {
+    id: "tor",
+    group: "VPN",
+    label: "Tor (양파 라우팅)",
+    blurb: "Brume 3 에서 Tor 를 켰습니다. 노트북에서 친구 웹 서버(공인 203.0.113.50:80)에 TCP 연결해 보세요 — 패킷이 세 겹으로 감싸져 가드 → 중간 → 출구를 거치고, 친구 웹 서버는 노트북이 아니라 출구 주소 198.51.100.133 에서 온 연결로 봅니다(서버의 표). 가드는 보낸 곳만, 출구는 목적지만 압니다. 8.8.8.8 로 ping 하면 Tor 가 ICMP 를 나르지 못해 버려집니다. Tor 를 끄면 친구 웹 서버는 Brume 의 공인 주소를 봅니다.",
+    build: exampleTorTopology,
   },
   dpi: {
     id: "dpi",

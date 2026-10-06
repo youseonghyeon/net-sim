@@ -111,6 +111,24 @@ export interface RtpPacket {
   from: string;
 }
 
+/**
+ * Tor 셀 (양파 라우팅): 공유기가 가드·중간·출구 세 릴레이의 키로 세 겹 감싼 원래 패킷. 릴레이마다 한 겹씩 벗긴다
+ * (실제는 TLS 위 512바이트 셀·TCP 스트림 — 여기서는 UDP 로 줄이고 IP 패킷째 나른다)
+ */
+export interface TorCell {
+  kind: "tor";
+  op: "create" | "created" | "data" | "destroy";
+  circ: number;
+  /** 남은 암호화 겹 수 (공유기가 보낼 때 3) */
+  layers: number;
+  inner?: Ipv4Packet;
+}
+
+export const TOR_PORT = 9001;
+export const TOR_GUARD: Ip = "198.51.100.131";
+export const TOR_MIDDLE: Ip = "198.51.100.132";
+export const TOR_EXIT: Ip = "198.51.100.133";
+
 export const SIP_PORT = 5060;
 export const SIP_SERVER: Ip = "198.51.100.120";
 export const SIP_DOMAIN = "voip.example";
@@ -483,7 +501,7 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage | OvpnMessage | TsMessage | CloudMessage | McastData | SipMessage | RtpPacket;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage | OvpnMessage | TsMessage | CloudMessage | McastData | SipMessage | RtpPacket | TorCell;
 }
 
 /** STUN·TURN (UDP 3478) */
@@ -1059,6 +1077,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (d.kind === "ts") return tsLabel(d);
   if (d.kind === "cloud") return cloudLabel(d);
   if (d.kind === "sip") return sipLabel(d);
+  if (d.kind === "tor") return d.op === "data" ? `Tor 셀 (암호 ${d.layers}겹 — 안은 아무도 다 보지 못함)` : `Tor 회로 ${d.op === "create" ? "만들기 (CREATE)" : d.op === "created" ? "만들어짐 (CREATED)" : "닫기 (DESTROY)"}`;
   if (d.kind === "rtp") return `RTP 음성 조각 ${d.seq} (${d.from})`;
   if (d.kind === "mcast") return `멀티캐스트 ${d.name} ${d.seq}/${d.total} → 그룹 ${d.group}`;
   if (d.kind === "dhcp6") return dhcp6Label(d);
@@ -1168,6 +1187,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "mcast") return "멀티캐스트";
   if (inner.payload.kind === "sip") return inner.payload.status ? `SIP ${inner.payload.status}` : `SIP ${inner.payload.method}`;
   if (inner.payload.kind === "rtp") return "RTP";
+  if (inner.payload.kind === "tor") return "Tor";
   if (inner.payload.kind === "ovpn") return inner.payload.op === "data" ? "OpenVPN" : "OpenVPN 제어";
   if (inner.payload.kind === "ddns") return inner.payload.op === "update" ? "DDNS 갱신" : inner.payload.op === "release" ? "DDNS 내려놓기" : "DDNS 응답";
   if (inner.payload.kind === "wg") return inner.payload.obf || inner.payload.type === "junk" ? "UDP" : inner.payload.type === "data" ? (inner.payload.inner ? "WireGuard" : "keepalive") : "WG 핸드셰이크";

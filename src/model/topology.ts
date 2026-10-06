@@ -657,6 +657,8 @@ export interface RouterSettings {
   igmpSnooping?: boolean;
   /** SIP ALG. 없으면 꺼짐 */
   sipAlg?: boolean;
+  /** Tor (LAN 의 TCP·DNS 를 Tor 로). 없으면 꺼짐 */
+  tor?: boolean;
 }
 
 export interface RouterAdminSettings {
@@ -1558,6 +1560,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.dropIn === true ? { dropIn: true } : {}),
           ...(r.igmpSnooping === true ? { igmpSnooping: true } : {}),
           ...(r.sipAlg === true ? { sipAlg: true } : {}),
+          ...(r.tor === true ? { tor: true } : {}),
           ...(r.samba && typeof r.samba === "object" ? { samba: { enabled: r.samba.enabled === true, wan: r.samba.wan === true } } : {}),
           ...(Array.isArray(r.blocked) ? { blocked: r.blocked.filter((x): x is string => typeof x === "string") } : {}),
           ...(r.wan2 ? { wan2: normalizeWan2(r.wan2) } : {}),

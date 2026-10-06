@@ -239,3 +239,34 @@ export function exampleTailscaleTopology(): Topology {
   ];
   return t;
 }
+
+/**
+ * Tor (양파 라우팅): Brume 3 의 Tor 를 켜면 LAN 노트북의 TCP·DNS 가 가드 → 중간 → 출구를 거친다.
+ * 집 공유기의 포트 포워딩 웹 서버(집 NAS)에 접속하면 NAS 는 출구 주소(198.51.100.133)에서 온 연결로 본다. ping 은 Tor 가 나르지 못한다
+ */
+export function exampleTorTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -296, "internet-1");
+  const isp = add("switch", 344, -168, "통신사 구간");
+  const brume = add("router", 120, -24, "Brume 3 (Tor)");
+  brume.router = { ...brume.router!, lanIp: "192.168.8.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" }, tor: true };
+  const lap = add("laptop", 120, 152, "노트북");
+  const home = add("router", 568, -24, "친구네 공유기");
+  home.router = {
+    ...home.router!,
+    lanIp: "192.168.0.1",
+    lanPrefix: 24,
+    dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" },
+    wan: { ipMode: "static", ip: "203.0.113.50", prefix: 24, gateway: "203.0.113.1" },
+    forwards: [{ publicPort: 80, lanIp: "192.168.0.20", lanPort: 80 }],
+  };
+  const web = add("server", 568, 152, "친구 웹 서버");
+  web.host = { ipMode: "static", ip: "192.168.0.20", prefix: 24, gateway: "192.168.0.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, brume, 0), cable(isp, 6, home, 0), cable(brume, 1, lap, 0), cable(home, 1, web, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "Tor 를 켠 LAN 192.168.8.0/24", tint: "green", ...zoneAround(t, [brume.id, lap.id], 56)! },
+    { id: newId("zone"), label: "친구네 (웹 서버 공개)", tint: "blue", ...zoneAround(t, [home.id, web.id], 56)! },
+  ];
+  return t;
+}

@@ -132,6 +132,22 @@ export function SambaSection({ d, r }: { d: Device; r: RouterSettings }) {
   );
 }
 
+export function TorSection({ d, r }: { d: Device; r: RouterSettings }) {
+  void simVersion.value;
+  const node = sim.node(d.id);
+  const status = node instanceof Router ? node.tor.summary() : undefined;
+  return (
+    <Section title="Tor">
+      <label class="toggle-row">
+        <span>{r.tor ? "켜짐" : "꺼짐"}</span>
+        <Toggle on={r.tor === true} onToggle={() => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, tor: !x.router!.tor } }))} />
+      </label>
+      {status && <p class="note">{status}</p>}
+      <p class="note">켜면 LAN 기기의 TCP·DNS 를 세 릴레이(가드 → 중간 → 출구)를 거치는 회로로 보냅니다. 목적지는 출구 릴레이의 주소를 보고, 가드는 보낸 곳만·출구는 목적지만 압니다. ping·그 밖의 UDP 는 Tor 가 나르지 못해 버립니다(밖으로 새지 않게). 매우 느려지고, 출구는 암호화되지 않은 내용을 볼 수 있습니다.</p>
+    </Section>
+  );
+}
+
 export function DropInSection({ d, r }: { d: Device; r: RouterSettings }) {
   return (
     <Section title="드롭인 게이트웨이">

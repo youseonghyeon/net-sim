@@ -78,6 +78,7 @@ function appLength(u: UdpPacket): number {
   if (m.kind === "mcast") return 1316; // RTP/MPEG-TS 7개
   if (m.kind === "sip") return 400 + (m.sdp ? 150 : 0);
   if (m.kind === "rtp") return 172; // RTP 12 + G.711 20ms 160
+  if (m.kind === "tor") return 514 * Math.max(1, Math.ceil((m.inner ? 20 + l4Length(m.inner.payload) : 0) / 498)); // 셀 514바이트 단위
 
   if (m.kind === "ts") {
     const inner = m.inner ?? m.msg?.inner;
@@ -223,6 +224,7 @@ function udpText(u: UdpPacket): string {
   if (m.kind === "mcast") return `UDP, length ${appLength(u)}`;
   if (m.kind === "sip") return `SIP: ${m.method ? `${m.method} sip:${m.to}@${SIP_DOMAIN} SIP/2.0` : `SIP/2.0 ${m.status} ${m.status === 200 ? "OK" : m.status === 180 ? "Ringing" : "Not Found"}`}`;
   if (m.kind === "rtp") return `UDP, length ${appLength(u)}`;
+  if (m.kind === "tor") return `UDP, length ${appLength(u)}`;
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
 }
 
@@ -705,6 +707,19 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
           ...(m.sdp ? ([["SDP (미디어 주소)", `c=IN IP4 ${m.sdp.ip} · m=audio ${m.sdp.port} — 상대는 음성을 여기로 보낸다${m.alg ? ` (SIP ALG 가 ${m.alg.ip}:${m.alg.port} 에서 고침)` : ""}`]] as [string, string][]) : []),
         ],
       },
+    ];
+  if (m.kind === "tor")
+    return [
+      udp,
+      {
+        title: "Tor 셀",
+        rows: [
+          ["명령", m.op === "data" ? "RELAY_DATA" : m.op.toUpperCase()],
+          ["회로", String(m.circ)],
+          ["암호 겹", m.op === "data" ? `${m.layers}겹 — 가드는 보낸 사람만, 출구는 목적지만 안다` : "—"],
+        ],
+      },
+      ...(m.inner && m.layers <= 0 ? ipLayers(m.inner, true) : []),
     ];
   if (m.kind === "rtp") return [udp, { title: "RTP (음성)", rows: [["순번", String(m.seq)], ["보낸 사람", m.from], ["통화", m.callId]] }];
   if (m.kind === "mcast") return [udp, { title: "멀티캐스트 스트림 (앱)", rows: [["채널", m.name], ["그룹", m.group], ["순번", `${m.seq}/${m.total}`]] }];

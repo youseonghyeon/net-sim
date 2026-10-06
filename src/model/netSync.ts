@@ -140,11 +140,12 @@ export class NetworkSync {
         if (node instanceof Router && d.router?.dpi?.enabled) node.setDpi(effectiveRouter(d).dpi, net.contextFor(d.id));
         if (node instanceof Router && d.router?.ovpnServer?.enabled) node.ovpn.setConfig(effectiveRouter(d).ovpnServer, net.contextFor(d.id));
         if (node instanceof Router && d.router?.mesh?.enabled) node.setMesh(effectiveRouter(d).mesh, net.contextFor(d.id));
-        if (node instanceof Router && (d.router?.admin?.enabled || d.router?.cloud || d.router?.blocked?.length || d.router?.dropIn || d.router?.samba?.enabled || d.router?.igmpSnooping || d.router?.sipAlg)) {
+        if (node instanceof Router && (d.router?.admin?.enabled || d.router?.cloud || d.router?.blocked?.length || d.router?.dropIn || d.router?.samba?.enabled || d.router?.igmpSnooping || d.router?.sipAlg || d.router?.tor)) {
           const r = effectiveRouter(d);
           const c = net.contextFor(d.id);
           node.setIgmp(r.igmpSnooping, c);
           node.setSipAlg(r.sipAlg, c);
+          node.tor.setEnabled(r.tor, c);
           node.setDropIn(r.dropIn, c);
           node.admin.setSamba(r.samba, c);
           node.admin.setConfig(r.admin, c);
@@ -514,6 +515,7 @@ export function effectiveRouter(d: Device, current?: Router) {
     samba: { enabled: r.samba?.enabled === true, wan: r.samba?.wan === true },
     igmpSnooping: r.igmpSnooping === true,
     sipAlg: r.sipAlg === true,
+    tor: r.tor === true,
     blocked: (r.blocked ?? []).map((m) => m.trim().toLowerCase()).filter((m) => /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(m)),
     ovpnServer: (() => {
       const o = r.ovpnServer;
