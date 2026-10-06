@@ -156,6 +156,8 @@ export class Host implements SimNode {
   readonly p2p: P2pAgent;
   /** 메시 VPN 앱 (Tailscale·ZeroTier) */
   readonly mesh: MeshAgent;
+  /** VPN 종류를 바꾸기 전 OpenVPN 이 쓰던 TCP 연결 ("서버:내 포트") — 늦게 온 세그먼트를 조용히 버린다 */
+  private ovpnLate: string[] = [];
   readonly tcp: TcpStack;
   /** 로드밸런서 서비스 (꺼져 있으면 아무것도 안 함) */
   readonly lb: LoadBalancer;
@@ -308,6 +310,8 @@ export class Host implements SimNode {
     if (want !== have) {
       // VPN 종류가 바뀜: 붙어 있던 연결을 끊고(서버에 알림) 다른 클라이언트로 바꿔 낀다
       if (this.ra.state === "up") this.ra.disconnect(ctx, "VPN 종류가 바뀜");
+      // OpenVPN TCP 연결은 서버의 FIN·ACK 가 늦게 온다 — 새 클라이언트로 바꾼 뒤에도 호스트 TCP 로 넘기지 않게 기억
+      if (this.ra instanceof OvpnClient) this.ovpnLate = [...this.ovpnLate, ...this.ra.tcpKeys()].slice(-16);
       this.ra = this.makeVpnClient(want);
     }
     this.ra.setConfig(cfg, ctx);
@@ -1232,6 +1236,10 @@ export class Host implements SimNode {
         if (inner) this.handleIp(inner, frameId, ctx);
         return;
       }
+    }
+    if (pkt.dst === this.iface.ip && pkt.payload.kind === "tcp" && this.ovpnLate.includes(`${pkt.src}:${pkt.payload.dstPort}`)) {
+      ctx.trace("vpn.drop", "L4", `OpenVPN 의 지난 TCP 연결(${pkt.src}, 내 포트 ${pkt.payload.dstPort})로 늦게 온 세그먼트 → 무시 (VPN 종류를 바꿔 그 연결은 이미 닫음)`, { ovpn: true, late: true }, frameId);
+      return;
     }
     // WireGuard 앱: 내 포트로 온 WireGuard 메시지
     if (this.ra instanceof WgClient && this.ra.config.enabled && pkt.dst === this.iface.ip) {

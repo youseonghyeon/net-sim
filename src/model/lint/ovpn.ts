@@ -57,9 +57,10 @@ export function ovpnRules({ t, m, add }: LintContext): void {
         add({ deviceId: d.id, severity: "warn", code: "ovpn.name-unknown", message: `서버 이름 ${name} 을(를) DDNS 로 등록한 공유기가 없음 → 이름을 풀지 못해(NXDOMAIN) 연결 실패`, fix: `서버 공유기 → 인터넷 → DDNS 켜기, 또는 ${d.name} 의 서버 주소를 고치기` });
         continue;
       }
-      found = owner && owner !== d ? followTarget(t.devices, d, owner, o.port, o.proto, isServer(o.proto)) : undefined;
-      const front = owner ? frontRouter(m, owner) : undefined;
-      if (found && owner && front && !front.router?.forwards?.some((f) => (f.proto ?? "tcp") === o.proto && f.publicPort === o.port)) {
+      // 이름의 주인이 다른 공유기 뒤에 있으면 DDNS 는 앞 공유기의 공인 주소를 등록한다 — 앞 공유기의 포워딩을 따라간다 (포트가 바뀔 수 있다)
+      const front = owner && owner !== d ? frontRouter(m, owner) : undefined;
+      found = front ? followTarget(t.devices, d, front, o.port, o.proto, isServer(o.proto)) : owner && owner !== d ? followTarget(t.devices, d, owner, o.port, o.proto, isServer(o.proto)) : undefined;
+      if (owner && front && !front.router?.forwards?.some((f) => (f.proto ?? "tcp") === o.proto && f.publicPort === o.port) && !isServer(o.proto)(front, o.port)) {
         add({ deviceId: d.id, severity: "warn", code: "ovpn.server-behind-nat", message: `${owner.name} 는 ${front.name} 뒤에 있어 ${name} 이(가) ${front.name} 의 공인 주소를 가리킴 → ${front.name} 에 ${o.proto.toUpperCase()} ${o.port} 포트 포워딩이 없어 닿지 않음`, fix: `${front.name} → 보안 → 포트 포워딩: ${o.proto.toUpperCase()} ${o.port} → ${owner.name} 의 WAN 주소`, related: [front.id, owner.id] });
         continue;
       }

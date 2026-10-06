@@ -345,7 +345,14 @@ export class Router implements SimNode {
       },
       cfg.id,
     );
-    this.ovpn = new OvpnServer({ source: wgIo.source, send: (outer, ctx) => wgIo.send(outer, ctx), lan: () => (this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined) }, cfg.id);
+    // OpenVPN 서버의 답은 클라이언트가 보낸 주소에서 — 멀티 WAN 이면 그 회선으로 (TCP 연결의 로컬 주소는 바뀌면 안 된다)
+    const ovpnSend = (outer: Ipv4Packet, ctx: NodeContext) => {
+      if (this.lan.ip && sameSubnet(outer.dst, this.lan.ip, this.lan.prefix)) this.lan.sendIp(outer, ctx, this.emitLan(ctx));
+      else if (this.wan2On && outer.src === this.wan2.ip) this.wan2.sendIp(outer, ctx, this.emitWan2(ctx));
+      else if (outer.src === this.wan.ip) this.wan.sendIp(outer, ctx, this.emitWan(ctx));
+      else wgIo.send(outer, ctx);
+    };
+    this.ovpn = new OvpnServer({ source: wgIo.source, send: (outer, ctx) => ovpnSend(outer, ctx), lan: () => (this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined) }, cfg.id);
     this.wgcPort = 49152 + (Math.abs(hashCode(`${cfg.id}:wgc`)) % 16000);
     this.natVpn.why = "VPN 서버는 이 공유기를 터널 주소 하나로만 안다(AllowedIPs) — LAN 기기 주소를 터널 주소로 바꾸고 테이블에 기록";
     // VPN 클라이언트가 켜져 있으면 DNS 포워더는 VPN 이 알려 준 DNS 에 터널로 묻는다 (DNS 유출 방지)

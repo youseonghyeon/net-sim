@@ -1223,8 +1223,9 @@ function ovpnLines(ev: TraceEvent, frames: { received?: EthernetFrame; sent?: Et
     else if (server && sm.includes("AUTH_FAILED")) line(`${from} TLS Auth Error: Auth Username/Password verification failed for peer`);
     else if (!server && sm.includes("AUTH_FAILED")) line("AUTH: Received control message: AUTH_FAILED");
     else if (!server && sm.includes("VERIFY ERROR")) line("VERIFY ERROR: depth=1, error=unable to get local issuer certificate: CN=GL.iNet CA");
-    else if (!server && sm.includes("응답 없음")) line("TLS Error: TLS key negotiation failed to occur within 60 seconds (check your network connectivity)");
-    else if (sm.includes("ping-restart")) line("[server] Inactivity timeout (--ping-restart), restarting");
+    else if (!server && sm.includes("SYN timeout")) line(`TCP: connect to [AF_INET]${sm.match(/TCP ([0-9.]+:\d+)/)?.[1] ?? "?"} failed: Connection timed out`);
+    else if (!server && sm.includes("응답 없음")) line("TLS Error: TLS key negotiation failed to occur within 3 seconds (check your network connectivity)");
+    else if (!server && sm.includes("Inactivity timeout")) line("[server] Inactivity timeout (--ping-restart), restarting");
     else if (sm.includes("RESTART")) line("SIGUSR1[soft,server-pushed-connection-reset] received, process restarting");
     else if (sm.includes("duplicate-cn")) line(`MULTI: new connection by client '${cn ?? "?"}' will cause previous active sessions by this client to be dropped.  Remember to use the --duplicate-cn option if you want multiple clients using the same certificate or username to concurrently connect.`);
     else if (sm.includes("explicit-exit-notify") || sm.includes("FIN")) line(server ? `${cn ?? "client"}/${from} SIGTERM[soft,remote-exit] received, client-instance exiting` : "SIGTERM[hard,] received, process exiting");

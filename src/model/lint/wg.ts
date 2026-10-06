@@ -181,9 +181,9 @@ export function wireguardRules({ t, m, add }: LintContext): void {
         add({ deviceId: d.id, severity: "warn", code: "wg.name-unknown", message: `서버 이름 ${name} 을(를) DDNS 로 등록한 공유기가 없음 → 이름을 풀지 못해(NXDOMAIN) 연결 실패`, fix: `서버 공유기 → 인터넷 → DDNS 켜고 이름을 ${name.slice(0, -(DDNS_ZONE_NAME.length + 1))} 로, 또는 ${d.name} 의 서버 주소를 고치기` });
         continue;
       }
-      found = owner && owner !== d ? followFrom(t.devices, d, owner, c.port) : undefined;
-      // 이름의 주인이 다른 공유기 뒤에 있으면 DDNS 는 그 앞 공유기의 공인 주소를 등록한다 — 앞 공유기가 그 포트를 포워딩해야 닿는다
-      const front = owner ? frontRouter(m, owner) : undefined;
+      // 이름의 주인이 다른 공유기 뒤에 있으면 DDNS 는 그 앞 공유기의 공인 주소를 등록한다 — 앞 공유기가 그 포트를 포워딩해야 닿는다 (포워딩을 따라가면 포트가 바뀔 수 있다)
+      const front = owner && owner !== d ? frontRouter(m, owner) : undefined;
+      found = front ? followFrom(t.devices, d, front, c.port) : owner && owner !== d ? followFrom(t.devices, d, owner, c.port) : undefined;
       if (found && owner && front && !front.router?.forwards?.some((f) => f.proto === "udp" && f.publicPort === c.port)) {
         add({ deviceId: d.id, severity: "warn", code: "wg.server-behind-nat", message: `${owner.name} 는 ${front.name} 뒤에 있어 ${name} 이(가) ${front.name} 의 공인 주소를 가리킴 → ${front.name} 에 UDP ${c.port} 포트 포워딩이 없어 핸드셰이크가 닿지 않음`, fix: `${front.name} → 보안 → 포트 포워딩: UDP ${c.port} → ${owner.name} 의 WAN 주소`, related: [front.id, owner.id] });
         continue;

@@ -121,6 +121,8 @@ interface TcpState {
 
 export interface OvpnSession {
   key: string;
+  /** 클라이언트가 보낸 목적지 = 내 주소 (멀티 WAN 이면 그 회선 — 답은 이 주소에서 나가야 한다) */
+  local: Ip;
   sid: number;
   peer: { ip: Ip; port: number };
   proto: OvpnProto;
@@ -273,21 +275,21 @@ export class OvpnServer {
     return [c.redirectGateway ? "redirect-gateway def1" : "", c.lanAccess && lan ? `route ${addrAt(lan, 0)}/${lan.prefix}` : "", c.pushDns ? `DNS ${this.address}` : ""].filter(Boolean).join(", ") || "(없음)";
   }
 
+  /** 서버가 다시 시작: 협상 중인 세션에도 RESTART 를 알린다 (그래야 클라이언트가 timeout·방화벽 탓으로 포기하지 않는다). TCP 는 알린 뒤 연결을 RST 로 */
   private notifyRestart(s: OvpnSession, ctx: NodeContext): void {
-    const src = this.io.source();
-    if (!src) return;
+    const src = s.local;
+    const exit: OvpnMessage = { kind: "ovpn", op: "exit", sid: s.sid, reason: "restart" };
     if (s.proto === "tcp" && s.tcp) {
+      this.io.send(outerPacket(src, s.peer.ip, "tcp", this.config.port, s.peer.port, exit, s.tcp), ctx);
       this.io.send(tcpFlag(src, s.peer.ip, this.config.port, s.peer.port, s.tcp, { rst: true, ackFlag: true }), ctx);
       return;
     }
-    if (s.phase !== "up") return;
-    this.io.send(outerPacket(src, s.peer.ip, "udp", this.config.port, s.peer.port, { kind: "ovpn", op: "exit", sid: s.sid, reason: "restart" }), ctx);
+    this.io.send(outerPacket(src, s.peer.ip, "udp", this.config.port, s.peer.port, exit), ctx);
   }
 
   /** 같은 인증서로 다른 기기가 붙어 밀려난 세션: 이유를 알리고 닫는다 (클라이언트는 다시 붙지 않는다 — 서로 밀어내기를 끝없이 하지 않게) */
   private kick(s: OvpnSession, ctx: NodeContext): void {
-    const src = this.io.source();
-    if (!src) return;
+    const src = s.local;
     this.io.send(outerPacket(src, s.peer.ip, s.proto, this.config.port, s.peer.port, { kind: "ovpn", op: "exit", sid: s.sid, reason: "kicked" }, s.tcp), ctx);
     if (s.proto === "tcp" && s.tcp) this.io.send(tcpFlag(src, s.peer.ip, this.config.port, s.peer.port, s.tcp, { fin: true, ackFlag: true }), ctx);
   }
@@ -303,13 +305,13 @@ export class OvpnServer {
   /** UDP 로 온 OpenVPN. 풀린 패킷이면 돌려준다 */
   handleUdp(pkt: Ipv4Packet, srcPort: number, m: OvpnMessage, ctx: NodeContext, frameId: number): Ipv4Packet | null {
     const key = `${pkt.src}:${srcPort}`;
-    return this.handleMessage(key, { ip: pkt.src, port: srcPort }, "udp", m, ctx, frameId);
+    return this.handleMessage(key, { ip: pkt.src, port: srcPort }, pkt.dst, "udp", m, ctx, frameId);
   }
 
   /** TCP 로 온 세그먼트 (내 OpenVPN TCP 포트). 풀린 패킷이면 돌려준다 */
   handleTcp(pkt: Ipv4Packet, seg: TcpSegment, ctx: NodeContext, frameId: number): Ipv4Packet | null {
     const key = `${pkt.src}:${seg.srcPort}`;
-    const src = this.io.source();
+    const src = pkt.dst;
     let s = this.sessions.get(key);
     if (seg.rst) {
       if (s) {
@@ -319,11 +321,10 @@ export class OvpnServer {
       return null;
     }
     if (seg.syn && !seg.ackFlag) {
-      if (!src) return null;
       // 새 연결 (같은 포트의 옛 연결이 남아 있으면 갈아 끼운다)
       const tcp: TcpState = { snd: this.isn, rcv: seg.seq + 1, established: false };
       this.isn = (this.isn + 64000) % 0x7fffffff;
-      s = { key, sid: 0, peer: { ip: pkt.src, port: seg.srcPort }, proto: "tcp", phase: "syn", replies: new Map(), rxBytes: 0, txBytes: 0, since: ctx.now, tcp };
+      s = { key, local: pkt.dst, sid: 0, peer: { ip: pkt.src, port: seg.srcPort }, proto: "tcp", phase: "syn", replies: new Map(), rxBytes: 0, txBytes: 0, since: ctx.now, tcp };
       this.sessions.set(key, s);
       ctx.trace("tcp.syn.received", "L4", `OpenVPN 서버 (TCP ${this.config.port}): ${key} 의 SYN → SYN·ACK (TCP 위로 OpenVPN 을 나른다)`, { ovpn: true }, frameId);
       this.io.send(tcpFlag(src, pkt.src, this.config.port, seg.srcPort, tcp, { syn: true, ackFlag: true }), ctx, frameId);
@@ -339,7 +340,7 @@ export class OvpnServer {
     if (seg.fin) {
       t.rcv = seg.seq + seg.len + 1;
       this.sessions.delete(key);
-      if (src) this.io.send(tcpFlag(src, pkt.src, this.config.port, seg.srcPort, t, { fin: true, ackFlag: true }), ctx, frameId);
+      this.io.send(tcpFlag(src, pkt.src, this.config.port, seg.srcPort, t, { fin: true, ackFlag: true }), ctx, frameId);
       ctx.trace("vpn.drop", "L4", `OpenVPN 서버: ${s.cn ?? key} 가 TCP 연결을 닫음 (FIN) → 세션 정리${s.vip ? `, 가상 주소 ${s.vip} 는 같은 인증서가 다시 붙을 때까지 남겨 둠` : ""}`, { ovpn: true }, frameId);
       return null;
     }
@@ -348,10 +349,10 @@ export class OvpnServer {
       return null;
     }
     t.rcv = Math.max(t.rcv, seg.seq + seg.len);
-    return this.handleMessage(key, { ip: pkt.src, port: seg.srcPort }, "tcp", seg.ovpn, ctx, frameId);
+    return this.handleMessage(key, { ip: pkt.src, port: seg.srcPort }, pkt.dst, "tcp", seg.ovpn, ctx, frameId);
   }
 
-  private handleMessage(key: string, peer: { ip: Ip; port: number }, proto: OvpnProto, m: OvpnMessage, ctx: NodeContext, frameId: number): Ipv4Packet | null {
+  private handleMessage(key: string, peer: { ip: Ip; port: number }, local: Ip, proto: OvpnProto, m: OvpnMessage, ctx: NodeContext, frameId: number): Ipv4Packet | null {
     const c = this.config;
     let s = this.sessions.get(key);
     // 데이터 채널 (세션 키로 암호화 — tls-crypt 와 무관)
@@ -398,7 +399,7 @@ export class OvpnServer {
       if (s?.phase === "up") ctx.trace("vpn.drop", "L4", `OpenVPN 서버: ${s.cn} 가 같은 주소에서 새 세션을 시작 → 옛 세션을 버림`, { ovpn: true }, frameId);
       const tcp = proto === "tcp" ? s?.tcp : undefined;
       if (proto === "tcp" && !tcp) return null;
-      s = { key, sid: m.sid, peer, proto, phase: "reset", replies: new Map(), rxBytes: 0, txBytes: 0, since: ctx.now, ...(tcp ? { tcp } : {}) };
+      s = { key, local, sid: m.sid, peer, proto, phase: "reset", replies: new Map(), rxBytes: 0, txBytes: 0, since: ctx.now, ...(tcp ? { tcp } : {}) };
       this.sessions.set(key, s);
       ctx.trace("vpn.handshake", "L4", `OpenVPN 서버: ${peer.ip}:${peer.port} 가 세션 시작 (HARD_RESET_CLIENT, sid ${m.sid})${c.tlsCrypt ? " — tls-crypt 키가 맞음" : ""} → HARD_RESET_SERVER`, { ovpn: true, from: peer.ip, sid: m.sid }, frameId);
       this.reply(s, { kind: "ovpn", op: "reset-server", sid: m.sid }, ctx, frameId, m.op);
@@ -506,9 +507,7 @@ export class OvpnServer {
     const c = this.config;
     const msg: OvpnMessage = m.op === "data" || m.op === "ping" || m.op === "exit" || !c.tlsCrypt ? m : { ...m, crypt: c.tlsCrypt };
     if (forOp) s.replies.set(forOp, msg);
-    const src = this.io.source();
-    if (!src) return;
-    this.io.send(outerPacket(src, s.peer.ip, s.proto, c.port, s.peer.port, msg, s.tcp), ctx, frameId);
+    this.io.send(outerPacket(s.local, s.peer.ip, s.proto, c.port, s.peer.port, msg, s.tcp), ctx, frameId);
   }
 
   /** 붙은 클라이언트에게 (목적지 = 가상 주소). 보냈으면 true */
@@ -567,6 +566,14 @@ export class OvpnClient {
   private tok = 0;
   private nextSid: number;
   private attempt = 0;
+  /** 잊은 TCP 연결 ("서버:내 포트") — 늦게 온 세그먼트를 호스트 TCP 로 넘기지 않고 조용히 버린다 (RST 가 새지 않게) */
+  private retired: string[] = [];
+  /** 다시 연결을 기다리는 중 (connect-retry) */
+  private reconnectPending = false;
+  /** 서버 이름 풀기 실패 횟수 (resolv-retry) */
+  private resolveTries = 0;
+  /** 실패 이유가 이름 풀기 (주소를 다시 얻으면 다시 시도) */
+  private nameFailed = false;
 
   constructor(
     private readonly io: OvpnClientIo,
@@ -589,7 +596,7 @@ export class OvpnClient {
   get state(): RaClientState {
     if (!this.config.enabled) return "off";
     if (this.s?.phase === "up") return "up";
-    if (this.s || this.resolving) return "init";
+    if (this.s || this.resolving || this.reconnectPending) return "init";
     return this.failed ? "failed" : "off";
   }
 
@@ -620,6 +627,9 @@ export class OvpnClient {
     if (was) this.close(ctx, "설정 변경");
     this.config = { ...cfg, ...(cfg.ovpn ? { ovpn: { ...cfg.ovpn, cert: { ...cfg.ovpn.cert } } } : {}) };
     this.failed = undefined;
+    this.nameFailed = false;
+    this.resolveTries = 0;
+    this.reconnectPending = false;
     if (!cfg.enabled) return;
     const o = cfg.ovpn;
     if (!o || !cfg.server || !o.ca || !o.cert.cn) {
@@ -631,7 +641,14 @@ export class OvpnClient {
   }
 
   connect(ctx: NodeContext): void {
+    // 이름 풀기 실패는 영구 실패가 아니다 — 주소를 다시 얻으면 다시 풀어 본다 (resolv-retry)
+    if (this.nameFailed && this.failed && !this.resolving) {
+      this.failed = undefined;
+      this.nameFailed = false;
+      this.resolveTries = 0;
+    }
     if (!this.config.enabled || this.s || this.resolving || this.failed) return;
+    this.reconnectPending = false;
     const o = this.config.ovpn;
     const me = this.io.myIp();
     if (!o || !this.config.server || !o.ca || !o.cert.cn || !me) return;
@@ -643,9 +660,19 @@ export class OvpnClient {
         this.resolving = false;
         if (this.serverName !== name || !this.config.enabled || this.s) return;
         if (!ip) {
-          this.fail(ctx, `서버 이름 ${name} 을(를) 풀지 못함 (${reason ?? "?"}) — 이름(DDNS)과 DNS 설정을 확인`);
+          this.resolveTries++;
+          if (this.resolveTries < OVPN_TRIES) {
+            ctx.trace("vpn.config", "sys", `OpenVPN: 서버 이름 ${name} 을(를) 풀지 못함 (${reason ?? "?"}) → ${OVPN_RECONNECT / 1000}초 뒤 다시 풂 (resolv-retry)`, { ovpn: true, name });
+            this.reconnectPending = true;
+            ctx.timer(OVPN_RECONNECT, OVPN_TIMER_TAG, { ovpn: "reconnect", tok: ++this.tok });
+            this.reconnectTok = this.tok;
+            return;
+          }
+          this.fail(ctx, `서버 이름 ${name} 을(를) 풀지 못함 (${reason ?? "?"}, ${this.resolveTries}번) — 이름(DDNS)과 DNS 설정을 확인. 주소를 다시 얻거나 "다시 연결" 하면 다시 풂`);
+          this.nameFailed = true;
           return;
         }
+        this.resolveTries = 0;
         this.start(ip, ctx);
       });
       return;
@@ -713,6 +740,30 @@ export class OvpnClient {
     return this.handleMessage(m, ctx, frameId);
   }
 
+  /** 지금 세션을 잊는다 (TCP 면 그 포트를 늦은 세그먼트용으로 남긴다) */
+  private forget(): void {
+    const s = this.s;
+    this.s = undefined;
+    if (s?.proto === "tcp") this.retire(s);
+  }
+
+  private retire(s: ClientSession): void {
+    this.retired.push(`${s.server}:${s.lport}`);
+    if (this.retired.length > 16) this.retired.shift();
+  }
+
+  /** 다시 연결 예약 (connect-retry) */
+  private scheduleReconnect(ctx: NodeContext): void {
+    this.reconnectPending = true;
+    ctx.timer(OVPN_RECONNECT, OVPN_TIMER_TAG, { ovpn: "reconnect", tok: ++this.tok });
+    this.reconnectTok = this.tok;
+  }
+
+  /** 이 클라이언트가 쓰거나 썼던 TCP 연결들 ("서버:내 포트" — VPN 종류를 바꾼 뒤에도 늦은 세그먼트를 알아보게) */
+  tcpKeys(): string[] {
+    return [...(this.s?.proto === "tcp" ? [`${this.s.server}:${this.s.lport}`] : []), ...(this.closing ? [`${this.closing.server}:${this.closing.lport}`] : []), ...this.retired];
+  }
+
   /** 받은 TCP 세그먼트 (내 OpenVPN TCP 연결) */
   handleTcp(pkt: Ipv4Packet, seg: TcpSegment, ctx: NodeContext, frameId: number): Ipv4Packet | null {
     const s = this.s;
@@ -725,9 +776,9 @@ export class OvpnClient {
         ctx.trace("vpn.drop", "L4", `OpenVPN 연결 실패: ${this.failed}`, { ovpn: true, failed: true }, frameId);
         return null;
       }
-      ctx.trace("vpn.drop", "L4", `OpenVPN: TCP 연결이 RST 로 끊김 (서버가 다시 시작함) → ${OVPN_RECONNECT / 1000}초 뒤 다시 연결 (connect-retry)`, { ovpn: true }, frameId);
-      ctx.timer(OVPN_RECONNECT, OVPN_TIMER_TAG, { ovpn: "reconnect", tok: ++this.tok });
-      this.reconnectTok = this.tok;
+      // 서버가 다시 시작할 때는 RESTART 를 먼저 알린다 — 알림 없는 RST 는 중간 장비(방화벽·DPI)일 수 있다
+      ctx.trace("vpn.drop", "L4", `OpenVPN: TCP 연결이 RST 로 끊김 (서버가 RESTART 를 알리지 않았으니 중간 방화벽·DPI 가 끊었을 수 있음) → ${OVPN_RECONNECT / 1000}초 뒤 다시 연결 (connect-retry)`, { ovpn: true }, frameId);
+      this.scheduleReconnect(ctx);
       return null;
     }
     if (seg.syn && seg.ackFlag && s.phase === "syn") {
@@ -752,6 +803,8 @@ export class OvpnClient {
     }
     if (!seg.ovpn) return null;
     t.rcv = Math.max(t.rcv, seg.seq + seg.len);
+    // 서버 재시작 알림은 협상 중(서버가 아직 세션 번호를 모를 때)에도 이 연결로 오면 받는다
+    if (seg.ovpn.op === "exit" && seg.ovpn.reason === "restart") return this.handleMessage({ ...seg.ovpn, sid: s.sid }, ctx, frameId);
     return this.handleMessage(seg.ovpn, ctx, frameId);
   }
 
@@ -773,10 +826,9 @@ export class OvpnClient {
       return null;
     }
     if (m.op === "exit") {
-      this.s = undefined;
+      this.forget();
       ctx.trace("vpn.drop", "L4", `OpenVPN: 서버가 다시 시작한다고 알려 옴 (RESTART) → ${OVPN_RECONNECT / 1000}초 뒤 다시 연결`, { ovpn: true }, frameId);
-      ctx.timer(OVPN_RECONNECT, OVPN_TIMER_TAG, { ovpn: "reconnect", tok: ++this.tok });
-      this.reconnectTok = this.tok;
+      this.scheduleReconnect(ctx);
       return null;
     }
     if (m.op === "ping") {
@@ -861,7 +913,7 @@ export class OvpnClient {
   }
 
   private fail(ctx: NodeContext, why: string): void {
-    this.s = undefined;
+    this.forget();
     this.failed = why;
     ctx.trace("vpn.drop", "L4", `OpenVPN 연결 실패: ${why}`, { ovpn: true, failed: true });
   }
@@ -885,21 +937,27 @@ export class OvpnClient {
       this.s = undefined;
       return;
     }
-    this.s = undefined;
+    this.forget();
   }
 
   /** 닫는 중인 TCP 연결 (서버의 FIN 에 마지막 ACK) */
   private closing: ClientSession | undefined;
 
-  /** 내 OpenVPN 포트로 온 것인가 (지금 연결·닫는 중인 TCP) */
+  /** 내 OpenVPN 포트로 온 것인가 (지금 연결·닫는 중·잊은 TCP) */
   ownsTcp(seg: TcpSegment, src: Ip): boolean {
-    return (!!this.s && this.s.proto === "tcp" && this.s.lport === seg.dstPort && this.s.server === src) || (!!this.closing && this.closing.lport === seg.dstPort && this.closing.server === src);
+    return this.tcpKeys().includes(`${src}:${seg.dstPort}`);
   }
 
-  /** 닫는 중인 TCP 연결로 온 세그먼트 */
+  /** 닫는 중이거나 잊은 TCP 연결로 온 세그먼트 (처리했으면 true) */
   handleClosing(pkt: Ipv4Packet, seg: TcpSegment, ctx: NodeContext): boolean {
     const c = this.closing;
-    if (!c?.tcp || seg.dstPort !== c.lport || pkt.src !== c.server) return false;
+    if (!c?.tcp || seg.dstPort !== c.lport || pkt.src !== c.server) {
+      const key = `${pkt.src}:${seg.dstPort}`;
+      if (this.s?.proto === "tcp" && `${this.s.server}:${this.s.lport}` === key) return false;
+      if (!this.retired.includes(key)) return false;
+      ctx.trace("vpn.drop", "L4", `OpenVPN: 지난 TCP 연결(${key})로 늦게 온 세그먼트 → 무시 (그 연결은 이미 잊음)`, { ovpn: true, late: true });
+      return true;
+    }
     if (seg.fin) {
       c.tcp.rcv = seg.seq + seg.len + 1;
       const me = this.io.myIp();
@@ -941,6 +999,7 @@ export class OvpnClient {
     const d = data as { ovpn?: string; tok?: number; sid?: number; at?: number };
     if (d.ovpn === "reconnect") {
       if (d.tok !== this.reconnectTok || this.s || !this.config.enabled) return;
+      this.reconnectPending = false;
       this.failed = undefined;
       ctx.trace("vpn.config", "sys", `OpenVPN: 다시 연결 (connect-retry)`, { ovpn: true });
       this.connect(ctx);
@@ -952,7 +1011,7 @@ export class OvpnClient {
       if (d.tok !== s.tok || s.phase === "up") return;
       if (s.tries >= OVPN_TRIES) {
         const o = this.config.ovpn;
-        const what = s.phase === "syn" ? `TCP ${s.server}:${s.port} 연결 응답 없음 (SYN timeout) — 서버가 꺼져 있거나 그 포트가 막힘` : `${s.server}:${s.port}/${s.proto} 응답 없음 (TLS key negotiation failed to occur within 3 seconds) — ${o?.tlsCrypt ? "tls-crypt 키가 다르거나, " : ""}서버가 꺼져 있거나, 전송(${s.proto.toUpperCase()})·포트가 다르거나, 방화벽이 막음`;
+        const what = s.phase === "syn" ? `TCP ${s.server}:${s.port} 연결 응답 없음 (SYN timeout) — 서버가 꺼져 있거나 그 포트가 막힘` : `${s.server}:${s.port}/${s.proto} 응답 없음 (TLS 협상이 ${(OVPN_RETRY * OVPN_TRIES) / 1000}초 안에 끝나지 않음) — ${o?.tlsCrypt ? "tls-crypt 키가 다르거나, " : ""}서버가 꺼져 있거나, 전송(${s.proto.toUpperCase()})·포트가 다르거나, 방화벽이 막음`;
         this.close(ctx, undefined);
         this.fail(ctx, what);
         return;
@@ -989,7 +1048,7 @@ export class OvpnClient {
         return;
       }
       ctx.trace("vpn.drop", "L4", `OpenVPN: ${OVPN_PING_RESTART / 1000}초 동안 서버에게서 받은 게 없음 (Inactivity timeout --ping-restart) → 다시 연결`, { ovpn: true });
-      this.s = undefined;
+      this.forget();
       this.connect(ctx);
     }
   }
@@ -1000,7 +1059,8 @@ export class OvpnClient {
   lost(ctx: NodeContext, why: string): void {
     if (!this.s) return;
     const was = this.s.phase === "up";
-    this.s = undefined;
+    this.forget();
+    if (this.closing) this.retire(this.closing);
     this.closing = undefined;
     if (was) ctx.trace("vpn.drop", "L4", `OpenVPN: ${why} → 터널이 끊김 (주소를 다시 얻으면 새로 연결)`, { ovpn: true });
   }
@@ -1008,11 +1068,14 @@ export class OvpnClient {
   disconnect(ctx: NodeContext, why: string): void {
     this.close(ctx, why);
     this.failed = undefined;
+    this.reconnectPending = false;
   }
 
   reconnect(ctx: NodeContext): void {
     this.close(ctx, "다시 연결");
     this.failed = undefined;
+    this.nameFailed = false;
+    this.resolveTries = 0;
     this.connect(ctx);
   }
 
@@ -1026,6 +1089,7 @@ export class OvpnClient {
     if (!o || !this.config.server || !o.ca || !o.cert.cn) return "설정 필요 (서버 주소·CA·내 인증서)";
     const s = this.s;
     if (s?.phase === "up" && s.push) return `연결됨 · 가상 주소 ${s.push.ip} · ${s.push.redirectGateway ? "모든 트래픽" : s.push.routes.map((r) => `${r.dest}/${r.prefix}`).join(", ") || "터널 대역만"} 는 터널로 · ${s.proto.toUpperCase()} ${s.port}`;
+    if (!s && this.reconnectPending) return `다시 연결 대기 (${OVPN_RECONNECT / 1000}초 뒤 — connect-retry)`;
     if (s || this.resolving) return `연결 중 (${s?.phase === "syn" ? "TCP 연결" : s?.phase === "reset" ? "세션 시작" : s?.phase === "tls" || s?.phase === "auth" ? "TLS·인증서 확인" : "이름 풀기"})`;
     if (this.failed) return `실패 · ${this.failed}`;
     return "대기 (주소를 받으면 연결)";
