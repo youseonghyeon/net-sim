@@ -123,6 +123,8 @@ export interface WgPeerState {
   cfg: WgPeer;
   endpoint?: { ip: Ip; port: number };
   session?: Session;
+  /** 직전 세션: 새 세션을 맺은 직후에도 상대가 아직 옛 세션으로 보낸 데이터를 받는다 (실제 WireGuard 의 previous keypair — 양쪽이 동시에 핸드셰이크했을 때 엇갈리지 않게) */
+  prevSession?: Session;
   /** 내가 시작해 응답을 기다리는 핸드셰이크 */
   pending?: { local: number; tries: number };
   queue: { inner: Ipv4Packet; frameId?: number }[];
@@ -317,6 +319,7 @@ export class WgInterface {
     p.queue = [];
     p.pending = undefined;
     p.session = undefined;
+      p.prevSession = undefined;
     p.failed = why;
     ctx.trace("vpn.drop", "L4", `${this.label}: 핸드셰이크 실패 — ${why}${n ? ` → 기다리던 패킷 ${n}개 드롭` : ""}. 보낼 패킷이 또 생기면 다시 시도`, { wg: true, failed: true, dropped: n }, frameId);
     this.onFail?.(p, ctx);
@@ -334,6 +337,7 @@ export class WgInterface {
     if (!p.endpoint || p.endpoint.ip !== ep.ip || p.endpoint.port !== ep.port) {
       p.endpoint = { ...ep };
       p.session = undefined;
+      p.prevSession = undefined;
       p.pending = undefined;
     }
     if (!this.config.enabled || p.pending || p.session) return;
@@ -350,6 +354,7 @@ export class WgInterface {
     if (p.endpoint) p.prevEndpoint = p.endpoint;
     p.endpoint = undefined;
     p.session = undefined;
+      p.prevSession = undefined;
     p.pending = undefined;
   }
 
@@ -455,8 +460,8 @@ export class WgInterface {
       }
       this.roam(p, from, ctx, frameId);
       const local = this.nextIdx++;
-      p.session = { local, remote: m.sender ?? 0, since: ctx.now, counter: 0 };
-      p.pending = undefined;
+      // 내가 시작한 핸드셰이크(pending)가 있어도 지우지 않는다: 양쪽이 동시에 시작했으면 그 Response 도 곧 온다 (세션은 두 칸이라 둘 다 받는다)
+      this.install(p, { local, remote: m.sender ?? 0, since: ctx.now, counter: 0 });
       p.lastHandshake = ctx.now;
       p.failed = undefined;
       p.unansweredSince = undefined;
@@ -473,7 +478,7 @@ export class WgInterface {
         return null;
       }
       this.roam(p, from, ctx, frameId);
-      p.session = { local: m.receiver!, remote: m.sender ?? 0, since: ctx.now, counter: 0 };
+      this.install(p, { local: m.receiver!, remote: m.sender ?? 0, since: ctx.now, counter: 0 });
       p.pending = undefined;
       p.lastHandshake = ctx.now;
       p.failed = undefined;
@@ -484,7 +489,7 @@ export class WgInterface {
       else this.transmit(p, undefined, ctx, frameId);
       return null;
     }
-    const p = [...this.peers.values()].find((x) => x.session?.local === m.receiver);
+    const p = [...this.peers.values()].find((x) => x.session?.local === m.receiver || x.prevSession?.local === m.receiver);
     if (!p) {
       ctx.trace("vpn.drop", "L4", `${this.label}: ${from.ip}:${from.port} 의 데이터가 모르는 세션 ${m.receiver} 로 옴 (이 장비가 재시작·설정 변경으로 세션을 잊음) → 버림. 상대는 ${WG_DEAD / 1000}초 동안 답이 없으면 새로 핸드셰이크한다`, { wg: true, from: from.ip, reason: "unknown-session" }, frameId);
       return null;
@@ -511,6 +516,12 @@ export class WgInterface {
     return inner;
   }
 
+  /** 새 세션을 현재로, 지금 것은 직전으로 */
+  private install(p: WgPeerState, s: Session): void {
+    if (p.session) p.prevSession = p.session;
+    p.session = s;
+  }
+
   /** 인증된 패킷의 바깥 출발지가 바뀌었으면 그 피어의 새 주소로 (엔드포인트 로밍) */
   private roam(p: WgPeerState, from: { ip: Ip; port: number }, ctx: NodeContext, frameId?: number): void {
     const e = p.endpoint;
@@ -529,6 +540,7 @@ export class WgInterface {
   reset(): void {
     for (const p of this.peers.values()) {
       p.session = undefined;
+      p.prevSession = undefined;
       p.pending = undefined;
       p.queue = [];
       p.unansweredSince = undefined;

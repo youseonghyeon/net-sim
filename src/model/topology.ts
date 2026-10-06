@@ -1078,6 +1078,10 @@ export function cloneDevices(t: Topology, ids: string[], offset: { x: number; y:
   const devices: Device[] = [];
   for (const d of picked) {
     const copy: Device = { ...structuredClone(d), id: newId(d.kind), name: nextName(d.kind, pool), mac: nextMac(pool), x: snap(d.x + offset.x), y: snap(d.y + offset.y) };
+    // WireGuard 개인 키는 장치의 신원이라 복사하지 않는다 (MAC 처럼 새로 — 새 id 에서 만든 키)
+    if (copy.router?.wgServer?.privateKey) delete copy.router.wgServer.privateKey;
+    if (copy.router?.wgClient?.privateKey) delete copy.router.wgClient.privateKey;
+    if (copy.host?.ra?.wg?.privateKey) delete copy.host.ra.wg.privateKey;
     idMap.set(d.id, copy.id);
     devices.push(copy);
     pool.push(copy);

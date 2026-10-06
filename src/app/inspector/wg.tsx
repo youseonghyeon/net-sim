@@ -130,6 +130,7 @@ function importFrom(self: Device, role: "client" | "host", srv: Device): void {
   const myKey = wgPublicKeyOf(self, role);
   const existing = s.peers.find((p) => p.publicKey.trim() === myKey);
   const ip = existing?.ip.trim() || nextPeerIp(s);
+  if (!ip) return; // 터널 대역이 가득 찼거나 서버 터널 주소가 올바르지 않음 — 서버 칸의 오류가 알려 준다
   const serverAddr = s.address.split("/")[0]!.trim();
   const fields: Partial<WgClientSettings> = { port: s.port, serverKey: wgPublicKeyOf(srv, "server"), address: `${ip}/32`, dns: validIp(serverAddr) ? serverAddr : "" };
   // 서버 공유기에 DDNS 가 켜져 있으면 이름(주소가 바뀌어도 따라감), 아니면 수동 WAN 주소

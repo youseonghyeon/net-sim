@@ -296,7 +296,7 @@ export class DnsServer {
   private readonly pendingUpstream = new Map<number, PendingUpstream>();
   private idSeq = 0x7000;
   /** 지금 물어볼 업스트림을 바꿔야 할 때 (공유기 VPN 클라이언트가 연결되면 VPN 의 DNS — DNS 유출 방지). 없거나 undefined 면 설정값 */
-  upstreamFor: (() => Ip | undefined) | undefined;
+  upstreamFor: ((client: Ip) => Ip | undefined) | undefined;
   /** 질의를 받은 주소가 이 인터페이스 주소가 아니어도 그 주소로 답해야 할 때 (VPN 터널 주소로 온 질의) */
   answersAt: ((dst: Ip) => boolean) | undefined;
 
@@ -306,7 +306,8 @@ export class DnsServer {
     /** 로그 문구 앞에 붙는 역할 이름 (예: "공인 DNS") */
     private readonly label = "DNS 서버",
     /** 업스트림 질의를 다른 인터페이스로 내보내야 할 때 (라우터: WAN). 없으면 iface 로 보낸다 */
-    private readonly upstreamPath?: { srcIp: () => Ip | undefined; send: (pkt: Ipv4Packet, ctx: NodeContext) => void },
+    /** client = 질의를 보낸 기기 (공유기 VPN 정책처럼 기기마다 다른 길로 물을 때) */
+    private readonly upstreamPath?: { srcIp: (client?: Ip) => Ip | undefined; send: (pkt: Ipv4Packet, ctx: NodeContext, client?: Ip) => void },
     /** 이 서버 호스트의 IPv6 (IPv6 로 온 질의에 답하고, IPv6 업스트림에 묻는다) */
     private readonly v6?: Ipv6Interface,
   ) {}
@@ -355,7 +356,7 @@ export class DnsServer {
       return;
     }
     const hops = msg.hops ?? 0;
-    const up = this.upstreamFor?.() ?? this.config.upstream;
+    const up = this.upstreamFor?.(pkt.src) ?? this.config.upstream;
     const upIsMe = !!up && (up === this.iface.ip || !!this.v6?.owns(up));
     if (up && !upIsMe && hops >= DNS_MAX_HOPS) {
       ctx.trace("dns.timeout", "app", `${this.label}: ${name} 질의가 서버 ${DNS_MAX_HOPS}대를 넘게 돌았음 → 서버들이 서로를 업스트림으로 가리키는 루프로 보고 SERVFAIL`, { name, hops });
@@ -368,7 +369,7 @@ export class DnsServer {
       this.pendingUpstream.set(id, { ...(replyFrom ? { replyFrom } : {}), clientIp: pkt.src, clientPort: srcPort, clientId: msg.id, name, qtype, timer });
       ctx.trace("dns.forward", "app", `${this.label}: ${name}${tq} 은(는) 내 레코드에 없음 → 업스트림 DNS ${up} 에 대신 물어봄 (재귀 질의)`, { name, upstream: up });
       const up6 = isIpv6(up);
-      const src = up6 ? this.v6?.sourceFor(up) : (this.upstreamPath?.srcIp() ?? this.iface.ip);
+      const src = up6 ? this.v6?.sourceFor(up) : (this.upstreamPath?.srcIp(pkt.src) ?? this.iface.ip);
       if (!src) {
         ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS 에 물어볼 인터페이스에 주소가 없음 → SERVFAIL`, { name });
         this.pendingUpstream.delete(id);
@@ -382,7 +383,7 @@ export class DnsServer {
         return;
       }
       const q: Ipv4Packet = { kind: "ipv4", src, dst: up, ttl: 64, payload: { kind: "udp", srcPort: DNS_PORT, dstPort: DNS_PORT, payload: m } };
-      if (this.upstreamPath) this.upstreamPath.send(q, ctx);
+      if (this.upstreamPath) this.upstreamPath.send(q, ctx, pkt.src);
       else this.iface.sendIp(q, ctx, emit);
       return;
     }
@@ -416,7 +417,7 @@ export class DnsServer {
     const p = this.pendingUpstream.get(id);
     if (!p) return;
     this.pendingUpstream.delete(id);
-    ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS ${this.upstreamFor?.() ?? this.config.upstream} timeout (응답 없음) → 클라이언트에게 SERVFAIL`, { name: p.name });
+    ctx.trace("dns.timeout", "app", `${this.label}: 업스트림 DNS ${this.upstreamFor?.(p.clientIp) ?? this.config.upstream} timeout (응답 없음) → 클라이언트에게 SERVFAIL`, { name: p.name });
     this.respond(p.clientIp, p.clientPort, { kind: "dns", id: p.clientId, op: "response", name: p.name, ...(p.qtype === "AAAA" ? { qtype: p.qtype } : {}), rcode: "SERVFAIL" }, ctx, emit, p.replyFrom);
   }
 

@@ -110,9 +110,21 @@ export function wireguardRules({ t, add }: LintContext): void {
       add({ deviceId: d.id, severity: "warn", code: "wg.no-peers", message: "WireGuard 서버에 등록한 클라이언트(피어)가 없음 → 아무도 붙을 수 없음 (WireGuard 는 등록된 공개 키에만 답한다)", fix: `${d.name} → WireGuard 서버 → 피어 추가 (클라이언트의 공개 키와 터널 주소)` });
     }
     const seen = new Map<string, string>();
+    const keys = new Map<string, string>();
     for (const p of peers) {
+      const k = p.publicKey.trim();
+      if (keys.has(k)) {
+        add({ deviceId: d.id, severity: "error", code: "wg.peer-key-duplicate", message: `피어 ${keys.get(k) || "(이름 없음)"} 와 ${p.name || "(이름 없음)"} 의 공개 키가 같음 → 앞의 피어만 쓰이고 뒤의 것은 무시됨 (공개 키가 곧 신원)`, fix: `${d.name} → WireGuard 서버 → 중복 피어를 지우거나 그 기기의 공개 키로` });
+        continue;
+      }
+      keys.set(k, p.name);
       const ip = validIp(p.ip.trim());
       if (!ip) continue;
+      if (lan && contains(lan, ip)) {
+        add({ deviceId: d.id, severity: "error", code: "wg.peer-in-lan", message: `피어 ${p.name || "(이름 없음)"} 의 터널 주소 ${ip} 가 집 LAN ${fmtSubnet(lan)} 안 → LAN 기기는 그 주소를 같은 서브넷으로 보고 ARP 로 찾아 공유기를 거치지 않음 (닿지 않음)`, fix: `${d.name} → WireGuard 서버 → 피어 주소를 터널 대역(${tunnel ? fmtSubnet(tunnel) : "예: 10.0.0.0/24"}) 안으로` });
+      } else if (tunnel && !contains(tunnel, ip)) {
+        add({ deviceId: d.id, severity: "warn", code: "wg.peer-outside", message: `피어 ${p.name || "(이름 없음)"} 의 터널 주소 ${ip} 가 서버 터널 대역 ${fmtSubnet(tunnel)} 밖 → 동작은 하지만 LAN 기기의 응답이 기본 게이트웨이(이 공유기)로 와야 해 경로가 엇갈리기 쉬움`, fix: `${d.name} → WireGuard 서버 → 피어 주소를 ${fmtSubnet(tunnel)} 안으로` });
+      }
       const prev = seen.get(ip);
       if (prev !== undefined) {
         add({ deviceId: d.id, severity: "error", code: "wg.peer-duplicate", message: `피어 ${prev || "(이름 없음)"} 와 ${p.name || "(이름 없음)"} 의 터널 주소가 ${ip} 로 같음 → 그 주소로 가는 패킷은 한쪽에만 감 (AllowedIPs 가 겹침)`, fix: `${d.name} → WireGuard 서버 → 피어마다 다른 터널 주소` });
@@ -124,9 +136,21 @@ export function wireguardRules({ t, add }: LintContext): void {
   for (const c of clientsOf(t.devices)) {
     const { d } = c;
     const me = cidr(c.address, 32);
+    if (!me) {
+      add({ deviceId: d.id, severity: "error", code: "wg.no-address", message: `${c.where} 에 내 터널 주소가 없음 → 터널로 보낼 출발지가 없어 VPN 을 쓰지 못함${c.role === "client" && d.router?.wgClient?.killSwitch ? " (킬 스위치가 켜져 있어 LAN 기기의 인터넷이 막힘)" : ""}`, fix: `${d.name} → ${c.where} → 내 터널 주소 (서버 관리자가 정해 준 주소, 예: 10.0.0.2/32)` });
+    }
     const dns = validIp(c.dns.trim());
     if (dns && !allowedHas(c.allowedIps, dns)) {
-      add({ deviceId: d.id, severity: "warn", code: "wg.dns-outside", message: `${c.where} 의 DNS ${dns} 가 AllowedIPs(${c.allowedIps || "없음"}) 밖 → DNS 질의가 터널로 가지 않음 (사설 주소면 닿지 않고, 공인 주소면 VPN 밖으로 새어 나감)`, fix: `${d.name} → ${c.where} → AllowedIPs 에 ${dns} 를 넣거나 DNS 를 비우기` });
+      add({
+        deviceId: d.id,
+        severity: "warn",
+        code: "wg.dns-outside",
+        message:
+          c.role === "client"
+            ? `${c.where} 의 DNS ${dns} 가 AllowedIPs(${c.allowedIps || "없음"}) 밖 → 공유기는 그 DNS 를 쓰지 않고 원래 업스트림에 WAN 으로 묻는다 (DNS 질의가 VPN 밖으로 샘)`
+            : `${c.where} 의 DNS ${dns} 가 AllowedIPs(${c.allowedIps || "없음"}) 밖 → DNS 질의가 터널로 가지 않음 (사설 주소면 닿지 않고, 공인 주소면 VPN 밖으로 새어 나감)`,
+        fix: `${d.name} → ${c.where} → AllowedIPs 에 ${dns} 를 넣거나 DNS 를 비우기`,
+      });
     }
     const server = validIp(c.server.trim());
     const name = server ? undefined : c.server.trim().toLowerCase().replace(/\.$/, "");

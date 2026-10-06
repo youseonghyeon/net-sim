@@ -493,7 +493,7 @@ export class Host implements SimNode {
       ctx,
       oldMac === this.iface.mac
         ? `${NIC_LABEL[want]} 로 다시 통신 (MAC ${oldMac} 그대로)`
-        : `${NIC_LABEL[want]} 로 전환: 다른 NIC 라 MAC 이 ${oldMac} → ${this.iface.mac} 로 바뀜 → ${what} (열려 있던 TCP·VPN 은 끊김)`,
+        : `${NIC_LABEL[want]} 로 전환: 다른 NIC 라 MAC 이 ${oldMac} → ${this.iface.mac} 로 바뀜 → ${what} (${this.ra instanceof WgClient && this.ra.config.enabled ? "열려 있던 TCP 는 끊김 · WireGuard 는 연결 상태가 없어 다음 패킷으로 서버가 새 주소를 배운다(로밍)" : "열려 있던 TCP·VPN 은 끊김"})`,
     );
   }
 
