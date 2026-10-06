@@ -1206,7 +1206,7 @@ export function parseTopology(text: string): { topology?: Topology; error?: stri
 export function portProblem(t: Topology, ref: PortRef, except?: string): string | undefined {
   const d = t.devices.find((x) => x.id === ref.device);
   if (!d) return "장치를 찾을 수 없습니다";
-  const p = DEVICE_SPECS[d.kind].ports[ref.port];
+  const p = specOf(d).ports[ref.port];
   if (!p) return `${d.name} 에는 ${ref.port + 1}번째 포트가 없습니다`;
   if (p.radio) return `${d.name} ${p.name} 은(는) 무선 슬롯이라 케이블을 꽂을 수 없습니다`;
   const busy = t.cables.find((c) => c.id !== except && ((c.a.device === ref.device && c.a.port === ref.port) || (c.b.device === ref.device && c.b.port === ref.port)));

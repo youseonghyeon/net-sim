@@ -1,5 +1,5 @@
 // L2 규칙: VLAN 트렁크 불일치, 스위치 고리(루프)에 STP 꺼짐.
-import { DEVICE_SPECS, type Device } from "../topology";
+import { DEVICE_SPECS, ROUTER_WAN2_PORT, type Device } from "../topology";
 import type { LintContext } from "./context";
 import { portName } from "./segments";
 
@@ -34,7 +34,7 @@ export function vlanTrunkRules({ m, add }: LintContext): void {
 //   → 브로드캐스트가 끝없이 돈다 (여기서는 안전장치가 드롭). 고리에 실제로 속한 장비만 본다 (고리 컴포넌트에 매달린 가지는 제외)
 export function loopStpRule({ t, add }: LintContext): void {
   const isL2 = (d: Device | undefined, port: number) =>
-    !!d && (d.kind === "switch" || d.kind === "hub" || d.kind === "firewall" || (DEVICE_SPECS[d.kind].role === "router" && port !== 0));
+    !!d && (d.kind === "switch" || d.kind === "hub" || d.kind === "firewall" || (DEVICE_SPECS[d.kind].role === "router" && port !== 0 && !(port === ROUTER_WAN2_PORT && d.router?.wan2?.enabled)));
   const byId = new Map(t.devices.map((d) => [d.id, d]));
   const edges = t.cables.filter((c) => c.a.device !== c.b.device && isL2(byId.get(c.a.device), c.a.port) && isL2(byId.get(c.b.device), c.b.port));
   // 한 케이블을 빼도 두 끝이 여전히 이어져 있으면 그 케이블은 고리 위에 있다

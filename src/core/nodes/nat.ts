@@ -115,6 +115,16 @@ export class NatTable {
     return [...this.entries.values()];
   }
 
+  /** 이 나가는 패킷이 이미 이 테이블의 흐름인지 (동적 매핑이 있거나, 포트 포워딩으로 들어온 흐름의 응답) — 멀티 WAN 이 흐름을 그 회선에 붙여 둘 때 */
+  carries(pkt: Ipv4Packet): boolean {
+    const p = pkt.payload;
+    if (p.kind !== "tcp" && p.kind !== "udp" && !(p.kind === "icmp" && (p.type === "echo-request" || p.type === "echo-reply"))) return false;
+    if ((p.kind === "tcp" || p.kind === "udp") && this.ruleFlows.has(`${p.kind}:${pkt.src}:${p.srcPort}:${pkt.dst}:${p.dstPort}`)) return true;
+    const innerId = p.kind === "icmp" ? p.id : p.srcPort;
+    const dest = p.kind === "icmp" ? pkt.dst : `${pkt.dst}:${p.dstPort}`;
+    return this.byInner.has(this.type === "symmetric" ? `${p.kind}:${pkt.src}:${innerId}>${dest}` : `${p.kind}:${pkt.src}:${innerId}`);
+  }
+
   /** 안 → 밖: 출발지를 공인 주소로 바꾼다 (ICMP 는 id, TCP/UDP 는 출발 포트) */
   translate(pkt: Ipv4Packet, publicIp: Ip, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
     const p = pkt.payload;
