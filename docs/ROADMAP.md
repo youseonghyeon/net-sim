@@ -1,4 +1,4 @@
-# GL.iNet Brume 3 기능 (2026-10-06 사용자 결정: "가능한 것은 로드맵대로 쭉")
+# GL.iNet Brume 3 기능 (2026-10-06 사용자 결정: "가능한 것은 로드맵대로 쭉") — 2026-10-07 1~9단계 모두 완료 (단계마다 clean-context 리뷰 → 결함 수정)
 
 Brume 3(GL-MT5000)는 OpenWrt 기반 VPN 보안 게이트웨이다. 공식 문서(docs.gl-inet.com/router/en/4/user_guide/gl-mt5000)의 기능을 코드와 대조했다.
 장치를 새로 만들지 않고 **공유기(Router)** 에 기능을 얹는다 — Brume 도 결국 OpenWrt 공유기이고, "장치보다 상자 안의 소프트웨어" 원칙.
