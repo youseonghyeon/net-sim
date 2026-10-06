@@ -1,3 +1,4 @@
+import { isMcastIp } from "../packet";
 import { OVPN_PORT, OvpnServer, shortFp, type OvpnServerConfig } from "./openvpn";
 import { MESH_SERVERS, MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
 import { CLOUD_TIMER_TAG, CloudAgent, RouterAdmin, type AdminConfig, type SambaConfig } from "./glinet";
@@ -978,7 +979,7 @@ export class Router implements SimNode {
     if (cfg.blocked) this.setBlocked(cfg.blocked, ctx);
     if (cfg.dropIn !== undefined) this.setDropIn(cfg.dropIn, ctx);
     if (cfg.samba) this.admin.setSamba(cfg.samba, ctx);
-    if (cfg.igmpSnooping !== undefined) this.igmp.setEnabled(cfg.igmpSnooping, ctx, "공유기 내부 스위치");
+    if (cfg.igmpSnooping !== undefined) this.setIgmp(cfg.igmpSnooping, ctx);
     if (cfg.sipAlg !== undefined) this.setSipAlg(cfg.sipAlg, ctx);
   }
 
@@ -1225,7 +1226,7 @@ export class Router implements SimNode {
       this.handleIcmp(pkt, pkt.payload, frame.id, ctx, this.lan, emit, pkt.dst);
       return;
     }
-    if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
+    if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || isMcastIp(pkt.dst)) {
       ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 드롭`, { dst: pkt.dst }, frame.id);
       return;
     }
@@ -1497,6 +1498,16 @@ export class Router implements SimNode {
     this.lan.sendIp(inner, ctx, this.emitLan(ctx));
   }
 
+  /** 내부 스위치의 IGMP 스누핑 (켤 때 쿼리를 보내 가입한 기기들이 다시 알리게) */
+  setIgmp(on: boolean, ctx: NodeContext): void {
+    const was = this.igmp.enabled;
+    this.igmp.setEnabled(on, ctx, "공유기 내부 스위치");
+    if (!on || was) return;
+    ctx.trace("igmp.snoop", "L2", "IGMP 스누핑 켜짐 → General Query 를 LAN 포트로 (가입한 기기는 다시 알린다)", {});
+    const q = IgmpSnoop.query(this.lan.mac, ctx);
+    for (const p of this.bridgePorts()) if (ctx.isPortConnected(p)) ctx.send(p, q);
+  }
+
   // ---------- SIP ALG ----------
 
   /** SIP ALG (공유기가 인터넷 전화의 SIP 를 고쳐 줌) */
@@ -1602,7 +1613,7 @@ export class Router implements SimNode {
       ctx.trace("ip.drop", "L4", `공유기 자신에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frameId);
       return;
     }
-    if (pkt.dst === "255.255.255.255" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
+    if (pkt.dst === "255.255.255.255" || isMcastIp(pkt.dst)) {
       ctx.trace("ip.drop", "L3", `VPN 클라이언트의 브로드캐스트/멀티캐스트 ${pkt.dst} → 집 LAN 으로 넘기지 않음 (L2TP 는 IP 만 나른다)`, { dst: pkt.dst }, frameId);
       return;
     }
@@ -1921,7 +1932,7 @@ export class Router implements SimNode {
       ctx.trace("ip.drop", "L4", `공유기 자신에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frameId);
       return;
     }
-    if (pkt.dst === "255.255.255.255" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
+    if (pkt.dst === "255.255.255.255" || isMcastIp(pkt.dst)) {
       ctx.trace("ip.drop", "L3", `${vpn.label} 클라이언트의 브로드캐스트/멀티캐스트 ${pkt.dst} → 넘기지 않음 (${vpn.label === "WireGuard" ? "WireGuard 는 IP 만 나른다" : "TUN 모드는 IP 만 나른다"})`, { dst: pkt.dst }, frameId);
       return;
     }

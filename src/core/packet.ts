@@ -64,9 +64,12 @@ export interface Ipv4Packet {
  */
 export interface IgmpPacket {
   kind: "igmp";
-  type: "report" | "leave";
+  type: "report" | "leave" | "query";
+  /** query 는 0.0.0.0 (모든 그룹 — General Query) */
   group: Ip;
 }
+
+export const ALL_HOSTS_IP: Ip = "224.0.0.1";
 
 /** 멀티캐스트 스트림 (IPTV 흉내): UDP 로 그룹 주소에 보낸다 */
 export interface McastData {
@@ -1043,7 +1046,7 @@ export function describeFrame(frame: EthernetFrame): string {
   if (inner.kind === "esp") return ESP_LABEL(inner);
   if (inner.kind === "pfsync") return `세션 동기화 (pfsync${inner.bulk ? " 전체" : ""}: NAT 매핑 ${inner.nat.length}개, 흐름 ${inner.flows.length}개)`;
   if (inner.kind === "vrrp") return `VRRP 광고 (그룹 ${inner.vrid}, 우선순위 ${inner.priority}${inner.priority === 0 ? " — 물러남" : ""}, 가상 주소 ${inner.vip})`;
-  if (inner.kind === "igmp") return inner.type === "report" ? `IGMP Membership Report (그룹 ${inner.group} 가입)` : `IGMP Leave (그룹 ${inner.group} 탈퇴)`;
+  if (inner.kind === "igmp") return inner.type === "report" ? `IGMP Membership Report (그룹 ${inner.group} 가입)` : inner.type === "query" ? "IGMP General Query (가입한 그룹을 알려 달라)" : `IGMP Leave (그룹 ${inner.group} 탈퇴)`;
   const d = inner.payload;
   if (d.kind === "esp") return `UDP 4500 (NAT-T) · ${ESP_LABEL(d)}`;
   if (d.kind === "ike") return IKE_LABEL(d);
@@ -1149,7 +1152,7 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.kind === "tcp") return inner.len > 0 ? `${inner.data ?? "DATA"} ${inner.len}B` : tcpFlags(inner);
   if (inner.kind === "pfsync") return "세션 동기화";
   if (inner.kind === "vrrp") return inner.priority === 0 ? "VRRP 물러남" : `VRRP ${inner.priority}`;
-  if (inner.kind === "igmp") return inner.type === "report" ? "IGMP 가입" : "IGMP 탈퇴";
+  if (inner.kind === "igmp") return inner.type === "report" ? "IGMP 가입" : inner.type === "query" ? "IGMP 쿼리" : "IGMP 탈퇴";
   if (inner.kind === "esp" || inner.payload.kind === "esp") return "ESP 터널";
   if (inner.payload.kind === "ike") {
     const m = inner.payload;

@@ -127,7 +127,7 @@ export class NetworkSync {
         // 이중화는 시작할 때 광고·타이머가 필요해 만든 뒤에 켠다
         if (node instanceof L3Node && d.l3?.ha?.enabled) node.setHa(effectiveL3(d).ha, net.contextFor(d.id));
         if (node instanceof Switch && d.switch?.stp?.enabled) node.setStp(effectiveStp(d), d.mac, net.contextFor(d.id));
-        if (node instanceof Switch && d.switch?.igmpSnooping) node.setIgmp(true, net.contextFor(d.id));
+        if (node instanceof Switch && d.switch?.igmpSnooping) node.setIgmp(true, net.contextFor(d.id), d.mac);
         if (node instanceof L3Node && d.l3?.ra?.enabled) node.setRa(effectiveL3(d).ra, net.contextFor(d.id));
         if (node instanceof Host && d.host?.ra?.enabled) node.setRemoteVpn(effectiveRaClient(d)!, net.contextFor(d.id));
         if (node instanceof Router && (d.router?.wgServer?.enabled || d.router?.wgClient?.enabled)) {
@@ -143,7 +143,7 @@ export class NetworkSync {
         if (node instanceof Router && (d.router?.admin?.enabled || d.router?.cloud || d.router?.blocked?.length || d.router?.dropIn || d.router?.samba?.enabled || d.router?.igmpSnooping || d.router?.sipAlg)) {
           const r = effectiveRouter(d);
           const c = net.contextFor(d.id);
-          node.igmp.setEnabled(r.igmpSnooping, c, "공유기 내부 스위치");
+          node.setIgmp(r.igmpSnooping, c);
           node.setSipAlg(r.sipAlg, c);
           node.setDropIn(r.dropIn, c);
           node.admin.setSamba(r.samba, c);
@@ -742,7 +742,7 @@ export function applyConfig(net: Network, d: Device): void {
   else if (node instanceof Switch) {
     node.setVlans(effectiveSwitchVlans(d), net.contextFor(d.id));
     node.setStp(effectiveStp(d), d.mac, net.contextFor(d.id));
-    node.setIgmp(d.switch?.igmpSnooping === true, net.contextFor(d.id));
+    node.setIgmp(d.switch?.igmpSnooping === true, net.contextFor(d.id), d.mac);
   }
   else if (node instanceof FirewallBridge) node.configure(effectiveFirewall(d.firewall), net.contextFor(d.id));
   else if (node instanceof AccessPoint) {

@@ -9,6 +9,7 @@
 //   - 노트북은 공유기 LAN 대역의 주소를 받는다 (예: 192.168.0.50) — 공유기가 그 주소의 ARP 에 대신 답해(프록시 ARP) 집 장치들이 LAN 안의 기기처럼 본다
 //   - 모든 트래픽이 집으로 간다 (full tunnel — Windows·iOS 의 기본값) → 해외에서도 집 공유기의 공인 주소(한국 IP)로 인터넷에 나간다
 // 재협상·LCP 협상·L2TP 의 신뢰성 있는 제어 채널(Ns/Nr)·Hello 는 생략. DPD 는 없다 (L2TP/IPsec 은 보통 쓰지 않음)
+import { isMcastIp } from "../packet";
 import { intToIp, ipToInt, prefixToMask, type Ip } from "../addr";
 import { IKE_PORT, L2TP_PORT, NAT_T_PORT, l2tpPartLabel, type EspPacket, type IkeMessage, type Ipv4Packet, type L2tpPacket, type PppFrame } from "../packet";
 import { IKE_RETRANSMITS, IKE_TIMEOUT, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
@@ -672,7 +673,7 @@ export class L2tpClient {
     if (this.state !== "up" || !this.vip || !this.sa.peer) return false;
     const p = pkt.payload;
     if (p.kind === "esp" || (p.kind === "udp" && (p.payload.kind === "ike" || p.payload.kind === "esp" || p.payload.kind === "l2tp" || p.payload.kind === "dhcp"))) return false;
-    if (pkt.dst === this.config.server || pkt.dst === "255.255.255.255" || pkt.dst.startsWith("224.")) return false;
+    if (pkt.dst === this.config.server || pkt.dst === "255.255.255.255" || isMcastIp(pkt.dst)) return false;
     if (this.io.local?.(pkt.dst)) return false;
     const inner: Ipv4Packet = { ...pkt, src: this.vip };
     ctx.trace("vpn.encap", "L3", `VPN 캡슐화 (L2TP/IPsec, full tunnel): ${pkt.dst} 로 가는 패킷의 출발지를 VPN 주소 ${this.vip} 로 바꿔 PPP → L2TP(UDP 1701) → ${this.sa.natT ? "UDP 4500 (NAT-T) 안의 " : ""}ESP 로 집 공유기 ${this.sa.peer.ip} 에 보냄`, { inner: `${this.vip}>${pkt.dst}`, peer: this.sa.peer.ip });

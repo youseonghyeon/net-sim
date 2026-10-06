@@ -1,4 +1,5 @@
 // 순수 L3 장치: 인터페이스 N개 사이를 라우팅한다. 게이트웨이(NAT 없음)와 NAT 박스(outside 인터페이스에서 변환)가 이 클래스다.
+import { isMcastIp } from "../packet";
 import { isMulticastMac, networkOf, sameSubnet, type Ip, type Mac } from "../addr";
 import { ALL_NODES, ALL_ROUTERS, isLinkLocal6, isMulticast6, network6, sameSubnet6, UNSPECIFIED6 } from "../addr6";
 import {
@@ -1055,7 +1056,7 @@ export class L3Node implements SimNode {
   /** @param tunnel VPN 터널에서 풀려 나온 패킷 (바깥에서 왔지만 NAT 하지 않는다. 방화벽은 인바운드로 본다) */
   /** @param natDone 포트 공개처럼 이미 주소를 바꾼 패킷 — 바깥으로 나가도 NAT 변환을 다시 하지 않는다 */
   private forward(pkt: Ipv4Packet, inPort: number, frameId: number, ctx: NodeContext, received: Ipv4Packet = pkt, tunnel = false, natDone = false): void {
-    if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || pkt.dst.startsWith("224.") || pkt.dst.startsWith("239.")) {
+    if (pkt.dst === "255.255.255.255" || pkt.dst === "0.0.0.0" || isMcastIp(pkt.dst)) {
       ctx.trace("ip.drop", "L3", `브로드캐스트/멀티캐스트 ${pkt.dst} 는 라우터가 다른 네트워크로 넘기지 않음 → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }

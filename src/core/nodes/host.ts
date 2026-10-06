@@ -35,7 +35,7 @@ import { P2P_TIMER_TAG, P2pAgent, type P2pConfig } from "./p2p";
 import { RA_DPD_TAG, RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
 import { WG_TIMER_TAG, WgClient } from "./wg";
 import { OVPN_TIMER_TAG, OvpnClient } from "./openvpn";
-import { ALL_ROUTERS_IP, isMcastIp, MCAST_PORT, mcastMac, SIP_PORT } from "../packet";
+import { ALL_HOSTS_IP, ALL_ROUTERS_IP, isMcastIp, MCAST_PORT, mcastMac, SIP_PORT } from "../packet";
 
 /** 스트림 송출 한 번의 패킷 수 */
 const STREAM_PACKETS = 5;
@@ -345,6 +345,14 @@ export class Host implements SimNode {
     this.groups.add(group);
     ctx.trace("igmp.join", "app", `멀티캐스트 그룹 ${group} 가입 → IGMP Membership Report 를 그 그룹 주소(MAC ${mcastMac(group)})로 알리고, NIC 가 이 MAC 의 프레임을 받기 시작`, { group });
     this.iface.sendToMac(mcastMac(group), { kind: "ipv4", src: this.iface.ip, dst: group, ttl: 1, payload: { kind: "igmp", type: "report", group } }, ctx, this.emit(ctx));
+  }
+
+  /** 가입한 그룹을 다시 알린다 (쿼리·링크 복구·주소를 다시 얻음 — 리눅스 ip_mc_up). only 면 그 그룹만 */
+  private reportGroups(ctx: NodeContext, why: string, only?: Ip): void {
+    if (!this.iface.ip || !this.groups.size) return;
+    const list = only ? [only] : [...this.groups];
+    ctx.trace("igmp.join", "app", `${why} → 가입한 그룹 ${list.join(", ")} 을(를) 다시 알림 (IGMP Report)`, { groups: list });
+    for (const group of list) this.iface.sendToMac(mcastMac(group), { kind: "ipv4", src: this.iface.ip, dst: group, ttl: 1, payload: { kind: "igmp", type: "report", group } }, ctx, this.emit(ctx));
   }
 
   leaveGroup(group: Ip, ctx: NodeContext): void {
@@ -1185,7 +1193,8 @@ export class Host implements SimNode {
       return;
     }
     // 가입하지 않은 멀티캐스트(예: 라우터끼리 주고받는 RIP)는 NIC 가 하드웨어에서 조용히 거른다. IPv6 는 모든 노드·내 solicited-node 그룹에 가입한다
-    const v6Group = this.v6.accepts(frame.dst) || [...this.groups].some((g) => mcastMac(g) === frame.dst);
+    // IPv4 멀티캐스트: 가입한 그룹, 모든 호스트(224.0.0.1 — IGMP 쿼리), 가입한 게 있으면 224.0.0.2(다른 기기의 Leave — 쿼리 흉내로 다시 알리려고)
+    const v6Group = this.v6.accepts(frame.dst) || frame.dst === mcastMac(ALL_HOSTS_IP) || (this.groups.size > 0 && frame.dst === mcastMac(ALL_ROUTERS_IP)) || [...this.groups].some((g) => mcastMac(g) === frame.dst);
     if (isMulticastMac(frame.dst) && !v6Group) return;
     if (!this.iface.accepts(frame) && !v6Group) {
       ctx.trace("frame.drop", "L2", `목적지 MAC ${frame.dst} 가 내 MAC(${this.iface.mac}) 아님 → 드롭`, { dst: frame.dst }, frame.id);
@@ -1288,6 +1297,13 @@ export class Host implements SimNode {
         return;
       }
     }
+    // IGMP: 쿼리면 가입한 그룹을 다시 알리고, 다른 기기가 내 그룹을 탈퇴하면 나는 아직 보고 있다고 다시 알린다 (스누핑 스위치가 포트를 지우지 않게)
+    if (pkt.payload.kind === "igmp") {
+      const g = pkt.payload;
+      if (g.type === "query" && this.groups.size) this.reportGroups(ctx, "IGMP 쿼리를 받음");
+      else if (g.type === "leave" && pkt.src !== this.iface.ip && this.groups.has(g.group)) this.reportGroups(ctx, `다른 기기(${pkt.src})가 그룹 ${g.group} 탈퇴`, g.group);
+      return;
+    }
     // 멀티캐스트 스트림: 가입한 그룹이면 받는다 (NIC 가 그 MAC 을 들여보냈다)
     if (isMcastIp(pkt.dst) && pkt.payload.kind === "udp" && pkt.payload.payload.kind === "mcast") {
       const m = pkt.payload.payload;
@@ -1371,6 +1387,7 @@ export class Host implements SimNode {
         this.p2p.onAddress(ctx); // P2P 앱은 시그널링 서버에 등록
         this.mesh.onAddress(ctx); // 메시 VPN 은 조정 서버에 로그인
         this.sip.onAddress(ctx); // 인터넷 전화는 SIP 서버에 등록
+        this.reportGroups(ctx, "주소를 얻음 (링크 복구·NIC 전환)");
         return;
       }
       if (udp.dstPort === P2P_PORT && pkt.dst === this.iface.ip && this.p2p.handle(pkt, udp, ctx, frameId)) return;
@@ -1508,6 +1525,7 @@ export class Host implements SimNode {
         this.p2p.onAddress(ctx);
         this.mesh.onAddress(ctx);
         this.sip.onAddress(ctx);
+        this.reportGroups(ctx, "주소를 쓰기 시작 (링크 복구·NIC 전환)");
         return;
       case RA_TIMER_TAG:
         this.ra.onTimer(data, ctx);

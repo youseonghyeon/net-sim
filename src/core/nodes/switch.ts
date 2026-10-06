@@ -54,8 +54,13 @@ export class Switch implements SimNode {
   /** IGMP 스누핑 */
   readonly igmp = new IgmpSnoop();
 
-  setIgmp(on: boolean, ctx: NodeContext): void {
+  setIgmp(on: boolean, ctx: NodeContext, mac = "00:00:00:00:00:00"): void {
+    const was = this.igmp.enabled;
     this.igmp.setEnabled(on, ctx, "스위치");
+    if (!on || was) return;
+    // 스누핑 쿼리어: 켤 때 쿼리를 보내 이미 가입한 기기들이 다시 알리게 한다 (그래야 표가 채워진다)
+    ctx.trace("igmp.snoop", "L2", "IGMP 스누핑 켜짐 → General Query 를 모든 포트로 (가입한 기기는 다시 알린다)", {});
+    for (let p = 0; p < this.portCount; p++) if (ctx.isPortConnected(p) && this.stp.forwarding(p)) this.sendOut(p, this.vlanOf(p) === "trunk" ? 1 : (this.vlanOf(p) as number), IgmpSnoop.query(mac, ctx), ctx);
   }
 
   setStp(cfg: StpConfig, mac: string, ctx: NodeContext): void {

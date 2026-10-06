@@ -19,7 +19,7 @@ export function IgmpSection({ d }: { d: Device }) {
       </label>
       <p class="note">
         켜면 기기의 IGMP 가입·탈퇴를 엿들어 멀티캐스트(IPTV)를 가입한 포트로만 보내고, 가입한 포트가 없는 그룹은 보내지 않습니다. 끄면 멀티캐스트는 브로드캐스트처럼 모든 포트로 가서 보지 않는 기기의 링크까지 채웁니다.
-        {on ? " 켜기 전에 가입한 기기는 다시 가입해야 스위치가 배웁니다(쿼리어 없음)." : ""}
+        {on ? " 켤 때 쿼리를 보내 이미 가입한 기기들이 다시 알리게 합니다." : ""}
       </p>
     </Section>
   );
@@ -39,8 +39,8 @@ export function McastSection({ d }: { d: Device }) {
         <input class="input mono" value={group} onInput={(e) => setGroup(e.currentTarget.value)} />
       </Field>
       <div class="btn-row">
-        <button class="btn" disabled={!ok || joined.includes(g)} onClick={() => sim.act({ kind: "mcast-join", nodeId: d.id, group: g })}>
-          가입
+        <button class="btn" disabled={!ok} onClick={() => sim.act({ kind: "mcast-join", nodeId: d.id, group: g })} title={joined.includes(g) ? "이미 가입한 그룹 — 가입 알림(IGMP Report)을 다시 보냅니다" : "그룹에 가입합니다"}>
+          {joined.includes(g) ? "다시 알리기" : "가입"}
         </button>
         <button class="btn" disabled={!ok || !joined.includes(g)} onClick={() => sim.act({ kind: "mcast-leave", nodeId: d.id, group: g })}>
           탈퇴

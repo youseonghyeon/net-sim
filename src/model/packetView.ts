@@ -123,7 +123,7 @@ function ipLine(pkt: Ipv4Packet): string {
   if (p.kind === "esp") return `IP ${pkt.src} > ${pkt.dst}: ${espText(p)}, length ${espLength(p)}`;
   if (p.kind === "pfsync") return `IP ${pkt.src} > ${pkt.dst}: pfsync${p.bulk ? " (bulk update)" : ""}, INS ST count ${p.nat.length + p.flows.length}, length ${l4Length(p)}`;
   if (p.kind === "vrrp") return `IP ${pkt.src} > ${pkt.dst}: VRRPv3, Advertisement, vrid ${p.vrid}, prio ${p.priority}, intvl 100cs, length 12`;
-  if (p.kind === "igmp") return `IP ${pkt.src} > ${pkt.dst}: igmp ${p.type === "report" ? "v2 report" : "leave"} ${p.group}`;
+  if (p.kind === "igmp") return `IP ${pkt.src} > ${pkt.dst}: igmp ${p.type === "report" ? `v2 report ${p.group}` : p.type === "query" ? "query v2" : `leave ${p.group}`}`;
   return `IP ${pkt.src}.${p.srcPort} > ${pkt.dst}.${p.dstPort}: ${udpText(p)}`;
 }
 
@@ -394,7 +394,7 @@ function ipLayers(p: Ipv4Packet, inTunnel = false): HeaderLayer[] {
     layers.push({
       title: "IGMP",
       rows: [
-        ["종류", l4.type === "report" ? "0x16 (v2 Membership Report — 이 그룹을 받겠다)" : "0x17 (Leave Group — 그만 받겠다)"],
+        ["종류", l4.type === "report" ? "0x16 (v2 Membership Report — 이 그룹을 받겠다)" : l4.type === "query" ? "0x11 (Membership Query — 받고 있는 그룹을 알려 달라)" : "0x17 (Leave Group — 그만 받겠다)"],
         ["그룹", l4.group],
         ["스누핑", "IGMP 스누핑 스위치는 이것을 엿들어 그룹마다 받을 포트를 배운다"],
       ],
