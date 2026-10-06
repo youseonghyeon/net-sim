@@ -35,11 +35,12 @@ import { P2P_TIMER_TAG, P2pAgent, type P2pConfig } from "./p2p";
 import { RA_DPD_TAG, RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
 import { WG_TIMER_TAG, WgClient } from "./wg";
 import { OVPN_TIMER_TAG, OvpnClient } from "./openvpn";
-import { ALL_ROUTERS_IP, isMcastIp, MCAST_PORT, mcastMac } from "../packet";
+import { ALL_ROUTERS_IP, isMcastIp, MCAST_PORT, mcastMac, SIP_PORT } from "../packet";
 
 /** 스트림 송출 한 번의 패킷 수 */
 const STREAM_PACKETS = 5;
 import { MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
+import { SIP_TIMER_TAG, SipPhone, type SipPhoneConfig } from "./sip";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, NUD_TIMER_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
 export type IpMode = "dhcp" | "static";
@@ -160,6 +161,8 @@ export class Host implements SimNode {
   readonly p2p: P2pAgent;
   /** 메시 VPN 앱 (Tailscale·ZeroTier) */
   readonly mesh: MeshAgent;
+  /** 인터넷 전화 (SIP) */
+  readonly sip: SipPhone;
   /** VPN 종류를 바꾸기 전 OpenVPN 이 쓰던 TCP 연결 ("서버:내 포트") — 늦게 온 세그먼트를 조용히 버린다 */
   private ovpnLate: string[] = [];
   readonly tcp: TcpStack;
@@ -239,6 +242,13 @@ export class Host implements SimNode {
       send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)),
     });
     if (cfg.p2p) this.p2p.config = { ...cfg.p2p };
+    this.sip = new SipPhone(
+      {
+        myIp: () => (this.iface.usable && !this.iface.probing ? this.iface.ip : undefined),
+        send: (pkt, ctx) => this.iface.sendIp(pkt, ctx, this.emit(ctx)),
+      },
+      16384 + (Math.abs(hashCode(`${cfg.id}:rtp`)) % 1000) * 2,
+    );
     this.mesh = new MeshAgent(
       {
         myIp: () => (this.iface.usable && !this.iface.probing ? this.iface.ip : undefined),
@@ -305,6 +315,10 @@ export class Host implements SimNode {
 
   setP2p(cfg: P2pConfig, ctx: NodeContext): void {
     this.p2p.setConfig(cfg, ctx);
+  }
+
+  setSip(cfg: SipPhoneConfig, ctx: NodeContext): void {
+    this.sip.setConfig(cfg, ctx);
   }
 
   setMesh(cfg: MeshConfig, ctx: NodeContext): void {
@@ -623,6 +637,7 @@ export class Host implements SimNode {
     this.ra.lost(ctx, why);
     this.p2p.lost();
     this.mesh.lost();
+    this.sip.lost();
     this.iface.clearPending();
     this.tcp.abortAll(why, ctx);
     this.cancelTraceroute(why, ctx);
@@ -1261,6 +1276,18 @@ export class Host implements SimNode {
   }
 
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+    // 인터넷 전화: SIP 신호(5060)·음성(RTP)
+    if (pkt.dst === this.iface.ip && pkt.payload.kind === "udp" && this.sip.config.enabled) {
+      const u = pkt.payload;
+      if (u.payload.kind === "sip" && u.dstPort === SIP_PORT) {
+        this.sip.handle(pkt, u, u.payload, ctx, frameId);
+        return;
+      }
+      if (u.payload.kind === "rtp" && u.dstPort === this.sip.rtpPort) {
+        this.sip.handleRtp(u.payload, ctx, frameId);
+        return;
+      }
+    }
     // 멀티캐스트 스트림: 가입한 그룹이면 받는다 (NIC 가 그 MAC 을 들여보냈다)
     if (isMcastIp(pkt.dst) && pkt.payload.kind === "udp" && pkt.payload.payload.kind === "mcast") {
       const m = pkt.payload.payload;
@@ -1343,6 +1370,7 @@ export class Host implements SimNode {
         this.ra.connect(ctx); // 주소를 받았으면 원격 접속 VPN 접속
         this.p2p.onAddress(ctx); // P2P 앱은 시그널링 서버에 등록
         this.mesh.onAddress(ctx); // 메시 VPN 은 조정 서버에 로그인
+        this.sip.onAddress(ctx); // 인터넷 전화는 SIP 서버에 등록
         return;
       }
       if (udp.dstPort === P2P_PORT && pkt.dst === this.iface.ip && this.p2p.handle(pkt, udp, ctx, frameId)) return;
@@ -1479,6 +1507,7 @@ export class Host implements SimNode {
         this.ra.connect(ctx); // 고정 주소를 쓰기 시작 → 원격 접속 VPN 접속
         this.p2p.onAddress(ctx);
         this.mesh.onAddress(ctx);
+        this.sip.onAddress(ctx);
         return;
       case RA_TIMER_TAG:
         this.ra.onTimer(data, ctx);
@@ -1491,6 +1520,9 @@ export class Host implements SimNode {
         return;
       case TS_TIMER_TAG:
         this.mesh.onTimer(data, ctx);
+        return;
+      case SIP_TIMER_TAG:
+        this.sip.onTimer(data, ctx);
         return;
       case "mcast-stream": {
         const d = data as { group: Ip; id: number; seq: number };
@@ -1582,6 +1614,7 @@ export class Host implements SimNode {
         ...(this.ra.config.enabled ? [[this.ra instanceof L2tpClient ? "VPN (L2TP/IPsec)" : this.ra instanceof WgClient ? "WireGuard" : this.ra instanceof OvpnClient ? "OpenVPN" : "원격 접속 VPN", this.ra.summary()!] as [string, string]] : []),
         ...(this.p2p.config.enabled ? [["P2P 앱", this.p2p.summary()!] as [string, string]] : []),
         ...(this.mesh.config.enabled ? [[this.mesh.brand, this.mesh.summary()!] as [string, string]] : []),
+        ...(this.sip.config.enabled ? [["인터넷 전화", this.sip.summary()!] as [string, string]] : []),
         ...(this.groups.size ? [["멀티캐스트 그룹", [...this.groups].map((g) => `${g} (받음 ${this.streamRx.get(g) ?? 0})`).join(", ")] as [string, string]] : []),
         ...(this.dhcpServer.config.enabled
           ? [["DHCP 서버", `켜짐 · ${this.dhcpServer.config.start} ~ ${this.dhcpServer.config.end}`] as [string, string]]
@@ -1596,6 +1629,7 @@ export class Host implements SimNode {
           : []),
       ],
       tables: [
+        ...(this.sip.calls.length ? [{ title: "통화 기록", columns: ["상대", "방향", "상태", "음성 보냄 / 받음", "이유"], rows: this.sip.calls.map((c) => [c.peer, c.role === "caller" ? "건 전화" : "받은 전화", c.state, `${c.sent} / ${c.received}`, c.reason ?? "—"]) }] : []),
         ...(this.mesh.config.enabled ? [{ title: `${this.mesh.brand} 피어 (${this.mesh.config.net === "zerotier" ? "zerotier-cli peers" : "tailscale status"})`, columns: ["이름", "메시 주소", "경로", "알린 대역", "패킷"], rows: this.mesh.rows() }] : []),
         ...(this.dhcpServer.config.enabled ? [{ title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() }] : []),
         ...(this.dnsServer.config.enabled ? [{ title: "DNS 레코드·캐시", columns: ["이름", "IP", "출처"], rows: this.dnsServer.rows() }] : []),

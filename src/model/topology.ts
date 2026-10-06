@@ -195,6 +195,8 @@ export interface HostSettings {
   p2p?: { enabled: boolean; name?: string };
   /** 메시 VPN 앱 (Tailscale·ZeroTier). 없으면 꺼짐 */
   mesh?: MeshSettings;
+  /** 인터넷 전화 (SIP). 없으면 꺼짐. user 가 비면 장치 이름에서 */
+  sip?: { enabled: boolean; user: string };
 }
 
 /** 호스트의 IPv6 설정 */
@@ -439,6 +441,10 @@ function normalizeHostExtras(h: HostSettings): HostSettings {
     out.p2p = { enabled: p.enabled === true, ...(typeof p.name === "string" ? { name: p.name } : {}) };
   }
   if (h.mesh && typeof h.mesh === "object") out.mesh = normalizeMesh(h.mesh as Partial<MeshSettings>);
+  if (h.sip && typeof h.sip === "object") {
+    const p = h.sip as { enabled?: unknown; user?: unknown };
+    out.sip = { enabled: p.enabled === true, user: typeof p.user === "string" ? p.user : "" };
+  }
   return out;
 }
 
@@ -649,6 +655,8 @@ export interface RouterSettings {
   samba?: { enabled: boolean; wan: boolean };
   /** 내부 스위치의 IGMP 스누핑. 없으면 꺼짐 */
   igmpSnooping?: boolean;
+  /** SIP ALG. 없으면 꺼짐 */
+  sipAlg?: boolean;
 }
 
 export interface RouterAdminSettings {
@@ -1549,6 +1557,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.cloud === true ? { cloud: true } : {}),
           ...(r.dropIn === true ? { dropIn: true } : {}),
           ...(r.igmpSnooping === true ? { igmpSnooping: true } : {}),
+          ...(r.sipAlg === true ? { sipAlg: true } : {}),
           ...(r.samba && typeof r.samba === "object" ? { samba: { enabled: r.samba.enabled === true, wan: r.samba.wan === true } } : {}),
           ...(Array.isArray(r.blocked) ? { blocked: r.blocked.filter((x): x is string => typeof x === "string") } : {}),
           ...(r.wan2 ? { wan2: normalizeWan2(r.wan2) } : {}),

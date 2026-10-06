@@ -1,8 +1,9 @@
 import { MESH_SERVERS, MeshCoordinator } from "./tailscale";
 import { CloudService } from "./glinet";
+import { SipServer } from "./sip";
 import { isMulticastMac, isPrivateIp, type Ip, type Mac } from "../addr";
 import { ALL_NODES, canonIp6, formatIp6, isGlobal6, isIpv6, isMulticast6, parseIp6, sameSubnet6 } from "../addr6";
-import { CLOUD_PORT, CLOUD_SERVER,
+import { SIP_PORT, SIP_SERVER, CLOUD_PORT, CLOUD_SERVER,
   DHCP_CLIENT_PORT,
   DHCP_SERVER_PORT,
   DHCP6_MULTICAST_MAC,
@@ -99,6 +100,8 @@ export class Internet implements SimNode {
   readonly delegations = new Map<Ip, { client: Mac; via: Ip; at: number }>();
   /** DDNS 서비스 (glddns.com): 공유기가 갱신한 이름 → 주소. 공인 DNS 가 이 이름들도 답한다 */
   readonly ddns = new DdnsService();
+  /** SIP 서버 (인터넷 전화의 등록·신호) */
+  readonly sip = new SipServer((to, m, ctx) => this.iface.sendIp({ kind: "ipv4", src: SIP_SERVER, dst: to.ip, ttl: 54, payload: { kind: "udp", srcPort: SIP_PORT, dstPort: to.port, payload: m } }, ctx, this.emit(ctx)));
   /** GoodCloud (GL.iNet 원격 관리 클라우드) */
   readonly cloud = new CloudService((to, m, ctx) => this.iface.sendIp({ kind: "ipv4", src: CLOUD_SERVER, dst: to.ip, ttl: 54, payload: { kind: "udp", srcPort: CLOUD_PORT, dstPort: to.port, payload: m } }, ctx, this.emit(ctx)));
   /** Tailscale·ZeroTier 조정 서버와 릴레이 (DERP·root) */
@@ -446,6 +449,9 @@ export class Internet implements SimNode {
         }
         const reply = this.ddns.handle(pkt.src, m, ctx, frameId);
         this.serverSend(DDNS_SERVER, DDNS_PORT, { ip: pkt.src, port: udp.srcPort }, reply, ctx);
+      } else if (m.kind === "sip" && pkt.dst === SIP_SERVER && udp.dstPort === SIP_PORT) {
+        if (isPrivateIp(pkt.src)) ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} → 응답을 돌려줄 수 없어 드롭 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
+        else this.sip.handle(pkt, udp.srcPort, m, ctx, frameId);
       } else if (m.kind === "cloud" && pkt.dst === CLOUD_SERVER && udp.dstPort === CLOUD_PORT) {
         if (isPrivateIp(pkt.src)) ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} → 응답을 돌려줄 수 없어 드롭 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
         else this.cloud.handle(pkt, udp.srcPort, m, ctx, frameId);
@@ -640,6 +646,7 @@ export class Internet implements SimNode {
         { title: "IPv6 프리픽스 위임 (DHCPv6-PD)", columns: ["프리픽스", "고객", "넥스트 홉"], rows: [...this.delegations.entries()].map(([p, d]) => [`${p}/${Internet.PD_LENGTH}`, d.client, d.via]) },
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: this.iface.arpRows() },
         { title: "알려진 서버", columns: ["IP", "이름"], rows: Object.entries(KNOWN_SERVERS) },
+        ...(this.sip.users.size ? [{ title: "SIP 서버 등록", columns: ["사용자", "Contact (기기가 적은 주소)", "실제로 온 곳"], rows: this.sip.rows() }] : []),
         ...(this.cloud.devices.size ? [{ title: "GoodCloud 기기", columns: ["이름", "MAC", "연락 주소", "마지막 상태"], rows: this.cloud.rows() }] : []),
         ...(this.mesh.nets.size ? [{ title: "메시 VPN 조정 서버 (Tailscale·ZeroTier)", columns: ["tailnet·네트워크", "기기", "주소", "상태", "후보 주소"], rows: this.mesh.rows() }] : []),
       ],

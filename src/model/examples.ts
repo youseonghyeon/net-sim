@@ -7,7 +7,7 @@ import { examplePartsTopology } from "./examples/parts";
 import { exampleTwoGatewaysTopology, exampleBackboneTopology, exampleRipTopology } from "./examples/routing";
 import { exampleIgmpTopology, exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
 import { exampleDropInTopology, exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
-import { exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology, exampleAdguardTopology } from "./examples/services";
+import { exampleSipTopology, exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology, exampleAdguardTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology, exampleMultiWanTopology } from "./examples/internet";
 import { exampleDdnsTopology, exampleDpiTopology, exampleOpenVpnTopology, exampleTailscaleTopology, exampleWireguardTopology } from "./examples/vpn";
 import { exampleRoamingTopology } from "./examples/wireless";
@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "igmp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "dpi" | "lb" | "proxy" | "adguard" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "igmp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "dpi" | "lb" | "proxy" | "adguard" | "sip" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -256,6 +256,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "DPI 와 VPN 난독화 (앱 알아보기·차단)",
     blurb: "회사 공유기의 DPI 가 흐름마다 앱을 알아보고(TLS SNI·DNS 로 배운 주소·프로토콜 모양) VPN·게임을 막습니다(표 탭의 DPI 앱별 트래픽). 직원 노트북의 WireGuard 는 첫 패킷의 모양으로 들켜 막힙니다 — 노트북의 VPN 과 집 Brume 3 의 WireGuard 서버 양쪽에서 \"난독화\" 를 켜고 노트북에서 \"다시 연결\" 하면 알아볼 수 없는 UDP 가 되어 지나갑니다(한쪽만 켜면 서로 못 알아봐 침묵합니다). 직원 PC 에서 roblox.com:443 으로 TCP 연결하면 SNI 로 게임이라 RST 로 끊기고, youtube.com:443 은 됩니다.",
     build: exampleDpiTopology,
+  },
+  sip: {
+    id: "sip",
+    group: "서비스",
+    label: "인터넷 전화와 SIP ALG",
+    blurb: "두 집의 전화기가 SIP 서버에 등록돼 있습니다(서버 표: 전화기가 적은 Contact 는 사설 주소, 실제로 온 곳은 공유기 공인 주소). 민지 전화기의 진단 탭에서 junho 에게 전화해 보세요 — 신호는 서버를 거쳐 연결되지만, 음성 주소(SDP)가 사설 주소라 양쪽 다 소리가 안 들립니다(통화 기록의 받은 음성 0). 한쪽 공유기의 SIP ALG 를 켜면 그쪽 음성만 들리고(한쪽 통화), 둘 다 켜면 정상 통화가 됩니다.",
+    build: exampleSipTopology,
   },
   roaming: {
     id: "roaming",

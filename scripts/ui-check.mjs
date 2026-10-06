@@ -1671,6 +1671,26 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("igmp tv:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "멀티캐스트" }) }).locator("p.note").first().textContent())?.trim());
   await page.screenshot({ path: `${OUT}/109-igmp.png` });
 }
+// 인터넷 전화: 민지가 junho 에게 전화 — ALG 없이 소리 0, 공유기 보안 묶음의 SIP ALG 토글
+{
+  await loadEx("sip");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitAddr("준호 전화기", /^192\.168\.1\.1\d\d/);
+  await clickDevice("민지 전화기");
+  await goTab("표");
+  await page.waitForFunction(() => /등록됨 · minji/.test(document.querySelector(".inspector")?.textContent ?? ""), null, { timeout: 30000 });
+  await goTab("진단");
+  const cs = page.locator(".inspector section", { has: page.locator("h3", { hasText: "전화 걸기" }) });
+  await cs.locator("button", { hasText: "전화" }).click();
+  await page.waitForFunction(() => /받은 음성|failed|talking|ringing|calling/.test([...document.querySelectorAll(".inspector section")].find((s) => s.querySelector("h3")?.textContent?.includes("전화 걸기"))?.querySelector("p.note")?.textContent ?? ""), null, { timeout: 30000 });
+  await page.waitForFunction(() => /받은 음성|failed/.test([...document.querySelectorAll(".inspector section")].find((s) => s.querySelector("h3")?.textContent?.includes("전화 걸기"))?.querySelector("p.note")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("sip call:", (await cs.locator("p.note").first().textContent())?.trim());
+  await page.screenshot({ path: `${OUT}/110-sip.png` });
+  await clickDevice("민지네 공유기");
+  await goTab("설정");
+  await goGroup("보안");
+  console.log("sip alg section:", await page.locator(".inspector section", { has: page.locator("h3", { hasText: "SIP ALG" }) }).count());
+}
 console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
 
 console.log("ERRORS:", errors.length ? errors : "none");

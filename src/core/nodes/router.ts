@@ -3,6 +3,7 @@ import { MESH_SERVERS, MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailsc
 import { CLOUD_TIMER_TAG, CloudAgent, RouterAdmin, type AdminConfig, type SambaConfig } from "./glinet";
 import { TCP_TIMER_TAG } from "./tcp";
 import { IgmpSnoop } from "./igmp";
+import { sipAlgRewrite } from "./sip";
 import { BROADCAST_MAC, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
 import { ALL_NODES, formatIp6, isIpv6, isLinkLocal6, isMulticast6, parseIp6, sameSubnet6, UNSPECIFIED6 } from "../addr6";
 import {
@@ -884,6 +885,7 @@ export class Router implements SimNode {
       dropIn?: boolean;
       samba?: SambaConfig;
       igmpSnooping?: boolean;
+      sipAlg?: boolean;
     },
     ctx: NodeContext,
   ): void {
@@ -977,6 +979,7 @@ export class Router implements SimNode {
     if (cfg.dropIn !== undefined) this.setDropIn(cfg.dropIn, ctx);
     if (cfg.samba) this.admin.setSamba(cfg.samba, ctx);
     if (cfg.igmpSnooping !== undefined) this.igmp.setEnabled(cfg.igmpSnooping, ctx, "공유기 내부 스위치");
+    if (cfg.sipAlg !== undefined) this.setSipAlg(cfg.sipAlg, ctx);
   }
 
   /** 인터넷을 막을 LAN 기기 (MAC) */
@@ -1494,6 +1497,34 @@ export class Router implements SimNode {
     this.lan.sendIp(inner, ctx, this.emitLan(ctx));
   }
 
+  // ---------- SIP ALG ----------
+
+  /** SIP ALG (공유기가 인터넷 전화의 SIP 를 고쳐 줌) */
+  sipAlg = false;
+
+  setSipAlg(on: boolean, ctx: NodeContext): void {
+    if (on === this.sipAlg) return;
+    this.sipAlg = on;
+    ctx.trace("ip.config", "sys", on ? "SIP ALG 켜짐: 나가는 SIP 의 SDP·Contact 에 적힌 사설 주소를 공인 주소로 고치고, 음성(RTP) 포트를 받을 NAT 구멍을 연다" : "SIP ALG 꺼짐: SIP 를 건드리지 않음 (NAT 뒤 전화기의 SDP 는 사설 주소 그대로 나간다)", { sipAlg: on });
+  }
+
+  /** NAT 를 지난 SIP: 안쪽 주소가 적힌 SDP·Contact 를 공인 주소로 */
+  private applySipAlg(orig: Ipv4Packet, out: Ipv4Packet, publicIp: Ip, nat: NatTable, frameId: number, ctx: NodeContext): Ipv4Packet {
+    const u = out.payload;
+    if (u.kind !== "udp" || u.payload.kind !== "sip") return out;
+    const m = u.payload;
+    const fixed = sipAlgRewrite(m, orig.src, publicIp, u.srcPort, (lanIp, port) => nat.openPinhole("udp", lanIp, port, ctx.now));
+    if (fixed === m) return out;
+    ctx.trace(
+      "sip.alg",
+      "L4",
+      `SIP ALG: ${m.method ?? `${m.status}`} 안의 ${fixed.sdp && m.sdp ? `SDP 음성 주소 ${m.sdp.ip}:${m.sdp.port} → ${fixed.sdp.ip}:${fixed.sdp.port} (그 포트로 들어오는 음성을 ${orig.src}:${m.sdp.port} 로 넘길 NAT 구멍을 엶)` : ""}${fixed.contact && m.contact && fixed.contact.ip !== m.contact.ip ? `${fixed.sdp ? ", " : ""}Contact ${m.contact.ip} → ${fixed.contact.ip}:${fixed.contact.port}` : ""}`,
+      { sipAlg: true },
+      frameId,
+    );
+    return { ...out, payload: { ...u, payload: fixed } };
+  }
+
   // ---------- 드롭인 게이트웨이 ----------
 
   /** 드롭인 게이트웨이 (GL.iNet Drop-in Gateway): WAN 만 기존 공유기 LAN 에 꽂고, 그 LAN 의 기기들이 이 공유기를 게이트웨이로 쓴다 */
@@ -1661,8 +1692,9 @@ export class Router implements SimNode {
       return;
     }
     if (!this.firewall.check(pkt, "out", ctx, frameId)) return;
-    const translated = o.nat.translate({ ...pkt, ttl: pkt.ttl - 1 }, o.iface.ip, ctx, frameId);
+    let translated = o.nat.translate({ ...pkt, ttl: pkt.ttl - 1 }, o.iface.ip, ctx, frameId);
     if (!translated) return;
+    if (this.sipAlg) translated = this.applySipAlg(pkt, translated, o.iface.ip, o.nat, frameId, ctx);
     ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 외부 → ${this.wan2On ? `${WAN_LABEL[o.name]}(${o.name === "wan" ? "wan" : "lan4"})` : "WAN"} 인터페이스로 전달 (TTL ${pkt.ttl} → ${translated.ttl})`, { dst: pkt.dst, out: o.name }, frameId);
     o.iface.sendIp(translated, ctx, o.emit);
   }

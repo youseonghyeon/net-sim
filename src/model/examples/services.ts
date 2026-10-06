@@ -224,3 +224,32 @@ export function exampleAdguardTopology(): Topology {
   t.zones = [{ id: newId("zone"), label: "집 192.168.8.0/24 · AdGuard Home", tint: "blue", ...zoneAround(t, [home.id, sw.id, pc.id, tv.id, tablet.id], 48)! }];
   return t;
 }
+
+/**
+ * 인터넷 전화와 SIP ALG: 두 집의 공유기 NAT 뒤 전화기가 SIP 서버에 등록하고 서로 전화한다.
+ * 신호(SIP)는 서버가 "실제로 온 곳" 으로 답해 연결되지만, 음성 주소(SDP)는 사설 주소라 소리가 안 들린다 — 공유기의 SIP ALG 를 켜면 고쳐진다
+ */
+export function exampleSipTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -296, "internet-1");
+  const isp = add("switch", 344, -168, "통신사 구간");
+  const a = add("router", 120, -24, "민지네 공유기");
+  a.router = { ...a.router!, lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" } };
+  const b = add("router", 568, -24, "준호네 공유기");
+  b.router = { ...b.router!, lanIp: "192.168.1.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.1.100", end: "192.168.1.199" } };
+  const pa = add("phone", 120, 152, "민지 전화기");
+  pa.host = { ...pa.host!, sip: { enabled: true, user: "minji" } };
+  const pb = add("phone", 568, 152, "준호 전화기");
+  pb.host = { ...pb.host!, sip: { enabled: true, user: "junho" } };
+  a.router = { ...a.router, wifi: { enabled: true, ssid: "minji-home" } };
+  b.router = { ...b.router, wifi: { enabled: true, ssid: "junho-home" } };
+  pa.wifi = { ssid: "minji-home" };
+  pb.wifi = { ssid: "junho-home" };
+  const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, a, 0), cable(isp, 6, b, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "민지네 192.168.0.0/24", tint: "green", ...zoneAround(t, [a.id, pa.id], 56)! },
+    { id: newId("zone"), label: "준호네 192.168.1.0/24", tint: "blue", ...zoneAround(t, [b.id, pb.id], 56)! },
+  ];
+  return t;
+}

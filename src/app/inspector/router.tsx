@@ -27,6 +27,7 @@ import { DdnsSection, WgClientSection, WgServerSection } from "./wg";
 import { OvpnServerSection } from "./ovpn";
 import { MeshSection } from "./mesh";
 import { IgmpSection } from "./mcast";
+import { SipAlgSection } from "./sip";
 import { AdminSection, BlockSection, CloudSection, DropInSection, SambaSection } from "./system";
 import { AdguardSection, DpiSection } from "./apps";
 
@@ -157,12 +158,13 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         {
           id: "security",
           label: "보안",
-          on: r.firewall?.enabled === true || (r.forwards?.length ?? 0) > 0 || r.hairpin === true || r.admin?.enabled === true || (r.blocked?.length ?? 0) > 0,
+          on: r.firewall?.enabled === true || (r.forwards?.length ?? 0) > 0 || r.hairpin === true || r.admin?.enabled === true || (r.blocked?.length ?? 0) > 0 || r.sipAlg === true,
           content: (
             <>
               <FirewallSection value={r.firewall ?? DEFAULT_FIREWALL_SETTINGS} onChange={(firewall) => set({ firewall })} uplinkName="WAN" />
               <AdminSection d={d} r={r} />
               <BlockSection d={d} r={r} />
+              <SipAlgSection d={d} r={r} />
               <ForwardSection rules={r.forwards ?? []} onChange={(forwards) => set({ forwards })} lanHint="예: 공인 :80 → 192.168.0.20:80 (LAN 의 웹 서버)." />
               <NatTypeSection natType={r.natType ?? "full-cone"} hairpin={r.hairpin === true} onChange={(patch) => set(patch)} />
             </>

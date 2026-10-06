@@ -4,7 +4,7 @@
 // - practitionerLines: 장치가 내린 판단을 실무 명령의 출력(시스코 debug, iptables LOG, dhclient, ping, curl …)으로
 // 시뮬레이터에 없는 필드(체크섬, 윈도우 크기, IP ID 등)는 넣지 않고, 길이는 근사값이다.
 import type { DhcpOp, EspPacket, EthernetFrame, IcmpPacket, Icmpv6Packet, IkeMessage, Ipv4Packet, Ipv6Packet, L2tpPacket, OvpnMessage, P2pMessage, StunMessage, TcpSegment, TsMessage, UdpPacket, WgMessage } from "../core/packet";
-import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE, cloudLabel, ovpnLength, tsLabel, tsLength, wgLength } from "../core/packet";
+import { describeOriginal, IP_PROTO, IP6_NEXT_HEADER, tcpFlags, UNREACHABLE_FLAG, UNREACHABLE6_CODE, cloudLabel, ovpnLength, SIP_DOMAIN, tsLabel, tsLength, wgLength } from "../core/packet";
 import { scopeLabel6 } from "../core/addr6";
 import type { TraceEvent } from "../core/trace";
 
@@ -76,6 +76,8 @@ function appLength(u: UdpPacket): number {
   if (m.kind === "ovpn") return ovpnLength(m, m.inner ? 20 + l4Length(m.inner.payload) : 0);
   if (m.kind === "cloud") return 60 + (m.status ? 40 : 0);
   if (m.kind === "mcast") return 1316; // RTP/MPEG-TS 7개
+  if (m.kind === "sip") return 400 + (m.sdp ? 150 : 0);
+  if (m.kind === "rtp") return 172; // RTP 12 + G.711 20ms 160
 
   if (m.kind === "ts") {
     const inner = m.inner ?? m.msg?.inner;
@@ -219,6 +221,8 @@ function udpText(u: UdpPacket): string {
   if (m.kind === "ts") return `UDP, length ${appLength(u)}`;
   if (m.kind === "cloud") return `UDP, length ${appLength(u)}`;
   if (m.kind === "mcast") return `UDP, length ${appLength(u)}`;
+  if (m.kind === "sip") return `SIP: ${m.method ? `${m.method} sip:${m.to}@${SIP_DOMAIN} SIP/2.0` : `SIP/2.0 ${m.status} ${m.status === 200 ? "OK" : m.status === 180 ? "Ringing" : "Not Found"}`}`;
+  if (m.kind === "rtp") return `UDP, length ${appLength(u)}`;
   return `RIPv2, ${m.command === "request" ? "Request" : "Response"}, length: ${appLength(u)}`;
 }
 
@@ -688,6 +692,21 @@ function udpLayers(u: UdpPacket): HeaderLayer[] {
     return [udp, { title: "DNS (앱)", rows }];
   }
   if (m.kind === "vpn" || m.kind === "esp" || m.kind === "wg" || m.kind === "ovpn" || m.kind === "ts") return [udp];
+  if (m.kind === "sip")
+    return [
+      udp,
+      {
+        title: "SIP (앱)",
+        rows: [
+          ["요청·응답", m.method ? `${m.method} sip:${m.to}@${SIP_DOMAIN}` : `SIP/2.0 ${m.status}`],
+          ["From / To", `${m.from} / ${m.to}`],
+          ["Call-ID", m.callId],
+          ...(m.contact ? ([["Contact", `${m.contact.ip}:${m.contact.port}`]] as [string, string][]) : []),
+          ...(m.sdp ? ([["SDP (미디어 주소)", `c=IN IP4 ${m.sdp.ip} · m=audio ${m.sdp.port} — 상대는 음성을 여기로 보낸다${m.alg ? ` (SIP ALG 가 ${m.alg.ip}:${m.alg.port} 에서 고침)` : ""}`]] as [string, string][]) : []),
+        ],
+      },
+    ];
+  if (m.kind === "rtp") return [udp, { title: "RTP (음성)", rows: [["순번", String(m.seq)], ["보낸 사람", m.from], ["통화", m.callId]] }];
   if (m.kind === "mcast") return [udp, { title: "멀티캐스트 스트림 (앱)", rows: [["채널", m.name], ["그룹", m.group], ["순번", `${m.seq}/${m.total}`]] }];
   if (m.kind === "cloud")
     return [

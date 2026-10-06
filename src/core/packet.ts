@@ -79,6 +79,43 @@ export interface McastData {
 }
 
 export const MCAST_PORT = 5004;
+
+/**
+ * SIP (인터넷 전화의 신호): 등록(REGISTER)·전화 걸기(INVITE → 180 Ringing → 200 OK → ACK)·끊기(BYE).
+ * SDP(sdp) 에 "내 음성은 이 주소:포트로 보내 달라" 를 적는다 — NAT 뒤 전화기는 사설 주소를 적어 상대가 보낼 곳을 모른다 (SIP ALG 가 고치는 것)
+ */
+export interface SipMessage {
+  kind: "sip";
+  method?: "REGISTER" | "INVITE" | "ACK" | "BYE";
+  status?: 100 | 180 | 200 | 404;
+  callId: string;
+  from: string;
+  to: string;
+  cseq: number;
+  /** Contact 헤더 (나에게 연락할 주소) */
+  contact?: Endpoint;
+  /** SDP 의 미디어 주소 (c= 와 m=audio 포트) */
+  sdp?: { ip: Ip; port: number };
+  /** SIP ALG 가 고쳐 쓴 메시지 (표시용) */
+  alg?: { ip: Ip; port: number };
+}
+
+/** RTP (음성 조각) */
+export interface RtpPacket {
+  kind: "rtp";
+  callId: string;
+  seq: number;
+  from: string;
+}
+
+export const SIP_PORT = 5060;
+export const SIP_SERVER: Ip = "198.51.100.120";
+export const SIP_DOMAIN = "voip.example";
+
+export function sipLabel(m: SipMessage): string {
+  if (m.status) return `SIP ${m.status} ${m.status === 200 ? "OK" : m.status === 180 ? "Ringing" : m.status === 100 ? "Trying" : "Not Found"}${m.sdp ? " (SDP)" : ""}`;
+  return `SIP ${m.method} ${m.method === "REGISTER" ? m.from : `${m.from} → ${m.to}`}${m.sdp ? ` (SDP ${m.sdp.ip}:${m.sdp.port})` : ""}`;
+}
 export const ALL_ROUTERS_IP: Ip = "224.0.0.2";
 
 /** IPv4 멀티캐스트 주소 → MAC (01:00:5e + 주소의 아래 23비트) */
@@ -443,7 +480,7 @@ export interface UdpPacket {
   kind: "udp";
   srcPort: number;
   dstPort: number;
-  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage | OvpnMessage | TsMessage | CloudMessage | McastData;
+  payload: DhcpMessage | DnsMessage | RipMessage | VpnMessage | IkeMessage | EspPacket | Dhcp6Message | L2tpPacket | StunMessage | P2pMessage | WgMessage | DdnsMessage | OvpnMessage | TsMessage | CloudMessage | McastData | SipMessage | RtpPacket;
 }
 
 /** STUN·TURN (UDP 3478) */
@@ -1018,6 +1055,8 @@ export function describeFrame(frame: EthernetFrame): string {
   if (d.kind === "ovpn") return ovpnLabel(d);
   if (d.kind === "ts") return tsLabel(d);
   if (d.kind === "cloud") return cloudLabel(d);
+  if (d.kind === "sip") return sipLabel(d);
+  if (d.kind === "rtp") return `RTP 음성 조각 ${d.seq} (${d.from})`;
   if (d.kind === "mcast") return `멀티캐스트 ${d.name} ${d.seq}/${d.total} → 그룹 ${d.group}`;
   if (d.kind === "dhcp6") return dhcp6Label(d);
   if (d.kind === "l2tp") return `L2TP${l2tpPartLabel(d)}`;
@@ -1124,6 +1163,8 @@ export function shortLabel(frame: EthernetFrame): string {
   if (inner.payload.kind === "ts") return inner.payload.net === "zerotier" ? "ZeroTier" : "Tailscale";
   if (inner.payload.kind === "cloud") return "GoodCloud";
   if (inner.payload.kind === "mcast") return "멀티캐스트";
+  if (inner.payload.kind === "sip") return inner.payload.status ? `SIP ${inner.payload.status}` : `SIP ${inner.payload.method}`;
+  if (inner.payload.kind === "rtp") return "RTP";
   if (inner.payload.kind === "ovpn") return inner.payload.op === "data" ? "OpenVPN" : "OpenVPN 제어";
   if (inner.payload.kind === "ddns") return inner.payload.op === "update" ? "DDNS 갱신" : inner.payload.op === "release" ? "DDNS 내려놓기" : "DDNS 응답";
   if (inner.payload.kind === "wg") return inner.payload.obf || inner.payload.type === "junk" ? "UDP" : inner.payload.type === "data" ? (inner.payload.inner ? "WireGuard" : "keepalive") : "WG 핸드셰이크";

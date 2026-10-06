@@ -116,7 +116,7 @@ export class NetworkSync {
     for (const d of t.devices) {
       const key: SyncedDevice = {
         net: configKey(d),
-        services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d), q: effectiveP2p(d), m: d.host ? effectiveMesh(d) : undefined }),
+        services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d), q: effectiveP2p(d), m: d.host ? effectiveMesh(d) : undefined, v: effectiveSip(d) }),
         v6: d.host ? JSON.stringify(effectiveHost6(d)) : "",
       };
       const prev = this.syncedConfig.get(d.id);
@@ -140,10 +140,11 @@ export class NetworkSync {
         if (node instanceof Router && d.router?.dpi?.enabled) node.setDpi(effectiveRouter(d).dpi, net.contextFor(d.id));
         if (node instanceof Router && d.router?.ovpnServer?.enabled) node.ovpn.setConfig(effectiveRouter(d).ovpnServer, net.contextFor(d.id));
         if (node instanceof Router && d.router?.mesh?.enabled) node.setMesh(effectiveRouter(d).mesh, net.contextFor(d.id));
-        if (node instanceof Router && (d.router?.admin?.enabled || d.router?.cloud || d.router?.blocked?.length || d.router?.dropIn || d.router?.samba?.enabled || d.router?.igmpSnooping)) {
+        if (node instanceof Router && (d.router?.admin?.enabled || d.router?.cloud || d.router?.blocked?.length || d.router?.dropIn || d.router?.samba?.enabled || d.router?.igmpSnooping || d.router?.sipAlg)) {
           const r = effectiveRouter(d);
           const c = net.contextFor(d.id);
           node.igmp.setEnabled(r.igmpSnooping, c, "공유기 내부 스위치");
+          node.setSipAlg(r.sipAlg, c);
           node.setDropIn(r.dropIn, c);
           node.admin.setSamba(r.samba, c);
           node.admin.setConfig(r.admin, c);
@@ -151,6 +152,7 @@ export class NetworkSync {
           node.setBlocked(r.blocked, c);
         }
         if (node instanceof Host && d.host?.mesh?.enabled) node.setMesh(effectiveMesh(d), net.contextFor(d.id));
+        if (node instanceof Host && d.host?.sip?.enabled) node.setSip(effectiveSip(d), net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -178,6 +180,7 @@ export class NetworkSync {
             node.setRemoteVpn(effectiveRaClient(d) ?? { enabled: false, psk: "" }, net.contextFor(d.id));
             node.setP2p(effectiveP2p(d), net.contextFor(d.id));
             node.setMesh(effectiveMesh(d), net.contextFor(d.id));
+            node.setSip(effectiveSip(d), net.contextFor(d.id));
           }
         }
       }
@@ -311,6 +314,12 @@ export function effectiveMesh(d: Device): MeshConfig {
     exitNode: !!d.router && m?.exitNode === true,
     ...(d.host && m?.useExitNode?.trim() ? { useExitNode: meshHostname(m.useExitNode) } : {}),
   };
+}
+
+/** 인터넷 전화: 사용자 이름이 비면 장치 이름의 영문 레이블 */
+export function effectiveSip(d: Device) {
+  const s = d.host?.sip;
+  return { enabled: s?.enabled === true, user: (s?.user.trim() || meshHostname(d.name) || `phone-${d.id.slice(-4)}`).toLowerCase() };
 }
 
 /** 원격 접속 VPN 클라이언트 설정 */
@@ -504,6 +513,7 @@ export function effectiveRouter(d: Device, current?: Router) {
     dropIn: r.dropIn === true,
     samba: { enabled: r.samba?.enabled === true, wan: r.samba?.wan === true },
     igmpSnooping: r.igmpSnooping === true,
+    sipAlg: r.sipAlg === true,
     blocked: (r.blocked ?? []).map((m) => m.trim().toLowerCase()).filter((m) => /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(m)),
     ovpnServer: (() => {
       const o = r.ovpnServer;

@@ -93,6 +93,25 @@ export class NatTable {
     if (e.publicId >= this.seq) this.seq = e.publicId + 1;
   }
 
+  /**
+   * 미리 여는 구멍 (SIP ALG 가 음성 포트에): 안쪽 주소:포트의 매핑을 만들고(있으면 그것) 바깥 누구든 들어오게 둔다. 공인 포트를 돌려준다
+   * 안쪽 포트를 그대로 쓸 수 있으면 그 번호로 (실제 ALG 도 대개 같은 포트를 고른다)
+   */
+  openPinhole(proto: "udp" | "tcp", lanIp: Ip, innerId: number, now: number): number {
+    const existing = this.byInner.get(`${proto}:${lanIp}:${innerId}`);
+    if (existing) {
+      const e = this.entries.get(existing)!;
+      delete e.peers;
+      return e.publicId;
+    }
+    const free = !this.entries.has(`${proto}:${innerId}`) && !this.forwards.some((r) => r.publicPort === innerId) && !this.reserved?.(innerId);
+    const id = free ? innerId : this.allocPublicId(proto);
+    const seq = this.seq;
+    this.importEntry({ proto, lanIp, innerId, publicId: id }, now);
+    if (free) this.seq = seq; // 같은 번호를 쓴 구멍이 동적 할당 순서를 밀어내지 않게
+    return id;
+  }
+
   setForwards(rules: PortForward[]): void {
     this.forwards = [...rules];
   }

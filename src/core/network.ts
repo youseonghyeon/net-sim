@@ -58,6 +58,8 @@ export type ActionSpec =
   | { kind: "mcast-join"; nodeId: string; group: Ip }
   | { kind: "mcast-leave"; nodeId: string; group: Ip }
   | { kind: "mcast-send"; nodeId: string; group: Ip }
+  /** 인터넷 전화: 그 사용자에게 전화 걸기 */
+  | { kind: "sip-call"; nodeId: string; to: string }
   /** 인터넷 노드의 "저편 클라이언트" 가 공인 주소 dst:port 로 TCP 연결 (포트 포워딩 시연) */
   | { kind: "inet-connect"; nodeId: string; dst: Ip; port: number }
   /** GoodCloud: 관리자가 클라우드 화면에서 그 공유기(MAC)를 엶 */
@@ -389,6 +391,10 @@ export class Network {
         ctx.trace("action", "sys", `[사용자] VPN 상대 확인 (DPD)`, { ...action });
         if (node instanceof L3Node) node.vpn.dpd(ctx);
         else this.getHost(action.nodeId).ra.dpd(ctx);
+        break;
+      case "sip-call":
+        ctx.trace("action", "sys", `[사용자] 인터넷 전화로 ${action.to} 에게 전화`, { ...action });
+        this.getHost(action.nodeId).sip.call(action.to, ctx);
         break;
       case "mcast-join":
         ctx.trace("action", "sys", `[사용자] 멀티캐스트 그룹 ${action.group} 가입`, { ...action });

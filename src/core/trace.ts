@@ -253,6 +253,12 @@ export type TraceKind =
   | "igmp.join"
   | "mcast.send"
   | "mcast.recv"
+  /** 인터넷 전화: 등록·통화·음성, SIP 서버, 공유기의 SIP ALG */
+  | "sip.register"
+  | "sip.call"
+  | "sip.rtp"
+  | "sip.server"
+  | "sip.alg"
   | "ha.config"
   | "ha.state"
   | "ha.advert"
