@@ -1045,6 +1045,21 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
         if (d?.answer) out.push({ tool: "dig", line: `${d.name}.\t\t300\tIN\t${d.qtype ?? "A"}\t${d.answer}` });
       }
       break;
+    case "dns.lookup":
+    case "dns.lookup.failed": {
+      // nslookup 출력: 물어본 서버 → 답 또는 실패 코드
+      const name = detail(ev, "name") ?? "?";
+      const server = detail(ev, "server");
+      const head = server ? `Server:\t\t${server}\nAddress:\t${server}#53\n\n` : "";
+      if (ev.kind === "dns.lookup") out.push({ tool: "nslookup", line: `${head}Name:\t${name}\nAddress: ${detail(ev, "ip") ?? "?"}` });
+      else {
+        const rcode = detail(ev, "rcode");
+        if (rcode === "NXDOMAIN" || rcode === "SERVFAIL") out.push({ tool: "nslookup", line: `${head}** server can't find ${name}: ${rcode}` });
+        else if (rcode === "NODATA") out.push({ tool: "nslookup", line: `${head}*** Can't find ${name}: No answer` });
+        else if (rcode === "timeout") out.push({ tool: "nslookup", line: `;; connection timed out; no servers could be reached` });
+      }
+      break;
+    }
     case "ssh.open": {
       // conn id = "내주소:포트-상대주소:포트"
       const [local, remote] = (detail(ev, "conn") ?? "").split("-");

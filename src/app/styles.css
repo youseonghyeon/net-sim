@@ -1091,7 +1091,6 @@ select.btn.example {
   color: var(--ink);
   font-weight: 500;
   text-align: right;
-  overflow-wrap: anywhere;
 }
 .hints {
   padding-left: 16px;
@@ -1469,8 +1468,16 @@ select.btn.example {
   padding: 0 6px;
 }
 .tcp-row,
-.p2p-row {
+.p2p-row,
+.dns-row {
   margin-top: 8px;
+}
+.dns-server-row {
+  margin-top: 6px;
+}
+.ping-row .input.qtype {
+  flex: 0 0 72px;
+  padding: 0 6px;
 }
 .ping-row .btn {
   padding: 0 10px;
@@ -1510,8 +1517,17 @@ select.btn.example {
 .tcp-log li.failed > span:nth-child(2) {
   color: var(--danger);
 }
-/* 프록시에게 부탁한 연결: 대상 아래 작은 줄 */
-.tcp-log li .via {
+/* DNS 조회 기록: 이름·종류는 한 줄로 두고, 긴 답(IPv6)은 오른쪽에서 접는다 */
+.dns-log li > span:first-child {
+  white-space: nowrap;
+}
+.dns-log li > span:last-child {
+  min-width: 0;
+  text-align: right;
+}
+/* 프록시에게 부탁한 연결·DNS 조회의 물어본 서버: 대상 아래 작은 줄 */
+.tcp-log li .via,
+.dns-log li .via {
   display: block;
   font-family: var(--font);
   font-size: 11px;

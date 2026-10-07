@@ -115,6 +115,23 @@ await page.fill(".ping-row .input", "google.com");
 await page.click(".ping-row .btn");
 await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 40000 });
 console.log("ping google.com:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+// 1a1) DNS 조회(nslookup): 설정된 DNS(공유기 포워더)에 A, 8.8.8.8 에 직접 AAAA — 캐시를 거치지 않고 매번 묻는다
+await page.fill(".dns-row .input", "google.com");
+await page.locator(".dns-row .btn", { hasText: "조회" }).click();
+await page.waitForFunction(() => /\d+\.\d+\.\d+\.\d+$|실패/.test(document.querySelector(".dns-log li")?.textContent?.trim() ?? ""), null, { timeout: 40000 });
+console.log("nslookup google.com:", (await page.locator(".dns-log li").first().innerText()).replace(/\s+/g, " "));
+await page.selectOption(".dns-row select", "AAAA");
+await page.fill(".dns-server-row .input", "8.8.8.8");
+await page.fill(".dns-row .input", "example.com");
+await page.press(".dns-row .input", "Enter");
+await page.waitForFunction(() => (document.querySelectorAll(".dns-log li").length ?? 0) >= 2 && /example\.com/.test(document.querySelector(".dns-log li")?.textContent ?? "") && !/기다리는 중/.test(document.querySelector(".dns-log li")?.textContent ?? ""), null, { timeout: 40000 });
+const nsAaaa = (await page.locator(".dns-log li").first().innerText()).replace(/\s+/g, " ");
+console.log("nslookup -type=AAAA example.com 8.8.8.8:", nsAaaa);
+if (!/서버 8\.8\.8\.8/.test(nsAaaa) || !/2606:2800/.test(nsAaaa)) throw new Error(`DNS 조회 결과가 예상과 다름: ${nsAaaa}\n해결: Host.lookup·DnsResolver.lookup 의 서버 지정·AAAA 경로 확인\n참조: src/core/nodes/host.ts lookup, tests/nslookup.test.ts`);
+await page.locator(".dns-log").scrollIntoViewIfNeeded();
+await page.screenshot({ path: `${OUT}/24-nslookup.png` });
+await page.fill(".dns-server-row .input", "");
+await page.selectOption(".dns-row select", "A");
 // 1a2) 바깥에서 공인 :80 접속 → 포트 포워딩으로 srv-1 에 닿는다
 await clickDevice("internet-1");
 await page.click("button:has-text('접속')");

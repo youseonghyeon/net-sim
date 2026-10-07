@@ -46,6 +46,8 @@ export type ActionSpec =
   | { kind: "ping"; nodeId: string; dst: Ip }
   /** 경로 추적: TTL 을 1 부터 늘려 가며 각 홉의 Time Exceeded 로 라우터 목록을 얻는다. dst 는 IP 또는 이름 */
   | { kind: "traceroute"; nodeId: string; dst: string }
+  /** nslookup: 캐시를 거치지 않고 DNS 서버에 그 이름의 A·AAAA 를 묻는다. server 가 있으면 그 서버에, 없으면 설정된 DNS 에 */
+  | { kind: "dns-lookup"; nodeId: string; name: string; qtype: "A" | "AAAA"; server?: Ip }
   | { kind: "dhcp-renew"; nodeId: string }
   | { kind: "tcp-connect"; nodeId: string; dst: Ip; port: number }
   /** 원격 접속 VPN 다시 연결 (실패했거나 서버가 다시 켜졌을 때) */
@@ -369,6 +371,10 @@ export class Network {
       case "traceroute":
         ctx.trace("action", "sys", `[사용자] traceroute ${action.dst}`, { ...action });
         this.getHost(action.nodeId).traceroute(action.dst, ctx);
+        break;
+      case "dns-lookup":
+        ctx.trace("action", "sys", `[사용자] nslookup${action.qtype === "AAAA" ? " -type=AAAA" : ""} ${action.name}${action.server ? ` ${action.server}` : ""}`, { ...action });
+        this.getHost(action.nodeId).lookup(action.name, action.qtype, action.server, ctx);
         break;
       case "dhcp-renew":
         ctx.trace("action", "sys", `[사용자] DHCP 임대 갱신`, { ...action });

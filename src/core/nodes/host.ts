@@ -24,7 +24,7 @@ import {
   type IcmpUnreachable,
 } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
-import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, type DnsServerConfig } from "./dns";
+import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, normalizeName, type DnsServerConfig, type QType, type ResolveInfo } from "./dns";
 import { NetInterface } from "./iface";
 import { LB_ALGORITHM_LABEL, LB_CHECK_TAG, LB_MODE_LABEL, LB_STICKY_LABEL, LoadBalancer, type LbConfig } from "./lb";
 import { ForwardProxy, type ProxyConfig } from "./proxy";
@@ -116,6 +116,24 @@ export interface TracerouteRecord {
   startedAt: number;
 }
 
+/** nslookup(DNS 조회) 한 번의 기록 */
+export interface LookupRecord {
+  seq: number;
+  name: string;
+  qtype: QType;
+  /** 물어본 DNS 서버 (사용자가 적은 서버, 아니면 설정된 DNS). 묻지도 못했으면 비어 있다 */
+  server?: Ip;
+  status: "pending" | "ok" | "failed";
+  answer?: Ip;
+  /** 답이 0.0.0.0·:: — DNS 필터(광고 차단·자녀 보호)가 막은 이름 */
+  blocked?: boolean;
+  /** MagicDNS(메시 VPN)가 기기 안에서 답함 */
+  magicDns?: boolean;
+  startedAt: number;
+  rtt?: number;
+  reason?: string;
+}
+
 /** 진행 중인 traceroute 의 현재 프로브 */
 interface ActiveTrace {
   rec: TracerouteRecord;
@@ -136,6 +154,8 @@ export class Host implements SimNode {
   static readonly TRACEROUTE_MAX_HOPS = 16;
   /** 보관하는 traceroute 기록 수 */
   static readonly TRACEROUTE_KEEP = 5;
+  /** 보관하는 nslookup 기록 수 */
+  static readonly LOOKUP_KEEP = 5;
 
   readonly type = "host" as const;
   readonly portCount: number;
@@ -183,6 +203,9 @@ export class Host implements SimNode {
   readonly pings: PingRecord[] = [];
   /** traceroute 기록 (최근 TRACEROUTE_KEEP 개, 오래된 것부터) */
   readonly traceroutes: TracerouteRecord[] = [];
+  /** nslookup 기록 (최근 LOOKUP_KEEP 개, 오래된 것부터) */
+  readonly lookups: LookupRecord[] = [];
+  private lookupSeq = 0;
 
   private readonly icmpId: number;
   private icmpSeq = 0;
@@ -750,6 +773,73 @@ export class Host implements SimNode {
     this.pingTimers.delete(rec.seq);
   }
 
+  // ---------- nslookup ----------
+
+  /**
+   * DNS 조회(nslookup): 캐시를 거치지 않고 DNS 서버에 묻고 답을 보여 준다 (캐시에도 넣지 않음).
+   * server 를 주면 그 서버에, 없으면 설정된 DNS 에. 127.0.0.1 은 내 주소(내 DNS 서버 서비스)
+   */
+  lookup(rawName: string, qtype: QType, server: Ip | undefined, ctx: NodeContext): void {
+    const name = normalizeName(rawName);
+    const rec: LookupRecord = { seq: ++this.lookupSeq, name, qtype, status: "pending", startedAt: ctx.now };
+    this.lookups.push(rec);
+    while (this.lookups.length > Host.LOOKUP_KEEP) this.lookups.shift();
+    const cmd = `nslookup${qtype === "AAAA" ? " -type=AAAA" : ""} ${name}`;
+    const fail = (reason: string, info?: ResolveInfo) => {
+      rec.status = "failed";
+      rec.reason = reason;
+      // rcode: NXDOMAIN·SERVFAIL·NODATA(이름은 있지만 그 종류가 없음)·timeout — 실무 출력(nslookup)의 모양을 고른다
+      const rcode = info?.rcode ?? (info?.nodata ? "NODATA" : info?.timeout ? "timeout" : undefined);
+      ctx.trace("dns.lookup.failed", "app", `${cmd} 실패: ${reason}`, { name, qtype, reason, ...(rec.server ? { server: rec.server } : {}), ...(rcode ? { rcode } : {}) });
+    };
+    if (isValidIp(name) || isIpv6(name)) {
+      fail("주소로 이름을 찾는 역방향 조회(PTR)는 지원하지 않음 — 이름을 적으세요");
+      return;
+    }
+    if (!looksLikeName(name) || !/^[a-z0-9._-]+$/.test(name)) {
+      fail("이름에 쓸 수 없는 글자가 있음 (영문·숫자·점·하이픈)");
+      return;
+    }
+    if (server !== undefined) {
+      server = server.trim();
+      if (server === "127.0.0.1" && this.iface.ip) server = this.iface.ip;
+      else if (isIpv6(server)) {
+        server = canonIp6(server)!;
+        // ::1 = 내 IPv6 주소 (내 DNS 서버 서비스에 루프백). 전역 주소가 없으면 링크 로컬
+        if (server === "::1") server = this.v6.globals[0]?.ip ?? this.v6.linkLocal;
+      }
+      else if (!isValidIp(server)) {
+        fail(`DNS 서버 주소가 올바르지 않음 (${server})`);
+        return;
+      }
+    }
+    // MagicDNS: 메시 VPN 이 시스템 DNS 를 100.100.100.100(기기 안)으로 잡아 피어 이름을 바로 답한다 — 서버를 지정하지 않았을 때만
+    const magic = server === undefined && qtype === "A" ? this.mesh.resolve(name) : undefined;
+    if (magic) {
+      Object.assign(rec, { status: "ok", answer: magic, server: "100.100.100.100", magicDns: true, rtt: 0 });
+      ctx.trace("dns.lookup", "app", `${cmd} → ${magic} (MagicDNS 100.100.100.100 — ${this.mesh.brand} netmap 의 피어 이름, 기기 안에서 답함)`, { name, qtype, ip: magic, server: "100.100.100.100" });
+      return;
+    }
+    // 물을 서버를 먼저 적어 둔다: 내 DNS 서버 서비스(루프백)는 답이 이 호출 안에서 바로 온다
+    rec.server = server ?? this.resolver.server;
+    this.resolver.lookup(name, qtype, server, ctx, this.emit(ctx), (ip, err, info) => {
+      if (!ip) {
+        fail(err ?? "응답 없음", info);
+        return;
+      }
+      rec.status = "ok";
+      rec.answer = ip;
+      rec.rtt = ctx.now - rec.startedAt;
+      if (ip === "0.0.0.0" || ip === "::") rec.blocked = true;
+      ctx.trace(
+        "dns.lookup",
+        "app",
+        `${cmd} → ${ip} (서버 ${rec.server ?? "?"}, ${rec.rtt}ms)${rec.blocked ? " — DNS 가 막은 이름 (광고 차단·자녀 보호가 이 주소로 답함)" : ""}`,
+        { name, qtype, ip, server: rec.server ?? "", rtt: rec.rtt, ...(rec.blocked ? { blocked: true } : {}) },
+      );
+    });
+  }
+
   // ---------- traceroute ----------
 
   /**
@@ -972,7 +1062,7 @@ export class Host implements SimNode {
       done("TCP 연결 실패");
       return;
     }
-    if (o.l4.kind === "udp" && o.l4.srcPort === this.resolver.port && this.resolver.onUnreachable(`DNS 서버에 닿지 않음: ${reason}`, ctx)) {
+    if (o.l4.kind === "udp" && o.l4.srcPort === this.resolver.port && this.resolver.onUnreachable(`DNS 서버에 닿지 않음: ${reason}`, ctx, o.dst)) {
       done("DNS 조회 실패");
       return;
     }

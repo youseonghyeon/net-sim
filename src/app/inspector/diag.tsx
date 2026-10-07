@@ -1,4 +1,5 @@
-// 진단(ping·traceroute·TCP 연결·DHCP 임대 갱신, 인터넷의 외부 접속)과 표 탭(현재 상태·라이브 테이블).
+// 진단(ping·traceroute·DNS 조회·TCP 연결·DHCP 임대 갱신, 인터넷의 외부 접속)과 표 탭(현재 상태·라이브 테이블).
+import { Fragment } from "preact";
 import { useState } from "preact/hooks";
 import { Host } from "../../core/nodes/host";
 import { endpoint, TCP_STATE_LABEL } from "../../core/nodes/tcp";
@@ -9,7 +10,7 @@ import type { SnapshotTable as SnapshotTableData } from "../../core/nodes/node";
 import { Router } from "../../core/nodes/router";
 import { sim, simVersion } from "../../model/sim";
 import { topology } from "../../model/store";
-import { looksLikeName } from "../../core/nodes/dns";
+import { looksLikeName, PUBLIC_ZONE, type QType } from "../../core/nodes/dns";
 import { type Device } from "../../model/topology";
 import { Icon } from "../Icons";
 import { TargetPicker } from "../TargetPicker";
@@ -212,6 +213,96 @@ export function SnapshotTable({ t }: { t: SnapshotTableData }) {
   );
 }
 
+/** DNS 조회 (nslookup): 이름·레코드 종류·물어볼 서버(비우면 설정된 DNS). 캐시를 거치지 않아 질의·응답이 매번 캔버스에 지나간다 */
+function DnsLookup({ d, node }: { d: Device; node: Host }) {
+  void simVersion.value; // 부모와 props 가 같아도 조회 기록이 바뀌면 다시 그린다
+  const [name, setName] = useDiagField(d.id, "dns", "");
+  const [server, setServer] = useDiagField(d.id, "dnsServer", "");
+  const [qtype, setQtype] = useDiagField(d.id, "dnsType", "A");
+  // 제안: DNS 서버 서비스를 켠 호스트의 주소·레코드 이름, 공유기의 DNS 포워더, 공인 DNS
+  const servers: { ip: string; label: string }[] = [];
+  const names = new Set<string>(PUBLIC_ZONE.map((r) => r.name));
+  const mine = node.resolver.server;
+  if (mine) servers.push({ ip: mine, label: "지금 설정된 DNS" });
+  for (const other of topology.value.devices) {
+    const n = sim.node(other.id);
+    if (n instanceof Host && n.dnsServer.config.enabled) {
+      if (n.ip) servers.push({ ip: n.ip, label: `${other.name} DNS 서버` });
+      for (const r of n.dnsServer.config.records) names.add(r.name);
+    }
+    if (n instanceof Router && n.lan.ip && n.dnsForwarder.config.enabled) servers.push({ ip: n.lan.ip, label: `${other.name} DNS 포워더` });
+  }
+  servers.push({ ip: "8.8.8.8", label: "공인 DNS" }, { ip: "1.1.1.1", label: "공인 DNS" });
+  const uniq = servers.filter((x, i) => servers.findIndex((y) => y.ip === x.ip) === i);
+  const go = () => {
+    const n = name.trim();
+    if (!n) return;
+    const sv = server.trim();
+    sim.act({ kind: "dns-lookup", nodeId: d.id, name: n, qtype: qtype === "AAAA" ? "AAAA" : "A", ...(sv ? { server: sv } : {}) });
+  };
+  const enter = (e: KeyboardEvent) => e.key === "Enter" && go();
+  return (
+    <>
+      <div class="ping-row dns-row">
+        <input class="input mono" list={`dns-names-${d.id}`} value={name} placeholder="DNS 로 찾을 이름" onInput={(e) => setName(e.currentTarget.value)} onKeyDown={enter} />
+        <datalist id={`dns-names-${d.id}`}>
+          {[...names].map((n) => (
+            <option key={n} value={n} />
+          ))}
+        </datalist>
+        <select class="input qtype mono" value={qtype} onChange={(e) => setQtype(e.currentTarget.value as QType)} title="레코드 종류: A = IPv4 주소, AAAA = IPv6 주소">
+          <option value="A">A</option>
+          <option value="AAAA">AAAA</option>
+        </select>
+        <button class="btn" onClick={go} title="nslookup: 캐시를 거치지 않고 DNS 서버에 묻습니다 (답도 캐시에 넣지 않음)">
+          조회
+        </button>
+      </div>
+      <div class="ping-row dns-server-row">
+        <input class="input mono" list={`dns-servers-${d.id}`} value={server} placeholder={mine ? `DNS 서버 (비우면 ${mine})` : "DNS 서버 (비우면 설정된 DNS)"} onInput={(e) => setServer(e.currentTarget.value)} onKeyDown={enter} title="이 서버에만 묻습니다 (nslookup 이름 서버)" />
+        <datalist id={`dns-servers-${d.id}`}>
+          {uniq.map((x) => (
+            <option key={x.ip} value={x.ip}>
+              {x.label}
+            </option>
+          ))}
+        </datalist>
+      </div>
+      {node.lookups.length > 0 && (
+        <ul class="ping-log dns-log">
+          {node.lookups.slice().reverse().map((r) => (
+            <li key={r.seq} class={r.status === "ok" && !r.blocked ? "ok" : r.status === "failed" || r.blocked ? "failed" : ""}>
+              <span class="mono">
+                {r.name} {r.qtype}
+                {r.server && <small class="via">서버 {r.server}{r.magicDns ? " (MagicDNS)" : ""}</small>}
+              </span>
+              <span class={r.status === "ok" ? "mono" : undefined}>
+                {r.status === "ok" ? (
+                  <>
+                    {/* IPv6 는 콜론 뒤에서만 줄을 바꾼다 (그룹 중간에서 끊기지 않게) */}
+                    {r.answer!.split(":").map((g, i) => (
+                      <Fragment key={i}>
+                        {i > 0 && ":"}
+                        {i > 0 && <wbr />}
+                        {g}
+                      </Fragment>
+                    ))}
+                    {r.blocked && " · 막은 이름"}
+                  </>
+                ) : r.status === "failed" ? (
+                  `실패 · ${r.reason}`
+                ) : (
+                  "응답 기다리는 중"
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
 /** P2P 연결: 상대 이름(다른 장치의 P2P 앱 이름)으로 연결하고 지금 상태를 한 줄로 */
 function P2pDiag({ d, node, peer, setPeer }: { d: Device; node: Host; peer: string; setPeer: (v: string) => void }) {
   const names = topology.value.devices
@@ -251,9 +342,9 @@ function P2pDiag({ d, node, peer, setPeer }: { d: Device; node: Host; peer: stri
 
 /** ping, TCP 연결, DHCP 임대 갱신 */
 /** 진단 입력값을 장치별로 기억 (다른 장치에 갔다 와도 마지막 값이 남는다) */
-export const diagMemory = new Map<string, { ping?: string; tcp?: string; port?: string; inet?: string; inetPort?: string; p2p?: string }>();
+export const diagMemory = new Map<string, { ping?: string; tcp?: string; port?: string; inet?: string; inetPort?: string; p2p?: string; dns?: string; dnsServer?: string; dnsType?: string }>();
 
-export function useDiagField(deviceId: string, key: "ping" | "tcp" | "port" | "inet" | "inetPort" | "p2p", initial: string): [string, (v: string) => void] {
+export function useDiagField(deviceId: string, key: "ping" | "tcp" | "port" | "inet" | "inetPort" | "p2p" | "dns" | "dnsServer" | "dnsType", initial: string): [string, (v: string) => void] {
   const mem = diagMemory.get(deviceId) ?? {};
   const [v, setV] = useState(mem[key] ?? initial);
   const set = (next: string) => {
@@ -343,6 +434,7 @@ export function DiagSection({ d }: { d: Device }) {
           </ol>
         </div>
       )}
+      <DnsLookup d={d} node={node} />
       <div class="ping-row tcp-row">
         <TargetPicker value={tcpDst} onInput={setTcpDst} onSubmit={connect} placeholder="서버 주소 또는 이름" load={() => probeTargetsCached(topology.peek(), d.id, "tcp", port)} />
         <input class="input mono port" type="number" min={1} max={65535} value={tcpPort} onInput={(e) => setTcpPort(e.currentTarget.value)} title="포트" />

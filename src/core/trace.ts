@@ -169,6 +169,9 @@ export type TraceKind =
   | "dns.nxdomain"
   | "dns.no-server"
   | "dns.resolved"
+  /** nslookup(진단의 DNS 조회) 결과 한 줄 */
+  | "dns.lookup"
+  | "dns.lookup.failed"
   | "fw.allow"
   | "fw.deny"
   | "fw.established"
@@ -333,6 +336,7 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "dns.timeout",
   "dns.nxdomain",
   "dns.no-server",
+  "dns.lookup.failed",
   "fw.deny",
   "wifi.disassociate",
   "wifi.no-base",

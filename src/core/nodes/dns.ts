@@ -31,6 +31,10 @@ function cacheKey(name: string, qtype: QType): string {
 export interface ResolveInfo {
   nodata?: boolean;
   retry?: boolean;
+  /** 서버가 돌려준 실패 코드 (nslookup 출력용) */
+  rcode?: "NXDOMAIN" | "SERVFAIL";
+  /** 서버가 끝내 답하지 않음 */
+  timeout?: boolean;
 }
 
 /** 리졸버 결과: 주소, 또는 실패 이유 */
@@ -88,6 +92,10 @@ interface PendingQuery {
   done: ResolveDone;
   /** VPN 이 알려 준 DNS 를 건너뛰고 원래 DNS 에 (VPN 서버 이름처럼 터널이 서기 전에 풀어야 하는 것) */
   direct?: boolean;
+  /** nslookup 이 지정한 서버: 설정된 DNS 대신 이 서버에만 묻는다 */
+  fixed?: Ip;
+  /** nslookup: 답을 캐시에 넣지 않는다 */
+  noStore?: boolean;
 }
 
 /** 호스트 쪽 리졸버: 설정된 DNS 서버에 묻고 결과를 캐시한다. DNS 서버는 IPv4 가 있으면 그쪽, 없으면 IPv6 DNS (질의 종류와 운반 버전은 따로 — AAAA 를 IPv4 로 물어도 된다) */
@@ -118,7 +126,11 @@ export class DnsResolver {
   }
 
   /** 물어볼 DNS 서버와 내 출발지: IPv4 DNS 가 있고 내 IPv4 주소가 있으면 그쪽, 아니면 IPv6 DNS */
-  private pick(direct = false): { server: Ip; src: Ip } | undefined {
+  private pick(direct = false, fixed?: Ip): { server: Ip; src: Ip } | undefined {
+    if (fixed) {
+      const src = isIpv6(fixed) ? this.v6?.sourceFor(fixed) : this.iface.ip;
+      return src ? { server: fixed, src } : undefined;
+    }
     const d4 = (direct ? undefined : this.vpnDns?.()) ?? this.iface.dns;
     if (d4 && this.iface.ip) return { server: d4, src: this.iface.ip };
     const d6 = this.v6?.effectiveDns;
@@ -138,26 +150,43 @@ export class DnsResolver {
       return;
     }
     if (cached) this.cache.delete(key);
-    const pick = this.pick(direct);
+    this.start(name, qtype, ctx, emit, done, direct ? { direct } : {});
+  }
+
+  /**
+   * nslookup: 캐시를 거치지 않고 매번 서버에 묻고, 답도 캐시에 넣지 않는다 (실제 nslookup·dig 처럼 OS 캐시와 따로).
+   * server 를 주면 그 서버에만, 없으면 설정된 DNS 에. 돌려주는 값 = 물어본 서버 (못 물었으면 undefined)
+   */
+  lookup(rawName: string, qtype: QType, server: Ip | undefined, ctx: NodeContext, emit: Emit, done: ResolveDone): Ip | undefined {
+    return this.start(normalizeName(rawName), qtype, ctx, emit, done, { noStore: true, ...(server ? { fixed: server } : {}) });
+  }
+
+  private start(name: string, qtype: QType, ctx: NodeContext, emit: Emit, done: ResolveDone, opts: Pick<PendingQuery, "direct" | "fixed" | "noStore">): Ip | undefined {
+    const pick = this.pick(opts.direct, opts.fixed);
     if (!pick) {
-      if (!this.iface.dns && !this.v6?.effectiveDns) {
+      if (opts.fixed) {
+        const v6 = isIpv6(opts.fixed);
+        ctx.trace("dns.no-server", "app", `${name} 을(를) 서버 ${opts.fixed} 에 물을 수 없음: 내 ${v6 ? "IPv6 주소(그 서버로 갈 출발지)" : "IP 주소"}가 없음`, { name, server: opts.fixed });
+        done(undefined, v6 ? "IPv6 주소 없음" : "IP 미설정");
+      } else if (!this.iface.dns && !this.v6?.effectiveDns) {
         ctx.trace("dns.no-server", "app", `${name} 을(를) 찾을 수 없음: DNS 서버가 설정되지 않음 (수동이면 DNS 칸 입력, 자동이면 DHCP 서버가 DNS 를 안내하는지 확인)`, { name });
         done(undefined, "DNS 서버 없음");
       } else {
         ctx.trace("dns.no-server", "app", `${name} 을(를) 찾을 수 없음: 내 IP 주소가 없음`, { name });
         done(undefined, "IP 미설정");
       }
-      return;
+      return undefined;
     }
     const id = ++this.idSeq;
     const timer = ctx.timer(DNS_TIMEOUT, DNS_TIMER_TAG, { id });
-    this.pending.set(id, { name, qtype, server: pick.server, attempts: 1, timer, done, ...(direct ? { direct } : {}) });
+    this.pending.set(id, { name, qtype, server: pick.server, attempts: 1, timer, done, ...opts });
     this.send(id, name, 1, ctx, emit);
+    return pick.server;
   }
 
   private send(id: number, name: string, attempt: number, ctx: NodeContext, emit: Emit): void {
     const q = this.pending.get(id);
-    const pick = this.pick(q?.direct);
+    const pick = this.pick(q?.direct, q?.fixed);
     if (!q || !pick) {
       this.fail(id, "DNS 설정이 사라짐", ctx);
       return;
@@ -200,8 +229,8 @@ export class DnsResolver {
     this.pending.delete(msg.id);
     q.timer.cancel();
     if (msg.answer) {
-      this.cache.set(cacheKey(q.name, q.qtype), { ip: msg.answer, at: ctx.now, ...(msg.ttl !== undefined ? { ttl: msg.ttl * 1000 } : {}) });
-      ctx.trace("dns.response.received", "app", `DNS 응답: ${q.name}${q.qtype === "AAAA" ? " AAAA" : ""} = ${msg.answer} (서버 ${from}) → 캐시에 저장`, { name: q.name, ip: msg.answer, qtype: q.qtype }, frameId);
+      if (!q.noStore) this.cache.set(cacheKey(q.name, q.qtype), { ip: msg.answer, at: ctx.now, ...(msg.ttl !== undefined ? { ttl: msg.ttl * 1000 } : {}) });
+      ctx.trace("dns.response.received", "app", `DNS 응답: ${q.name}${q.qtype === "AAAA" ? " AAAA" : ""} = ${msg.answer} (서버 ${from}) → ${q.noStore ? "nslookup 이라 캐시에 넣지 않음" : "캐시에 저장"}`, { name: q.name, ip: msg.answer, qtype: q.qtype }, frameId);
       q.done(msg.answer);
       return;
     }
@@ -211,8 +240,8 @@ export class DnsResolver {
       return;
     }
     ctx.trace("dns.nxdomain", "app", `DNS 응답: ${q.name} 은(는) 없는 이름 (${msg.rcode ?? "NXDOMAIN"}) — 서버 ${from} 가 모르는 이름`, { name: q.name, rcode: msg.rcode }, frameId);
-    if (msg.rcode === "SERVFAIL") q.done(undefined, "DNS 서버가 업스트림 서버 응답을 받지 못함", { retry: true });
-    else q.done(undefined, "없는 이름");
+    if (msg.rcode === "SERVFAIL") q.done(undefined, "DNS 서버가 업스트림 서버 응답을 받지 못함", { retry: true, rcode: "SERVFAIL" });
+    else q.done(undefined, "없는 이름", { rcode: "NXDOMAIN" });
   }
 
   onTimeout(data: unknown, ctx: NodeContext, emit: Emit): void {
@@ -228,14 +257,17 @@ export class DnsResolver {
     }
     this.pending.delete(id);
     ctx.trace("dns.timeout", "app", `DNS timeout: 서버 ${q.server} 가 ${DNS_MAX_ATTEMPTS}번 물어도 응답 없음 → ${q.name} 해석 실패 (서버 주소·경로 확인)`, { id, name: q.name });
-    q.done(undefined, "DNS timeout · 응답 없음", { retry: true });
+    q.done(undefined, "DNS timeout · 응답 없음", { retry: true, timeout: true });
   }
 
-  /** 내 DNS 서버에 닿지 않는다는 ICMP Destination Unreachable: 기다리는 질의를 바로 실패로 */
-  onUnreachable(reason: string, ctx: NodeContext): boolean {
-    if (this.pending.size === 0) return false;
-    for (const id of [...this.pending.keys()]) this.fail(id, reason, ctx, true);
-    return true;
+  /**
+   * DNS 서버에 닿지 않는다는 ICMP Destination Unreachable: 그 서버(server = ICMP 에 담긴 원래 목적지)로 보낸 질의만 바로 실패로.
+   * nslookup 이 다른 서버를 지정할 수 있어, 한 서버의 Unreachable 이 다른 서버를 기다리는 질의까지 끝내면 안 된다
+   */
+  onUnreachable(reason: string, ctx: NodeContext, server: Ip): boolean {
+    const ids = [...this.pending.entries()].filter(([, q]) => q.server === server).map(([id]) => id);
+    for (const id of ids) this.fail(id, reason, ctx, true);
+    return ids.length > 0;
   }
 
   private fail(id: number, reason: string, ctx: NodeContext, retry = false): void {
