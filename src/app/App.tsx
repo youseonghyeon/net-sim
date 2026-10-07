@@ -37,6 +37,8 @@ import { Palette } from "./Palette";
 
 export function App() {
   const notice = useSignal<string | null>(null);
+  /** 예제 설명: 읽을 시간이 필요해 자동으로 사라지지 않는다 (닫기·다른 예제·비우기·불러오기까지) */
+  const exampleNote = useSignal<string | null>(null);
   const timer = useRef<number>(0);
 
   function showNotice(msg: string): void {
@@ -77,6 +79,7 @@ export function App() {
       if (r.error) showNotice(`불러오지 못했습니다: ${r.error}`);
       else {
         sim.reset();
+        exampleNote.value = null;
         showNotice(`${file.name} 에서 장치 ${r.devices}개를 불러왔습니다.`);
       }
     });
@@ -137,6 +140,10 @@ export function App() {
   }, []);
 
   const t = topology.value;
+  // 장치를 모두 지우면 예제 설명도 내린다 (빈 캔버스의 시작 카드로 다른 예제를 열 때 옛 설명이 남지 않게)
+  useEffect(() => {
+    if (t.devices.length === 0) exampleNote.value = null;
+  }, [t.devices.length]);
   const isRunning = running.value;
   return (
     <div class="app">
@@ -183,13 +190,14 @@ export function App() {
             onExample={(v) => {
               loadExample(v);
               sim.reset();
-              showNotice(EXAMPLES[v].blurb);
+              exampleNote.value = EXAMPLES[v].blurb;
             }}
             onDownload={download}
             onUpload={() => fileInput.current?.click()}
             onClear={() => {
               clearAll();
               sim.reset();
+              exampleNote.value = null;
               showNotice("비웠습니다. ⌘Z 로 되돌릴 수 있습니다.");
             }}
           />
@@ -215,7 +223,19 @@ export function App() {
         <Inspector />
       </div>
       <LogDrawer />
-      {notice.value && <div class="toast">{notice.value}</div>}
+      {(exampleNote.value || notice.value) && (
+        <div class="notices">
+          {exampleNote.value && (
+            <div class="example-note" role="note">
+              <p>{exampleNote.value}</p>
+              <button class="note-close" onClick={() => (exampleNote.value = null)} title="예제 설명 닫기" aria-label="예제 설명 닫기">
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+          )}
+          {notice.value && <div class="toast">{notice.value}</div>}
+        </div>
+      )}
     </div>
   );
 }

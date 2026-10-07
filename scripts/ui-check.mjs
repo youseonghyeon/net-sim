@@ -44,9 +44,18 @@ async function clickDevice(name) {
   else await goTab("설정");
 }
 /** 상단 파일 메뉴에서 예제 불러오기 / 비우기 */
-async function loadEx(id) {
+/**
+ * 예제 불러오기. 예제 설명은 닫을 때까지 남아 아래쪽 장치를 가리므로 기본으로 닫는다.
+ * 그리고 2.6초 동안 주소 받기(DHCP·SLAAC)가 끝나게 둔다 — 예전엔 예제 설명 토스트가 2.6초 뒤 사라지길 기다리며
+ * 이 시간이 흘렀고, 뒤 단계(LB·프록시·IPv6 등)가 그것에 기대고 있다
+ */
+async function loadEx(id, { keepNote = false } = {}) {
   await page.click(".menu-btn");
   await page.click(`.menu-item[data-example="${id}"]`);
+  if (keepNote) return;
+  // 메뉴 클릭 뒤 설명이 그려질 때까지 기다렸다 닫는다 (바로 세면 아직 없어 닫기를 건너뛸 수 있다)
+  if (await page.locator(".example-note").waitFor({ timeout: 2000 }).then(() => true, () => false)) await page.click(".note-close");
+  await page.waitForTimeout(2600);
 }
 async function clearUi() {
   await page.click(".menu-btn");
@@ -115,6 +124,18 @@ await page.fill(".ping-row .input", "google.com");
 await page.click(".ping-row .btn");
 await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 40000 });
 console.log("ping google.com:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+// 1a0) 반복 ping (ping -c 4): 1초 간격으로 보내고 끝나면 통계 줄 — 손실 0%
+await page.selectOption(".ping-row select.count", "4");
+await page.fill(".ping-row .input", "8.8.8.8");
+await page.keyboard.press("Escape");
+await page.click(".ping-row .btn");
+await page.waitForFunction(() => /손실/.test(document.querySelector(".ping-log li.ping-stats")?.textContent ?? ""), null, { timeout: 60000 });
+const pingStats = (await page.locator(".ping-log li.ping-stats").innerText()).replace(/\s+/g, " ");
+console.log("ping -c 4 8.8.8.8:", pingStats);
+if (!/4\/4 응답 · 손실 0%/.test(pingStats)) throw new Error(`반복 ping 통계가 예상과 다름: ${pingStats}\n해결: Host.ping 의 반복 실행(continueRun·nextPing·checkRun)과 PingRunSummary 확인\n참조: src/core/nodes/host.ts, tests/ping-repeat.test.ts`);
+await page.locator(".ping-log").first().scrollIntoViewIfNeeded();
+await page.screenshot({ path: `${OUT}/25-ping-count.png` });
+await page.selectOption(".ping-row select.count", "1");
 // 1a1) DNS 조회(nslookup): 설정된 DNS(공유기 포워더)에 A, 8.8.8.8 에 직접 AAAA — 캐시를 거치지 않고 매번 묻는다
 await page.fill(".dns-row .input", "google.com");
 await page.locator(".dns-row .btn", { hasText: "조회" }).click();
@@ -345,9 +366,15 @@ await page.waitForTimeout(100);
 await page.screenshot({ path: `${OUT}/20-vlan.png` });
 
 // 10) 편집 도구: 영역 선택 → 함께 이동 → 복제 → 일괄 설정 → 되돌리기 → JSON 저장/불러오기
-await loadEx("gateways");
+await loadEx("gateways", { keepNote: true });
 await page.waitForTimeout(400);
-console.log("gateways example devices:", await page.locator("[data-device]").count(), "| blurb toast:", (await page.locator(".toast").textContent().catch(() => "")).slice(0, 30));
+console.log("gateways example devices:", await page.locator("[data-device]").count(), "| example note:", (await page.locator(".example-note").textContent().catch(() => "")).slice(0, 30));
+// 예제 설명은 예전 토스트(2.6초)와 달리 닫기 전까지 남는다 → 닫기 버튼으로 사라짐
+await page.waitForTimeout(3200);
+if ((await page.locator(".example-note").count()) !== 1) throw new Error("예제 설명이 3초 뒤 사라짐\n해결: App.tsx 의 exampleNote 가 타이머로 지워지지 않는지 확인\n참조: src/app/App.tsx exampleNote");
+await page.screenshot({ path: `${OUT}/23-example-note.png` });
+await page.click(".note-close");
+console.log("example note after close:", await page.locator(".example-note").count());
 await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // 안내 토스트가 아래쪽 장치를 가린다
 {
   // pc-1·pc-2 를 영역으로 잡는다 (빈 곳에서 드래그)

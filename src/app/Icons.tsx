@@ -35,7 +35,8 @@ export type IconName =
   | "panel"
   | "widen"
   | "fit"
-  | "zone";
+  | "zone"
+  | "close";
 
 const PATHS: Record<IconName, JSX.Element> = {
   pc: (
@@ -172,6 +173,7 @@ const PATHS: Record<IconName, JSX.Element> = {
     </>
   ),
   widen: <path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4" />,
+  close: <path d="M6 6l12 12M18 6 6 18" />,
   zone: (
     <>
       <rect x="3.5" y="6" width="17" height="14" rx="2.5" stroke-dasharray="3 2.2" />

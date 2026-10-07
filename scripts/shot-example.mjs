@@ -12,6 +12,8 @@ await page.goto(server.resolvedUrls.local[0]);
 await page.click(".menu-btn");
 await page.click(`.menu-item[data-example="${id}"]`);
 await page.waitForTimeout(2500);
+// 예제 설명(닫을 때까지 남음)을 닫아 아래쪽 장치를 가리지 않게
+if (await page.locator(".example-note").count()) await page.click(".note-close");
 // 로그를 접어 캔버스를 넓게
 if (await page.locator(".log.open").count()) await page.click(".log-toggle");
 await page.waitForTimeout(300);

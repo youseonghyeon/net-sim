@@ -94,6 +94,39 @@ export interface PingRecord {
   status: "pending" | "ok" | "failed";
   rtt?: number;
   reason?: string;
+  /** 반복 ping(ping -c N)의 한 번이면 그 실행의 id */
+  run?: number;
+}
+
+/** 반복 ping 실행 (ping -c N): 1초 간격으로 보내고, 모두 끝나면 통계 */
+export interface PingRun {
+  id: number;
+  /** 사용자가 입력한 대상 (이름 또는 IP) */
+  dst: string;
+  count: number;
+  /** 지금까지 보낸 수 */
+  sent: number;
+  /** 이름이면 처음에 한 번 해석한 주소 (이후 그 주소로) */
+  resolved?: Ip;
+  /** 실제로 보내는 주소 */
+  target?: Ip;
+  done: boolean;
+  /** 첫 요청도 못 보내고 멈춤 (IP 미설정·이름 해석 실패) */
+  stopped?: string;
+  stats?: PingStats;
+}
+
+export interface PingStats {
+  transmitted: number;
+  received: number;
+  /** 패킷 손실 % */
+  loss: number;
+  min?: number;
+  avg?: number;
+  max?: number;
+  mdev?: number;
+  /** 첫 요청부터 마지막 요청까지 (ms) */
+  time: number;
 }
 
 export interface TracerouteHop {
@@ -149,6 +182,11 @@ export { DHCP_MAX_ATTEMPTS, DHCP_TIMEOUT, DHCP_STATE_LABEL, type DhcpState } fro
 /** 단말 호스트: 인터페이스 1개, DHCP 클라이언트, ICMP ping */
 export class Host implements SimNode {
   static readonly PING_TIMEOUT = 2000;
+  /** 반복 ping 간격 (실제 ping 기본값 1초) */
+  static readonly PING_INTERVAL = 1000;
+  static readonly PING_MAX_COUNT = 100;
+  /** 보관하는 반복 ping 실행 수 */
+  static readonly PING_RUN_KEEP = 5;
   /** traceroute: 홉 하나의 응답을 기다리는 시간 */
   static readonly TRACEROUTE_TIMEOUT = 1000;
   static readonly TRACEROUTE_MAX_HOPS = 16;
@@ -201,6 +239,9 @@ export class Host implements SimNode {
   ipMode: IpMode;
   linkUp = false;
   readonly pings: PingRecord[] = [];
+  /** 반복 ping 실행 (최근 PING_RUN_KEEP 개) */
+  readonly pingRuns: PingRun[] = [];
+  private pingRunSeq = 0;
   /** traceroute 기록 (최근 TRACEROUTE_KEEP 개, 오래된 것부터) */
   readonly traceroutes: TracerouteRecord[] = [];
   /** nslookup 기록 (최근 LOOKUP_KEEP 개, 오래된 것부터) */
@@ -683,24 +724,56 @@ export class Host implements SimNode {
 
   // ---------- 사용자 동작 ----------
 
-  ping(target: string, ctx: NodeContext): void {
+  /** 반복 ping 횟수를 1~PING_MAX_COUNT 정수로 (없거나 숫자가 아니면 1) */
+  static pingCount(count?: number): number {
+    return Math.min(Host.PING_MAX_COUNT, Math.max(1, Math.floor(count ?? 1) || 1));
+  }
+
+  /** ping. count > 1 이면 반복 ping (ping -c N): 1초 간격으로 보내고 모두 끝나면 통계를 남긴다 */
+  ping(target: string, ctx: NodeContext, count = 1): void {
     const seq = ++this.icmpSeq;
-    const rec: PingRecord = { dst: target, seq, sentAt: ctx.now, status: "pending" };
+    const n = Host.pingCount(count);
+    const run: PingRun | undefined = n > 1 ? { id: ++this.pingRunSeq, dst: target, count: n, sent: 1, done: false } : undefined;
+    if (run) {
+      this.pingRuns.push(run);
+      // 끝나고 통계까지 남긴 실행만 밀어낸다 (진행 중인 실행을 지우면 다음 요청·통계를 잃는다)
+      while (this.pingRuns.length > Host.PING_RUN_KEEP) {
+        const i = this.pingRuns.findIndex((r) => r.stats || r.stopped);
+        if (i < 0) break;
+        this.pingRuns.splice(i, 1);
+      }
+    }
+    const rec: PingRecord = { dst: target, seq, sentAt: ctx.now, status: "pending", ...(run ? { run: run.id } : {}) };
     this.pings.push(rec);
+    // 첫 요청을 못 보내면 반복도 멈춘다 (실제 ping 도 unknown host·Network unreachable 이면 바로 끝남)
+    const stop = (reason: string) => {
+      if (!run) return;
+      run.done = true;
+      run.stopped = reason;
+    };
+    /** 첫 요청을 보낸 뒤: 바로 실패했으면(IPv6 출발지 없음) 멈추고, 아니면 반복을 잇는다 */
+    const next = (ip: Ip) => {
+      if (!run) return;
+      if (rec.status === "failed") stop(rec.reason ?? "보내지 못함");
+      else this.continueRun(run, ip, ctx);
+    };
     if (isIpv6(target)) {
       this.sendPing6(rec, canonIp6(target)!, ctx);
+      next(canonIp6(target)!);
       return;
     }
     if (!this.iface.ip && !(looksLikeName(target) && this.hasV6Global())) {
       rec.status = "failed";
       rec.reason = "IP 미설정";
       ctx.trace("ip.no-address", "L3", `ping ${target} 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)`, { dst: target });
+      stop(rec.reason);
       return;
     }
     if (!looksLikeName(target) && !isValidIp(target)) {
       rec.status = "failed";
       rec.reason = "잘못된 주소";
       ctx.trace("ip.drop", "L3", `ping ${target} 실패: IP 주소도 이름도 아님`, { dst: target });
+      stop(rec.reason);
       return;
     }
     if (looksLikeName(target)) {
@@ -710,16 +783,79 @@ export class Host implements SimNode {
           rec.status = "failed";
           rec.reason = err ?? "이름 해석 실패";
           ctx.trace("icmp.failed", "app", `ping ${target} 실패: 이름을 주소로 바꾸지 못함 (${rec.reason})`, { dst: target });
+          stop(rec.reason);
           return;
         }
         rec.resolved = ip;
         ctx.trace("dns.resolved", "app", `${target} = ${ip} → 이제 이 주소로 ping`, { name: target, ip });
         if (isIpv6(ip)) this.sendPing6(rec, ip, ctx);
         else this.sendPing(rec, ip, ctx);
+        if (run) run.resolved = ip;
+        next(ip);
       });
       return;
     }
     this.sendPing(rec, target, ctx);
+    next(target);
+  }
+
+  /** 반복 ping: 첫 요청을 보낸 뒤 — 남았으면 1초 뒤 다음, 다 보냈으면 끝났는지 본다 */
+  private continueRun(run: PingRun, target: Ip, ctx: NodeContext): void {
+    run.target = target;
+    if (run.sent < run.count) ctx.timer(Host.PING_INTERVAL, "ping-next", { run: run.id });
+    this.checkRun(run, ctx);
+  }
+
+  /** 반복 ping 의 다음 요청 (이름은 다시 풀지 않고 처음 주소로) */
+  private nextPing(runId: number, ctx: NodeContext): void {
+    const run = this.pingRuns.find((r) => r.id === runId);
+    if (!run || run.done || !run.target) return;
+    const target = run.target;
+    run.sent += 1;
+    const rec: PingRecord = { dst: run.dst, seq: ++this.icmpSeq, sentAt: ctx.now, status: "pending", run: run.id, ...(run.resolved ? { resolved: run.resolved } : {}) };
+    this.pings.push(rec);
+    if (isIpv6(target)) this.sendPing6(rec, target, ctx);
+    else if (!this.iface.ip) {
+      // 도중에 주소를 잃음: 이번 요청은 실패, 다음 요청은 계속 (실제 ping 의 sendmsg: Network is unreachable)
+      rec.status = "failed";
+      rec.reason = "IP 미설정";
+      ctx.trace("ip.no-address", "L3", `ping ${target} (seq=${rec.seq}) 실패: 내 IP 주소가 없음`, { dst: target, seq: rec.seq });
+    } else this.sendPing(rec, target, ctx);
+    if (run.sent < run.count) ctx.timer(Host.PING_INTERVAL, "ping-next", { run: run.id });
+    this.checkRun(run, ctx);
+  }
+
+  /** 다 보냈고 모두 답(또는 timeout)이 났으면 통계 — 마지막 결과 줄 뒤에 남도록 0ms 뒤에 */
+  private checkRun(run: PingRun, ctx: NodeContext): void {
+    if (run.done || run.sent < run.count) return;
+    if (this.pings.some((p) => p.run === run.id && p.status === "pending")) return;
+    run.done = true;
+    ctx.timer(0, "ping-stats", { run: run.id });
+  }
+
+  private pingStats(runId: number, ctx: NodeContext): void {
+    const run = this.pingRuns.find((r) => r.id === runId);
+    if (!run) return;
+    const recs = this.pings.filter((p) => p.run === run.id);
+    const rtts = recs.filter((p) => p.status === "ok").map((p) => p.rtt ?? 0);
+    const transmitted = recs.length;
+    const received = rtts.length;
+    const loss = transmitted ? ((transmitted - received) / transmitted) * 100 : 0;
+    const time = recs.length ? recs.at(-1)!.sentAt - recs[0]!.sentAt : 0;
+    const stats: PingStats = { transmitted, received, loss, time };
+    if (received) {
+      const avg = rtts.reduce((a, b) => a + b, 0) / received;
+      Object.assign(stats, { min: Math.min(...rtts), avg, max: Math.max(...rtts), mdev: Math.sqrt(Math.max(0, rtts.reduce((a, b) => a + b * b, 0) / received - avg * avg)) });
+    }
+    run.stats = stats;
+    const pct = +loss.toPrecision(6);
+    const dst = run.resolved ? `${run.dst} (${run.resolved})` : run.dst;
+    ctx.trace(
+      "icmp.stats",
+      "app",
+      `ping ${dst} 통계: ${transmitted}개 보냄 → ${received}개 받음, 패킷 손실 ${pct}%${received ? ` · RTT 최소/평균/최대 ${stats.min}/${Math.round(stats.avg! * 10) / 10}/${stats.max}ms` : ""}`,
+      { dst: run.dst, transmitted, received, loss: pct, time, ...(received ? { min: stats.min!, avg: stats.avg!, max: stats.max!, mdev: stats.mdev! } : {}) },
+    );
   }
 
   private sendPing(rec: PingRecord, dst: Ip, ctx: NodeContext): void {
@@ -765,12 +901,14 @@ export class Host implements SimNode {
     this.pingTimers.set(rec.seq, ctx.timer(Host.PING_TIMEOUT, "ping-timeout", { seq: rec.seq }));
   }
 
-  private finishPing(rec: PingRecord, status: "ok" | "failed", extra: { rtt?: number; reason?: string }): void {
+  private finishPing(rec: PingRecord, status: "ok" | "failed", extra: { rtt?: number; reason?: string }, ctx: NodeContext): void {
     rec.status = status;
     if (extra.rtt !== undefined) rec.rtt = extra.rtt;
     if (extra.reason) rec.reason = extra.reason;
     this.pingTimers.get(rec.seq)?.cancel();
     this.pingTimers.delete(rec.seq);
+    const run = rec.run !== undefined ? this.pingRuns.find((r) => r.id === rec.run) : undefined;
+    if (run) this.checkRun(run, ctx);
   }
 
   // ---------- nslookup ----------
@@ -1017,7 +1155,7 @@ export class Host implements SimNode {
       const seq = o.l4.seq;
       const rec = this.pings.find((p) => p.seq === seq && p.status === "pending");
       if (rec) {
-        this.finishPing(rec, "failed", { reason: pkt.kind === "ipv6" ? "Hop Limit 초과" : "TTL 초과" });
+        this.finishPing(rec, "failed", { reason: pkt.kind === "ipv6" ? "Hop Limit 초과" : "TTL 초과" }, ctx);
         ctx.trace(
           "icmp.ttl-received",
           "app",
@@ -1052,7 +1190,7 @@ export class Host implements SimNode {
       const seq = o.l4.seq;
       const rec = this.pings.find((p) => p.seq === seq && p.status === "pending");
       if (rec) {
-        this.finishPing(rec, "failed", { reason });
+        this.finishPing(rec, "failed", { reason }, ctx);
         done(`ping ${rec.dst} 실패`);
         ctx.trace("icmp.failed", "app", `ping ${rec.dst} 실패: ${reason}`, { dst: rec.dst, seq: rec.seq });
         return;
@@ -1370,7 +1508,7 @@ export class Host implements SimNode {
       else ctx.trace("ip.drop", "L3", `내가 보낸 적 없는 ICMPv6 Echo 응답 (id=${icmp.id}, seq=${icmp.seq}) → 무시`, {}, frameId);
       return;
     }
-    this.finishPing(rec, "ok", { rtt: ctx.now - rec.sentAt });
+    this.finishPing(rec, "ok", { rtt: ctx.now - rec.sentAt }, ctx);
     ctx.trace("icmp.reply.received", "app", `ping 성공: ${pkt.src} seq=${icmp.seq} RTT=${rec.rtt}ms`, { from: pkt.src, seq: icmp.seq, rtt: rec.rtt }, frameId);
   }
 
@@ -1565,7 +1703,7 @@ export class Host implements SimNode {
       ctx.trace("ip.drop", "L3", `내가 보낸 적 없는 Echo 응답 (id=${icmp.id}, seq=${icmp.seq}) → 무시`, {}, frameId);
       return;
     }
-    this.finishPing(rec, "ok", { rtt: ctx.now - rec.sentAt });
+    this.finishPing(rec, "ok", { rtt: ctx.now - rec.sentAt }, ctx);
     ctx.trace("icmp.reply.received", "app", `ping 성공: ${pkt.src} seq=${icmp.seq} RTT=${rec.rtt}ms`, { from: pkt.src, seq: icmp.seq, rtt: rec.rtt }, frameId);
   }
 
@@ -1604,7 +1742,7 @@ export class Host implements SimNode {
           }
           const rec = this.pings.find((p) => p.seq === icmp.seq && p.status === "pending");
           if (!rec) continue;
-          this.finishPing(rec, "failed", { reason: "NDP timeout · 응답 없음" });
+          this.finishPing(rec, "failed", { reason: "NDP timeout · 응답 없음" }, ctx);
           ctx.trace("icmp.failed", "app", `ping ${rec.dst} 실패: 그 주소를 가진 장치가 NS 에 응답하지 않음 (Address unreachable)`, { dst: rec.dst, seq: rec.seq });
         }
         return;
@@ -1656,7 +1794,7 @@ export class Host implements SimNode {
           }
           const rec = this.pings.find((p) => p.seq === icmp.seq && p.status === "pending");
           if (!rec) continue;
-          this.finishPing(rec, "failed", { reason: "ARP timeout · 응답 없음" });
+          this.finishPing(rec, "failed", { reason: "ARP timeout · 응답 없음" }, ctx);
           ctx.trace("icmp.failed", "app", `ping ${rec.dst} 실패: 그 주소를 가진 장치가 응답하지 않음 (Destination Host Unreachable)`, { dst: rec.dst, seq: rec.seq });
         }
         return;
@@ -1671,12 +1809,18 @@ export class Host implements SimNode {
         this.nextProbe(ctx);
         return;
       }
+      case "ping-next":
+        this.nextPing((data as { run: number }).run, ctx);
+        return;
+      case "ping-stats":
+        this.pingStats((data as { run: number }).run, ctx);
+        return;
       case "ping-timeout": {
         const { seq } = data as { seq: number };
         this.pingTimers.delete(seq);
         const rec = this.pings.find((p) => p.seq === seq && p.status === "pending");
         if (!rec) return;
-        this.finishPing(rec, "failed", { reason: "timeout · 응답 없음" });
+        this.finishPing(rec, "failed", { reason: "timeout · 응답 없음" }, ctx);
         ctx.trace("icmp.timeout", "app", `ping ${rec.dst} timeout: ${Host.PING_TIMEOUT}ms 동안 응답 없음 (Request timed out)`, { dst: rec.dst, seq });
         return;
       }

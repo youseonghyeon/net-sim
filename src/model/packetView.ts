@@ -1045,6 +1045,17 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
         if (d?.answer) out.push({ tool: "dig", line: `${d.name}.\t\t300\tIN\t${d.qtype ?? "A"}\t${d.answer}` });
       }
       break;
+    case "icmp.stats": {
+      // 리눅스 ping -c N 의 마지막 통계 (mdev = RTT 표준편차)
+      const tx = detail(ev, "transmitted") ?? "0";
+      const rx = detail(ev, "received") ?? "0";
+      const f3 = (k: string) => Number(detail(ev, k) ?? 0).toFixed(3);
+      out.push({
+        tool: "ping",
+        line: `--- ${detail(ev, "dst") ?? "?"} ping statistics ---\n${tx} packets transmitted, ${rx} received, ${detail(ev, "loss") ?? "0"}% packet loss, time ${detail(ev, "time") ?? "0"}ms${rx !== "0" ? `\nrtt min/avg/max/mdev = ${f3("min")}/${f3("avg")}/${f3("max")}/${f3("mdev")} ms` : ""}`,
+      });
+      break;
+    }
     case "dns.lookup":
     case "dns.lookup.failed": {
       // nslookup 출력: 물어본 서버 → 답 또는 실패 코드

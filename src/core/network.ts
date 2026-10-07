@@ -43,7 +43,8 @@ export interface Transmission {
 
 /** 사용자 동작. 직렬화 가능한 형태 */
 export type ActionSpec =
-  | { kind: "ping"; nodeId: string; dst: Ip }
+  /** count > 1 이면 반복 ping (ping -c N: 1초 간격, 끝나면 통계). 없으면 한 번 */
+  | { kind: "ping"; nodeId: string; dst: Ip; count?: number }
   /** 경로 추적: TTL 을 1 부터 늘려 가며 각 홉의 Time Exceeded 로 라우터 목록을 얻는다. dst 는 IP 또는 이름 */
   | { kind: "traceroute"; nodeId: string; dst: string }
   /** nslookup: 캐시를 거치지 않고 DNS 서버에 그 이름의 A·AAAA 를 묻는다. server 가 있으면 그 서버에, 없으면 설정된 DNS 에 */
@@ -364,10 +365,12 @@ export class Network {
     if (!node) return;
     const ctx = this.ctx(action.nodeId);
     switch (action.kind) {
-      case "ping":
-        ctx.trace("action", "sys", `[사용자] ping ${action.dst}`, { ...action });
-        this.getHost(action.nodeId).ping(action.dst, ctx);
+      case "ping": {
+        const count = Host.pingCount(action.count);
+        ctx.trace("action", "sys", `[사용자] ping ${count > 1 ? `-c ${count} ` : ""}${action.dst}`, { ...action });
+        this.getHost(action.nodeId).ping(action.dst, ctx, action.count);
         break;
+      }
       case "traceroute":
         ctx.trace("action", "sys", `[사용자] traceroute ${action.dst}`, { ...action });
         this.getHost(action.nodeId).traceroute(action.dst, ctx);

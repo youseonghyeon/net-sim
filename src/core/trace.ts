@@ -169,6 +169,8 @@ export type TraceKind =
   | "dns.nxdomain"
   | "dns.no-server"
   | "dns.resolved"
+  /** 반복 ping(ping -c N) 이 끝난 뒤 통계 */
+  | "icmp.stats"
   /** nslookup(진단의 DNS 조회) 결과 한 줄 */
   | "dns.lookup"
   | "dns.lookup.failed"

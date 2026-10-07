@@ -303,6 +303,27 @@ function DnsLookup({ d, node }: { d: Device; node: Host }) {
   );
 }
 
+/** 반복 ping(ping -c N): 마지막 실행의 진행·통계를 한 줄로 — 진행 중이면 항상, 끝났으면 마지막 ping 이 그 실행의 것일 때만 (첫 요청도 못 보내고 멈춘 실행은 그 실패 줄로 충분) */
+function PingRunSummary({ node }: { node: Host }) {
+  void simVersion.value; // 부모와 props 가 같아도 진행 상황이 바뀌면 다시 그린다 (LESSONS 4zi)
+  const run = node.pingRuns.at(-1);
+  if (!run || run.stopped || (run.done && node.pings.at(-1)?.run !== run.id)) return null;
+  const recs = node.pings.filter((p) => p.run === run.id);
+  const rx = recs.filter((p) => p.status === "ok").length;
+  const s = run.stats;
+  const text = s
+    ? `${s.received}/${s.transmitted} 응답 · 손실 ${+s.loss.toFixed(1)}%${s.avg !== undefined ? ` · 평균 ${Math.round(s.avg * 10) / 10}ms` : ""}`
+    : `${rx}/${run.sent} 응답 · ${run.count - run.sent}개 남음`;
+  return (
+    <li class={`ping-stats ${s ? (s.loss === 0 ? "ok" : "failed") : ""}`}>
+      <span class="mono">
+        {run.dst} · {run.count}회
+      </span>
+      <span>{text}</span>
+    </li>
+  );
+}
+
 /** P2P 연결: 상대 이름(다른 장치의 P2P 앱 이름)으로 연결하고 지금 상태를 한 줄로 */
 function P2pDiag({ d, node, peer, setPeer }: { d: Device; node: Host; peer: string; setPeer: (v: string) => void }) {
   const names = topology.value.devices
@@ -342,9 +363,9 @@ function P2pDiag({ d, node, peer, setPeer }: { d: Device; node: Host; peer: stri
 
 /** ping, TCP 연결, DHCP 임대 갱신 */
 /** 진단 입력값을 장치별로 기억 (다른 장치에 갔다 와도 마지막 값이 남는다) */
-export const diagMemory = new Map<string, { ping?: string; tcp?: string; port?: string; inet?: string; inetPort?: string; p2p?: string; dns?: string; dnsServer?: string; dnsType?: string }>();
+export const diagMemory = new Map<string, { ping?: string; tcp?: string; port?: string; inet?: string; inetPort?: string; p2p?: string; dns?: string; dnsServer?: string; dnsType?: string; pingCount?: string }>();
 
-export function useDiagField(deviceId: string, key: "ping" | "tcp" | "port" | "inet" | "inetPort" | "p2p" | "dns" | "dnsServer" | "dnsType", initial: string): [string, (v: string) => void] {
+export function useDiagField(deviceId: string, key: "ping" | "tcp" | "port" | "inet" | "inetPort" | "p2p" | "dns" | "dnsServer" | "dnsType" | "pingCount", initial: string): [string, (v: string) => void] {
   const mem = diagMemory.get(deviceId) ?? {};
   const [v, setV] = useState(mem[key] ?? initial);
   const set = (next: string) => {
@@ -358,6 +379,7 @@ export function DiagSection({ d }: { d: Device }) {
   void simVersion.value;
   const node = sim.node(d.id);
   const [pingDst, setPingDst] = useDiagField(d.id, "ping", "");
+  const [pingCount, setPingCount] = useDiagField(d.id, "pingCount", "1");
   const [tcpDst, setTcpDst] = useDiagField(d.id, "tcp", "");
   const [tcpPort, setTcpPort] = useDiagField(d.id, "port", "80");
   const [p2pPeer, setP2pPeer] = useDiagField(d.id, "p2p", "");
@@ -367,7 +389,8 @@ export function DiagSection({ d }: { d: Device }) {
   const send = () => {
     const dst = pingDst.trim();
     if (!dst || !okTarget(dst)) return;
-    sim.act({ kind: "ping", nodeId: d.id, dst });
+    const count = Number(pingCount) || 1;
+    sim.act({ kind: "ping", nodeId: d.id, dst, ...(count > 1 ? { count } : {}) });
   };
   const trace = () => {
     const dst = pingDst.trim();
@@ -385,6 +408,11 @@ export function DiagSection({ d }: { d: Device }) {
     <Section>
       <div class="ping-row">
         <TargetPicker value={pingDst} onInput={setPingDst} onSubmit={send} placeholder="ping 보낼 주소 또는 이름" load={() => probeTargetsCached(topology.peek(), d.id, "ping")} />
+        <select class="input count" value={pingCount} onChange={(e) => setPingCount(e.currentTarget.value)} title="보낼 횟수 (ping -c): 여러 번이면 1초 간격으로 보내고 끝나면 손실률·RTT 통계">
+          <option value="1">1회</option>
+          <option value="4">4회</option>
+          <option value="10">10회</option>
+        </select>
         <button class="btn" onClick={send}>
           <Icon name="send" size={14} />
           ping
@@ -395,6 +423,7 @@ export function DiagSection({ d }: { d: Device }) {
       </div>
       {node.pings.length > 0 && (
         <ul class="ping-log">
+          <PingRunSummary node={node} />
           {node.pings.slice(-5).reverse().map((p) => (
             <li key={p.seq} class={p.status}>
               <span class="mono">{p.resolved ? `${p.dst} (${p.resolved})` : p.dst}</span>
