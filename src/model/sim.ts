@@ -139,6 +139,11 @@ class SimController {
 
 export const sim = new SimController();
 
+// ui-check(Playwright)가 고정 대기 대신 "시뮬레이션이 조용해짐" 을 기다리는 신호. 개발 서버에서만
+if (import.meta.env.DEV) {
+  (window as unknown as { __netsimIdle?: () => boolean }).__netsimIdle = () => sim.net.peekNextTime() === undefined && sim.inFlight().length === 0;
+}
+
 export function togglePlay(): void {
   running.value = !running.value;
 }

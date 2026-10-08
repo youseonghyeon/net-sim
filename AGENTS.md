@@ -36,10 +36,11 @@ Packet Tracer 식으로 직접 구성하는 네트워크 학습 시뮬레이터.
 ```
 npm run typecheck   # tsc
 npm test            # vitest (코어)
-npm run ui-check    # Playwright 스모크 (개발 서버 자동 기동, .shots/ 에 스크린샷. 헬퍼 goTab/loadEx/clearUi — 인스펙터 탭·파일 메뉴를 거친다)
+npm run ui-check    # Playwright 스모크 — 구간 전부를 워커 4개가 나눠 동시에 (개발 서버 자동 기동, .shots/ 에 스크린샷. 헬퍼 goTab/loadEx/clearUi/waitIdle)
+npm run ui-check -- mwan lb   # 그 구간만 (이름 = 같거나 "이름-" 으로 시작). --list 목록, --workers=1 차례로(로그 바로 보임)
 npm run perf-check  # 프로덕션 빌드로 예제 전부 + 단말 52대 스트레스를 CPU 4배 감속에서 6초씩: fps·p95·긴 프레임·점유율·라벨 깜빡임. --headed, --throttle N, --only=id, --log(로그 연 채로)
 ```
-코어 변경은 `npm test`, UI 변경은 `npm run ui-check` 까지 통과해야 완료. 캔버스 매 프레임 코드(PacketLayer·ActiveCables·sim tick)를 건드리면 `npm run perf-check` 도 (개발 서버는 preact 디버그 훅 때문에 느려 측정에 쓰지 않는다).
+코어 변경은 `npm test`, UI 변경은 `npm run ui-check` 까지 통과해야 완료. 개발 중엔 고친 기능의 구간만 돌리고(`npm run ui-check -- <구간>`), 완료 전에 전체를 한 번. ui-check 구간 규칙: 새 기능은 `section("이름", async () => { … })` 하나로 추가하고 `loadEx`/`clearUi` 로 시작한다(구간마다 빈 페이지에서 시작, 다른 구간의 상태에 기대지 않음 — 워커가 아무 순서로 나눠 가짐). 고정 대기(`waitForTimeout`)를 새로 늘리지 않는다 — 시뮬레이션이 조용해지길 기다릴 땐 `waitIdle()`, 화면 결과는 `waitForFunction`. 끝에 찍히는 "느린 구간" 이 30초를 넘으면 그 구간의 대기부터 줄인다. 캔버스 매 프레임 코드(PacketLayer·ActiveCables·sim tick)를 건드리면 `npm run perf-check` 도 (개발 서버는 preact 디버그 훅 때문에 느려 측정에 쓰지 않는다).
 
 ## 배포 (porta-hub 와 같은 방식)
 - `Dockerfile`: node:24-alpine 에서 `vite build` → `nginxinc/nginx-unprivileged`(8080, uid 101) 가 `dist/` 서빙. 설정은 `deploy/nginx.conf`(`/healthz`, `/assets/` 영구 캐시, 나머지는 `index.html` 폴백).

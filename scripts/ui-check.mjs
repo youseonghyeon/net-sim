@@ -1,27 +1,34 @@
-// 브라우저 스모크 테스트: 편집 → DHCP 자동 할당 → DHCP 끄고 실패 → 수동 설정 → ping 성공 흐름을 실제 브라우저에서 확인한다.
-// 실행: npm run ui-check   (스크린샷은 .shots/ 에 저장)
+// 브라우저 스모크 테스트: 예제를 실제 브라우저에서 열어 편집·진단·설정 화면이 동작하는지 확인한다 (스크린샷은 .shots/).
+// 실행:
+//   npm run ui-check                 구간 전부를 워커 4개가 나눠 동시에 돌린다 (완료 전 필수)
+//   npm run ui-check -- mwan lb      이름이 같거나 "이름-" 으로 시작하는 구간만 (개발 중엔 고친 기능의 구간만)
+//   npm run ui-check -- --list       구간 이름 목록
+//   --workers=N                      동시 워커 수. 1 이면 한 프로세스에서 차례로 돌며 로그가 바로 보인다
+// 구간 규칙: 구간마다 빈 페이지(localStorage 비움, 4배속)에서 시작하고 다른 구간의 상태에 기대지 않는다 — 워커가 아무 순서로 나눠 가진다.
+// 고정 대기(waitForTimeout)를 늘리지 않는다: 시뮬레이션이 조용해질 때까지는 waitIdle(), 화면에 나올 결과는 waitForFunction 으로 기다린다.
+import { fork } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { format } from "node:util";
 import { chromium } from "playwright";
 import { createServer } from "vite";
 
 const OUT = ".shots";
 mkdirSync(OUT, { recursive: true });
-const server = await createServer({ server: { port: 5199 }, logLevel: "silent" });
-await server.listen();
-const URL = server.resolvedUrls.local[0];
-
-const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+/** 지금 워커의 페이지 (구간 함수와 도우미가 쓴다) */
+let page;
+/** 지금 구간에서 난 페이지 오류·콘솔 오류 */
 const errors = [];
-page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
-page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
-process.on("unhandledRejection", async (e) => {
-  console.log("CRASH:", e?.message?.split("\n")[0]);
-  console.log("toast:", await page.locator(".toast").allInnerTexts().catch(() => []));
-  console.log("ERRORS:", errors.length ? errors : "none");
-  await page.screenshot({ path: `${OUT}/crash.png` }).catch(() => {});
-  process.exit(1);
-});
+const SECTIONS = [];
+/** 구간 등록. 이름은 명령줄에서 고르는 영문 소문자·숫자·- */
+function section(name, fn) {
+  SECTIONS.push({ name, fn });
+}
+/** 시뮬레이션이 조용해질 때까지 (대기 이벤트도, 링크 위 패킷도 없음 — 주기 동작만 남으면 조용한 것). timeout 이면 그냥 진행 */
+async function waitIdle(timeout = 10000) {
+  const quiet = await page.waitForFunction(() => window.__netsimIdle?.() ?? false, null, { timeout, polling: 100 }).then(() => true, () => false);
+  if (!quiet) console.log(`(waitIdle: ${timeout / 1000}초 안에 조용해지지 않아 그냥 진행 — 계속 도는 일반 타이머가 있는지 확인)`);
+}
 
 // 이름 칸(text.name)이 정확히 그 이름인 타일 — 구성 검사 배지의 툴팁(<title>)에 다른 장치 이름이 들어가도 섞이지 않게
 const device = (name) => page.locator("[data-device]").filter({ has: page.locator("text.name", { hasText: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }) });
@@ -46,8 +53,8 @@ async function clickDevice(name) {
 /** 상단 파일 메뉴에서 예제 불러오기 / 비우기 */
 /**
  * 예제 불러오기. 예제 설명은 닫을 때까지 남아 아래쪽 장치를 가리므로 기본으로 닫는다.
- * 그리고 2.6초 동안 주소 받기(DHCP·SLAAC)가 끝나게 둔다 — 예전엔 예제 설명 토스트가 2.6초 뒤 사라지길 기다리며
- * 이 시간이 흘렀고, 뒤 단계(LB·프록시·IPv6 등)가 그것에 기대고 있다
+ * 그리고 시뮬레이션이 조용해질 때까지(주소 받기 — DHCP·SLAAC — 가 끝날 때까지) 기다린다. 뒤 단계(LB·프록시·IPv6 등)가 그것에 기대고 있다
+ * (예전엔 고정 2.6초)
  */
 async function loadEx(id, { keepNote = false } = {}) {
   await page.click(".menu-btn");
@@ -55,16 +62,25 @@ async function loadEx(id, { keepNote = false } = {}) {
   if (keepNote) return;
   // 메뉴 클릭 뒤 설명이 그려질 때까지 기다렸다 닫는다 (바로 세면 아직 없어 닫기를 건너뛸 수 있다)
   if (await page.locator(".example-note").waitFor({ timeout: 2000 }).then(() => true, () => false)) await page.click(".note-close");
-  await page.waitForTimeout(2600);
+  await waitIdle();
 }
 async function clearUi() {
   await page.click(".menu-btn");
-  await page.click(".menu-item.danger");
+  const item = page.locator(".menu-item.danger");
+  if (await item.isEnabled()) await item.click();
+  else await page.keyboard.press("Escape"); // 이미 비어 있다 (빈 페이지에서 시작한 구간) — 메뉴만 닫는다
 }
 async function addrOf(name) {
   const el = device(name).locator(".addr, .status");
   return (await el.count()) ? (await el.first().textContent()) : "";
 }
+/** 요소가 1초 안에 나타나면 그 글자, 아니면 "" (없는 요소에 textContent 를 부르면 30초를 다 기다린다) */
+async function textOf(selector, timeout = 1000) {
+  const el = page.locator(selector).first();
+  return (await el.waitFor({ timeout }).then(() => true, () => false)) ? ((await el.textContent()) ?? "") : "";
+}
+/** 진단 탭 TCP 연결 기록 줄 (최신이 맨 위) */
+const tcpRows = () => page.locator(".inspector .tcp-log li");
 async function waitAddr(name, pattern, timeout = 30000) {
   const start = Date.now();
   for (;;) {
@@ -75,382 +91,385 @@ async function waitAddr(name, pattern, timeout = 30000) {
   }
 }
 
-await page.goto(URL);
-await page.waitForLoadState("networkidle");
-await page.evaluate(() => localStorage.clear());
-await page.reload();
-await page.waitForLoadState("networkidle");
-await page.evaluate(() => document.fonts.ready);
-
 // 1) 예제 로드 → DHCP 로 주소를 받는 과정 (4배속)
-await page.selectOption(".transport .speed", "4");
-console.log("start cards:", await page.locator(".start-card").count());
-await page.screenshot({ path: `${OUT}/00-start.png` });
-await page.locator(".start-card", { hasText: "집 공유기" }).click();
-await page.waitForTimeout(500);
-await page.screenshot({ path: `${OUT}/10-dhcp-in-progress.png` });
-console.log("packets visible during DHCP:", await page.locator(".packet").count());
-for (const n of ["pc-1", "laptop-1", "srv-1"]) console.log(n, "→", await waitAddr(n, /^192\.168\.0\.\d+\/24$/));
-// 1w) 스마트폰이 공유기 Wi-Fi 로 주소를 받는다 → 멀리 끌면 끊긴다
-console.log("phone-1 (Wi-Fi) →", await waitAddr("phone-1", /^192\.168\.0\.\d+\/24$/));
-console.log("wifi links:", await page.locator(".wifi-link").count(), "| coverage:", await page.locator(".wifi-range").count());
-{
-  const ph = await device("phone-1").locator(".tile").boundingBox();
-  await page.mouse.move(ph.x + ph.width / 2, ph.y + ph.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(ph.x + ph.width / 2, ph.y + ph.height / 2 + 420, { steps: 12 });
-  await page.mouse.up();
-  await page.waitForTimeout(300);
-  console.log("phone-1 far →", await addrOf("phone-1"), "| links:", await page.locator(".wifi-link").count());
-  const ph2 = await device("phone-1").locator(".tile").boundingBox();
-  await page.mouse.move(ph2.x + ph2.width / 2, ph2.y + ph2.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(ph.x + ph.width / 2, ph.y + ph.height / 2, { steps: 12 });
-  await page.mouse.up();
-  console.log("phone-1 back →", await waitAddr("phone-1", /^192\.168\.0\.\d+\/24$/));
-}
-await page.screenshot({ path: `${OUT}/19-wifi.png` });
+section("basic", async () => {
+  await page.selectOption(".transport .speed", "4");
+  console.log("start cards:", await page.locator(".start-card").count());
+  await page.screenshot({ path: `${OUT}/00-start.png` });
+  await page.locator(".start-card", { hasText: "집 공유기" }).click();
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: `${OUT}/10-dhcp-in-progress.png` });
+  console.log("packets visible during DHCP:", await page.locator(".packet").count());
+  for (const n of ["pc-1", "laptop-1", "srv-1"]) console.log(n, "→", await waitAddr(n, /^192\.168\.0\.\d+\/24$/));
+  // 1w) 스마트폰이 공유기 Wi-Fi 로 주소를 받는다 → 멀리 끌면 끊긴다
+  console.log("phone-1 (Wi-Fi) →", await waitAddr("phone-1", /^192\.168\.0\.\d+\/24$/));
+  console.log("wifi links:", await page.locator(".wifi-link").count(), "| coverage:", await page.locator(".wifi-range").count());
+  {
+    const ph = await device("phone-1").locator(".tile").boundingBox();
+    await page.mouse.move(ph.x + ph.width / 2, ph.y + ph.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(ph.x + ph.width / 2, ph.y + ph.height / 2 + 420, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    console.log("phone-1 far →", await addrOf("phone-1"), "| links:", await page.locator(".wifi-link").count());
+    const ph2 = await device("phone-1").locator(".tile").boundingBox();
+    await page.mouse.move(ph2.x + ph2.width / 2, ph2.y + ph2.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(ph.x + ph.width / 2, ph.y + ph.height / 2, { steps: 12 });
+    await page.mouse.up();
+    console.log("phone-1 back →", await waitAddr("phone-1", /^192\.168\.0\.\d+\/24$/));
+  }
+  await page.screenshot({ path: `${OUT}/19-wifi.png` });
 
-// 1t) traceroute: pc-1 → 8.8.8.8 은 공유기 → ISP → 목적지 3홉
-await clickDevice("pc-1");
-await page.fill(".ping-row .input", "8.8.8.8");
-await page.locator(".ping-row .btn", { hasText: "경로" }).click();
-await page.waitForFunction(() => /홉|실패/.test(document.querySelector(".trace-head")?.textContent ?? ""), null, { timeout: 40000 });
-console.log("traceroute 8.8.8.8:", (await page.locator(".trace-head").innerText()).replace("\n", " "), "|", (await page.locator(".trace-hops li").allInnerTexts()).map((x) => x.replace(/\s+/g, " ").trim()).join(" → "));
+  // 1t) traceroute: pc-1 → 8.8.8.8 은 공유기 → ISP → 목적지 3홉
+  await clickDevice("pc-1");
+  await page.fill(".ping-row .input", "8.8.8.8");
+  await page.locator(".ping-row .btn", { hasText: "경로" }).click();
+  await page.waitForFunction(() => /홉|실패/.test(document.querySelector(".trace-head")?.textContent ?? ""), null, { timeout: 40000 });
+  console.log("traceroute 8.8.8.8:", (await page.locator(".trace-head").innerText()).replace("\n", " "), "|", (await page.locator(".trace-hops li").allInnerTexts()).map((x) => x.replace(/\s+/g, " ").trim()).join(" → "));
 
-// 1a) 이름으로 ping: pc-1 → google.com (라우터 DNS 포워더 → 8.8.8.8)
-await clickDevice("pc-1");
-await page.fill(".ping-row .input", "google.com");
-await page.click(".ping-row .btn");
-await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 40000 });
-console.log("ping google.com:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
-// 1a0) 반복 ping (ping -c 4): 1초 간격으로 보내고 끝나면 통계 줄 — 손실 0%
-await page.selectOption(".ping-row select.count", "4");
-await page.fill(".ping-row .input", "8.8.8.8");
-await page.keyboard.press("Escape");
-await page.click(".ping-row .btn");
-await page.waitForFunction(() => /손실/.test(document.querySelector(".ping-log li.ping-stats")?.textContent ?? ""), null, { timeout: 60000 });
-const pingStats = (await page.locator(".ping-log li.ping-stats").innerText()).replace(/\s+/g, " ");
-console.log("ping -c 4 8.8.8.8:", pingStats);
-if (!/4\/4 응답 · 손실 0%/.test(pingStats)) throw new Error(`반복 ping 통계가 예상과 다름: ${pingStats}\n해결: Host.ping 의 반복 실행(continueRun·nextPing·checkRun)과 PingRunSummary 확인\n참조: src/core/nodes/host.ts, tests/ping-repeat.test.ts`);
-await page.locator(".ping-log").first().scrollIntoViewIfNeeded();
-await page.screenshot({ path: `${OUT}/25-ping-count.png` });
-await page.selectOption(".ping-row select.count", "1");
-// 1a1) DNS 조회(nslookup): 설정된 DNS(공유기 포워더)에 A, 8.8.8.8 에 직접 AAAA — 캐시를 거치지 않고 매번 묻는다
-await page.fill(".dns-row .input", "google.com");
-await page.locator(".dns-row .btn", { hasText: "조회" }).click();
-await page.waitForFunction(() => /\d+\.\d+\.\d+\.\d+$|실패/.test(document.querySelector(".dns-log li")?.textContent?.trim() ?? ""), null, { timeout: 40000 });
-console.log("nslookup google.com:", (await page.locator(".dns-log li").first().innerText()).replace(/\s+/g, " "));
-await page.selectOption(".dns-row select", "AAAA");
-await page.fill(".dns-server-row .input", "8.8.8.8");
-await page.fill(".dns-row .input", "example.com");
-await page.press(".dns-row .input", "Enter");
-await page.waitForFunction(() => (document.querySelectorAll(".dns-log li").length ?? 0) >= 2 && /example\.com/.test(document.querySelector(".dns-log li")?.textContent ?? "") && !/기다리는 중/.test(document.querySelector(".dns-log li")?.textContent ?? ""), null, { timeout: 40000 });
-const nsAaaa = (await page.locator(".dns-log li").first().innerText()).replace(/\s+/g, " ");
-console.log("nslookup -type=AAAA example.com 8.8.8.8:", nsAaaa);
-if (!/서버 8\.8\.8\.8/.test(nsAaaa) || !/2606:2800/.test(nsAaaa)) throw new Error(`DNS 조회 결과가 예상과 다름: ${nsAaaa}\n해결: Host.lookup·DnsResolver.lookup 의 서버 지정·AAAA 경로 확인\n참조: src/core/nodes/host.ts lookup, tests/nslookup.test.ts`);
-await page.locator(".dns-log").scrollIntoViewIfNeeded();
-await page.screenshot({ path: `${OUT}/24-nslookup.png` });
-await page.fill(".dns-server-row .input", "");
-await page.selectOption(".dns-row select", "A");
-// 1a2) 바깥에서 공인 :80 접속 → 포트 포워딩으로 srv-1 에 닿는다
-await clickDevice("internet-1");
-await page.click("button:has-text('접속')");
-await page.waitForFunction(() => /종료됨|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 40000 });
-console.log("inbound via port forward:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
+  // 1a) 이름으로 ping: pc-1 → google.com (라우터 DNS 포워더 → 8.8.8.8)
+  await clickDevice("pc-1");
+  await page.fill(".ping-row .input", "google.com");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 40000 });
+  console.log("ping google.com:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+  // 1a0) 반복 ping (ping -c 4): 1초 간격으로 보내고 끝나면 통계 줄 — 손실 0%
+  await page.selectOption(".ping-row select.count", "4");
+  await page.fill(".ping-row .input", "8.8.8.8");
+  await page.keyboard.press("Escape");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /손실/.test(document.querySelector(".ping-log li.ping-stats")?.textContent ?? ""), null, { timeout: 60000 });
+  const pingStats = (await page.locator(".ping-log li.ping-stats").innerText()).replace(/\s+/g, " ");
+  console.log("ping -c 4 8.8.8.8:", pingStats);
+  if (!/4\/4 응답 · 손실 0%/.test(pingStats)) throw new Error(`반복 ping 통계가 예상과 다름: ${pingStats}\n해결: Host.ping 의 반복 실행(continueRun·nextPing·checkRun)과 PingRunSummary 확인\n참조: src/core/nodes/host.ts, tests/ping-repeat.test.ts`);
+  await page.locator(".ping-log").first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/25-ping-count.png` });
+  await page.selectOption(".ping-row select.count", "1");
+  // 1a1) DNS 조회(nslookup): 설정된 DNS(공유기 포워더)에 A, 8.8.8.8 에 직접 AAAA — 캐시를 거치지 않고 매번 묻는다
+  await page.fill(".dns-row .input", "google.com");
+  await page.locator(".dns-row .btn", { hasText: "조회" }).click();
+  await page.waitForFunction(() => /\d+\.\d+\.\d+\.\d+$|실패/.test(document.querySelector(".dns-log li")?.textContent?.trim() ?? ""), null, { timeout: 40000 });
+  console.log("nslookup google.com:", (await page.locator(".dns-log li").first().innerText()).replace(/\s+/g, " "));
+  await page.selectOption(".dns-row select", "AAAA");
+  await page.fill(".dns-server-row .input", "8.8.8.8");
+  await page.fill(".dns-row .input", "example.com");
+  await page.press(".dns-row .input", "Enter");
+  await page.waitForFunction(() => (document.querySelectorAll(".dns-log li").length ?? 0) >= 2 && /example\.com/.test(document.querySelector(".dns-log li")?.textContent ?? "") && !/기다리는 중/.test(document.querySelector(".dns-log li")?.textContent ?? ""), null, { timeout: 40000 });
+  const nsAaaa = (await page.locator(".dns-log li").first().innerText()).replace(/\s+/g, " ");
+  console.log("nslookup -type=AAAA example.com 8.8.8.8:", nsAaaa);
+  if (!/서버 8\.8\.8\.8/.test(nsAaaa) || !/2606:2800/.test(nsAaaa)) throw new Error(`DNS 조회 결과가 예상과 다름: ${nsAaaa}\n해결: Host.lookup·DnsResolver.lookup 의 서버 지정·AAAA 경로 확인\n참조: src/core/nodes/host.ts lookup, tests/nslookup.test.ts`);
+  await page.locator(".dns-log").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${OUT}/24-nslookup.png` });
+  await page.fill(".dns-server-row .input", "");
+  await page.selectOption(".dns-row select", "A");
+  // 1a2) 바깥에서 공인 :80 접속 → 포트 포워딩으로 srv-1 에 닿는다
+  await clickDevice("internet-1");
+  await page.click("button:has-text('접속')");
+  await page.waitForFunction(() => /종료됨|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 40000 });
+  console.log("inbound via port forward:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
 
-// 1a3) 방화벽: 라우터에서 "나가는 ICMP 차단" 규칙 → pc-1 의 외부 ping 이 막힌다
-await clickDevice("rt-1");
-await goGroup("보안");
-const fwSection = page.locator(".inspector .section", { has: page.locator("h3", { hasText: /^방화벽$/ }) });
-await fwSection.locator(".toggle").first().click();
-await fwSection.locator("button:has-text('규칙 추가')").click();
-await fwSection.locator(".fw-line select").nth(1).selectOption("out");
-await fwSection.locator(".fw-line select").nth(2).selectOption("icmp");
-await page.waitForTimeout(100);
-await clickDevice("pc-1");
-await page.fill(".ping-row .input", "8.8.8.8");
-await page.click(".ping-row .btn");
-await page.waitForFunction(() => /8\.8\.8\.8/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
-console.log("ping 8.8.8.8 with firewall:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
-console.log("fw badge:", (await page.locator(".badge text").allTextContents()).includes("방화벽"));
-await clickDevice("rt-1");
-await goGroup("보안");
-await page.waitForTimeout(100);
-await page.screenshot({ path: `${OUT}/18-firewall.png` });
-await fwSection.locator(".toggle").first().click(); // 다시 끔 (첫 토글 = 켜짐/꺼짐)
-await page.waitForTimeout(100);
-async function wanOf() {
-  return (await device("rt-1").locator("text.uplink").textContent()) ?? "";
-}
-for (let i = 0; i < 100 && !/WAN 203\.0\.113\./.test(await wanOf()); i++) await page.waitForTimeout(100);
-console.log("rt-1 wan →", await wanOf());
-await page.screenshot({ path: `${OUT}/11-dhcp-done.png` });
-
-// 1b) 외부 ping (NAT)
-await clickDevice("pc-1");
-await page.fill(".ping-row .input", "8.8.8.8");
-await page.click(".ping-row .btn");
-await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
-console.log("ping 8.8.8.8 from pc-1:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
-const natRows = await page.locator(".inspector").locator("text=NAT 테이블").count();
-await clickDevice("rt-1");
-await page.waitForTimeout(100);
-await page.screenshot({ path: `${OUT}/11b-router-nat.png` });
-
-// 1c) 장치 삭제 → DHCP Release 로 라우터 임대가 줄어든다
-await clickDevice("laptop-1");
-await goTab("개요");
-await page.click("button:has-text('장치 삭제')");
-await page.waitForTimeout(600);
-await clickDevice("rt-1");
-await goTab("표");
-await page.waitForTimeout(100);
-const leaseRows = await page.locator(".inspector .section", { hasText: "DHCP 임대" }).locator("tbody tr").allInnerTexts();
-console.log("router leases after deleting laptop-1:", leaseRows.length, leaseRows.some((r) => /비어/.test(r)) ? "(empty)" : "");
-
-// 2) 라우터 DHCP 끄기 → 새 PC 연결 → 실패
-await clickDevice("rt-1");
-await goTab("설정");
-await goGroup("네트워크");
-const dhcpToggle = () => page.locator(".inspector .section", { has: page.locator("h3", { hasText: /^DHCP 서비스$/ }) }).locator(".toggle");
-await dhcpToggle().click();
-await page.click(".palette .tool.item:has-text('PC')");
-await page.keyboard.press("c");
-const a = await device("pc-2").locator(".tile").boundingBox();
-const b = await device("sw-1").locator(".tile").boundingBox();
-await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
-await page.mouse.down();
-await page.mouse.move(a.x + 40, a.y - 40, { steps: 5 });
-await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 10 });
-await page.mouse.up();
-await page.keyboard.press("v");
-console.log("pc-2 →", await waitAddr("pc-2", /DHCP 실패/));
-await page.screenshot({ path: `${OUT}/12-dhcp-failed.png` });
-
-// 3) IP 없이 ping → 실패, 수동 설정 → ping 성공
-await clickDevice("pc-2");
-await page.fill(".ping-row .input", "192.168.0.1");
-await page.click(".ping-row .btn");
-await page.waitForTimeout(200);
-console.log("ping without ip:", await page.locator(".ping-log li").first().innerText());
-await goTab("설정");
-await page.click(".segmented button:has-text('수동')");
-await page.fill(".inspector input[placeholder='192.168.0.10']", "192.168.0.50");
-await page.fill(".inspector input[placeholder='192.168.0.1']", "192.168.0.1");
-console.log("pc-2 →", await waitAddr("pc-2", /^192\.168\.0\.50\/24$/));
-await goTab("진단");
-await page.click(".ping-row .btn");
-await page.waitForFunction(() => /응답 \d+ms/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 20000 });
-console.log("ping after static:", await page.locator(".ping-log li").first().innerText());
-
-// 3b) TCP: pc-1 → srv-1 (웹 서버) 연결, 완료까지 대기
-await clickDevice("pc-1");
-const srvIp = await addrOf("srv-1");
-await page.fill(".tcp-row .input:not(.port)", srvIp.split("/")[0]);
-await page.click(".tcp-row .btn");
-await page.waitForTimeout(600);
-await page.screenshot({ path: `${OUT}/12b-tcp-in-flight.png` });
-const tcpRows = () => page.locator(".inspector .tcp-log li");
-await page.waitForFunction(() => /종료됨/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 40000 });
-console.log("tcp to srv-1:", await tcpRows().first().innerText());
-
-// 3c) 케이블 손실 실험: srv-1 케이블 다음 패킷 손실 → 재전송으로 복구
-const srvCable = page.locator("[data-cable]").nth(4);
-await srvCable.locator(".hit").click({ force: true });
-await page.waitForTimeout(100);
-await page.click("text=다음 패킷 1개 손실시키기");
-await clickDevice("pc-1");
-await page.click(".tcp-row .btn");
-await page.waitForFunction(() => { const rows = document.querySelectorAll(".inspector .tcp-log li"); return rows.length >= 2 && /종료됨/.test(rows[0]?.textContent ?? ""); }, null, { timeout: 60000 });
-console.log("tcp after loss:", await tcpRows().first().innerText());
-console.log("retransmit logged:", await page.evaluate(() => document.body.textContent.includes("재전송")));
-
-// 3d) NAT 를 거쳐 example.com:80
-await page.fill(".tcp-row .input:not(.port)", "93.184.216.34");
-await page.click(".tcp-row .btn");
-await page.waitForFunction(() => { const t = document.querySelector(".inspector .tcp-log li")?.textContent ?? ""; return /93\.184\.216\.34/.test(t) && /종료됨/.test(t); }, null, { timeout: 60000 });
-console.log("tcp to example.com:", await tcpRows().first().innerText());
-
-// 4) 로그 열고 스크린샷
-await page.click(".log-toggle");
-await page.waitForTimeout(200);
-console.log("log rows:", await page.locator(".log-list .row").count());
-await page.screenshot({ path: `${OUT}/13-static-ping-log.png` });
-
-// 5) 다크
-await page.click('.topbar-right .icon-btn[title*="테마"]');
-await page.waitForTimeout(100);
-await page.screenshot({ path: `${OUT}/14-dark.png` });
-
-// 6) 케이블 제거 → 주소 해제 (DHCP 호스트)
-await clickDevice("pc-1");
-await page.waitForTimeout(100);
-const cable = page.locator("[data-cable]").first();
-await cable.locator(".hit").click({ force: true });
-await page.keyboard.press("Delete");
-await page.waitForTimeout(200);
-console.log("cables after delete:", await page.locator("[data-cable]").count());
-
-// 7) 라우터 LAN 서브넷 변경 → DHCP 범위가 따라가고, 다시 요청하면 새 서브넷 주소를 받는다
-{
-  // 레이아웃 회귀 확인: 로그가 열려 있어도 캔버스가 푸터를 덮지 않아야 한다
-  const body = await page.locator(".body").boundingBox();
-  const canvas = await page.locator("#canvas-svg").boundingBox();
-  console.log("layout ok:", Math.abs(body.height - canvas.height) < 1 ? "yes" : `NO (body ${Math.round(body.height)} vs canvas ${Math.round(canvas.height)})`);
-}
-await page.click(".log-toggle"); // 로그를 닫아 캔버스 아래쪽 장치가 보이게
-await page.waitForTimeout(100);
-await clickDevice("rt-1");
-await goTab("설정");
-await goGroup("네트워크");
-await dhcpToggle().click(); // DHCP 다시 켜기
-const lanInput = page.locator(".inspector input.mono").first();
-await lanInput.fill("192.168.127.1");
-await page.waitForTimeout(100);
-console.log("dhcp range after LAN change:", await page.locator(".inspector input.mono").evaluateAll((els) => els.map((e) => e.value).slice(2, 4)));
-await clickDevice("pc-1");
-await page.click("button:has-text('DHCP 임대 갱신')");
-console.log("pc-1 after subnet change →", await waitAddr("pc-1", /^192\.168\.127\.\d+\/24$/));
-
-// 8) 기능 단위 예제: NAT 박스 + 게이트웨이 + DHCP 서버 호스트
-await loadEx("parts");
-await page.waitForTimeout(300);
-console.log("parts lint badges:", await page.locator(".lint-badge").count());
-console.log("parts example devices:", await page.locator("[data-device]").count());
-console.log("pc-1 (DHCP from dhcp-srv) →", await waitAddr("pc-1", /^192\.168\.1\.\d+\/24$/));
-console.log("laptop-1 (DHCP via gateway relay) →", await waitAddr("laptop-1", /^192\.168\.2\.\d+\/24$/));
-console.log("badges:", await page.locator(".badge text").allTextContents());
-const natLine = () => device("nat-1").locator("text.uplink").textContent();
-for (let i = 0; i < 100 && !/outside 203\.0\.113\./.test((await natLine()) ?? ""); i++) await page.waitForTimeout(100);
-console.log("nat-1 outside →", await natLine());
-await clickDevice("pc-1");
-await page.fill(".ping-row .input", "192.168.2.100");
-await page.click(".ping-row .btn");
-await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
-console.log("ping across gateway:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
-await page.fill(".ping-row .input", "8.8.8.8");
-await page.click(".ping-row .btn");
-await page.waitForFunction(() => /8\.8\.8\.8/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
-console.log("ping via NAT box:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
-await page.fill(".ping-row .input", "web.home");
-await page.click(".ping-row .btn");
-await page.waitForFunction(() => /web\.home/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
-console.log("ping web.home (LAN DNS record):", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
-await clickDevice("nat-1");
-await page.waitForTimeout(100);
-await page.screenshot({ path: `${OUT}/15-parts-nat.png` });
-await clickDevice("gw-1");
-await page.waitForTimeout(100);
-await page.screenshot({ path: `${OUT}/16-parts-gateway.png` });
-
-// 9) VLAN 예제: 같은 VLAN 은 직접, 다른 VLAN 은 게이트웨이 서브 인터페이스를 거쳐 통신
-await loadEx("vlan");
-await page.waitForTimeout(400);
-console.log("vlan example devices:", await page.locator("[data-device]").count(), "| trunk ports:", await page.locator(".port.trunk").count(), "| VLAN badge:", (await page.locator(".badge text").allTextContents()).includes("VLAN"));
-await clickDevice("pc-1");
-await page.fill(".ping-row .input", "192.168.10.11");
-await page.click(".ping-row .btn");
-await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
-console.log("ping same VLAN:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
-await page.fill(".ping-row .input", "192.168.20.20");
-await page.click(".ping-row .btn");
-await page.waitForFunction(() => /192\.168\.20\.20/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
-console.log("ping across VLAN via gateway:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
-await page.fill(".ping-row .input", "google.com");
-await page.click(".ping-row .btn");
-await page.waitForFunction(() => /google/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 40000 });
-console.log("ping internet from VLAN 10:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
-await clickDevice("sw-1");
-await page.waitForTimeout(100);
-await page.screenshot({ path: `${OUT}/20-vlan.png` });
-
-// 10) 편집 도구: 영역 선택 → 함께 이동 → 복제 → 일괄 설정 → 되돌리기 → JSON 저장/불러오기
-await loadEx("gateways", { keepNote: true });
-await page.waitForTimeout(400);
-console.log("gateways example devices:", await page.locator("[data-device]").count(), "| example note:", (await page.locator(".example-note").textContent().catch(() => "")).slice(0, 30));
-// 예제 설명은 예전 토스트(2.6초)와 달리 닫기 전까지 남는다 → 닫기 버튼으로 사라짐
-await page.waitForTimeout(3200);
-if ((await page.locator(".example-note").count()) !== 1) throw new Error("예제 설명이 3초 뒤 사라짐\n해결: App.tsx 의 exampleNote 가 타이머로 지워지지 않는지 확인\n참조: src/app/App.tsx exampleNote");
-await page.screenshot({ path: `${OUT}/23-example-note.png` });
-await page.click(".note-close");
-console.log("example note after close:", await page.locator(".example-note").count());
-await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // 안내 토스트가 아래쪽 장치를 가린다
-{
-  // pc-1·pc-2 를 영역으로 잡는다 (빈 곳에서 드래그)
-  const a = await device("pc-1").locator(".tile").boundingBox();
-  const b = await device("pc-2").locator(".tile").boundingBox();
-  await page.mouse.move(a.x - 30, a.y - 30);
-  await page.mouse.down();
-  await page.mouse.move(b.x + b.width + 30, b.y + b.height + 30, { steps: 8 });
-  await page.mouse.up();
+  // 1a3) 방화벽: 라우터에서 "나가는 ICMP 차단" 규칙 → pc-1 의 외부 ping 이 막힌다
+  await clickDevice("rt-1");
+  await goGroup("보안");
+  const fwSection = page.locator(".inspector .section", { has: page.locator("h3", { hasText: /^방화벽$/ }) });
+  await fwSection.locator(".toggle").first().click();
+  await fwSection.locator("button:has-text('규칙 추가')").click();
+  await fwSection.locator(".fw-line select").nth(1).selectOption("out");
+  await fwSection.locator(".fw-line select").nth(2).selectOption("icmp");
   await page.waitForTimeout(100);
-  console.log("marquee selected:", await page.locator(".device.selected").count(), "| multi panel:", (await page.locator(".inspector h2").textContent()));
-  await page.screenshot({ path: `${OUT}/21-multi-select.png` });
-  // 함께 이동: 둘 다 같은 양만큼 내려간다
-  const a1 = await device("pc-1").locator(".tile").boundingBox();
-  await page.mouse.move(a1.x + a1.width / 2, a1.y + a1.height / 2);
+  await clickDevice("pc-1");
+  await page.fill(".ping-row .input", "8.8.8.8");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /8\.8\.8\.8/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("ping 8.8.8.8 with firewall:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+  console.log("fw badge:", (await page.locator(".badge text").allTextContents()).includes("방화벽"));
+  await clickDevice("rt-1");
+  await goGroup("보안");
+  await page.waitForTimeout(100);
+  await page.screenshot({ path: `${OUT}/18-firewall.png` });
+  await fwSection.locator(".toggle").first().click(); // 다시 끔 (첫 토글 = 켜짐/꺼짐)
+  await page.waitForTimeout(100);
+  async function wanOf() {
+    return (await device("rt-1").locator("text.uplink").textContent()) ?? "";
+  }
+  for (let i = 0; i < 100 && !/WAN 203\.0\.113\./.test(await wanOf()); i++) await page.waitForTimeout(100);
+  console.log("rt-1 wan →", await wanOf());
+  await page.screenshot({ path: `${OUT}/11-dhcp-done.png` });
+
+  // 1b) 외부 ping (NAT)
+  await clickDevice("pc-1");
+  await page.fill(".ping-row .input", "8.8.8.8");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("ping 8.8.8.8 from pc-1:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+  const natRows = await page.locator(".inspector").locator("text=NAT 테이블").count();
+  await clickDevice("rt-1");
+  await page.waitForTimeout(100);
+  await page.screenshot({ path: `${OUT}/11b-router-nat.png` });
+
+  // 1c) 장치 삭제 → DHCP Release 로 라우터 임대가 줄어든다
+  await clickDevice("laptop-1");
+  await goTab("개요");
+  await page.click("button:has-text('장치 삭제')");
+  await page.waitForTimeout(600);
+  await clickDevice("rt-1");
+  await goTab("표");
+  await page.waitForTimeout(100);
+  const leaseRows = await page.locator(".inspector .section", { hasText: "DHCP 임대" }).locator("tbody tr").allInnerTexts();
+  console.log("router leases after deleting laptop-1:", leaseRows.length, leaseRows.some((r) => /비어/.test(r)) ? "(empty)" : "");
+
+  // 2) 라우터 DHCP 끄기 → 새 PC 연결 → 실패
+  await clickDevice("rt-1");
+  await goTab("설정");
+  await goGroup("네트워크");
+  const dhcpToggle = () => page.locator(".inspector .section", { has: page.locator("h3", { hasText: /^DHCP 서비스$/ }) }).locator(".toggle");
+  await dhcpToggle().click();
+  await page.click(".palette .tool.item:has-text('PC')");
+  await page.keyboard.press("c");
+  const a = await device("pc-2").locator(".tile").boundingBox();
+  const b = await device("sw-1").locator(".tile").boundingBox();
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
   await page.mouse.down();
-  await page.mouse.move(a1.x + a1.width / 2, a1.y + a1.height / 2 + 80, { steps: 6 });
+  await page.mouse.move(a.x + 40, a.y - 40, { steps: 5 });
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 10 });
   await page.mouse.up();
-  const a2 = await device("pc-1").locator(".tile").boundingBox();
-  const b2 = await device("pc-2").locator(".tile").boundingBox();
-  console.log("group move dy:", Math.round(a2.y - a1.y), Math.round(b2.y - b.y));
-  // 일괄 설정: 게이트웨이를 한 번에. 틀린 값이면 구성 검사 배지가 뜨고, 고치면 사라진다
-  const sec = page.locator(".inspector .section").filter({ has: page.locator("h3", { hasText: "공통 설정" }) });
-  console.log("lint badges before:", await page.locator(".lint-badge").count());
-  await sec.locator("input.mono").nth(1).fill("10.9.9.9");
+  await page.keyboard.press("v");
+  console.log("pc-2 →", await waitAddr("pc-2", /DHCP 실패/));
+  await page.screenshot({ path: `${OUT}/12-dhcp-failed.png` });
+
+  // 3) IP 없이 ping → 실패, 수동 설정 → ping 성공
+  await clickDevice("pc-2");
+  await page.fill(".ping-row .input", "192.168.0.1");
+  await page.click(".ping-row .btn");
+  await page.waitForTimeout(200);
+  console.log("ping without ip:", await page.locator(".ping-log li").first().innerText());
+  await goTab("설정");
+  await page.click(".segmented button:has-text('수동')");
+  await page.fill(".inspector input[placeholder='192.168.0.10']", "192.168.0.50");
+  await page.fill(".inspector input[placeholder='192.168.0.1']", "192.168.0.1");
+  console.log("pc-2 →", await waitAddr("pc-2", /^192\.168\.0\.50\/24$/));
+  await goTab("진단");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /응답 \d+ms/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 20000 });
+  console.log("ping after static:", await page.locator(".ping-log li").first().innerText());
+
+  // 3b) TCP: pc-1 → srv-1 (웹 서버) 연결, 완료까지 대기
+  await clickDevice("pc-1");
+  const srvIp = await addrOf("srv-1");
+  await page.fill(".tcp-row .input:not(.port)", srvIp.split("/")[0]);
+  await page.click(".tcp-row .btn");
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: `${OUT}/12b-tcp-in-flight.png` });
+  await page.waitForFunction(() => /종료됨/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 40000 });
+  console.log("tcp to srv-1:", await tcpRows().first().innerText());
+
+  // 3c) 케이블 손실 실험: srv-1 케이블 다음 패킷 손실 → 재전송으로 복구
+  const srvCable = page.locator("[data-cable]").nth(4);
+  await srvCable.locator(".hit").click({ force: true });
   await page.waitForTimeout(100);
-  console.log("lint badges after bad gateway:", await page.locator(".lint-badge").count(), "| error:", await page.locator(".lint-badge.error").count());
-  await sec.locator("input.mono").nth(1).fill("192.168.1.1");
+  await page.click("text=다음 패킷 1개 손실시키기");
+  await clickDevice("pc-1");
+  await page.click(".tcp-row .btn");
+  await page.waitForFunction(() => { const rows = document.querySelectorAll(".inspector .tcp-log li"); return rows.length >= 2 && /종료됨/.test(rows[0]?.textContent ?? ""); }, null, { timeout: 60000 });
+  console.log("tcp after loss:", await tcpRows().first().innerText());
+  console.log("retransmit logged:", await page.evaluate(() => document.body.textContent.includes("재전송")));
+
+  // 3d) NAT 를 거쳐 example.com:80
+  await page.fill(".tcp-row .input:not(.port)", "93.184.216.34");
+  await page.click(".tcp-row .btn");
+  await page.waitForFunction(() => { const t = document.querySelector(".inspector .tcp-log li")?.textContent ?? ""; return /93\.184\.216\.34/.test(t) && /종료됨/.test(t); }, null, { timeout: 60000 });
+  console.log("tcp to example.com:", await tcpRows().first().innerText());
+
+  // 4) 로그 열고 스크린샷
+  await page.click(".log-toggle");
+  await page.waitForTimeout(200);
+  console.log("log rows:", await page.locator(".log-list .row").count());
+  await page.screenshot({ path: `${OUT}/13-static-ping-log.png` });
+
+  // 5) 다크
+  await page.click('.topbar-right .icon-btn[title*="테마"]');
   await page.waitForTimeout(100);
-  console.log("lint badges after fix:", await page.locator(".lint-badge").count());
-  // 복제 → 장치 수 +2, 되돌리기 → 원래대로 (입력 칸에 포커스가 있으면 단축키가 무시되므로 먼저 뺀다)
-  await page.evaluate(() => document.activeElement?.blur());
-  const n0 = await page.locator("[data-device]").count();
-  await page.keyboard.press("Meta+d");
-  await page.waitForTimeout(150);
-  const n1 = await page.locator("[data-device]").count();
-  await page.keyboard.press("Meta+z");
-  await page.waitForTimeout(150);
-  const n2 = await page.locator("[data-device]").count();
-  console.log("duplicate:", n0, "→", n1, "| undo →", n2);
-  await page.keyboard.press("Meta+Shift+z");
-  await page.waitForTimeout(150);
-  console.log("redo →", await page.locator("[data-device]").count());
-  await page.screenshot({ path: `${OUT}/22-after-redo.png` });
-  // 되돌리기로 복제본이 사라지면 선택도 비므로, 클릭 + Shift+클릭으로 다시 두 대를 고른다
+  await page.screenshot({ path: `${OUT}/14-dark.png` });
+
+  // 6) 케이블 제거 → 주소 해제 (DHCP 호스트)
   await clickDevice("pc-1");
   await page.waitForTimeout(100);
-  console.log("click pc-1 selected:", await page.locator(".device.selected").count(), "|", await page.locator(".inspector h2").textContent(), "| toast:", await page.locator(".toast").textContent().catch(() => ""));
-  await page.keyboard.down("Shift");
-  await clickDevice("pc-2");
-  await page.keyboard.up("Shift");
+  const cable = page.locator("[data-cable]").first();
+  await cable.locator(".hit").click({ force: true });
+  await page.keyboard.press("Delete");
+  await page.waitForTimeout(200);
+  console.log("cables after delete:", await page.locator("[data-cable]").count());
+
+  // 7) 라우터 LAN 서브넷 변경 → DHCP 범위가 따라가고, 다시 요청하면 새 서브넷 주소를 받는다
+  {
+    // 레이아웃 회귀 확인: 로그가 열려 있어도 캔버스가 푸터를 덮지 않아야 한다
+    const body = await page.locator(".body").boundingBox();
+    const canvas = await page.locator("#canvas-svg").boundingBox();
+    console.log("layout ok:", Math.abs(body.height - canvas.height) < 1 ? "yes" : `NO (body ${Math.round(body.height)} vs canvas ${Math.round(canvas.height)})`);
+  }
+  await page.click(".log-toggle"); // 로그를 닫아 캔버스 아래쪽 장치가 보이게
   await page.waitForTimeout(100);
-  console.log("shift-click selected:", await page.locator(".device.selected").count());
-  // 일괄 ping
-  await page.fill(".inspector .ping-row .input", "8.8.8.8");
-  await page.click(".inspector .ping-row .btn");
-  await page.waitForFunction(() => { const rows = [...document.querySelectorAll(".ping-table tbody tr")]; return rows.length >= 2 && rows.every((r) => /응답|실패/.test(r.textContent)); }, null, { timeout: 30000 });
-  console.log("batch ping rows:", (await page.locator(".ping-table tbody tr").allInnerTexts()).map((r) => r.replace(/\t/g, " ")).join(" / "));
-}
-// JSON: 저장된 토폴로지를 파일로 쓰고, 비운 뒤 올려서 복원
-{
-  const json = await page.evaluate(() => localStorage.getItem("net-sim.topology.v1"));
-  const saved = JSON.parse(json);
-  writeFileSync(`${OUT}/export.json`, JSON.stringify({ app: "net-sim", version: 1, ...saved }, null, 2));
-  await clearUi();
-  await page.waitForTimeout(150);
-  console.log("after clear:", await page.locator("[data-device]").count());
-  await page.locator('input[type="file"]').setInputFiles(`${OUT}/export.json`);
-  await page.waitForTimeout(400);
-  console.log("after import:", await page.locator("[data-device]").count(), "| toast:", await page.locator(".toast").textContent().catch(() => ""));
-  await page.locator('input[type="file"]').setInputFiles({ name: "bad.json", mimeType: "application/json", buffer: Buffer.from("{oops") });
+  await clickDevice("rt-1");
+  await goTab("설정");
+  await goGroup("네트워크");
+  await dhcpToggle().click(); // DHCP 다시 켜기
+  const lanInput = page.locator(".inspector input.mono").first();
+  await lanInput.fill("192.168.127.1");
+  await page.waitForTimeout(100);
+  console.log("dhcp range after LAN change:", await page.locator(".inspector input.mono").evaluateAll((els) => els.map((e) => e.value).slice(2, 4)));
+  await clickDevice("pc-1");
+  await page.click("button:has-text('DHCP 임대 갱신')");
+  console.log("pc-1 after subnet change →", await waitAddr("pc-1", /^192\.168\.127\.\d+\/24$/));
+});
+
+// 8) 기능 단위 예제: NAT 박스 + 게이트웨이 + DHCP 서버 호스트
+section("parts", async () => {
+  await loadEx("parts");
   await page.waitForTimeout(300);
-  console.log("bad import toast:", await page.locator(".toast").textContent().catch(() => ""));
-}
+  console.log("parts lint badges:", await page.locator(".lint-badge").count());
+  console.log("parts example devices:", await page.locator("[data-device]").count());
+  console.log("pc-1 (DHCP from dhcp-srv) →", await waitAddr("pc-1", /^192\.168\.1\.\d+\/24$/));
+  console.log("laptop-1 (DHCP via gateway relay) →", await waitAddr("laptop-1", /^192\.168\.2\.\d+\/24$/));
+  console.log("badges:", await page.locator(".badge text").allTextContents());
+  const natLine = () => device("nat-1").locator("text.uplink").textContent();
+  for (let i = 0; i < 100 && !/outside 203\.0\.113\./.test((await natLine()) ?? ""); i++) await page.waitForTimeout(100);
+  console.log("nat-1 outside →", await natLine());
+  await clickDevice("pc-1");
+  await page.fill(".ping-row .input", "192.168.2.100");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("ping across gateway:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+  await page.fill(".ping-row .input", "8.8.8.8");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /8\.8\.8\.8/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("ping via NAT box:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+  await page.fill(".ping-row .input", "web.home");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /web\.home/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("ping web.home (LAN DNS record):", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+  await clickDevice("nat-1");
+  await page.waitForTimeout(100);
+  await page.screenshot({ path: `${OUT}/15-parts-nat.png` });
+  await clickDevice("gw-1");
+  await page.waitForTimeout(100);
+  await page.screenshot({ path: `${OUT}/16-parts-gateway.png` });
+});
+
+// 9) VLAN 예제: 같은 VLAN 은 직접, 다른 VLAN 은 게이트웨이 서브 인터페이스를 거쳐 통신
+section("vlan", async () => {
+  await loadEx("vlan");
+  await page.waitForTimeout(400);
+  console.log("vlan example devices:", await page.locator("[data-device]").count(), "| trunk ports:", await page.locator(".port.trunk").count(), "| VLAN badge:", (await page.locator(".badge text").allTextContents()).includes("VLAN"));
+  await clickDevice("pc-1");
+  await page.fill(".ping-row .input", "192.168.10.11");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("ping same VLAN:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+  await page.fill(".ping-row .input", "192.168.20.20");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /192\.168\.20\.20/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("ping across VLAN via gateway:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+  await page.fill(".ping-row .input", "google.com");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /google/.test(document.querySelector(".ping-log li")?.textContent ?? "") && /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 40000 });
+  console.log("ping internet from VLAN 10:", (await page.locator(".ping-log li").first().innerText()).replace("\n", " "));
+  await clickDevice("sw-1");
+  await page.waitForTimeout(100);
+  await page.screenshot({ path: `${OUT}/20-vlan.png` });
+});
+
+// 10) 편집 도구: 영역 선택 → 함께 이동 → 복제 → 일괄 설정 → 되돌리기 → JSON 저장/불러오기
+section("edit", async () => {
+  await loadEx("gateways", { keepNote: true });
+  await page.waitForTimeout(400);
+  console.log("gateways example devices:", await page.locator("[data-device]").count(), "| example note:", (await page.locator(".example-note").textContent().catch(() => "")).slice(0, 30));
+  // 예제 설명은 예전 토스트(2.6초)와 달리 닫기 전까지 남는다 → 닫기 버튼으로 사라짐
+  await page.waitForTimeout(3200);
+  if ((await page.locator(".example-note").count()) !== 1) throw new Error("예제 설명이 3초 뒤 사라짐\n해결: App.tsx 의 exampleNote 가 타이머로 지워지지 않는지 확인\n참조: src/app/App.tsx exampleNote");
+  await page.screenshot({ path: `${OUT}/23-example-note.png` });
+  await page.click(".note-close");
+  console.log("example note after close:", await page.locator(".example-note").count());
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // 안내 토스트가 아래쪽 장치를 가린다
+  {
+    // pc-1·pc-2 를 영역으로 잡는다 (빈 곳에서 드래그)
+    const a = await device("pc-1").locator(".tile").boundingBox();
+    const b = await device("pc-2").locator(".tile").boundingBox();
+    await page.mouse.move(a.x - 30, a.y - 30);
+    await page.mouse.down();
+    await page.mouse.move(b.x + b.width + 30, b.y + b.height + 30, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(100);
+    console.log("marquee selected:", await page.locator(".device.selected").count(), "| multi panel:", (await page.locator(".inspector h2").textContent()));
+    await page.screenshot({ path: `${OUT}/21-multi-select.png` });
+    // 함께 이동: 둘 다 같은 양만큼 내려간다
+    const a1 = await device("pc-1").locator(".tile").boundingBox();
+    await page.mouse.move(a1.x + a1.width / 2, a1.y + a1.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(a1.x + a1.width / 2, a1.y + a1.height / 2 + 80, { steps: 6 });
+    await page.mouse.up();
+    const a2 = await device("pc-1").locator(".tile").boundingBox();
+    const b2 = await device("pc-2").locator(".tile").boundingBox();
+    console.log("group move dy:", Math.round(a2.y - a1.y), Math.round(b2.y - b.y));
+    // 일괄 설정: 게이트웨이를 한 번에. 틀린 값이면 구성 검사 배지가 뜨고, 고치면 사라진다
+    const sec = page.locator(".inspector .section").filter({ has: page.locator("h3", { hasText: "공통 설정" }) });
+    console.log("lint badges before:", await page.locator(".lint-badge").count());
+    await sec.locator("input.mono").nth(1).fill("10.9.9.9");
+    await page.waitForTimeout(100);
+    console.log("lint badges after bad gateway:", await page.locator(".lint-badge").count(), "| error:", await page.locator(".lint-badge.error").count());
+    await sec.locator("input.mono").nth(1).fill("192.168.1.1");
+    await page.waitForTimeout(100);
+    console.log("lint badges after fix:", await page.locator(".lint-badge").count());
+    // 복제 → 장치 수 +2, 되돌리기 → 원래대로 (입력 칸에 포커스가 있으면 단축키가 무시되므로 먼저 뺀다)
+    await page.evaluate(() => document.activeElement?.blur());
+    const n0 = await page.locator("[data-device]").count();
+    await page.keyboard.press("Meta+d");
+    await page.waitForTimeout(150);
+    const n1 = await page.locator("[data-device]").count();
+    await page.keyboard.press("Meta+z");
+    await page.waitForTimeout(150);
+    const n2 = await page.locator("[data-device]").count();
+    console.log("duplicate:", n0, "→", n1, "| undo →", n2);
+    await page.keyboard.press("Meta+Shift+z");
+    await page.waitForTimeout(150);
+    console.log("redo →", await page.locator("[data-device]").count());
+    await page.screenshot({ path: `${OUT}/22-after-redo.png` });
+    // 되돌리기로 복제본이 사라지면 선택도 비므로, 클릭 + Shift+클릭으로 다시 두 대를 고른다
+    await clickDevice("pc-1");
+    await page.waitForTimeout(100);
+    console.log("click pc-1 selected:", await page.locator(".device.selected").count(), "|", await page.locator(".inspector h2").textContent(), "| toast:", await textOf(".toast"));
+    await page.keyboard.down("Shift");
+    await clickDevice("pc-2");
+    await page.keyboard.up("Shift");
+    await page.waitForTimeout(100);
+    console.log("shift-click selected:", await page.locator(".device.selected").count());
+    // 일괄 ping
+    await page.fill(".inspector .ping-row .input", "8.8.8.8");
+    await page.click(".inspector .ping-row .btn");
+    await page.waitForFunction(() => { const rows = [...document.querySelectorAll(".ping-table tbody tr")]; return rows.length >= 2 && rows.every((r) => /응답|실패/.test(r.textContent)); }, null, { timeout: 30000 });
+    console.log("batch ping rows:", (await page.locator(".ping-table tbody tr").allInnerTexts()).map((r) => r.replace(/\t/g, " ")).join(" / "));
+  }
+  // JSON: 저장된 토폴로지를 파일로 쓰고, 비운 뒤 올려서 복원
+  {
+    const json = await page.evaluate(() => localStorage.getItem("net-sim.topology.v1"));
+    const saved = JSON.parse(json);
+    writeFileSync(`${OUT}/export.json`, JSON.stringify({ app: "net-sim", version: 1, ...saved }, null, 2));
+    await clearUi();
+    await page.waitForTimeout(150);
+    console.log("after clear:", await page.locator("[data-device]").count());
+    await page.locator('input[type="file"]').setInputFiles(`${OUT}/export.json`);
+    await page.waitForTimeout(400);
+    console.log("after import:", await page.locator("[data-device]").count(), "| toast:", await textOf(".toast"));
+    await page.locator('input[type="file"]').setInputFiles({ name: "bad.json", mimeType: "application/json", buffer: Buffer.from("{oops") });
+    await page.waitForTimeout(300);
+    console.log("bad import toast:", await textOf(".toast"));
+  }
+});
+
 // 11) 인스펙터: 섹션 접기 → 넓게 → 접기(레일) → 펼치기, 끌어서 폭 조절
-{
+section("inspector", async () => {
+  // 편집 도구 구간과 같은 예제(gw-1)에서 시작
+  await loadEx("gateways");
   await clickDevice("gw-1");
   await goGroup("라우팅");
   await page.waitForTimeout(150);
@@ -493,7 +512,8 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.click('.inspector .icon-btn[title*="펼치기"]');
   await page.waitForTimeout(150);
   console.log("reopened width:", (await page.locator(".inspector").boundingBox()).width);
-  await page.click('.inspector-tools .icon-btn[title="보통 폭"]').catch(() => {});
+  const normal = page.locator('.inspector-tools .icon-btn[title="보통 폭"]'); // 넓게 상태일 때만 있다
+  if (await normal.count()) await normal.click();
   // 화면에 맞추기: 뷰포트를 멀리 옮긴 뒤 버튼 → 장치들이 다시 캔버스 안에
   await page.mouse.move(700, 450);
   await page.keyboard.down("Alt");
@@ -506,9 +526,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   const cw = await page.locator(".canvas-wrap").boundingBox();
   const boxes = await page.locator("[data-device] .tile").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()));
   console.log("fit: all tiles inside canvas:", boxes.every((b) => b.left >= cw.x && b.right <= cw.x + cw.width && b.top >= cw.y && b.bottom <= cw.y + cw.height));
-}
+});
+
 // 12) 영역: 선택 → 영역으로 묶기 → 이름 바꾸기 → 이름표 끌어서 안의 장치와 함께 이동 → 영역 도구로 그리기 → 삭제
-{
+section("zones", async () => {
   await loadEx("docker");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 });
   const a = await device("web").locator(".tile").boundingBox();
@@ -575,9 +596,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.mouse.dblclick(web.x + web.width / 2, web.y + web.height / 2);
   await page.waitForTimeout(100);
   console.log("dblclick opens inspector:", (await page.locator(".inspector.collapsed").count()) === 0 ? "yes" : "NO", "|", await page.locator(".inspector .device-head").first().textContent().catch(() => "?"));
-}
+});
+
 // 13) 방화벽 장비 예제: ping 차단, TCP 80 통과, 장치 패널에 규칙 편집기
-{
+section("fwbox", async () => {
   await loadEx("fwbox");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 });
   console.log("fw device:", await device("fw-1").count(), "| status:", await addrOf("fw-1"));
@@ -595,9 +617,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForFunction(() => /종료됨|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 40000 });
   console.log("tcp srv through fw:", await tcpRows().first().innerText());
   await page.screenshot({ path: `${OUT}/31-firewall-box.png` });
-}
+});
+
 // 14) 케이블 포트 지정: 스위치의 6번째 포트 칸을 잡고 PC 로 끌기 → 패널에서 포트 바꾸기
-{
+section("cable-ports", async () => {
   await clearUi();
   await page.click(".palette .tool.item:has-text('스위치')");
   await page.click(".palette .tool.item:has-text('PC')");
@@ -624,9 +647,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   const cab2 = await page.evaluate(() => JSON.parse(localStorage.getItem("net-sim.topology.v1")).cables);
   console.log("after panel change:", cab2.map((c) => `${c.a.port}-${c.b.port}`).join(","), "| options:", opts.length);
   await page.screenshot({ path: `${OUT}/36-cable-port.png` });
-}
+});
+
 // 14b) 케이블 여러 개: 하나에 손실 10% → Shift+클릭으로 하나 더(여러 값) → 30% 한 번에 → select 에 포커스를 둔 채 ⌘Z 한 번에 둘 다 복귀·⌘⇧Z 다시 실행 → Delete 로 둘 다 삭제 → Esc
-{
+section("multi-cable", async () => {
   await loadEx("router");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   const c1 = page.locator("[data-cable]").nth(2);
@@ -677,9 +701,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.keyboard.press("Escape");
   await page.waitForTimeout(100);
   console.log("multi cable esc → selected:", await page.locator("[data-cable].selected").count());
-}
+});
+
 // 15) 진단 자동완성 + 장치별 기억: 도커 예제의 pc-1 에서 목록 열기 → 그룹·닿지 않는 후보 → 다른 장치 갔다 와도 값 유지
-{
+section("autocomplete", async () => {
   await loadEx("docker");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 });
   await clickDevice("집 PC");
@@ -699,9 +724,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await clickDevice("집 PC");
   await page.waitForTimeout(100);
   console.log("remembered ping target:", await page.locator(".ping-row .picker .input").first().inputValue());
-}
+});
+
 // 동적 라우팅(RIP) 예제: 게이트웨이가 광고로 경로를 배우고, 그 경로로 ping 이 된다
-{
+section("rip", async () => {
   await loadEx("rip");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   const ripRows = async () => {
@@ -722,9 +748,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.click(".ping-row .btn:has-text('ping')");
   await page.locator(".inspector .ping-log li.ok, .inspector .ping-log li.failed").first().waitFor({ timeout: 30000 });
   console.log("pc-a → 192.168.3.10 via RIP:", (await page.locator(".inspector .ping-log li").first().textContent())?.replace(/\s+/g, " "));
-}
+});
+
 // 로드밸런서 예제: nginx 서버(LB 서비스 토글)로 연결을 두 번 → 응답 서버가 바뀐다, lb-1 장비의 설정 섹션
-{
+section("lb", async () => {
   await loadEx("lb");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await waitAddr("pc-1", /^192\.168\.0\.1\d\d/);
@@ -743,9 +770,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("설정");
   console.log("lb-1 section:", await page.locator(".inspector h3", { hasText: "로드밸런서" }).count(), "| backends:", await page.locator(".inspector .lb-row").count(), "| badge:", await device("lb-1").locator(".badge", { hasText: "LB" }).count());
   await page.screenshot({ path: `${OUT}/43-lb-config.png` });
-}
+});
+
 // 패킷 상세 보기: 로그 줄을 펼치면 도구 출력(tcpdump·시스코 debug)과 계층별 헤더
-{
+section("packet-detail", async () => {
   await loadEx("router");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await waitAddr("pc-1", /^192\.168\.0\.1\d\d/);
@@ -765,9 +793,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("pkt detail:", (await detail.locator(".pkt-tool").allTextContents()).join(" | "), "| layers:", (await detail.locator(".pkt-layer-title").allTextContents()).join(","));
   console.log("nat debug line:", await detail.locator(".pkt-line", { hasText: "debug ip nat" }).locator("code").textContent().catch(() => "?"));
   await detail.screenshot({ path: `${OUT}/44-pkt-detail.png` });
-}
+});
+
 // 캔버스의 패킷을 누르면 일시정지 + 상세 카드, 재생하면 닫힘
-{
+section("packet-card", async () => {
   await loadEx("starter");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await clickDevice("pc-1");
@@ -791,9 +820,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.keyboard.press("Space");
   await page.waitForTimeout(200);
   console.log("card closed on play:", (await card.count()) === 0 ? "yes" : "NO", paused ? "" : "");
-}
+});
+
 // 공유기 설정: DHCP 의 DNS 서버 칸, 포트 포워딩 두 줄 편집기(TCP/UDP)
-{
+section("router-config", async () => {
   await loadEx("router");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await clickDevice("rt-1");
@@ -810,9 +840,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   const ip = await fwd.locator(".fwd-ip").boundingBox();
   console.log("fwd row: two lines", b.height > 50 ? "yes" : "NO", "| ip width", Math.round(ip.width), "| proto", await fwd.locator("select.proto").inputValue());
   await fwd.screenshot({ path: `${OUT}/46-fwd-row.png` });
-}
+});
+
 // VPN 예제: 사설끼리 ping, 통신사 구간을 지나는 패킷 카드에 "터널 안" 층, NAT 박스 설정에 VPN 섹션
-{
+section("vpn", async () => {
   await loadEx("vpn");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await clickDevice("pc-a");
@@ -847,9 +878,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
     await page.keyboard.press("Escape");
     await page.keyboard.press("Space");
   } else console.log("vpn packet card: (터널 패킷을 누르지 못함)");
-}
+});
+
 // 망분리 + NCP 예제: 내부망 PC 1 → dev-2 TCP 22 (IPsec 터널을 맺고 연결), VPN 설정에 IPsec·PSK, 서버에 SSH 토글
-{
+section("ncp", async () => {
   await loadEx("ncp");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await page.screenshot({ path: `${OUT}/48-ncp-overview.png` });
@@ -875,9 +907,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await clickDevice("dev-2");
   await goTab("설정");
   console.log("ssh toggle:", await page.locator(".inspector .toggle-row", { hasText: "SSH 서버" }).count(), "| badge:", await device("dev-2").locator(".badge", { hasText: "SSH" }).count());
-}
+});
+
 // 방화벽 이중화: A 가 master → ping, A 를 지우면 B 가 master 가 되어 ping 이 계속된다
-{
+section("ha", async () => {
   await loadEx("ha");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => /방화벽 A/.test(el.textContent ?? "") && /HA master/.test(el.textContent ?? "")), null, { timeout: 20000 });
@@ -904,9 +937,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("ha failover: B master");
   console.log("ha ping via B:", await pingOnce());
   await page.screenshot({ path: `${OUT}/51-ha-failover.png` });
-}
+});
+
 // 이중화 주기 광고: 두 방화벽에 켜고 A 의 케이블 둘을 손실 100%(말없이 죽음) → 그대로는 B 가 모름 → "+10초" 로 시간을 흘려보내면 B 가 이어받음
-{
+section("ha-advert", async () => {
   await loadEx("ha");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => /방화벽 A/.test(el.textContent ?? "") && /HA master/.test(el.textContent ?? "")), null, { timeout: 20000 });
@@ -951,9 +985,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => /방화벽 B/.test(el.textContent ?? "") && /HA master/.test(el.textContent ?? "")), null, { timeout: 20000 });
   console.log("ha advert: B before", bBefore, "| clock", clockBefore, "→", await page.locator(".transport .clock").innerText(), "| B after: HA master");
   await page.screenshot({ path: `${OUT}/51c-ha-silent-failover.png` });
-}
+});
+
 // 스위치 이중화 (STP): 막힌 포트 표시(점선·⊘), 루트 배지, ping
-{
+section("stp", async () => {
   await loadEx("stp");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await page.waitForFunction(() => document.querySelectorAll(".stp-blocked").length > 0, null, { timeout: 20000 });
@@ -969,9 +1004,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("설정");
   console.log("stp section:", await page.locator(".inspector h3", { hasText: "스패닝 트리" }).count());
   await page.screenshot({ path: `${OUT}/53-stp.png` });
-}
+});
+
 // 재택근무 원격 접속 VPN: 노트북이 접속(배지), 사내 서버로 SSH
-{
+section("remote", async () => {
   await loadEx("remote");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => /재택 노트북/.test(el.textContent ?? "") && /VPN 연결됨/.test(el.textContent ?? "")), null, { timeout: 30000 });
@@ -1036,9 +1072,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await clickDevice("재택 노트북");
   await goTab("설정");
   console.log("remote periodic dpd: up before", stillUp, "| after:", (await raSec.locator(".note.error-note").first().innerText().catch(() => "?")).slice(0, 50));
-}
+});
+
 // ipTIME 공유기 VPN (L2TP/IPsec): 출장 노트북이 집 공유기에 붙고(배지) 집 NAS 로 TCP 80, 공유기 VPN 서버 섹션·표
-{
+section("iptime", async () => {
   await loadEx("iptime");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "출장 노트북" && /VPN 연결됨/.test(el.textContent ?? "")), null, { timeout: 30000 });
@@ -1065,9 +1102,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("표");
   console.log("iptime table:", (await page.locator(".inspector").innerText()).includes("VPN 접속") ? "yes" : "NO");
   await page.screenshot({ path: `${OUT}/60-iptime.png` });
-}
+});
+
 // 도커 네트워크 (Docker Desktop): macOS 설정의 NAT·포트 공개, 맥 터미널에서 127.0.0.1:8080 (localhost) → web
-{
+section("docker", async () => {
   await loadEx("docker");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await clickDevice("macOS");
@@ -1086,9 +1124,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForFunction(() => /종료됨|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 60000 });
   console.log("docker localhost:8080:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
   await page.screenshot({ path: `${OUT}/64-docker.png` });
-}
+});
+
 // 노트북 유선·무선 NIC: 호텔 공유기 Wi-Fi 를 켜고 노트북 Wi-Fi 를 켠 뒤 케이블을 빼면 Wi-Fi 로 넘어가 VPN 이 다시 붙는다
-{
+section("laptop-nic", async () => {
   await loadEx("iptime");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await clickDevice("호텔 공유기");
@@ -1123,9 +1162,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   );
   console.log("laptop failover: Wi-Fi + VPN 연결됨 | standby lines:", await page.locator(".wifi-link.standby").count(), "| active lines:", await page.locator(".wifi-link:not(.standby)").count());
   await page.screenshot({ path: `${OUT}/62-laptop-wifi-failover.png` });
-}
+});
+
 // 로드밸런서 L4 모드: lb-1 을 L4 로 바꾸고 pc-1 → 192.168.0.20:80 연결
-{
+section("lb-l4", async () => {
   await loadEx("lb");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await clickDevice("lb-1");
@@ -1141,9 +1181,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.click(".tcp-row .btn");
   await page.waitForFunction(() => /종료됨|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 60000 });
   console.log("lb l4 tcp:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
-}
+});
+
 // 로드밸런서 쿠키 세션 고정: lb-1 을 쿠키로 → pc-1 이 두 번 연결하면 처음은 쿠키를 받고 다음은 보낸다
-{
+section("lb-cookie", async () => {
   await loadEx("lb");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await clickDevice("lb-1");
@@ -1161,9 +1202,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   }
   const rows = (await page.locator(".inspector .tcp-log li").allInnerTexts()).map((x) => x.replace(/\s+/g, " "));
   console.log("lb cookie:", rows.slice(0, 2).join(" | "));
-}
+});
+
 // 로드밸런서 액티브 헬스 체크: lb-1 에 켜고 web-2 의 웹 서버를 끔 → 시간이 흐르기 전에는 모름 → "+10초" 뒤 lb-1 표에 DOWN
-{
+section("lb-health", async () => {
   await loadEx("lb");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await clickDevice("lb-1");
@@ -1183,9 +1225,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.waitForFunction(() => [...document.querySelectorAll(".inspector section")].some((s) => /로드밸런서 백엔드/.test(s.querySelector("h3")?.textContent ?? "") && /DOWN/.test(s.textContent ?? "")), null, { timeout: 20000 });
   console.log("lb health: before", web2Before, "| after", (await backends.locator("tbody tr").nth(1).innerText()).replace(/\s+/g, " "));
   await backends.screenshot({ path: `${OUT}/55c-lb-health-down.png` });
-}
+});
+
 // 포워드 프록시: pc-1 의 웹 요청은 proxy-1 경유(이름도 프록시가 찾음), 차단 목록은 403, proxy-1 표에 access.log
-{
+section("proxy", async () => {
   await loadEx("proxy");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await clickDevice("pc-1");
@@ -1229,9 +1272,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("설정");
   await page.locator(".inspector h3", { hasText: "HTTP 프록시" }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${OUT}/58-http-proxy.png` });
-}
+});
+
 // IPv6 기초: IPv4 없이 링크 로컬·NDP·라우팅. 타일은 IPv6 주소, 진단은 IPv6 주소를 받고, 로그 상세는 tcpdump 의 IPv6 표기
-{
+section("ipv6", async () => {
   await loadEx("ipv6");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   console.log("ipv6 tiles:", await waitAddr("pc-1", /^2001:db8:1::10$/), "| gw-1:", (await device("gw-1").locator(".addr, .status").allTextContents()).join(" / "), "| badge:", await device("pc-1").locator(".badge", { hasText: "IPv6" }).count());
@@ -1273,9 +1317,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("ndp layers:", (await detail.locator(".pkt-layer-title").allTextContents()).join(","));
   await detail.screenshot({ path: `${OUT}/63-ipv6-ndp-detail.png` });
   await page.click(".log-toggle");
-}
+});
+
 // IPv6 SLAAC: 자동 호스트가 RA 로 주소를 만든다. 게이트웨이 인터페이스별 RA 광고 토글, 호스트 자동/수동
-{
+section("slaac", async () => {
   await loadEx("slaac");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   console.log("slaac tiles:", await waitAddr("pc-1", /^2001:db8:1::ff:fe00:1$/), "|", await waitAddr("laptop-1", /^2001:db8:1::/));
@@ -1336,9 +1381,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   const gwAfter = await gwOf();
   console.log("slaac periodic ra: gateway before", gwBefore, "| after +40s", gwAfter);
   if (!/없음/.test(gwAfter ?? "")) errors.push(`slaac periodic ra: 라우터가 말없이 사라지고 40초가 지났는데 pc-1 의 IPv6 게이트웨이가 ${gwAfter} — 라우터 수명(30초)이 다하면 빼야 함 / src/core/nodes/ipv6.ts onRouterExpiry`);
-}
+});
+
 // 듀얼 스택: 이름으로 연결하면 AAAA 우선 → IPv6, AAAA 없는 이름은 IPv4. DNS 레코드 칸은 IPv6 주소(AAAA)도 받는다
-{
+section("dualstack", async () => {
   await loadEx("dualstack");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await waitAddr("laptop-1", /^2001:db8:1::/);
@@ -1357,9 +1403,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("dns records:", await rec.count(), "| errors:", await page.locator(".inspector .record-error").count());
   await rec.first().scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${OUT}/67-dualstack-dns-records.png` });
-}
+});
+
 // 듀얼 스택 집: 공유기가 DHCPv6-PD 로 /56 을 받아 LAN 에 RA, google.com 은 IPv6 로 NAT 없이, 바깥 IPv6 접속은 인바운드 기본 차단
-{
+section("home6", async () => {
   await loadEx("home6");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await waitAddr("pc-1", /^192\.168\.0\./);
@@ -1390,9 +1437,11 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.locator(".inspector .tcp-log li.failed").first().waitFor({ timeout: 30000 });
   console.log("home6 inbound blocked:", (await page.locator(".inspector .tcp-log li").first().textContent())?.replace(/\s+/g, " "));
   await page.screenshot({ path: `${OUT}/69-home6-inbound-blocked.png` });
-}
+});
+
 // 이벤트 로그 높이 조절: 끝까지 올리면 상단바 바로 아래, 새로고침해도 유지, 아래로 한참 끌면 접힘
-{
+section("log-resize", async () => {
+  await loadEx("router"); // 새로고침 뒤 장치가 그려지는지 보므로 장치가 있는 예제에서 시작
   if (!(await page.locator(".log.open").count())) await page.click(".log-toggle");
   const handle = page.locator(".log-resize");
   const hb = await handle.boundingBox();
@@ -1449,9 +1498,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
     await page.waitForTimeout(300);
     console.log("log more:", rowsBefore, "→", await page.locator(".log-list .row").count(), "| total:", await page.locator(".log-toggle .count").textContent());
   } else console.log("log more: (500줄 이하라 버튼 없음)", rowsBefore);
-}
+});
+
 // P2P (NAT 종류·홀 펀칭): 예제 메뉴 검색 → 진단 탭 "P2P 연결" → 직접 연결, 공유기 설정의 NAT 종류
-{
+section("p2p", async () => {
   await page.click(".menu-btn");
   await page.keyboard.type("홀 펀칭");
   console.log("example search '홀 펀칭':", await page.locator(".menu-examples .menu-item").count(), "match(es)");
@@ -1483,9 +1533,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("router NAT type select:", await natSel.inputValue(), "| hairpin toggle:", await page.locator(".inspector .toggle-row", { hasText: "헤어핀 NAT" }).count());
   await page.locator(".inspector h3", { hasText: "NAT 종류" }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${OUT}/96-nat-type.png` });
-}
+});
+
 // WireGuard (GL.iNet 식): 집 Brume 서버 피어·여행용 공유기 클라이언트(킬 스위치)·노트북 full tunnel, 설정 묶음 칩
-{
+section("wireguard", async () => {
   await loadEx("wireguard");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await waitAddr("여행 노트북", /^192\.168\.9\.1\d\d/);
@@ -1515,9 +1566,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("phone vpn type:", await ra.locator(".segmented button.on").first().textContent());
   await ra.scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${OUT}/99-wg-phone.png` });
-}
+});
+
 // DDNS: 집 Brume 의 공인 주소를 ISP 가 바꾸면 DDNS 가 갱신된다 (인터넷 노드 진단 "공인 주소 바꾸기")
-{
+section("ddns", async () => {
   await loadEx("ddns");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "카페 폰" && /VPN 연결됨/.test(el.textContent ?? "")), null, { timeout: 30000 });
@@ -1542,9 +1594,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   for (let i = 0; i < 80 && !((await dd.locator("p.note").first().textContent()) ?? "").includes(newIp); i++) await page.waitForTimeout(100);
   console.log("ddns status:", (await dd.locator("p.note").first().textContent())?.trim());
   await page.screenshot({ path: `${OUT}/100-ddns.png` });
-}
+});
+
 // 멀티 WAN: lan4 = WAN2(핫스팟), WAN1 케이블을 지우면 바로 WAN2 로 (타일 위쪽 줄 "WAN2 …", 배지)
-{
+section("mwan", async () => {
   await loadEx("mwan");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await waitAddr("사무실 PC", /^192\.168\.8\.1\d\d/);
@@ -1564,9 +1617,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.keyboard.press("Delete");
   for (let i = 0; i < 50 && !/WAN2/.test((await device("사무실 Brume 3").locator("text.uplink").textContent()) ?? ""); i++) await page.waitForTimeout(100);
   console.log("after wan1 removed:", await device("사무실 Brume 3").locator("text.uplink").textContent(), "| badge:", await device("사무실 Brume 3").locator(".badge", { hasText: "WAN2 사용 중" }).count());
-}
+});
+
 // AdGuard Home: 아빠 PC 의 광고 이름 차단, 공유기 "앱" 묶음, 쿼리 로그
-{
+section("adguard", async () => {
   await loadEx("adguard");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await waitAddr("아빠 PC", /^192\.168\.8\.1\d\d/);
@@ -1592,9 +1646,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   console.log("adguard rules:", JSON.stringify(await page.evaluate(() => JSON.parse(localStorage.getItem("net-sim.topology.v1")).devices.find((d) => d.name === "집 Brume 3").router.adguard.custom)));
   await goTab("표");
   console.log("adguard log rows:", await page.locator(".inspector section", { has: page.locator("h3", { hasText: "AdGuard 쿼리 로그" }) }).locator("tbody tr").count());
-}
+});
+
 // DPI 와 VPN 난독화: 회사 공유기의 DPI 가 WireGuard 를 막음, "앱" 묶음의 DPI 칩, 표의 앱별 트래픽
-{
+section("dpi", async () => {
   await loadEx("dpi");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await waitAddr("직원 PC", /^10\.30\.0\.1\d\d/);
@@ -1609,9 +1664,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   const dpiRows = () => page.locator(".inspector section", { has: page.locator("h3", { hasText: "DPI 앱별 트래픽" }) }).locator("tbody tr", { hasText: "WireGuard" });
   for (let i = 0; i < 100 && !(await dpiRows().count()); i++) await page.waitForTimeout(100);
   console.log("dpi rows:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "DPI 앱별 트래픽" }) }).locator("tbody tr").allInnerTexts()).map((x) => x.replace(/\s+/g, " ")).join(" | "));
-}
+});
+
 // OpenVPN: 카페 노트북이 TCP 443 으로 집 Brume 3 에 붙음 — 서버 섹션(CA·전송·발급한 인증서 폐기)·노트북의 설정 파일 칸·표의 클라이언트
-{
+section("openvpn", async () => {
   await loadEx("openvpn");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "카페 노트북" && /VPN 연결됨/.test(el.textContent ?? "")), null, { timeout: 30000 });
@@ -1634,9 +1690,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await page.screenshot({ path: `${OUT}/105-ovpn-server.png` });
   await goTab("표");
   console.log("ovpn status rows:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "OpenVPN 클라이언트" }) }).locator("tbody tr").allInnerTexts()).map((x) => x.replace(/\s+/g, " ")).join(" | "));
-}
+});
+
 // Tailscale: 셋이 tailnet 에 로그인, 노트북 → work-pc (MagicDNS·DERP), 공유기 VPN 묶음의 메시 VPN 섹션, 표의 피어 경로
-{
+section("tailscale", async () => {
   await loadEx("tailscale");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "회사 PC" && /Tailscale(?! 대기)/.test(el.textContent ?? "")), null, { timeout: 30000 });
@@ -1659,9 +1716,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await rs.scrollIntoViewIfNeeded();
   console.log("ts router toggles on:", await rs.locator(".toggle.on").count());
   await page.screenshot({ path: `${OUT}/107-ts-router.png` });
-}
+});
+
 // 드롭인 게이트웨이·관리 접근·기기 차단: 아이 PC 만 Brume 을 거침, 보안 묶음의 관리 접근·기기 차단 섹션
-{
+section("dropin", async () => {
   await loadEx("dropin");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await waitAddr("아빠 PC", /^192\.168\.0\.1\d\d/);
@@ -1691,9 +1749,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await cm.locator("button").first().click();
   await page.waitForTimeout(800);
   console.log("cloud manage row:", (await cm.locator(".toggle-row").first().innerText()).replace(/\s+/g, " "));
-}
+});
+
 // IGMP 스누핑: TV 가 가입하고 서버가 송출 — 스위치 설정의 스누핑 토글, 진단 탭의 멀티캐스트 칸
-{
+section("igmp", async () => {
   await loadEx("igmp");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await waitAddr("거실 TV", /^192\.168\.0\.1\d\d/);
@@ -1714,9 +1773,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("진단");
   console.log("igmp tv:", (await page.locator(".inspector section", { has: page.locator("h3", { hasText: "멀티캐스트" }) }).locator("p.note").first().textContent())?.trim());
   await page.screenshot({ path: `${OUT}/109-igmp.png` });
-}
+});
+
 // 인터넷 전화: 민지가 junho 에게 전화 — ALG 없이 소리 0, 공유기 보안 묶음의 SIP ALG 토글
-{
+section("sip", async () => {
   await loadEx("sip");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await waitAddr("준호 전화기", /^192\.168\.1\.1\d\d/);
@@ -1734,9 +1794,10 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await goTab("설정");
   await goGroup("보안");
   console.log("sip alg section:", await page.locator(".inspector section", { has: page.locator("h3", { hasText: "SIP ALG" }) }).count());
-}
+});
+
 // Tor: 노트북 → 친구 웹 서버 (출구 주소로 보임), 공유기 VPN 묶음의 Tor 섹션
-{
+section("tor", async () => {
   await loadEx("tor");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => el.querySelector("text.name")?.textContent === "Brume 3 (Tor)" && /Tor(?! 대기)/.test(el.textContent ?? "")), null, { timeout: 30000 });
@@ -1747,10 +1808,130 @@ await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }); // �
   await ts.scrollIntoViewIfNeeded();
   console.log("tor status:", (await ts.locator("p.note").first().textContent())?.trim());
   await page.screenshot({ path: `${OUT}/111-tor.png` });
-}
-console.log("layout ok (end):", await page.evaluate(() => document.body.scrollHeight <= window.innerHeight ? "yes" : "no"));
+});
 
-console.log("ERRORS:", errors.length ? errors : "none");
-await browser.close();
-await server.close();
-process.exit(errors.length ? 1 : 0);
+// ---------- 실행 ----------
+const URL_ENV = "UI_CHECK_URL";
+
+async function openPage() {
+  const browser = await chromium.launch({ headless: true });
+  page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+  page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
+  page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
+  return browser;
+}
+
+/** 구간 하나: 빈 페이지에서 시작 → 실행 → 페이지 오류 확인. 실패해도 던지지 않고 결과로 돌려준다 */
+async function runSection(s, url) {
+  errors.length = 0;
+  const t0 = Date.now();
+  try {
+    await page.goto(url);
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(() => document.fonts.ready);
+    await page.selectOption(".transport .speed", "4");
+    await s.fn();
+    if (!(await page.evaluate(() => document.body.scrollHeight <= window.innerHeight))) console.log("layout ok (end): no — body 가 창보다 길다");
+    if (errors.length) throw new Error("페이지 오류:\n" + errors.join("\n"));
+    return { name: s.name, ok: true, ms: Date.now() - t0 };
+  } catch (e) {
+    await page.screenshot({ path: `${OUT}/crash-${s.name}.png` }).catch(() => {});
+    const toast = await page.locator(".toast").allInnerTexts().catch(() => []);
+    return { name: s.name, ok: false, ms: Date.now() - t0, error: `${e?.message ?? e}${toast.length ? `\ntoast: ${toast.join(" / ")}` : ""}\n스크린샷: ${OUT}/crash-${s.name}.png` };
+  }
+}
+
+const sec = (ms) => `${(ms / 1000).toFixed(1)}s`;
+function printResult(r, lines) {
+  console.log(`── ${r.name}  ${r.ok ? "통과" : "실패"} ${sec(r.ms)}`);
+  for (const l of lines) console.log("  " + l.replace(/\n/g, "\n  "));
+  if (!r.ok) console.log("  [실패] " + r.error.replace(/\n/g, "\n  "));
+}
+
+/** 자식 워커 하나: 부모가 보내는 구간 이름을 하나씩 돌려 결과를 돌려준다. 비정상 종료하면 그때 돌던 구간은 실패, 남은 구간은 새 워커가 잇는다 */
+function runWorker(queue, url, results) {
+  return new Promise((resolve) => {
+    const child = fork(fileURLToPath(import.meta.url), ["--child"], { env: { ...process.env, [URL_ENV]: url } });
+    let current;
+    const next = () => {
+      current = queue.shift();
+      child.send(current ? { run: current.name } : { exit: true });
+    };
+    child.on("message", (m) => {
+      if (m.ready) return next();
+      printResult(m, m.lines);
+      results.push(m);
+      next();
+    });
+    child.on("exit", (code) => {
+      if (current && !results.some((r) => r.name === current.name)) {
+        const r = { name: current.name, ok: false, ms: 0, error: `워커가 비정상 종료했습니다 (exit ${code}). --workers=1 로 이 구간만 돌려 로그를 보세요` };
+        printResult(r, []);
+        results.push(r);
+        current = undefined;
+        if (queue.length) return void runWorker(queue, url, results).then(resolve);
+      }
+      resolve();
+    });
+  });
+}
+
+if (process.argv.includes("--child")) {
+  const url = process.env[URL_ENV];
+  const browser = await openPage();
+  const lines = [];
+  console.log = (...a) => void lines.push(format(...a));
+  process.on("message", async (m) => {
+    if (m.exit) {
+      await browser.close();
+      process.exit(0);
+    }
+    lines.length = 0;
+    const r = await runSection(SECTIONS.find((s) => s.name === m.run), url);
+    process.send({ ...r, lines: [...lines] });
+  });
+  process.send({ ready: true });
+} else {
+  const args = process.argv.slice(2);
+  if (args.includes("--list")) {
+    console.log(SECTIONS.map((s) => s.name).join("\n"));
+    process.exit(0);
+  }
+  const match = (s, n) => s.name === n || s.name.startsWith(n + "-");
+  const names = args.filter((a) => !a.startsWith("--"));
+  const unknown = names.filter((n) => !SECTIONS.some((s) => match(s, n)));
+  if (unknown.length) {
+    console.error(`[문제] 없는 구간 이름: ${unknown.join(", ")}\n[해결] npm run ui-check -- --list 로 이름을 확인하세요\n[참조] scripts/ui-check.mjs 의 section("이름", …)`);
+    process.exit(2);
+  }
+  const picked = names.length ? SECTIONS.filter((s) => names.some((n) => match(s, n))) : SECTIONS;
+  const w = args.find((a) => a.startsWith("--workers="));
+  const workers = Math.max(1, Math.min(w ? Number(w.split("=")[1]) || 1 : 4, picked.length));
+  const server = await createServer({ server: { port: 5199 }, logLevel: "silent" });
+  await server.listen();
+  const url = server.resolvedUrls.local[0];
+  const t0 = Date.now();
+  const results = [];
+  if (workers === 1) {
+    const browser = await openPage();
+    for (const s of picked) {
+      console.log(`── ${s.name} …`);
+      const r = await runSection(s, url);
+      results.push(r);
+      printResult(r, []);
+    }
+    await browser.close();
+  } else {
+    const queue = [...picked];
+    await Promise.all(Array.from({ length: workers }, () => runWorker(queue, url, results)));
+  }
+  const failed = results.filter((r) => !r.ok);
+  const slow = [...results].sort((a, b) => b.ms - a.ms).slice(0, 8).map((r) => `${r.name} ${sec(r.ms)}`);
+  console.log(`\n구간 ${results.length}개 · 통과 ${results.length - failed.length} · 실패 ${failed.length} · ${sec(Date.now() - t0)} (워커 ${workers})`);
+  console.log(`느린 구간: ${slow.join(", ")}`);
+  for (const r of failed) console.log(`실패: ${r.name} — ${r.error.split("\n")[0]}`);
+  await server.close();
+  process.exit(failed.length ? 1 : 0);
+}
