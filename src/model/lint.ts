@@ -10,7 +10,7 @@ import { haRules } from "./lint/ha";
 import { ipv6Rules } from "./lint/ipv6";
 import { loopStpRule, vlanTrunkRules } from "./lint/l2";
 import { lbRules } from "./lint/lb";
-import { relayRouteRule, returnRouteRule, uplinkDefaultRule } from "./lint/routing";
+import { relayRouteRule, returnRouteRule, routerWanLanRule, uplinkDefaultRule } from "./lint/routing";
 import { analyze } from "./lint/segments";
 import { forwardClosedRule, httpProxyRule, proxyPortClashRule, routerDnsRule } from "./lint/services";
 import { remoteAccessRules, routerVpnRules, siteVpnRules } from "./lint/vpn";
@@ -44,6 +44,7 @@ const RULES: ((ctx: LintContext) => void)[] = [
   segmentConflictRules, // 9·10
   uplinkSubnetRule, // 11
   relayRouteRule, // 12
+  routerWanLanRule, // 12b
   vlanTrunkRules, // 13a·13b
   lbRules, // 14
   forwardClosedRule, // 15

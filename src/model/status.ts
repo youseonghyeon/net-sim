@@ -186,7 +186,9 @@ export function wanStatusOf(node: SimNode | undefined): StatusLine | null {
   const wc = conflictLine("WAN ", node.wan);
   if (wc) return wc;
   // 멀티 WAN 이 예비 회선으로 넘어가 있으면 그 회선을 보인다
-  if (node.wan2On && node.mwan.active === "wan2" && node.wan2.ip) return { text: `WAN2 ${node.wan2.ip}`, tone: "warn", mono: true };
+  if (node.wan2On && node.mwan.active === "wan2" && node.wan2.ip) return { text: `WAN2 ${node.wan2.ip}${node.defaultRouteProblem(node.wan2) ? " · No route" : ""}`, tone: "warn", mono: true };
+  // 주소는 받았지만 디폴트 라우트를 못 쓴다 (WAN 과 LAN 이 같은 대역)
+  if (node.wan.ip && node.defaultRouteProblem(node.wan)) return { text: `WAN ${node.wan.ip} · No route`, tone: "warn", mono: true };
   if (node.wan.ip) return { text: `WAN ${node.wan.ip}`, tone: "ok", mono: true };
   if (!node.wanLinkUp) return { text: "WAN 연결 없음", tone: "muted", mono: false };
   if (node.wanMode === "static") return { text: "WAN 주소 수동 입력 필요", tone: "warn", mono: false };

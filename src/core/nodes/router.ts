@@ -1,4 +1,4 @@
-import { type TorCell, isMcastIp } from "../packet";
+import { LIMITED_BROADCAST_IP, type TorCell, isMcastIp } from "../packet";
 import { OVPN_PORT, OvpnServer, shortFp, type OvpnServerConfig } from "./openvpn";
 import { MESH_SERVERS, MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
 import { CLOUD_TIMER_TAG, CloudAgent, RouterAdmin, type AdminConfig, type SambaConfig } from "./glinet";
@@ -348,6 +348,11 @@ export class Router implements SimNode {
     this.lan.proxyArp = (ip) => this.vpnServer.owns(ip);
     // LAN 으로 내보내려는 패킷의 목적지가 VPN 클라이언트면 LAN 대신 터널로 (DNS 포워더·ping 응답·NAT 역변환한 인터넷 응답)
     this.lan.outbound = (pkt, ctx) => (!!this.wan.ip && this.vpnServer.owns(pkt.dst) && this.vpnServer.sendTo(pkt, this.wan.ip, ctx)) || this.toTunnelPeer(pkt, ctx);
+    // WAN 회선으로 나가는 모든 패킷(LAN 에서 넘긴 것·공유기 자신이 만든 것)은 경로 판단을 거친다 — WAN 과 LAN 이 같은 대역이면 디폴트 라우트를 못 쓴다
+    this.wan.outbound = (pkt, ctx) => this.noRouteOut(this.wan, pkt, ctx);
+    this.wan2.outbound = (pkt, ctx) => this.noRouteOut(this.wan2, pkt, ctx);
+    // DHCP 는 공유기 자신의 다른 인터페이스 주소(WAN·WAN2)를 LAN 기기에 빌려주지 않는다
+    this.dhcpServer.ownAddresses = () => [this.wan.ip, this.wan2.ip];
     // WireGuard: 공유기 자신이 만든 바깥 UDP 라 NAT·방화벽을 거치지 않고 WAN 으로
     // 바깥 주소는 WAN 링크가 살아 있을 때만 (수동 WAN 은 케이블 없이도 주소가 있다). 상대가 LAN 쪽이면(공유기 뒤 클라이언트가 내 공인 주소로 접속) LAN 으로
     // 멀티 WAN 이면 지금 쓰는 회선으로 (WireGuard 는 출발지가 바뀌어도 상대가 로밍으로 따라온다)
@@ -1782,12 +1787,66 @@ export class Router implements SimNode {
       if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
       return;
     }
+    const why = this.wanRouteProblem(o.iface, pkt.dst);
+    if (why) {
+      ctx.trace("ip.no-route", "L3", `No route: ${why} → 드롭하고 Destination Unreachable (net)`, { dst: pkt.dst }, frameId);
+      const notice = this.lan.unreachable(pkt, "net", ctx, frameId);
+      if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
+      return;
+    }
     if (!this.firewall.check(pkt, "out", ctx, frameId)) return;
     let translated = o.nat.translate({ ...pkt, ttl: pkt.ttl - 1 }, o.iface.ip, ctx, frameId);
     if (!translated) return;
     if (this.sipAlg) translated = this.applySipAlg(pkt, translated, o.iface.ip, o.nat, frameId, ctx);
     ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 외부 → ${this.wan2On ? `${WAN_LABEL[o.name]}(${o.name === "wan" ? "wan" : "lan4"})` : "WAN"} 인터페이스로 전달 (TTL ${pkt.ttl} → ${translated.ttl})`, { dst: pkt.dst, out: o.name }, frameId);
     o.iface.sendIp(translated, ctx, o.emit);
+  }
+
+  // ---------- 경로 판단 ----------
+
+  /** 이 WAN 회선의 대역이 LAN 대역과 겹치나 (공유기 뒤 공유기를 둘 다 192.168.0.x 로 둔 경우) */
+  private overlapsLan(iface: NetInterface): boolean {
+    return !!iface.ip && !!this.lan.ip && sameSubnet(iface.ip, this.lan.ip, Math.min(iface.prefix, this.lan.prefix));
+  }
+
+  /**
+   * 이 회선의 디폴트 라우트를 쓸 수 없는 사유. 넥스트 홉이 내 주소이거나 LAN 대역 안이면 그 경로로는 인터넷에 못 나간다
+   * (리눅스는 넥스트 홉을 연결된 대역으로 찾는데, 그게 LAN 쪽이거나 나 자신이다). 게이트웨이가 아예 없으면 인터페이스가 기존대로 알린다
+   */
+  defaultRouteProblem(iface: NetInterface = this.wan): string | undefined {
+    const gw = iface.gateway;
+    const lan = this.lan.ip;
+    if (!iface.ip || !gw || !lan) return undefined;
+    const label = iface === this.wan2 ? "WAN2" : "WAN";
+    const both = `${label} ${iface.ip}/${iface.prefix} 와 LAN ${lan}/${this.lan.prefix}`;
+    if (gw === lan) return `디폴트 라우트의 넥스트 홉 ${gw} 가 내 LAN 주소 (${both} 가 같은 대역) → 쓸 수 없는 경로라 인터넷으로 못 나감`;
+    if (gw === this.wan.ip || gw === this.wan2.ip) return `디폴트 라우트의 넥스트 홉 ${gw} 가 내 주소 → 쓸 수 없는 경로라 인터넷으로 못 나감`;
+    if (sameSubnet(gw, lan, this.lan.prefix)) return `디폴트 라우트의 넥스트 홉 ${gw} 가 LAN 대역 안 (${both}) → 넥스트 홉을 LAN 쪽에서 찾게 돼 인터넷으로 못 나감`;
+    return undefined;
+  }
+
+  /**
+   * WAN 회선으로 보내려는 목적지의 경로를 리눅스처럼 판단한다: 연결된 대역(LAN 이 먼저 — 부팅 때 LAN 브리지가 먼저 올라온다) → 그 회선의 대역 → 디폴트 라우트.
+   * 못 보내면 사유, 보내도 되면 undefined
+   */
+  private wanRouteProblem(iface: NetInterface, dst: Ip): string | undefined {
+    if (!iface.ip || !this.lan.ip) return undefined;
+    if (this.overlapsLan(iface) && sameSubnet(dst, this.lan.ip, this.lan.prefix)) {
+      const label = iface === this.wan2 ? "WAN2" : "WAN";
+      return `${dst} 는 ${label} 대역(${iface.ip}/${iface.prefix})이면서 LAN 대역(${this.lan.ip}/${this.lan.prefix})이기도 함 → 연결된 LAN 경로가 먼저라 ${label} 로 보낼 수 없음`;
+    }
+    if (sameSubnet(dst, iface.ip, iface.prefix)) return undefined;
+    const why = this.defaultRouteProblem(iface);
+    return why && `${dst} 는 외부 → ${why}`;
+  }
+
+  /** WAN 인터페이스로 나가기 직전의 경로 판단 (공유기 자신이 만든 패킷도). 못 보내면 기록하고 true */
+  private noRouteOut(iface: NetInterface, pkt: Ipv4Packet, ctx: NodeContext): boolean {
+    if (pkt.dst === LIMITED_BROADCAST_IP) return false; // DHCP 등 브로드캐스트는 경로와 무관
+    const why = this.wanRouteProblem(iface, pkt.dst);
+    if (!why) return false;
+    ctx.trace("ip.no-route", "L3", `No route: ${pkt.src} → ${pkt.dst} 를 보내려 했지만 ${why} → 드롭`, { dst: pkt.dst });
+    return true;
   }
 
   // ---------- 멀티 WAN ----------

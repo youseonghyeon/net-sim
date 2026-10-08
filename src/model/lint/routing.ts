@@ -108,3 +108,44 @@ export function relayRouteRule({ t, m, add }: LintContext): void {
     }
   }
 }
+
+// 규칙 12b: 공유기 WAN 과 LAN 이 같은 대역 → 디폴트 라우트의 넥스트 홉이 내 LAN 주소(또는 LAN 대역 안)라 인터넷으로 못 나감.
+// 자동(DHCP) WAN 은 WAN 세그먼트의 DHCP 서버가 공유기 하나뿐일 때만 그 LAN 대역·주소를 받을 것으로 본다 (공유기 뒤 공유기). 아니면 침묵
+export function routerWanLanRule({ t, m, add }: LintContext): void {
+  for (const d of t.devices) {
+    const r = d.router;
+    if (d.kind !== "router" || !r) continue;
+    const lan = subnetOf(validIp(r.lanIp), r.lanPrefix);
+    const lanIp = validIp(r.lanIp);
+    if (!lan || !lanIp) continue;
+    let wan: Subnet | undefined;
+    let gw: string | undefined;
+    let from = "";
+    if (r.wan.ipMode === "static") {
+      wan = subnetOf(validIp(r.wan.ip), r.wan.prefix);
+      gw = validIp(r.wan.gateway);
+      from = "수동 설정";
+    } else {
+      const key = `${d.id}:0`;
+      if (!m.linked.has(key) || m.stranded.has(key)) continue;
+      const mem = m.membersOf(key);
+      if (!mem || mem.gws.some((g) => g.gwKind !== "router")) continue; // ISP·게이트웨이(릴레이)가 끼면 어디서 받을지 모름
+      const srv = uniqueDevices(mem.dhcp);
+      const up = srv.length === 1 && srv[0]!.kind === "router" ? srv[0]! : undefined;
+      const upLan = up && m.allGws.find((g) => g.device === up && g.gwKind === "router");
+      if (!up || !upLan?.subnet || !upLan.ip) continue;
+      wan = upLan.subnet;
+      gw = upLan.ip;
+      from = `${up.name} 의 DHCP 로 받을 주소`;
+    }
+    if (!wan || !gw || !contains(lan, gw)) continue;
+    const next = lan.prefix >= 16 && lanIp.startsWith("192.168.") ? `192.168.${(Number(lanIp.split(".")[2]) + 1) % 256}.1` : undefined;
+    add({
+      deviceId: d.id,
+      severity: "error",
+      code: "router.wan-lan-overlap",
+      message: `WAN(${from}, ${fmtSubnet(wan)})과 LAN ${fmtSubnet(lan)} 이 같은 대역 → 디폴트 라우트의 넥스트 홉 ${gw} 가 ${gw === lanIp ? "내 LAN 주소" : "LAN 대역 안"}라 인터넷으로 못 나감 (No route)`,
+      fix: `${d.name} → 설정 → 네트워크 → LAN IP 를 WAN 과 다른 대역으로 바꾸기${next ? ` (예: ${next})` : ""}`,
+    });
+  }
+}

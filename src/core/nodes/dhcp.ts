@@ -288,6 +288,8 @@ export const LEASE_TIME = 86_400;
 export class DhcpServer {
   readonly leases = new Map<Ip, Lease>();
   private readonly offers = new Map<Mac, Ip>();
+  /** 같은 장비의 다른 인터페이스 주소 (공유기의 WAN). 풀에 들어 있어도 빌려주지 않는다 — dnsmasq 도 이미 쓰는 주소는 건너뛴다 */
+  ownAddresses: () => (Ip | undefined)[] = () => [];
 
   constructor(
     public config: DhcpServerConfig,
@@ -554,13 +556,14 @@ export class DhcpServer {
 
   /** 기존 임대 → 기존 제안 → 풀 안의 첫 빈 주소 (기존 것이 그 풀 밖이면 버린다) */
   private pickAddress(mac: Mac, pool: DhcpPool): Ip | undefined {
+    const own = new Set(this.ownAddresses().filter((ip): ip is Ip => !!ip));
     for (const [ip, lease] of this.leases) {
       if (lease.mac !== mac) continue;
-      if (this.inPool(ip, pool)) return ip;
-      if (!this.inRange(ip)) this.leases.delete(ip);
+      if (this.inPool(ip, pool) && !own.has(ip)) return ip;
+      if (!this.inRange(ip) || own.has(ip)) this.leases.delete(ip);
     }
     const offered = this.offers.get(mac);
-    if (offered && this.inPool(offered, pool)) return offered;
+    if (offered && this.inPool(offered, pool) && !own.has(offered)) return offered;
     this.offers.delete(mac);
     let start: number, end: number;
     try {
@@ -569,7 +572,7 @@ export class DhcpServer {
     } catch {
       return undefined;
     }
-    const taken = new Set([...this.leases.keys(), ...this.offers.values(), this.iface.ip]);
+    const taken = new Set([...this.leases.keys(), ...this.offers.values(), this.iface.ip, ...own]);
     const avoid = this.avoid.get(mac);
     for (let n = start; n <= end; n++) {
       const ip = intToIp(n);
