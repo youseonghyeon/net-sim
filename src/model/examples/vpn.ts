@@ -241,6 +241,46 @@ export function exampleTailscaleTopology(): Topology {
 }
 
 /**
+ * k3s 안의 Tailscale (이중 NAT·DERP): tailscaled 를 pod 로 돌리면 패킷이 NAT 를 두 번 지난다.
+ * - pod 10.42.0.5 → k3s 노드의 flannel MASQUERADE(cni0 10.42.0.0/24 → 노드 주소 192.168.0.10) → 집 공유기 NAT → 인터넷
+ * - flannel 은 MASQUERADE 에 --random-fully 를 붙여 연결마다 출발 포트를 무작위로 고른다 = 상대마다 바깥 포트가 바뀌는 symmetric NAT 처럼 보인다
+ * - 그래서 카페 노트북(port-restricted)과의 홀 펀칭이 실패해 DERP 릴레이로 간다. 노드 NAT 를 port-restricted 로 바꾸면 이중 NAT 그대로 직접 연결
+ * CoreDNS(10.43.0.10)·kube-proxy·Service 는 생략 — pod 의 DNS 는 집 공유기로 둔다 (Tailscale 은 서버를 주소로 찾는다)
+ */
+export function exampleK3sTailscaleTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 456, -296, "internet-1");
+  const isp = add("switch", 456, -168, "통신사 구간");
+  const cafe = add("router", 120, -24, "카페 공유기");
+  cafe.router = { ...cafe.router!, lanIp: "10.20.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "10.20.0.100", end: "10.20.0.199" }, natType: "port-restricted" };
+  const laptop = add("laptop", 120, 152, "카페 노트북");
+  laptop.host = { ...laptop.host!, mesh: { enabled: true, net: "tailscale", network: "homelab", name: "laptop" } };
+  const home = add("router", 680, -24, "집 공유기");
+  home.router = { ...home.router!, lanIp: "192.168.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" }, natType: "port-restricted" };
+  const node = add("gateway", 680, 152, "k3s 노드");
+  node.l3 = {
+    interfaces: [
+      { ipMode: "static", ip: "192.168.0.10", prefix: 24, gateway: "192.168.0.1" }, // if0: eth0 (집 LAN)
+      { ipMode: "static", ip: "10.42.0.1", prefix: 24, gateway: "" }, // if1: cni0 (flannel 이 이 노드에 준 pod 대역)
+    ],
+    routes: [],
+    nat: { enabled: true }, // pod → 바깥은 MASQUERADE --random-fully
+    natType: "symmetric",
+  };
+  const cni0 = add("switch", 680, 328, "cni0");
+  const pod = add("server", 680, 504, "tailscale pod");
+  pod.host = { ipMode: "static", ip: "10.42.0.5", prefix: 24, gateway: "10.42.0.1", dns: "192.168.0.1", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER }, mesh: { enabled: true, net: "tailscale", network: "homelab", name: "k3s-ts" } };
+  const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, cafe, 0), cable(isp, 6, home, 0), cable(cafe, 1, laptop, 0), cable(home, 1, node, 0), cable(node, 1, cni0, 3), cable(cni0, 4, pod, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "카페 · port-restricted NAT", tint: "green", ...zoneAround(t, [cafe.id, laptop.id], 56)! },
+    { id: newId("zone"), label: "집 192.168.0.0/24 · NAT 1 (공유기)", tint: "blue", ...zoneAround(t, [home.id, node.id, cni0.id, pod.id], 56)! },
+    { id: newId("zone"), label: "k3s 노드 · NAT 2 (flannel)", tint: "amber", ...zoneAround(t, [node.id, cni0.id, pod.id], 32)! },
+  ];
+  return t;
+}
+
+/**
  * Tor (양파 라우팅): Brume 3 의 Tor 를 켜면 LAN 노트북의 TCP·DNS 가 가드 → 중간 → 출구를 거친다.
  * 집 공유기의 포트 포워딩 웹 서버(집 NAS)에 접속하면 NAS 는 출구 주소(198.51.100.133)에서 온 연결로 본다. ping 은 Tor 가 나르지 못한다
  */

@@ -9,7 +9,7 @@ import { exampleIgmpTopology, exampleHubTopology, exampleVlanTopology, exampleSt
 import { exampleDropInTopology, exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleSipTopology, exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology, exampleAdguardTopology } from "./examples/services";
 import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology, exampleMultiWanTopology } from "./examples/internet";
-import { exampleDdnsTopology, exampleDpiTopology, exampleOpenVpnTopology, exampleTailscaleTopology, exampleTorTopology, exampleWireguardTopology } from "./examples/vpn";
+import { exampleDdnsTopology, exampleDpiTopology, exampleK3sTailscaleTopology, exampleOpenVpnTopology, exampleTailscaleTopology, exampleTorTopology, exampleWireguardTopology } from "./examples/vpn";
 import { exampleRoamingTopology } from "./examples/wireless";
 import { exampleCompanyTopology } from "./examples/overview";
 import { exampleDualStackHomeTopology, exampleDualStackTopology, exampleIpv6BasicsTopology, exampleSlaacTopology } from "./examples/ipv6";
@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "igmp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "tor" | "dpi" | "lb" | "proxy" | "adguard" | "sip" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "igmp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "k3s" | "tor" | "dpi" | "lb" | "proxy" | "adguard" | "sip" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -249,6 +249,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "Tailscale (메시 VPN·홀 펀칭·DERP·서브넷 라우터)",
     blurb: "세 곳의 기기가 tailnet \"family\" 에 로그인해 100.64.x.y 주소를 받고, 조정 서버가 서로의 후보 주소를 나눠 줍니다(netmap). 카페 노트북에서 work-pc 로 ping 해 보세요 — 이름은 MagicDNS 가 풀고, 카페(port-restricted)와 회사(symmetric) NAT 사이는 홀 펀칭이 안 돼 DERP 릴레이를 거칩니다. home-brume 으로는 홀 펀칭이 성공해 직접 갑니다(표 탭의 경로). 집 Brume 3 은 서브넷 라우터라 노트북에서 집 NAS 192.168.8.20 에도 닿고, 노트북의 exit node 를 home-brume 으로 하면 인터넷도 집을 거칩니다.",
     build: exampleTailscaleTopology,
+  },
+  k3s: {
+    id: "k3s",
+    group: "VPN",
+    label: "k3s 안의 Tailscale (이중 NAT·DERP)",
+    blurb: "k3s 의 tailscale pod(10.42.0.5)가 내보낸 패킷은 k3s 노드의 flannel MASQUERADE 와 집 공유기 NAT 를 차례로 지납니다. flannel 은 MASQUERADE 에 --random-fully 를 붙여 연결마다 출발 포트를 무작위로 고르므로, 바깥에서 보면 상대마다 포트가 바뀌는 symmetric NAT 입니다. 카페 노트북에서 k3s-ts 로 ping 해 보세요 — STUN 이 본 바깥 포트로 홀 펀칭을 해도 맞지 않아 DERP 릴레이를 거칩니다(표 탭의 경로). k3s 노드의 NAT 종류를 port-restricted 로 바꾸고 상단바 \"+10초\" 를 세 번 눌러 STUN 을 다시 확인하게 한 뒤(25초마다) ping 하면, NAT 는 여전히 두 겹인데도 홀 펀칭이 성공해 직접 연결됩니다. 이미 있던 NAT 매핑은 바꿔도 그대로라 바로는 DERP 입니다. 원인은 겹 수가 아니라 둘 중 하나라도 symmetric 인지입니다. 실제 pod 에서는 tailscale netcheck 의 MappingVariesByDestIP: true 로 확인합니다.",
+    build: exampleK3sTailscaleTopology,
   },
   tor: {
     id: "tor",
