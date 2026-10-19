@@ -66,7 +66,7 @@ npm run perf-check  # 프로덕션 빌드로 예제 전부 + 단말 52대 스트
 | `docs/features/l2.md` | 무선(노트북 유선·무선 NIC 포함), VLAN, STP, IGMP 스누핑 |
 | `docs/features/routing.md` | RIP, 이중화(VRRP·세션 동기화), 게이트웨이 NAT·포트 공개(도커 예제), NAT 종류·P2P·헤어핀 |
 | `docs/features/vpn.md` | 사이트 간 VPN(WireGuard 식·IPsec·DPD), 원격 접속 VPN(EAP), 공유기 L2TP, WireGuard, OpenVPN, 메시 VPN, DPI·난독화, Tor |
-| `docs/features/services.md` | 로드밸런서(L7·L4·세션 고정), 포워드 프록시, DDNS, 멀티 WAN, AdGuard, 공유기 관리, Samba, SIP |
+| `docs/features/services.md` | 로드밸런서(L7·L4·세션 고정), 포워드 프록시, DDNS, 멀티 WAN·공유기 스태틱 라우트, AdGuard, 공유기 관리, Samba, SIP |
 | `docs/features/ipv6.md` | 링크 로컬·NDP·SLAAC·NUD·듀얼 스택·공유기 PD·인터넷 IPv6 |
 | `docs/features/ui.md` | 캔버스·인스펙터·로그 서랍·영역의 동작 상세 |
 

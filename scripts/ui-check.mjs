@@ -1006,33 +1006,65 @@ section("stp", async () => {
   await page.screenshot({ path: `${OUT}/53-stp.png` });
 });
 
-// 재택근무 원격 접속 VPN: 노트북이 접속(배지), 사내 서버로 SSH
-// 망분리 재택 접속: 재택 노트북 → VPN → ssh -J 점프 서버 → 내부망 PC 1. 점프 서버의 "SSH 점프 허용" 토글, 표의 SSH 점프 기록
-section("ncpjump", async () => {
-  await loadEx("ncpjump");
+// 망분리 재택 접속 (WireGuard 공유기): 재택 노트북 → WireGuard → 사무실 공유기 → 스태틱 라우트(WAN2) → IPsec → NCP dev-1 ping·SSH.
+// 사무실 공유기의 스태틱 라우트 섹션·WAN2 "디폴트 라우트로 사용" 토글·표의 라우팅 테이블. 이어서 dev-1 의 "SSH 점프 허용" 을 켜고 ssh -J dev-1 → dev-2
+section("ncpwg", async () => {
+  await loadEx("ncpwg");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
   await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => /재택 노트북/.test(el.textContent ?? "") && /VPN 연결됨/.test(el.textContent ?? "")), null, { timeout: 30000 });
-  await page.screenshot({ path: `${OUT}/55a-ncpjump.png` });
+  await page.screenshot({ path: `${OUT}/55a-ncpwg.png` });
   await clickDevice("재택 노트북");
   await goTab("진단");
-  await page.fill(".tcp-row .input:not(.port)", "10.50.10.1");
+  await page.fill(".ping-row .input", "192.168.111.11");
+  await page.click(".ping-row .btn");
+  await page.click(".transport .ff");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".inspector .ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("ncpwg ping dev-1:", (await page.locator(".inspector .ping-log li").first().innerText()).replace(/\s+/g, " "));
+  await page.fill(".tcp-row .input:not(.port)", "192.168.111.11");
   await page.keyboard.press("Escape");
   await page.fill(".tcp-row .input.port", "22");
-  await page.fill(".jump-row .input", "10.255.1.10");
   await page.click(".tcp-row .btn");
-  await page.click(".transport .ff"); // 홉이 많아 애니메이션을 기다리지 않고 10초를 흘려보낸다
-  await page.waitForFunction(() => /세션 열림|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 60000 });
-  console.log("ncpjump ssh -J:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
-  await page.screenshot({ path: `${OUT}/55b-ncpjump-diag.png` });
-  await clickDevice("점프 서버");
+  await page.click(".transport .ff");
+  await page.waitForFunction(() => /세션 열림|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("ncpwg ssh dev-1:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
+  await page.screenshot({ path: `${OUT}/55b-ncpwg-diag.png` });
+  await clickDevice("사무실 공유기");
   await goTab("표");
-  const jt = page.locator(".inspector .section", { hasText: "SSH 점프 기록" });
-  console.log("ncpjump log:", (await jt.locator("tbody tr").allInnerTexts()).map((r) => r.replace(/\s+/g, " ")));
+  const rt = page.locator(".inspector .section", { hasText: "라우팅 테이블 (main)" });
+  console.log("ncpwg routes:", (await rt.locator("tbody tr").allInnerTexts()).map((r) => r.replace(/\s+/g, " ")));
+  await goTab("설정");
+  await goGroup("인터넷");
+  const mw = page.locator(".inspector section", { has: page.locator("h3", { hasText: /^멀티 WAN$/ }) });
+  console.log("ncpwg default route toggle:", (await mw.locator(".toggle-row", { hasText: "디폴트 라우트로 사용" }).locator(".toggle.on").count()) === 0 ? "off" : "ON?");
+  const sr = page.locator(".inspector section", { has: page.locator("h3", { hasText: /^스태틱 라우트$/ }) });
+  await sr.scrollIntoViewIfNeeded();
+  console.log("ncpwg static rows:", await sr.locator(".static-route").count());
+  await page.screenshot({ path: `${OUT}/55c-ncpwg-routes.png` });
+  // 넥스트 홉을 대역 밖으로 → 칸 아래 이유
+  await sr.locator(".static-route").first().locator("input").nth(1).fill("10.60.0.1");
+  console.log("ncpwg bad via:", (await sr.locator(".static-route").first().locator(".error").textContent())?.trim());
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
+  // SSH 점프: dev-1 의 "SSH 점프 허용" 을 켜고 노트북에서 ssh -J 192.168.111.11 192.168.112.11
+  await clickDevice("dev-1");
   await goTab("설정");
   const svc = page.locator(".inspector section", { has: page.locator("h3", { hasText: /^서비스$/ }) });
-  console.log("ncpjump toggle:", (await svc.locator(".toggle-row", { hasText: "SSH 점프 허용" }).count()) === 1 ? "yes" : "NO");
+  const jumpToggle = svc.locator(".toggle-row", { hasText: "SSH 점프 허용" }).locator(".toggle");
+  await jumpToggle.click();
+  console.log("ncpwg dev-1 jump toggle:", await jumpToggle.getAttribute("aria-checked"));
+  await clickDevice("재택 노트북");
+  await goTab("진단");
+  await page.fill(".tcp-row .input:not(.port)", "192.168.112.11");
+  await page.keyboard.press("Escape");
+  await page.fill(".tcp-row .input.port", "22");
+  await page.fill(".jump-row .input", "192.168.111.11");
+  await page.click(".tcp-row .btn");
+  await page.click(".transport .ff"); // 홉이 많아 애니메이션을 기다리지 않고 10초를 흘려보낸다
+  const jumpLi = () => [...document.querySelectorAll(".inspector .tcp-log li")].find((li) => /점프/.test(li.textContent ?? ""))?.textContent ?? "";
+  await page.waitForFunction((f) => /세션 열림|실패/.test(new Function(`return (${f})()`)()), jumpLi.toString(), { timeout: 30000 });
+  console.log("ncpwg ssh -J:", (await page.locator(".inspector .tcp-log li", { hasText: "점프" }).innerText()).replace(/\s+/g, " "));
 });
 
+// 재택근무 원격 접속 VPN: 노트북이 접속(배지), 사내 서버로 SSH
 section("remote", async () => {
   await loadEx("remote");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});

@@ -1015,6 +1015,14 @@ select.btn.example {
 .lb-row.mwan-rule {
   grid-template-columns: minmax(0, 1fr) auto 96px 30px;
 }
+/* 스태틱 라우트: 인터페이스 · 대상 · 삭제, 다음 줄에 via 넥스트 홉 */
+.lb-row.static-route {
+  grid-template-columns: 88px minmax(0, 1fr) 30px;
+}
+.lb-row.static-route .via {
+  text-align: right;
+  padding-right: 4px;
+}
 .lb-error {
   grid-column: 1 / -1;
 }

@@ -6,7 +6,8 @@ import { DEFAULT_DHCP_SERVER, type Device, type Topology } from "../src/model/to
 import type { Host } from "../src/core/nodes/host";
 import { practitionerLines } from "../src/model/packetView";
 import { lintTopology } from "../src/model/lint";
-import { EXAMPLES, exampleSeparatedRemoteTopology } from "../src/model/examples";
+import { EXAMPLES } from "../src/model/examples";
+import { separatedJumpTopology as exampleSeparatedRemoteTopology } from "./fixtures";
 
 const patchDev = (t: Topology, name: string, f: (d: Device) => Device): Topology => ({ ...t, devices: t.devices.map((d) => (d.name === name ? f(d) : d)) });
 
@@ -163,7 +164,7 @@ describe("SSH 점프: 구성 검사", () => {
   });
 });
 
-describe("예제: 망분리 사무실 재택 접속 (VPN + 점프 서버)", () => {
+describe("망분리 사무실 재택 접속 (VPN + 점프 서버, tests/fixtures)", () => {
   const conn = (L: ReturnType<typeof loadTopology>, name: string) => [...L.host(name).tcp.conns.values()].filter((c) => c.role === "client").at(-1)!;
   it("구성 검사 0, 재택 노트북은 VPN 으로 DMZ 경로만 받는다", () => {
     const L = loadTopology(exampleSeparatedRemoteTopology());
@@ -216,6 +217,15 @@ describe("예제: 망분리 사무실 재택 접속 (VPN + 점프 서버)", () =
 
 // 리뷰(2026-10-19) 회귀
 describe("review: SSH 점프", () => {
+  it("이미 만든 서버에서 \"SSH 점프 허용\" 을 켜면 바로 반영된다 (동기화 키에 sshJump)", () => {
+    const off = patchDev(lan(), "jump", (d) => ({ ...d, host: { ...d.host!, sshJump: false } }));
+    const L = loadTopology(off);
+    L.apply(patchDev(L.t, "jump", (d) => ({ ...d, host: { ...d.host!, sshJump: true } })));
+    L.act({ kind: "tcp-connect", nodeId: L.id("cli"), dst: "10.0.0.3", port: 22, jump: "10.0.0.2" });
+    expect(L.lastConn("cli").ssh?.open).toBe(true);
+    expect(L.lastConn("cli").jump?.state).toBe("up");
+  });
+
   it("듀얼 스택 클라이언트가 점프 서버를 이름으로 적어도 A 로 푼다 (AAAA 가 먼저 와도 실패하지 않음)", () => {
     let t = EXAMPLES.dualstack.build();
     t = patchDev(t, "web-1", (d) => ({ ...d, host: { ...d.host!, services: [...new Set([...(d.host!.services ?? []), 22])], sshJump: true } }));

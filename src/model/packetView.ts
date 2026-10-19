@@ -920,6 +920,8 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       if (ip) out.push({ tool: "시스코 debug ip packet", line: `IP: s=${ip.src}, d=${ip.dst} (${detail(ev, "out") ?? "?"}), len ${len}, forward` });
       // 멀티 WAN 정책 규칙으로 회선을 골랐으면 mwan3 status 의 user rules 줄 (pkts = 그 규칙으로 고른 새 연결 수, policy = 그 회선 먼저·끊기면 다른 회선)
       if (detail(ev, "rule") !== undefined) out.push({ tool: "OpenWrt mwan3 status", line: `Active ipv4 user rules:\n${String(detail(ev, "hits") ?? 1).padStart(5)}     - ${detail(ev, "policy")}  all  --  *      *       ${String(detail(ev, "ruleSrc")).padEnd(20)} 0.0.0.0/0` });
+      // 공유기 스태틱 라우트로 나간 전달: LuCI 상태 → 라우트의 그 경로 줄 (main 테이블)
+      if (detail(ev, "route") !== undefined && detail(ev, "via") !== undefined) out.push({ tool: "OpenWrt LuCI 상태 → 라우트", line: `Network  Target              IPv4 gateway     Metric  Table\n${String(detail(ev, "iface")).padEnd(9)}${String(detail(ev, "route")).padEnd(20)}${String(detail(ev, "via")).padEnd(17)}0       main` });
       if (ip6) out.push({ tool: "시스코 debug ipv6 packet", line: `IPV6: source ${ip6.src}\n      dest ${ip6.dst} (${detail(ev, "out") ?? "?"})\n      traffic class 0, flow 0x0, len ${len}, prot ${IP6_NEXT_HEADER[ip6.payload.kind].num}, hops ${ip6.hopLimit}, forwarding` });
       break;
     case "ndp.cache.update":

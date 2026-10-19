@@ -7,6 +7,8 @@
 // - 추적 주소를 비우면 링크·주소만 본다 (회선이 링크는 살아 있는데 인터넷이 안 되는 장애는 모른다)
 // - 정책 규칙(mwan3 rule): 출발지 대역 → 회선. 위에서부터 처음 맞는 규칙의 회선이 살아 있으면 그 회선, 끊겼으면 지금 회선
 //   (mwan3 의 wan2_wan1 같은 순서 policy). 맞는 규칙이 없으면 페일오버 그대로. 출발지는 NAT 전 주소라 VPN 대역(터널에서 풀린 것)도 고른다
+// - WAN2 를 디폴트 라우트로 쓰지 않음(LuCI "Use default gateway" 끔 + mwan3 인터페이스에서 뺌): WAN2 는 페일오버·정책 규칙의 회선이 아니다 —
+//   추적 ping 도 하지 않고, WAN1 이 끊겨도 넘어가지 않으며, WAN2 를 가리키는 규칙은 policy 에 남은 WAN1 로. WAN2 는 직접 연결된 대역·스태틱 라우트로만 쓴다
 // 생략: 로드 밸런싱(회선 나눠 쓰기), 회선 3개 이상, 추적 주소 여러 개(reliability), 회선마다 다른 추적 주소, 목적지·포트 규칙, "그 회선만"(끊기면 드롭) policy
 import { type Ip, sameSubnet } from "../addr";
 import type { NodeContext } from "./node";
@@ -65,23 +67,34 @@ export class MultiWan {
   rules: MwanRule[] = [];
   /** 규칙마다 그 규칙으로 회선을 고른 새 흐름 수 */
   hits: number[] = [];
+  /** WAN2 가 mwan3 의 회선인지 (false = 디폴트 라우트로 쓰지 않음) */
+  wan2Member = true;
   private seq = 0;
   private tick = 0;
 
   constructor(private readonly io: MwanIo) {}
 
-  setConfig(enabled: boolean, track: Ip | undefined, ctx: NodeContext): void {
-    if (enabled === this.enabled && track === this.track) return;
+  setConfig(enabled: boolean, track: Ip | undefined, ctx: NodeContext, wan2Member = true): void {
+    if (enabled === this.enabled && track === this.track && wan2Member === this.wan2Member) return;
     const was = this.enabled;
     this.enabled = enabled;
     this.track = track;
+    this.wan2Member = wan2Member;
     for (const w of ["wan", "wan2"] as const) this.lines[w] = { ...fresh(), online: this.io.ready(w) };
     if (!enabled) {
       if (was) ctx.trace("mwan.config", "sys", `멀티 WAN 꺼짐 — lan4 는 다시 LAN 포트, 모든 트래픽은 WAN1 로`, {});
       this.switchTo("wan", "멀티 WAN 꺼짐", ctx);
       return;
     }
-    ctx.trace("mwan.config", "sys", `멀티 WAN (페일오버) 켜짐: WAN1 이 주 회선, WAN2(lan4) 가 예비. ${track ? `${MWAN_INTERVAL / 1000}초마다 회선마다 ${track} 에 ping — ${MWAN_DOWN}번 이어 실패하면 끊김, ${MWAN_UP}번 이어 답하면 살아남` : "추적 주소가 없어 링크·주소만 본다"}`, { track: track ?? "" });
+    const probing = track ? `${MWAN_INTERVAL / 1000}초마다 ${wan2Member ? "회선마다" : "WAN1 로"} ${track} 에 ping — ${MWAN_DOWN}번 이어 실패하면 끊김, ${MWAN_UP}번 이어 답하면 살아남` : "추적 주소가 없어 링크·주소만 본다";
+    ctx.trace(
+      "mwan.config",
+      "sys",
+      wan2Member
+        ? `멀티 WAN (페일오버) 켜짐: WAN1 이 주 회선, WAN2(lan4) 가 예비. ${probing}`
+        : `WAN2(lan4) 를 디폴트 라우트로 쓰지 않음: mwan3 회선은 WAN1 하나 — WAN1 이 끊겨도 인터넷 트래픽은 WAN2 로 넘어가지 않고, WAN2 는 직접 연결된 대역·스태틱 라우트로만 쓴다. ${probing}`,
+      { track: track ?? "", wan2Member },
+    );
     this.decide(ctx, "설정");
     this.arm(ctx);
   }
@@ -94,6 +107,11 @@ export class MultiWan {
     if (this.enabled) ctx.trace("mwan.config", "sys", rules.length ? `멀티 WAN 정책 규칙: ${rules.map(mwanRuleLabel).join(", ")} — 출발지가 맞으면 그 회선으로 (끊겼으면 지금 회선), 나머지는 페일오버대로` : `멀티 WAN 정책 규칙 없음 → 모든 새 연결은 지금 회선으로`, { rules: rules.length });
   }
 
+  /** 그 회선을 페일오버·정책 규칙에 쓸 수 있는지 (살아 있고 mwan3 의 회선) */
+  usable(w: WanName): boolean {
+    return this.lines[w].online && (w === "wan" || this.wan2Member);
+  }
+
   /** 출발지가 처음 맞는 규칙 */
   ruleFor(src: Ip): { rule: MwanRule; index: number } | undefined {
     if (!this.enabled) return undefined;
@@ -103,7 +121,8 @@ export class MultiWan {
 
   /** 표시용: mwan3 status 의 규칙 줄 */
   ruleRows(): string[][] {
-    return this.rules.map((r, i) => [`${i + 1}`, `${r.src.ip}/${r.src.prefix}`, WAN_LABEL[r.line], this.lines[r.line].online ? "그 회선으로" : `끊김 → ${WAN_LABEL[this.active]}`, `${this.hits[i] ?? 0}`]);
+    const now = (r: MwanRule) => (this.usable(r.line) ? "그 회선으로" : r.line === "wan2" && !this.wan2Member ? `디폴트 라우트로 안 씀 → ${WAN_LABEL[this.active]}` : `끊김 → ${WAN_LABEL[this.active]}`);
+    return this.rules.map((r, i) => [`${i + 1}`, `${r.src.ip}/${r.src.prefix}`, WAN_LABEL[r.line], now(r), `${this.hits[i] ?? 0}`]);
   }
 
   private arm(ctx: NodeContext): void {
@@ -138,7 +157,7 @@ export class MultiWan {
     if ((data as { tick: number }).tick !== this.tick || !this.enabled || !this.track) return;
     for (const w of ["wan", "wan2"] as const) {
       const l = this.lines[w];
-      if (!this.io.ready(w)) {
+      if (!this.io.ready(w) || (w === "wan2" && !this.wan2Member)) {
         l.probe = undefined;
         continue;
       }
@@ -172,7 +191,7 @@ export class MultiWan {
   private decide(ctx: NodeContext, why: string): void {
     if (!this.enabled) return;
     const wan1Coming = this.active === "wan" && this.io.waiting("wan");
-    const want: WanName = this.lines.wan.online || wan1Coming ? "wan" : this.lines.wan2.online ? "wan2" : "wan";
+    const want: WanName = this.lines.wan.online || wan1Coming ? "wan" : this.usable("wan2") ? "wan2" : "wan";
     this.switchTo(want, why, ctx);
   }
 
@@ -187,6 +206,7 @@ export class MultiWan {
   rows(): string[][] {
     return (["wan", "wan2"] as const).map((w) => {
       const l = this.lines[w];
+      if (w === "wan2" && !this.wan2Member) return [WAN_LABEL[w], l.online ? "연결됨" : "끊김", "mwan3 에서 뺌 (디폴트 라우트로 안 씀)", "추적 안 함"];
       return [WAN_LABEL[w], l.online ? "살아 있음" : "끊김", this.active === w ? "사용 중" : "대기", this.track ? `실패 ${l.fails} · 성공 ${l.oks}` : "추적 안 함"];
     });
   }

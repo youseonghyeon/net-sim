@@ -116,7 +116,7 @@ export class NetworkSync {
     for (const d of t.devices) {
       const key: SyncedDevice = {
         net: configKey(d),
-        services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d), q: effectiveP2p(d), m: d.host ? effectiveMesh(d) : undefined, v: effectiveSip(d) }),
+        services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d), q: effectiveP2p(d), m: d.host ? effectiveMesh(d) : undefined, v: effectiveSip(d), j: d.host?.sshJump === true }),
         v6: d.host ? JSON.stringify(effectiveHost6(d)) : "",
       };
       const prev = this.syncedConfig.get(d.id);
@@ -507,8 +507,16 @@ export function effectiveRouter(d: Device, current?: Router) {
           const c = parseCidr(x.src, 32);
           return c ? [{ src: { ip: networkOf(c.ip, c.prefix), prefix: c.prefix }, line: x.line }] : [];
         }),
+        ...(w2?.defaultRoute === false ? { defaultRoute: false } : {}),
       };
     })(),
+    // 스태틱 라우트: 대상·넥스트 홉을 읽을 수 없는 줄(편집 중·잘못 적음 — 구성 검사 router.route-invalid)은 뺀다
+    routes: (r.routes ?? []).flatMap((x) => {
+      const c = parseCidr(x.dest, 32);
+      const via = x.via.trim() ? validIp(x.via.trim()) : "";
+      // 넥스트 홉을 비우면 그 인터페이스로 바로 (on-link)
+      return c && via !== undefined ? [{ iface: x.iface, dest: { ip: networkOf(c.ip, c.prefix), prefix: c.prefix }, ...(via ? { via } : {}) }] : [];
+    }),
     mesh: effectiveMesh(d),
     admin: (() => {
       const allow = parseCidrList(r.admin?.allow);

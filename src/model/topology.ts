@@ -665,6 +665,15 @@ export interface RouterSettings {
   sipAlg?: boolean;
   /** Tor (LAN 의 TCP·DNS 를 Tor 로). 없으면 꺼짐 */
   tor?: boolean;
+  /** 스태틱 라우트 (LuCI Network → Static Routes). 없으면 없음 */
+  routes?: RouterRouteSetting[];
+}
+
+/** 스태틱 라우트: dest = 대상 대역 (CIDR, 주소 하나면 /32), via = 넥스트 홉 (그 인터페이스 대역 안) */
+export interface RouterRouteSetting {
+  iface: "wan" | "wan2";
+  dest: string;
+  via: string;
 }
 
 export interface RouterAdminSettings {
@@ -821,6 +830,8 @@ export interface RouterWan2Settings extends WanSettings {
   track: string;
   /** 정책 규칙 (mwan3 rule): 출발지 대역 → 회선, 위에서부터 처음 맞는 것. 없으면 페일오버만 */
   rules?: MwanRuleSetting[];
+  /** false = 디폴트 라우트로 쓰지 않음 (LuCI "Use default gateway" 끔 + mwan3 에서 뺌 — 직접 연결된 대역·스태틱 라우트로만). 없으면 씀 */
+  defaultRoute?: boolean;
 }
 
 /** 멀티 WAN 정책 규칙: src = 출발지 대역 (CIDR, 주소 하나면 /32) */
@@ -926,7 +937,15 @@ function normalizeWan2(v: Partial<RouterWan2Settings>): RouterWan2Settings {
             .map((x) => ({ src: str(x.src), line: x.line === "wan" ? ("wan" as const) : ("wan2" as const) })),
         }
       : {}),
+    ...(v.defaultRoute === false ? { defaultRoute: false } : {}),
   };
+}
+
+function normalizeRoutes(v: unknown[]): RouterRouteSetting[] {
+  const str = (x: unknown) => (typeof x === "string" ? x : "");
+  return v
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+    .map((x) => ({ iface: x.iface === "wan2" ? ("wan2" as const) : ("wan" as const), dest: str(x.dest), via: str(x.via) }));
 }
 
 function normalizeWgFields(v: Partial<WgClientSettings>): WgClientSettings {
@@ -1585,6 +1604,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...(r.samba && typeof r.samba === "object" ? { samba: { enabled: r.samba.enabled === true, wan: r.samba.wan === true } } : {}),
           ...(Array.isArray(r.blocked) ? { blocked: r.blocked.filter((x): x is string => typeof x === "string") } : {}),
           ...(r.wan2 ? { wan2: normalizeWan2(r.wan2) } : {}),
+          ...(Array.isArray(r.routes) ? { routes: normalizeRoutes(r.routes) } : {}),
           ...(r.adguard ? { adguard: normalizeAdguard(r.adguard) } : {}),
           ...(r.dpi ? { dpi: { enabled: (r.dpi as Partial<RouterDpiSettings>).enabled === true, blockApps: Array.isArray(r.dpi.blockApps) ? r.dpi.blockApps.filter((x): x is string => typeof x === "string") : [], blockCategories: Array.isArray(r.dpi.blockCategories) ? r.dpi.blockCategories.filter((x): x is string => typeof x === "string") : [] } } : {}),
           ...(r.ddns ? { ddns: { enabled: (r.ddns as Partial<RouterDdnsSettings>).enabled === true, name: typeof (r.ddns as Partial<RouterDdnsSettings>).name === "string" ? r.ddns.name : "" } } : {}),

@@ -6,7 +6,7 @@ import { TCP_TIMER_TAG } from "./tcp";
 import { IgmpSnoop } from "./igmp";
 import { sipAlgRewrite } from "./sip";
 import { TOR_TIMER_TAG, TorClient } from "./tor";
-import { BROADCAST_MAC, isMulticastMac, sameSubnet, type Ip, type Mac } from "../addr";
+import { BROADCAST_MAC, isMulticastMac, isPrivateIp, networkOf, sameSubnet, type Ip, type Mac } from "../addr";
 import { ALL_NODES, formatIp6, isIpv6, isLinkLocal6, isMulticast6, parseIp6, sameSubnet6, UNSPECIFIED6 } from "../addr6";
 import {
   DHCP_CLIENT_PORT,
@@ -100,6 +100,8 @@ export interface RouterConfig {
   cloud?: boolean;
   /** 인터넷을 막은 LAN 기기 (MAC) */
   blocked?: string[];
+  /** 스태틱 라우트 (LuCI Static Routes) */
+  routes?: RouterStaticRoute[];
 }
 
 /** 멀티 WAN 페일오버: lan4 = WAN2 (예비 회선), 추적 주소 */
@@ -109,9 +111,33 @@ export interface Wan2Config extends WanConfig {
   track?: Ip;
   /** 정책 규칙 (출발지 대역 → 회선) */
   rules?: MwanRule[];
+  /** false = 디폴트 라우트로 쓰지 않음 (LuCI "Use default gateway" 끔 + mwan3 에서 뺌). 없으면 씀 */
+  defaultRoute?: boolean;
 }
 
-/** 인터넷으로 내보내는 회선. rule = 이 회선을 고른 정책 규칙 번호, fallback = 규칙의 회선이 끊겨 지금 회선으로 */
+/** 스태틱 라우트 (LuCI Network → Static Routes, main 테이블): 이 대역은 그 인터페이스의 넥스트 홉으로 */
+export interface RouterStaticRoute {
+  iface: WanName;
+  dest: { ip: Ip; prefix: number };
+  /** 넥스트 홉. 없으면 그 인터페이스로 바로 (on-link — 대상에게 직접 ARP) */
+  via?: Ip;
+}
+
+export function staticRouteLabel(r: RouterStaticRoute): string {
+  return `${r.dest.ip}/${r.dest.prefix} ${r.via ? `via ${r.via}` : "on-link"} (${WAN_LABEL[r.iface]})`;
+}
+
+/** main 테이블에서 디폴트 라우트가 아닌 경로: 그 회선에 직접 연결된 대역(via 없음) 또는 스태틱 라우트(route = 번호) */
+interface MainRoute {
+  line: WanName;
+  via?: Ip;
+  route?: number;
+}
+
+/**
+ * 인터넷으로 내보내는 회선. rule = 이 회선을 고른 정책 규칙 번호, fallback = 규칙의 회선을 쓸 수 없어 지금 회선으로,
+ * main = mwan3 정책이 아니라 main 테이블의 경로(직접 연결된 대역·스태틱 라우트)로 고름
+ */
 interface OutLine {
   name: WanName;
   iface: NetInterface;
@@ -119,6 +145,7 @@ interface OutLine {
   emit: Emit;
   rule?: number;
   fallback?: boolean;
+  main?: MainRoute;
 }
 
 /** 공유기 WireGuard 서버: 밖의 노트북·폰·다른 공유기가 공개 키로 붙는다 */
@@ -241,6 +268,8 @@ export class Router implements SimNode {
   readonly igmp = new IgmpSnoop();
   /** DDNS 클라이언트 */
   readonly ddns: DdnsClient;
+  /** 스태틱 라우트 (main 테이블) */
+  routes: RouterStaticRoute[] = [];
   /** 멀티 WAN: lan4 를 WAN2 로 쓰는지 */
   wan2On = false;
   readonly wan2: NetInterface;
@@ -324,14 +353,14 @@ export class Router implements SimNode {
       "DNS 포워더",
       {
         // VPN 클라이언트가 켜져 있으면 터널로(출발지 = 내 터널 주소), 업스트림 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
-        srcIp: (client) => (this.dnsViaVpn(client) ? this.wgClientCfg!.address!.ip : this.upstreamInLan() ? this.lan.ip : this.wan2On && this.mwan.active === "wan2" ? this.wan2.ip : this.wan.ip),
+        srcIp: (client) => (this.dnsViaVpn(client) ? this.wgClientCfg!.address!.ip : this.upstreamInLan() ? this.lan.ip : (this.mainSource(this.dnsForwarder.config.upstream) ?? (this.wan2On && this.mwan.active === "wan2" ? this.wan2.ip : this.wan.ip))),
         send: (pkt, ctx, client) => {
           if (this.tor.enabled && !this.dnsViaVpn(client) && !this.upstreamInLan()) {
             ctx.trace("ip.forward", "L3", `DNS 포워더: 업스트림 ${pkt.dst} 질의를 Tor 회로로 (출구가 대신 풀어 준다 — 통신사·DNS 서버가 내 질의를 보지 못한다)`, { dst: pkt.dst, tor: true });
             this.tor.sendInner(pkt, ctx);
           } else if (this.dnsViaVpn(client)) this.dnsToVpn(pkt, ctx);
           else if (this.upstreamInLan()) this.lan.sendIp(pkt, ctx, this.emitLan(ctx));
-          else {
+          else if (!this.sendMain(pkt, ctx)) {
             const o = this.out(ctx);
             o.iface.sendIp(pkt, ctx, o.emit);
           }
@@ -362,7 +391,10 @@ export class Router implements SimNode {
     this.lan.outbound = (pkt, ctx) => (!!this.wan.ip && this.vpnServer.owns(pkt.dst) && this.vpnServer.sendTo(pkt, this.wan.ip, ctx)) || this.toTunnelPeer(pkt, ctx);
     // WAN 회선으로 나가는 모든 패킷(LAN 에서 넘긴 것·공유기 자신이 만든 것)은 경로 판단을 거친다 — WAN 과 LAN 이 같은 대역이면 디폴트 라우트를 못 쓴다
     this.wan.outbound = (pkt, ctx) => this.noRouteOut(this.wan, pkt, ctx);
-    this.wan2.outbound = (pkt, ctx) => this.noRouteOut(this.wan2, pkt, ctx);
+    this.wan2.outbound = (pkt, ctx) => this.wan2NoDefault(pkt, ctx) || this.noRouteOut(this.wan2, pkt, ctx);
+    // 공유기 자신이 회선으로 내보내는 것(받은 주소에서 하는 답 등)도 스태틱 라우트의 넥스트 홉으로
+    this.wan.nextHop = (dst) => this.staticVia(dst, "wan");
+    this.wan2.nextHop = (dst) => this.staticVia(dst, "wan2");
     // DHCP 는 공유기 자신의 다른 인터페이스 주소(WAN·WAN2)를 LAN 기기에 빌려주지 않는다
     this.dhcpServer.ownAddresses = () => [this.wan.ip, this.wan2.ip];
     // WireGuard: 공유기 자신이 만든 바깥 UDP 라 NAT·방화벽을 거치지 않고 WAN 으로
@@ -370,10 +402,10 @@ export class Router implements SimNode {
     // 멀티 WAN 이면 상대가 보내던 회선(살아 있으면 — mwan3 의 "from <회선 주소>" 규칙), 아니면 지금 쓰는 회선으로
     // (WireGuard 는 출발지가 바뀌어도 상대가 로밍으로 따라온다). 보낼 때는 출발지 주소의 회선으로
     const wgIo = {
-      source: (_dst?: Ip, local?: Ip) => this.stickySource(local) ?? (this.wan2On && this.mwan.active === "wan2" ? (this.wan2LinkUp ? this.wan2.ip : undefined) : this.wanLinkUp ? this.wan.ip : undefined),
+      source: (dst?: Ip, local?: Ip) => this.stickySource(local) ?? this.mainSource(dst) ?? (this.wan2On && this.mwan.active === "wan2" ? (this.wan2LinkUp ? this.wan2.ip : undefined) : this.wanLinkUp ? this.wan.ip : undefined),
       send: (outer: Ipv4Packet, ctx: NodeContext) => {
-        if (this.lan.ip && sameSubnet(outer.dst, this.lan.ip, this.lan.prefix)) this.lan.sendIp(outer, ctx, this.emitLan(ctx));
-        else {
+        if (this.toLan(outer.dst)) this.lan.sendIp(outer, ctx, this.emitLan(ctx));
+        else if (!this.sendMain(outer, ctx)) {
           // 두 회선 주소가 같으면(같은 대역의 모뎀 두 대) 주소로 가를 수 없으니 지금 회선
           const o = !this.wan2On || this.wan.ip === this.wan2.ip ? this.out(ctx) : outer.src === this.wan2.ip ? this.line("wan2", ctx) : outer.src === this.wan.ip ? this.line("wan", ctx) : this.out(ctx);
           o.iface.sendIp(outer, ctx, o.emit);
@@ -382,7 +414,8 @@ export class Router implements SimNode {
     };
     this.wgs = new WgInterface(wgIo, "WireGuard 서버", `${cfg.id}:server`);
     // 공유기의 WireGuard 클라이언트는 늘 지금 회선에서 보낸다 (WAN1 이 살아나면 예비 회선에서 돌아온다 — 받은 회선을 기억하는 것은 서버만)
-    this.wgc = new WgInterface({ ...wgIo, source: () => wgIo.source() }, "WireGuard 클라이언트", `${cfg.id}:client`);
+    // 서버가 main 테이블 경로(직접 연결된 대역·스태틱 라우트) 뒤에 있으면 그 회선에서
+    this.wgc = new WgInterface({ ...wgIo, source: (dst?: Ip) => this.mainSource(dst) ?? wgIo.source() }, "WireGuard 클라이언트", `${cfg.id}:client`);
     // OpenVPN 서버: WireGuard 와 같은 바깥 경로 (공유기 자신이 만든 바깥 패킷이라 NAT·방화벽을 거치지 않는다)
     this.mesh = new MeshAgent(
       {
@@ -394,7 +427,8 @@ export class Router implements SimNode {
     );
     // OpenVPN 서버의 답은 클라이언트가 보낸 주소에서 — 멀티 WAN 이면 그 회선으로 (TCP 연결의 로컬 주소는 바뀌면 안 된다)
     const ovpnSend = (outer: Ipv4Packet, ctx: NodeContext) => {
-      if (this.lan.ip && sameSubnet(outer.dst, this.lan.ip, this.lan.prefix)) this.lan.sendIp(outer, ctx, this.emitLan(ctx));
+      if (this.toLan(outer.dst)) this.lan.sendIp(outer, ctx, this.emitLan(ctx));
+      else if (this.sendMain(outer, ctx)) return;
       else if (this.wan2On && outer.src === this.wan2.ip) this.wan2.sendIp(outer, ctx, this.emitWan2(ctx));
       else if (outer.src === this.wan.ip) this.wan.sendIp(outer, ctx, this.emitWan(ctx));
       else wgIo.send(outer, ctx);
@@ -467,12 +501,14 @@ export class Router implements SimNode {
     if (cfg.adguard) this.adguard.config = { ...cfg.adguard, custom: [...cfg.adguard.custom], allow: [...cfg.adguard.allow], parental: cfg.adguard.parental.map((p) => ({ ...p, categories: [...p.categories] })) };
     if (cfg.wgServer) this.wgServerCfg = cfg.wgServer;
     if (cfg.wgClient) this.wgClientCfg = cfg.wgClient;
+    if (cfg.routes) this.routes = cfg.routes.map((r) => ({ ...r, dest: { ...r.dest } }));
     // DDNS 는 지금 인터넷으로 내보내는 회선의 주소로 (멀티 WAN 이 넘어가면 따라간다)
     this.ddns = new DdnsClient(
       {
         wanIp: () => (this.wan2On && this.mwan.active === "wan2" ? this.wan2.ip : this.wan.ip),
         device: cfg.wanMac,
         send: (pkt, ctx) => {
+          if (this.sendMain(pkt, ctx)) return;
           const o = this.out(ctx);
           o.iface.sendIp(pkt, ctx, o.emit);
         },
@@ -876,18 +912,122 @@ export class Router implements SimNode {
   /**
    * LAN 에서 나가는 이 패킷의 회선: 이미 다른 회선의 흐름(그 회선으로 들어온 포트 포워딩의 응답, 그 회선으로 시작한 연결)이고
    * 그 회선이 살아 있으면 그쪽으로 (mwan3 의 conntrack mark — 되돌아갈 때 쓰던 연결이 끊기지 않게).
-   * 새 흐름은 출발지가 맞는 정책 규칙의 회선(살아 있으면), 아니면 지금 회선
+   * 목적지가 main 테이블의 경로(회선에 직접 연결된 대역·스태틱 라우트)면 그 경로 (mwan3_connected — 정책을 거치지 않는다).
+   * 그 밖의 새 흐름은 출발지가 맞는 정책 규칙의 회선(쓸 수 있으면), 아니면 지금 회선
    */
   private outFor(pkt: Ipv4Packet, ctx: NodeContext): OutLine {
     const o = this.out(ctx);
+    const main = this.mainRoute(pkt.dst);
+    if (this.wan2On) {
+      if (o.nat.carries(pkt) && this.mwan.usable(o.name) && (!main || main.line !== o.name)) return o;
+      const other: WanName = o.name === "wan" ? "wan2" : "wan";
+      if (this.mwan.usable(other) && this.line(other, ctx).nat.carries(pkt) && (!main || main.line !== other)) return this.line(other, ctx);
+    }
+    if (main) return { ...this.line(main.line, ctx), main };
     if (!this.wan2On || o.nat.carries(pkt)) return o;
-    const other: WanName = o.name === "wan" ? "wan2" : "wan";
-    if (this.mwan.lines[other].online && this.line(other, ctx).nat.carries(pkt)) return this.line(other, ctx);
     const hit = this.mwan.ruleFor(pkt.src);
     if (!hit) return o;
     const want = hit.rule.line;
     if (want === o.name) return { ...o, rule: hit.index };
-    return this.mwan.lines[want].online ? { ...this.line(want, ctx), rule: hit.index } : { ...o, rule: hit.index, fallback: true };
+    return this.mwan.usable(want) ? { ...this.line(want, ctx), rule: hit.index } : { ...o, rule: hit.index, fallback: true };
+  }
+
+  /**
+   * main 테이블에서 이 목적지의 가장 긴 일치 경로 (디폴트 라우트 제외): LAN·회선마다 직접 연결된 대역과 스태틱 라우트.
+   * 길이가 같으면 먼저 생긴 경로 — LAN, WAN1, WAN2, 스태틱 라우트 순 (스태틱 라우트는 인터페이스가 올라온 뒤에 들어간다).
+   * 가장 긴 것이 LAN 이거나 맞는 경로가 없으면 undefined. 스태틱 라우트는 넥스트 홉이 그 인터페이스 대역 안일 때만 들어간다
+   * (리눅스는 넥스트 홉에 닿을 수 없는 경로를 넣지 않는다 — "Nexthop has invalid gateway"), 넥스트 홉이 없으면 그 인터페이스로 바로(on-link).
+   * 0.0.0.0/0 은 디폴트 라우트라 mwan3_connected 가 아니다 (회선 설정·mwan3 정책이 정함).
+   * 경로는 주소가 있는 동안 남는다 — 수동 주소 회선은 케이블이 빠져도(netifd force_link 1), DHCP 회선은 주소를 잃으면 빠진다.
+   * 단 mwan3 의 회선(WAN1, 디폴트 라우트로 쓰는 WAN2)에 직접 연결된 대역은 그 회선이 살아 있을 때만 본다: 이 시뮬레이터의 인터넷은
+   * 203.0.113.0/24 하나라 WAN 대역이 곧 다른 집·회사 전부인데, 실제로는 그들이 같은 대역에 있지 않다 — 끊긴 회선에 묶지 않고 mwan3 가 살아 있는 회선으로 보내게
+   */
+  private mainRoute(dst: Ip): MainRoute | undefined {
+    let best: { prefix: number; route?: MainRoute } | undefined;
+    const offer = (ip: Ip, prefix: number, route?: MainRoute) => {
+      if (sameSubnet(dst, ip, prefix) && (!best || prefix > best.prefix)) best = { prefix, ...(route ? { route } : {}) };
+    };
+    if (this.lan.ip) offer(this.lan.ip, this.lan.prefix);
+    if (this.wan.ip && (!this.wan2On || this.mwan.usable("wan"))) offer(this.wan.ip, this.wan.prefix, { line: "wan" });
+    if (this.wan2On && this.wan2.ip && (!this.mwan.wan2Member || this.mwan.usable("wan2"))) offer(this.wan2.ip, this.wan2.prefix, { line: "wan2" });
+    this.routes.forEach((r, i) => {
+      if (r.dest.prefix === 0) return;
+      const i4 = r.iface === "wan2" ? (this.wan2On ? this.wan2 : undefined) : this.wan;
+      if (!i4?.ip) return;
+      if (!r.via) offer(r.dest.ip, r.dest.prefix, { line: r.iface, via: dst, route: i });
+      else if (sameSubnet(r.via, i4.ip, i4.prefix) && r.via !== i4.ip) offer(r.dest.ip, r.dest.prefix, { line: r.iface, via: r.via, route: i });
+    });
+    return best?.route;
+  }
+
+  /** 이 목적지의 main 테이블 경로가 그 회선의 스태틱 라우트면 넥스트 홉 (on-link 면 대상 자신) */
+  private staticVia(dst: Ip, line: WanName): Ip | undefined {
+    const r = this.mainRoute(dst);
+    return r?.route !== undefined && r.line === line ? r.via : undefined;
+  }
+
+  /** LAN 으로 가는 목적지인가 (LAN 대역 안이고, 더 긴 스태틱 라우트가 없음) */
+  private toLan(dst: Ip): boolean {
+    return !!this.lan.ip && sameSubnet(dst, this.lan.ip, this.lan.prefix) && !this.mainRoute(dst);
+  }
+
+  /** 공유기 자신이 만든 패킷: 목적지가 main 테이블의 경로(직접 연결된 대역·스태틱 라우트)이고 출발지가 그 회선의 주소면 그 경로로 보낸다. 보냈으면 true */
+  private sendMain(pkt: Ipv4Packet, ctx: NodeContext): boolean {
+    const r = this.mainRoute(pkt.dst);
+    if (!r) return false;
+    const o = this.line(r.line, ctx);
+    if (pkt.src !== o.iface.ip) return false;
+    o.iface.sendIp(pkt, ctx, o.emit, r.via);
+    return true;
+  }
+
+  /** 공유기 자신이 이 목적지로 보낼 때의 출발지: main 테이블의 경로면 그 회선 주소 */
+  private mainSource(dst: Ip | undefined): Ip | undefined {
+    const r = dst ? this.mainRoute(dst) : undefined;
+    return r ? (r.line === "wan2" ? this.wan2.ip : this.wan.ip) : undefined;
+  }
+
+  /** 표시용: LuCI 상태 → 라우트 처럼 main 테이블 (디폴트 라우트는 그 회선을 디폴트 라우트로 쓸 때만) */
+  private routeRows(): string[][] {
+    const rows: string[][] = [];
+    const conn = (name: string, i: NetInterface, member: WanName | undefined) => {
+      if (!i.ip) return;
+      const off = this.wan2On && member && !this.mwan.usable(member) ? " (회선 끊김 — 살아 있는 회선으로)" : "";
+      rows.push([name, `${networkOf(i.ip, i.prefix)}/${i.prefix}`, "", `직접 연결${off}`]);
+    };
+    conn("lan", this.lan, undefined);
+    conn("wan", this.wan, "wan");
+    if (this.wan.ip && this.wan.gateway) rows.push(["wan", "0.0.0.0/0", this.wan.gateway, "디폴트 라우트"]);
+    if (this.wan2On) {
+      conn("wan2", this.wan2, this.mwan.wan2Member ? "wan2" : undefined);
+      if (this.wan2.ip && this.wan2.gateway && this.mwan.wan2Member) rows.push(["wan2", "0.0.0.0/0", this.wan2.gateway, "디폴트 라우트 (예비)"]);
+    }
+    for (const r of this.routes) {
+      const i = r.iface === "wan2" ? (this.wan2On ? this.wan2 : undefined) : this.wan;
+      const why =
+        r.dest.prefix === 0
+          ? "디폴트 라우트는 회선 설정·멀티 WAN 이 정함"
+          : !i
+            ? "멀티 WAN 이 꺼져 WAN2 가 없음"
+            : !i.ip
+              ? `${r.iface} 에 주소 없음`
+              : !r.via
+                ? ""
+                : r.via === i.ip
+                  ? "넥스트 홉이 내 주소"
+                  : !sameSubnet(r.via, i.ip, i.prefix)
+                    ? `넥스트 홉이 ${r.iface} 대역(${networkOf(i.ip, i.prefix)}/${i.prefix}) 밖`
+                    : "";
+      rows.push([r.iface, `${r.dest.ip}/${r.dest.prefix}`, r.via ?? "", why ? `스태틱 — 쓰이지 않음 (${why})` : r.via ? "스태틱" : "스태틱 (on-link)"]);
+    }
+    return rows;
+  }
+
+  /** 스태틱 라우트 설정 (바뀌었을 때만 기록) */
+  setRoutes(routes: RouterStaticRoute[], ctx: NodeContext): void {
+    if (routes.map(staticRouteLabel).join() === this.routes.map(staticRouteLabel).join()) return;
+    this.routes = routes.map((r) => ({ ...r, dest: { ...r.dest } }));
+    ctx.trace("ip.config", "sys", routes.length ? `스태틱 라우트: ${routes.map(staticRouteLabel).join(", ")} — 이 대역은 mwan3 정책을 거치지 않고 main 테이블의 이 경로로 (그 회선의 NAT 로 나간다)` : "스태틱 라우트 없음", { routes: routes.length });
   }
 
   /** 내 WAN 주소 (멀티 WAN 이면 WAN2 주소도) */
@@ -899,7 +1039,7 @@ export class Router implements SimNode {
   private stickySource(local: Ip | undefined): Ip | undefined {
     if (!this.wan2On || !local) return undefined;
     if (local === this.wan.ip && this.wanLinkUp && this.mwan.lines.wan.online) return local;
-    if (local === this.wan2.ip && this.wan2LinkUp && this.mwan.lines.wan2.online) return local;
+    if (local === this.wan2.ip && this.wan2LinkUp && this.mwan.usable("wan2")) return local;
     return undefined;
   }
 
@@ -935,10 +1075,12 @@ export class Router implements SimNode {
       igmpSnooping?: boolean;
       sipAlg?: boolean;
       tor?: boolean;
+      routes?: RouterStaticRoute[];
     },
     ctx: NodeContext,
   ): void {
     if (cfg.dpi) this.setDpi(cfg.dpi, ctx);
+    if (cfg.routes) this.setRoutes(cfg.routes, ctx);
     if (cfg.adguard) this.setAdguard(cfg.adguard, ctx);
     if (cfg.ddns) this.ddns.setConfig(cfg.ddns, ctx);
     if (cfg.wan2) this.setWan2(cfg.wan2, ctx);
@@ -1738,7 +1880,7 @@ export class Router implements SimNode {
       this.toVpnClient(pkt, frameId, ctx);
       return;
     }
-    if (this.lan.ip && sameSubnet(pkt.dst, this.lan.ip, this.lan.prefix)) {
+    if (this.toLan(pkt.dst)) {
       if (pkt.ttl <= 1) {
         const notice = this.lan.timeExceeded(pkt, ctx, frameId);
         if (notice) this.lan.sendIp(notice, ctx, emit);
@@ -1800,7 +1942,7 @@ export class Router implements SimNode {
       ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 는 VPN 할당 IP 인데 지금 그 주소로 붙어 있는 VPN 기기가 없음 (끊긴 기기에 대신 답했던 프록시 ARP 가 보낸 쪽 캐시에 남음) → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
-    if (sameSubnet(pkt.dst, this.lan.ip!, this.lan.prefix)) {
+    if (this.toLan(pkt.dst)) {
       ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 는 LAN 안의 주소 → 라우터를 거칠 필요가 없음 (호스트끼리 직접 통신) → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
@@ -1834,14 +1976,40 @@ export class Router implements SimNode {
       return;
     }
     if (!this.firewall.check(pkt, "out", ctx, frameId)) return;
+    // main 테이블 경로로 나가는 것도 그 회선의 MASQUERADE (OpenWrt wan 영역) — 상대 쪽은 내 LAN·VPN 대역을 모르니 그 회선 주소로
+    const natWhy = o.nat.why;
+    const natNew = !o.nat.carries(pkt);
+    if (o.main && isPrivateIp(o.iface.ip)) o.nat.why = `${o.iface.ip} 쪽 상대는 이 공유기 안쪽 대역(${pkt.src})을 모름 → 그 회선의 주소로 바꾸고(MASQUERADE) 테이블에 기록`;
     let translated = o.nat.translate({ ...pkt, ttl: pkt.ttl - 1 }, o.iface.ip, ctx, frameId);
+    o.nat.why = natWhy;
     if (!translated) return;
     if (this.sipAlg) translated = this.applySipAlg(pkt, translated, o.iface.ip, o.nat, frameId, ctx);
     const rule = o.rule !== undefined ? this.mwan.rules[o.rule] : undefined;
     if (rule) this.mwan.hits[o.rule!] = (this.mwan.hits[o.rule!] ?? 0) + 1;
-    const via = rule ? ` — 출발지 ${pkt.src} 는 mwan3 규칙 ${o.rule! + 1}(${mwanRuleLabel(rule)})${o.fallback ? ` 이지만 ${WAN_LABEL[rule.line]} 이 끊겨 지금 회선으로` : ""}` : "";
-    ctx.trace("ip.forward", "L3", `라우팅: ${pkt.dst} 는 외부 → ${this.wan2On ? `${WAN_LABEL[o.name]}(${o.name === "wan" ? "wan" : "lan4"})` : "WAN"} 인터페이스로 전달${via} (TTL ${pkt.ttl} → ${translated.ttl})`, { dst: pkt.dst, out: o.name, ...(rule ? { rule: o.rule! + 1, ruleSrc: `${rule.src.ip}/${rule.src.prefix}`, policy: rule.line === "wan2" ? "wan2_wan" : "wan_wan2", hits: this.mwan.hits[o.rule!] } : {}) }, frameId);
-    o.iface.sendIp(translated, ctx, o.emit);
+    const unusable = rule && rule.line === "wan2" && !this.mwan.wan2Member ? "을 디폴트 라우트로 쓰지 않아" : " 이 끊겨";
+    const via = rule ? ` — 출발지 ${pkt.src} 는 mwan3 규칙 ${o.rule! + 1}(${mwanRuleLabel(rule)})${o.fallback ? ` 이지만 ${WAN_LABEL[rule.line]}${unusable} 지금 회선으로` : ""}` : "";
+    const port = this.wan2On ? `${WAN_LABEL[o.name]}(${o.name === "wan" ? "wan" : "lan4"})` : "WAN";
+    const main = o.main;
+    const sr = main?.route !== undefined ? this.routes[main.route] : undefined;
+    const nat = natNew ? `${o.iface.ip} 로 MASQUERADE` : "이미 있는 흐름이라 NAT 테이블대로";
+    const what = sr
+      ? `${pkt.dst} 는 스태틱 라우트 ${sr.dest.ip}/${sr.dest.prefix} → ${sr.via ? `넥스트 홉 ${sr.via}` : "넥스트 홉 없음(on-link)"}, ${port} 인터페이스로 전달 (${this.wan2On ? "mwan3 정책을 거치지 않음, " : ""}${nat})`
+      : main && this.wan2On
+        ? `${pkt.dst} 는 ${port} 에 직접 연결된 대역(${networkOf(o.iface.ip, o.iface.prefix)}/${o.iface.prefix}) → ${port} 인터페이스로 바로 전달 (mwan3 정책을 거치지 않음, ${nat})`
+        : `${pkt.dst} 는 외부 → ${port} 인터페이스로 전달${via}`;
+    ctx.trace(
+      "ip.forward",
+      "L3",
+      `라우팅: ${what} (TTL ${pkt.ttl} → ${translated.ttl})`,
+      {
+        dst: pkt.dst,
+        out: o.name,
+        ...(rule ? { rule: o.rule! + 1, ruleSrc: `${rule.src.ip}/${rule.src.prefix}`, policy: rule.line === "wan2" ? "wan2_wan" : "wan_wan2", hits: this.mwan.hits[o.rule!] } : {}),
+        ...(sr ? { route: `${sr.dest.ip}/${sr.dest.prefix}`, via: sr.via ?? "", iface: sr.iface } : main && this.wan2On ? { connected: `${networkOf(o.iface.ip, o.iface.prefix)}/${o.iface.prefix}`, iface: o.name } : {}),
+      },
+      frameId,
+    );
+    o.iface.sendIp(translated, ctx, o.emit, main?.via);
   }
 
   // ---------- 경로 판단 ----------
@@ -1878,8 +2046,22 @@ export class Router implements SimNode {
       return `${dst} 는 ${label} 대역(${iface.ip}/${iface.prefix})이면서 LAN 대역(${this.lan.ip}/${this.lan.prefix})이기도 함 → 연결된 LAN 경로가 먼저라 ${label} 로 보낼 수 없음`;
     }
     if (sameSubnet(dst, iface.ip, iface.prefix)) return undefined;
+    const main = this.mainRoute(dst);
+    if (main?.via && (main.line === "wan2" ? this.wan2 : this.wan) === iface) return undefined; // 스태틱 라우트 — 디폴트 라우트를 쓰지 않는다
     const why = this.defaultRouteProblem(iface);
     return why && `${dst} 는 외부 → ${why}`;
+  }
+
+  /**
+   * WAN2 를 디폴트 라우트로 쓰지 않는데 WAN2 로 내보내려는 패킷(공유기 자신의 답 — 받은 주소에서)의 목적지가 WAN2 의 대역·스태틱 라우트가 아니면:
+   * WAN2 에는 디폴트 라우트가 없으니(받은 게이트웨이도 쓰지 않음) main 테이블의 디폴트 라우트인 WAN1 으로 나간다 (출발지 주소는 그대로). 처리했으면 true
+   */
+  private wan2NoDefault(pkt: Ipv4Packet, ctx: NodeContext): boolean {
+    if (!this.wan2On || this.mwan.wan2Member || !this.wan2.ip || pkt.dst === LIMITED_BROADCAST_IP || sameSubnet(pkt.dst, this.wan2.ip, this.wan2.prefix)) return false;
+    if (this.mainRoute(pkt.dst)?.line === "wan2") return false;
+    ctx.trace("ip.forward", "L3", `${pkt.src} → ${pkt.dst}: WAN2 는 디폴트 라우트로 쓰지 않아 WAN2 의 게이트웨이로 보내지 않음 → main 테이블의 디폴트 라우트(WAN1)로 (출발지 주소는 그대로)`, { dst: pkt.dst, out: "wan" });
+    this.wan.sendIp(pkt, ctx, this.emitWan(ctx));
+    return true;
   }
 
   /** WAN 인터페이스로 나가기 직전의 경로 판단 (공유기 자신이 만든 패킷도). 못 보내면 기록하고 true */
@@ -1925,7 +2107,7 @@ export class Router implements SimNode {
         if (this.wan2LinkUp) this.wan2Client.start(ctx, this.emitWan2(ctx));
       }
     }
-    this.mwan.setConfig(on, cfg.track, ctx);
+    this.mwan.setConfig(on, cfg.track, ctx, cfg.defaultRoute !== false);
     this.mwan.setRules(on ? (cfg.rules ?? []) : [], ctx);
     this.mwan.onLine("wan2", ctx);
   }
@@ -2122,7 +2304,7 @@ export class Router implements SimNode {
       this.toWgPeerFwd(pkt, frameId, ctx);
       return;
     }
-    if (this.lan.ip && sameSubnet(pkt.dst, this.lan.ip, this.lan.prefix)) {
+    if (this.toLan(pkt.dst)) {
       if (!vpn.lanAccess) {
         ctx.trace("fw.deny", "L3", `${vpn.label} 클라이언트 ${pkt.src} → 집 LAN ${pkt.dst}: "LAN 접근 허용" 이 꺼져 있음 → 드롭 (인터넷만 이 공유기로 나갈 수 있다)`, { src: pkt.src, dst: pkt.dst }, frameId);
         return;
@@ -2406,7 +2588,7 @@ export class Router implements SimNode {
         ...(this.wan2On
           ? ([
               ["WAN2 (lan4)", this.wan2.ip ? `${this.wan2.ip}/${this.wan2.prefix}` : !this.wan2LinkUp ? "없음 (링크 다운)" : this.wan2Mode === "dhcp" ? `없음 (DHCP: ${DHCP_STATE_LABEL[this.wan2Client.state]})` : "없음 (수동 입력 필요)"],
-              ["멀티 WAN", `${WAN_LABEL[this.mwan.active]} 사용 중 · WAN1 ${this.mwan.lines.wan.online ? "살아 있음" : "끊김"} · WAN2 ${this.mwan.lines.wan2.online ? "살아 있음" : "끊김"}${this.mwan.track ? ` · 추적 ${this.mwan.track}` : " · 추적 안 함"}`],
+              ["멀티 WAN", `${WAN_LABEL[this.mwan.active]} 사용 중 · WAN1 ${this.mwan.lines.wan.online ? "살아 있음" : "끊김"} · WAN2 ${this.mwan.wan2Member ? (this.mwan.lines.wan2.online ? "살아 있음" : "끊김") : "디폴트 라우트로 안 씀"}${this.mwan.track ? ` · 추적 ${this.mwan.track}` : " · 추적 안 함"}`],
             ] as [string, string][])
           : []),
       ],
@@ -2423,6 +2605,7 @@ export class Router implements SimNode {
               ...(this.mwan.rules.length ? [{ title: "멀티 WAN 정책 규칙 (mwan3 rules)", columns: ["#", "출발지", "회선", "지금", "새 연결"], rows: this.mwan.ruleRows() }] : []),
             ]
           : []),
+        ...(this.routes.length || this.wan2On ? [{ title: "라우팅 테이블 (main)", columns: ["네트워크", "대상", "IPv4 게이트웨이", "종류"], rows: this.routeRows() }] : []),
         ...(this.vpnServer.config.enabled ? [{ title: "VPN 접속", columns: ["사용자", "할당 IP", "접속 주소", "방식"], rows: this.vpnServer.rows() }] : []),
         ...(this.wgServerCfg?.enabled ? [{ title: "WireGuard 서버 피어 (wg show)", columns: ["피어", "공개 키", "엔드포인트", "AllowedIPs", "최근 핸드셰이크", "전송"], rows: this.wgs.rows() }] : []),
         ...(this.igmp.enabled ? [{ title: "IGMP 스누핑 (그룹 → 포트)", columns: ["그룹", "VLAN", "포트"], rows: this.igmp.rows((p) => Router.portName(p)) }] : []),

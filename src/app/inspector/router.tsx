@@ -8,6 +8,7 @@ import {
   DEFAULT_ROUTER_VPN_SERVER,
   DEFAULT_ROUTER_WAN2,
   type MwanRuleSetting,
+  type RouterRouteSetting,
   type RouterWan2Settings,
   DEFAULT_WAN,
   type Device,
@@ -25,6 +26,7 @@ import { Icon } from "../Icons";
 import { ConfigGroups, Field, IfaceFields, Section, Toggle, ipError, validIp } from "./ui";
 import { WAN_LABEL } from "../../core/nodes/mwan";
 import { parseCidr } from "../../model/netSync";
+import { staticRouteProblem } from "../../model/lint/glinet";
 import { DdnsSection, WgClientSection, WgServerSection } from "./wg";
 import { OvpnServerSection } from "./ovpn";
 import { MeshSection } from "./mesh";
@@ -119,12 +121,13 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
         {
           id: "internet",
           label: "인터넷",
-          on: r.ipv6?.enabled === true || r.ddns?.enabled === true || r.wan2?.enabled === true || r.dropIn === true,
+          on: r.ipv6?.enabled === true || r.ddns?.enabled === true || r.wan2?.enabled === true || r.dropIn === true || (r.routes?.length ?? 0) > 0,
           content: (
             <>
               <WanSection d={d} w={r.wan ?? DEFAULT_WAN} />
               <DropInSection d={d} r={r} />
               <MultiWanSection d={d} r={r} />
+              <StaticRouteSection d={d} r={r} />
               <DdnsSection d={d} r={r} />
               <RouterIpv6Section d={d} r={r} />
             </>
@@ -346,6 +349,13 @@ export function MultiWanSection({ d, r }: { d: Device; r: RouterSettings }) {
             gatewayLabel="게이트웨이"
             dhcpNote="WAN2 에 꽂은 장비(핫스팟·LTE 모뎀·다른 통신사)에서 주소를 받습니다."
           />
+          <label class="toggle-row">
+            <span>
+              디폴트 라우트로 사용 <span class="mono muted">Use default gateway · mwan3</span>
+            </span>
+            <Toggle on={w.defaultRoute !== false} onToggle={() => set({ defaultRoute: w.defaultRoute === false ? undefined : false })} />
+          </label>
+          {w.defaultRoute === false && <p class="note">WAN2 를 인터넷 회선으로 쓰지 않습니다(mwan3 에서 뺌). WAN1 이 끊겨도 넘어가지 않고 WAN2 로는 추적 ping 도 하지 않습니다. WAN2 는 직접 연결된 대역과 스태틱 라우트로만 씁니다 — 사내 내부망처럼 인터넷이 아닌 망에 꽂을 때.</p>}
           <Field label="추적 주소" hint="회선이 살았는지 ping" error={ipError(w.track, false)}>
             <input class="input mono" value={w.track} placeholder="비우면 링크만 봄 (예: 8.8.8.8)" onInput={(e) => set({ track: e.currentTarget.value })} />
           </Field>
@@ -353,7 +363,7 @@ export function MultiWanSection({ d, r }: { d: Device; r: RouterSettings }) {
             <div class="stat-row">
               <span>지금</span>
               <b class="mono">
-                {WAN_LABEL[node.mwan.active]} 사용 · WAN1 {node.mwan.lines.wan.online ? "살아 있음" : "끊김"} · WAN2 {node.mwan.lines.wan2.online ? "살아 있음" : "끊김"}
+                {WAN_LABEL[node.mwan.active]} 사용 · WAN1 {node.mwan.lines.wan.online ? "살아 있음" : "끊김"} · WAN2 {node.mwan.wan2Member ? (node.mwan.lines.wan2.online ? "살아 있음" : "끊김") : "디폴트 라우트로 안 씀"}
               </b>
             </div>
           )}
@@ -381,6 +391,43 @@ export function MultiWanSection({ d, r }: { d: Device; r: RouterSettings }) {
           {rules.length > 0 && <p class="note">위에서부터 처음 맞는 규칙의 회선으로 나갑니다. 그 회선이 끊겨 있으면 지금 회선으로 나갑니다. 이미 시작한 연결은 규칙을 바꿔도 처음 나간 회선을 계속 씁니다. 출발지는 NAT 전 주소라 LAN 기기와 VPN 으로 붙은 기기(WireGuard·OpenVPN·메시 대역) 모두 고를 수 있습니다.</p>}
         </>
       )}
+    </Section>
+  );
+}
+
+/** 스태틱 라우트 (LuCI Network → Static Routes): 인터페이스 · 대상 대역 · 넥스트 홉 */
+export function StaticRouteSection({ d, r }: { d: Device; r: RouterSettings }) {
+  const routes = r.routes ?? [];
+  const setRoutes = (next: RouterRouteSetting[]) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, routes: next } }));
+  const patch = (i: number, p: Partial<RouterRouteSetting>) => setRoutes(routes.map((y, k) => (k === i ? { ...y, ...p } : y)));
+  const wan2 = r.wan2?.enabled === true;
+  return (
+    <Section title="스태틱 라우트">
+      {routes.length === 0 && <p class="note">이 대역은 이 인터페이스의 넥스트 홉으로 보냅니다(LuCI Static Routes). 예를 들어 WAN2 를 사내 내부망에 꽂았다면, 사내 라우터 뒤의 대역을 넥스트 홉 사내 게이트웨이로 적습니다. 없으면 WAN 에 직접 연결된 대역 밖은 모두 디폴트 라우트로 나갑니다.</p>}
+      {routes.map((x, i) => {
+        const why = staticRouteProblem(r, x);
+        return (
+          <div key={i} class="lb-row static-route">
+            <select class="input" value={x.iface} title="인터페이스" onChange={(e) => patch(i, { iface: e.currentTarget.value as RouterRouteSetting["iface"] })}>
+              <option value="wan">{WAN_LABEL.wan}</option>
+              {(wan2 || x.iface === "wan2") && <option value="wan2">{WAN_LABEL.wan2}</option>}
+            </select>
+            <input class="input mono" value={x.dest} placeholder="192.168.111.0/24" title="대상 대역 (주소 하나면 /32)" onInput={(e) => patch(i, { dest: e.currentTarget.value })} />
+            <button class="icon-btn" title="경로 삭제" onClick={() => setRoutes(routes.filter((_, k) => k !== i))}>
+              <Icon name="trash" size={15} />
+            </button>
+            <span class="mono muted via">via</span>
+            <input class="input mono" value={x.via} placeholder="비우면 on-link" title="넥스트 홉 (이 인터페이스 대역 안의 라우터, 비우면 그 인터페이스로 바로)" onInput={(e) => patch(i, { via: e.currentTarget.value })} />
+            <span />
+            {why && <div class="error lb-error">{why} — 이 경로는 쓰이지 않습니다</div>}
+          </div>
+        );
+      })}
+      <button class="btn wide" onClick={() => setRoutes([...routes, { iface: wan2 ? "wan2" : "wan", dest: "", via: "" }])}>
+        <Icon name="plus" size={14} />
+        경로 추가
+      </button>
+      {routes.length > 0 && <p class="note">긴 대역이 먼저입니다(longest prefix match). 스태틱 라우트로 나가는 패킷은 멀티 WAN 정책을 거치지 않고, 그 회선의 주소로 MASQUERADE 됩니다 — 상대는 이 공유기 안쪽(LAN·VPN) 대역을 몰라도 답할 수 있습니다. 넥스트 홉을 비우면 그 인터페이스로 바로 보냅니다(on-link — 대상에게 직접 ARP). 0.0.0.0/0 은 쓰지 않습니다(인터넷 회선은 WAN 설정·멀티 WAN 이 정함). 지금 라우팅 테이블은 "표" 탭에 있습니다.</p>}
     </Section>
   );
 }

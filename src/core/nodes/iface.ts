@@ -51,6 +51,8 @@ export class NetInterface {
   readonly pending = new Map<Ip, PendingPacket[]>();
   /** 내보낼 IP 패킷을 먼저 가로챌 기회 (원격 접속 VPN 클라이언트가 사내 대역 패킷을 터널로). true 면 처리됨 */
   outbound: ((pkt: Ipv4Packet, ctx: NodeContext) => boolean) | undefined;
+  /** 장치의 라우팅 테이블이 이 인터페이스로 정한 넥스트 홉 (공유기의 스태틱 라우트). 같은 서브넷이 아닐 때 게이트웨이보다 먼저 */
+  nextHop: ((dst: Ip) => Ip | undefined) | undefined;
   /** 이중화(HA) master 일 때만: 이 인터페이스가 함께 쓰는 가상 주소·가상 MAC (ARP 응답·수신을 이것으로도 한다) */
   vip: { ip: Ip; mac: Mac } | undefined;
   /** 프록시 ARP: 이 주소들의 ARP 요청에 내 MAC 으로 대신 답한다 (공유기 VPN 서버가 VPN 클라이언트의 LAN 주소를) */
@@ -209,6 +211,11 @@ export class NetInterface {
     if (sameSubnet(dst, ip, this.prefix)) {
       ctx.trace("ip.route", "L3", `${dst} 는 같은 서브넷 ${networkOf(ip, this.prefix)}/${this.prefix} → 직접 전달 (next hop = ${dst})`, { dst, nextHop: dst });
       return dst;
+    }
+    const via = this.nextHop?.(dst);
+    if (via) {
+      ctx.trace("ip.route", "L3", `${dst} 는 스태틱 라우트 → 넥스트 홉 ${via} 로 전달`, { dst, nextHop: via });
+      return via;
     }
     if (this.gateway) {
       ctx.trace("ip.route", "L3", `${dst} 는 다른 서브넷 → 게이트웨이 ${this.gateway} 로 전달`, { dst, nextHop: this.gateway });

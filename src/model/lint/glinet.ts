@@ -1,7 +1,30 @@
-// 공유기 관리 규칙: 관리 화면을 인터넷에 연 것, 드롭인 게이트웨이의 WAN 주소, 멀티 WAN 정책 규칙의 출발지
+// 공유기 관리 규칙: 관리 화면을 인터넷에 연 것, 드롭인 게이트웨이의 WAN 주소, 멀티 WAN 정책 규칙의 출발지, 스태틱 라우트
 import type { LintContext } from "./context";
-import { natOn } from "../topology";
+import { natOn, type RouterRouteSetting, type RouterSettings } from "../topology";
 import { parseCidr } from "../netSync";
+import { networkOf, sameSubnet } from "../../core/addr";
+import { validIp } from "./addr";
+
+/**
+ * 스태틱 라우트 한 줄이 main 테이블에 들어가지 못하는 이유 (리눅스가 거절하거나 쓸 수 없는 경로). 들어가면 undefined.
+ * 그 인터페이스가 자동(DHCP)이면 대역을 몰라 넥스트 홉은 보지 않는다
+ */
+export function staticRouteProblem(r: RouterSettings, x: RouterRouteSetting): string | undefined {
+  if (!x.dest.trim()) return "대상이 비어 있음";
+  const c = parseCidr(x.dest, 32);
+  if (!c) return `대상 "${x.dest.trim()}" 이 대역이 아님`;
+  if (c.prefix === 0) return "대상이 0.0.0.0/0(디폴트 라우트) — 인터넷으로 나갈 회선은 WAN 설정·멀티 WAN 이 정함";
+  if (x.via.trim() && !validIp(x.via.trim())) return `넥스트 홉 "${x.via.trim()}" 이 주소가 아님`;
+  const label = x.iface === "wan2" ? "WAN2" : "WAN1";
+  if (x.iface === "wan2" && !r.wan2?.enabled) return "멀티 WAN 이 꺼져 WAN2 가 없음";
+  const i = x.iface === "wan2" ? r.wan2 : r.wan;
+  const ip = i?.ipMode === "static" ? validIp(i.ip) : undefined;
+  const via = x.via.trim();
+  if (!i || !ip || !via) return undefined;
+  if (via === ip) return `넥스트 홉 ${via} 가 공유기 자신의 ${label} 주소`;
+  if (!sameSubnet(via, ip, i.prefix)) return `넥스트 홉 ${via} 가 ${label} 대역(${networkOf(ip, i.prefix)}/${i.prefix}) 밖`;
+  return undefined;
+}
 
 // 규칙 20g: 공유기 관리
 export function glinetRules({ t, add }: LintContext): void {
@@ -31,5 +54,16 @@ export function glinetRules({ t, add }: LintContext): void {
     const badRules = r.wan2?.enabled ? (r.wan2.rules ?? []).flatMap((x, i) => (parseCidr(x.src, 32) ? [] : [`${i + 1}번(${x.src.trim() ? `"${x.src.trim()}"` : "비어 있음"})`])) : [];
     if (badRules.length)
       add({ deviceId: d.id, severity: "error", code: "mwan.rule-invalid", message: `멀티 WAN 정책 규칙 ${badRules.join(", ")} 의 출발지는 대역이 아님 → 그 규칙은 쓰지 않아 그 출발지도 지금 회선으로 나감`, fix: `${d.name} → 인터넷 → 멀티 WAN → 정책 규칙의 출발지 (예: 10.0.0.0/24, 주소 하나면 192.168.8.50)` });
+    // WAN2 를 디폴트 라우트로 쓰지 않는데 정책 규칙이 WAN2 로 보냄: mwan3 policy 에 WAN2 가 없어 WAN1 로 나간다
+    const noDefault = r.wan2?.enabled && r.wan2.defaultRoute === false ? (r.wan2.rules ?? []).flatMap((x, i) => (x.line === "wan2" && parseCidr(x.src, 32) ? [`${i + 1}번(${x.src.trim()})`] : [])) : [];
+    if (noDefault.length)
+      add({ deviceId: d.id, severity: "warn", code: "mwan.rule-no-default", message: `멀티 WAN 정책 규칙 ${noDefault.join(", ")} 은 WAN2 로 보내지만 WAN2 를 디폴트 라우트로 쓰지 않음(mwan3 에서 뺌) → 그 출발지는 WAN1 으로 나감`, fix: `${d.name} → 인터넷 → 멀티 WAN 에서 "디폴트 라우트로 사용" 을 켜거나, 그 규칙을 지우고 필요한 대역만 스태틱 라우트로` });
+    // 스태틱 라우트: 들어가지 못하는 줄은 없는 것과 같다 (그 대역은 디폴트 라우트로 나감)
+    const badRoutes = (r.routes ?? []).flatMap((x, i) => {
+      const why = staticRouteProblem(r, x);
+      return why ? [`${i + 1}번(${why})`] : [];
+    });
+    if (badRoutes.length)
+      add({ deviceId: d.id, severity: "error", code: "router.route-invalid", message: `스태틱 라우트 ${badRoutes.join(", ")} → 그 경로는 쓰이지 않아 그 대역도 디폴트 라우트(지금 회선)로 나감`, fix: `${d.name} → 인터넷 → 스태틱 라우트 (넥스트 홉은 고른 인터페이스 대역 안의 라우터 주소, 예: 10.50.10.254)` });
   }
 }

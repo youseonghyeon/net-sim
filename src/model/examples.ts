@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "igmp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "mwanvpn" | "internet" | "vpn" | "ncp" | "ncpjump" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "k3s" | "tor" | "dpi" | "lb" | "proxy" | "adguard" | "sip" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "igmp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "mwanvpn" | "internet" | "vpn" | "ncp" | "ncpwg" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "k3s" | "tor" | "dpi" | "lb" | "proxy" | "adguard" | "sip" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -215,11 +215,11 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     blurb: "내부망 PC 1 에서 dev-2(192.168.112.11)로 TCP 22 연결하면, 첫 패킷에 IKE 로 IPsec 터널을 맺은 뒤 ESP 로 NCP 서버에 닿습니다. 외부망 PC 에서는 닿지 않습니다. prod 는 172.21.4.11 입니다.",
     build: exampleNcpVpnTopology,
   },
-  ncpjump: {
-    id: "ncpjump",
+  ncpwg: {
+    id: "ncpwg",
     group: "VPN",
-    label: "망분리 사무실 재택 접속 (VPN + 점프 서버)",
-    blurb: "재택 노트북이 외부망 방화벽 NAT(원격 접속 VPN, 계정 kim)에 붙어 10.99.0.x 를 받습니다. VPN 이 내려 주는 경로는 DMZ(10.255.1.0/24) 뿐이고, 외부망과 내부망 사이에는 경로가 없습니다. 노트북 진단 탭에서 SSH 접속 10.50.10.1 (내부망 PC 1), 점프 서버 10.255.1.10 으로 접속해 보세요 — 점프 서버에 먼저 로그인한 뒤 그 서버가 내부망 PC 까지 이어 준 채널 위에서 SSH 가 열립니다. 내부망 PC 에게는 점프 서버가 접속한 것으로 보이고, 내부망 접근통제 방화벽은 점프 서버에서 오는 SSH 만 들입니다. 점프 서버 칸을 비우면 VPN 경로가 아니라 집 인터넷으로 나가 닿지 않고, 점프 서버의 \"SSH 점프 허용\" 을 끄면 administratively prohibited 로 거절됩니다. 외부망 PC 에서는 DMZ 방화벽이 막습니다.",
+    label: "망분리 사무실 재택 접속 (WireGuard 공유기)",
+    blurb: "사무실 공유기의 WAN1 은 KT 모뎀(외부망 회선), WAN2 는 내부망 스위치(10.50.10.18)에 꽂혀 있습니다. 재택 노트북은 WireGuard 로 사무실 공유기에 붙어 있으니, 노트북 진단 탭에서 192.168.111.11 (NCP dev-1)로 ping 하거나 SSH 접속해 보세요 — 공유기가 스태틱 라우트로 내부망 게이트웨이(10.50.10.254)에 넘기며 출발지를 10.50.10.18 로 바꾸고(MASQUERADE), 기존 IPsec 터널로 NCP 에 닿습니다. 공유기의 WAN2 는 디폴트 라우트로 쓰지 않아, WAN1 케이블을 빼도 인터넷 트래픽이 내부망으로 넘어가지 않습니다. 두 망을 장비 하나로 잇는 구성이라 실제로는 망분리 규정을 먼저 확인해야 합니다.",
     build: exampleSeparatedRemoteTopology,
   },
   remote: {
