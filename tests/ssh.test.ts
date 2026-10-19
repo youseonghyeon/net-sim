@@ -149,9 +149,19 @@ describe("SSH 세션", () => {
 
   it("리뷰: 인터넷에서 포트 포워딩으로 들어온 SSH 세션도 인터넷 쪽에서 연결 해제할 수 있다", () => {
     const base = withSshServer();
-    const t: Topology = { ...base, devices: base.devices.map((d) => (d.l3?.ha ? { ...d, l3: { ...d.l3, forwards: [{ publicPort: 22, lanIp: "192.168.0.12", lanPort: 22, proto: "tcp" as const }], firewall: { ...d.l3.firewall!, rules: [...d.l3.firewall!.rules, { action: "allow" as const, proto: "tcp" as const, direction: "in" as const, src: "", dst: "192.168.0.12", dstPort: "22" }] } } } : d)) };
-    const { s, id, act } = load(t);
-    act({ kind: "inet-connect", nodeId: id("internet-1"), dst: "203.0.113.10", port: 22 });
+    // 엣지 라우터가 공인 :22 를 이중화 쌍의 가상 주소로, 쌍이 다시 안쪽 서버로
+    const t: Topology = {
+      ...base,
+      devices: base.devices.map((d) =>
+        d.l3?.ha
+          ? { ...d, l3: { ...d.l3, forwards: [{ publicPort: 22, lanIp: "192.168.0.12", lanPort: 22, proto: "tcp" as const }], firewall: { ...d.l3.firewall!, rules: [...d.l3.firewall!.rules, { action: "allow" as const, proto: "tcp" as const, direction: "in" as const, src: "", dst: "192.168.0.12", dstPort: "22" }] } } }
+          : d.name === "엣지 라우터"
+            ? { ...d, l3: { ...d.l3!, forwards: [{ publicPort: 22, lanIp: "10.0.0.10", lanPort: 22, proto: "tcp" as const }] } }
+            : d,
+      ),
+    };
+    const { s, id, act, l3 } = load(t);
+    act({ kind: "inet-connect", nodeId: id("internet-1"), dst: l3("엣지 라우터").ifaces[0]!.ip!, port: 22 });
     const inet = s.net.nodes.get(id("internet-1")) as Internet;
     const c = [...inet.tcp.conns.values()].filter((x) => x.localIp === Internet.REMOTE_CLIENT).at(-1)!;
     expect(c).toMatchObject({ state: "ESTABLISHED", ssh: { open: true } });

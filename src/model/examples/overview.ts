@@ -28,13 +28,13 @@ export function exampleCompanyTopology(): Topology {
   // ---------- 재택 ----------
   const home = add("router", 320, -300, "재택 집 공유기");
   const laptop = add("laptop", 364, -112, "재택 노트북");
-  laptop.host = { ...laptop.host!, ra: { enabled: true, server: "203.0.113.10", psk: "remote-psk", user: "kim", password: "kim-pass" } };
+  laptop.host = { ...laptop.host!, ra: { enabled: true, server: "203.0.113.18", psk: "remote-psk", user: "kim", password: "kim-pass" } };
 
   // ---------- 본사 ----------
   const edge = add("nat", 936, -220, "본사 방화벽");
   edge.l3 = {
     interfaces: [
-      { ipMode: "static", ip: "203.0.113.10", prefix: 24, gateway: "203.0.113.1" },
+      { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" },
       { ipMode: "static", ip: "10.1.0.1", prefix: 24, gateway: "" },
     ],
     // 안쪽 대역은 코어 게이트웨이 뒤
@@ -52,7 +52,7 @@ export function exampleCompanyTopology(): Topology {
         { action: "allow", proto: "any", direction: "in", src: "10.99.0.0/24", dst: "10.1.0.0/16", dstPort: "" },
       ],
     },
-    vpn: { enabled: true, mode: "ipsec", psk: "branch-psk", peer: "203.0.113.20", remote: [{ dest: "10.2.0.0", prefix: 24 }] },
+    vpn: { enabled: true, mode: "ipsec", psk: "branch-psk", peer: "203.0.113.26", remote: [{ dest: "10.2.0.0", prefix: 24 }] },
     ra: { enabled: true, psk: "remote-psk", poolStart: "10.99.0.10", poolEnd: "10.99.0.30", routes: [{ dest: "10.1.0.0", prefix: 16 }], users: [{ name: "kim", password: "kim-pass" }] },
   };
   const core = add("gateway", 936, -60, "본사 코어");
@@ -120,11 +120,11 @@ export function exampleCompanyTopology(): Topology {
   const branch = add("nat", 1624, -300, "지사 NAT");
   branch.l3 = {
     interfaces: [
-      { ipMode: "static", ip: "203.0.113.20", prefix: 24, gateway: "203.0.113.1" },
+      { ipMode: "dhcp", ip: "", prefix: 24, gateway: "" },
       { ipMode: "static", ip: "10.2.0.1", prefix: 24, gateway: "" },
     ],
     routes: [],
-    vpn: { enabled: true, mode: "ipsec", psk: "branch-psk", peer: "203.0.113.10", remote: [{ dest: "10.1.0.0", prefix: 16 }] },
+    vpn: { enabled: true, mode: "ipsec", psk: "branch-psk", peer: "203.0.113.18", remote: [{ dest: "10.1.0.0", prefix: 16 }] },
   };
   const brSw = add("switch", 1624, -140, "지사 스위치");
   const bpc1 = add("pc", 1608, 32, "지사 PC-1");

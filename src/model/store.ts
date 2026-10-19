@@ -281,7 +281,9 @@ export const selectedDevice = computed<Device | undefined>(() => {
   return s?.type === "device" ? topology.value.devices.find((d) => d.id === s.id) : undefined;
 });
 /** 구성 검사 결과. 토폴로지가 바뀔 때만 다시 계산한다 */
-export const lintIssues = computed<LintIssue[]>(() => lintTopology(topology.value));
+/** ISP 가 DHCP 로 나눠 준 공인 주소 (시뮬레이터가 갱신 — 구성 검사가 자동 WAN 의 주소를 알게) */
+export const ispLeases = signal<Record<string, string>>({});
+export const lintIssues = computed<LintIssue[]>(() => lintTopology(topology.value, { leased: ispLeases.value }));
 
 export const selectedZone = computed<Zone | undefined>(() => {
   const s = selection.value;

@@ -19,6 +19,11 @@ export function cable(a: Device, ap: number, b: Device, bp: number): Cable {
 }
 
 /** 게이트웨이·NAT 박스의 수동 주소 인터페이스 (/24) */
+/** ISP 에서 자동(DHCP)으로 주소를 받는 인터페이스 (ISP 는 가입자마다 /29 를 준다) */
+export function dhcpIface() {
+  return { ipMode: "dhcp" as const, ip: "", prefix: 24, gateway: "" };
+}
+
 export function iface(ip: string, gateway = "") {
   return { ipMode: "static" as const, ip, prefix: 24, gateway };
 }

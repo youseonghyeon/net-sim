@@ -2,11 +2,13 @@
 import { describe, expect, it } from "vitest";
 import { loadTopology } from "./helpers";
 import { exampleIptimeVpnTopology, exampleRemoteVpnTopology } from "../src/model/examples";
-import { createDevice, type Device, type RouterVpnServerSettings, type Topology } from "../src/model/topology";
+import { createDevice, DEFAULT_WAN, type Device, type RouterVpnServerSettings, type Topology } from "../src/model/topology";
 import type { Router } from "../src/core/nodes/router";
 import { NetworkSync } from "../src/model/netSync";
-import { lintTopology } from "../src/model/lint";
 import { headerLayers, practitionerLines } from "../src/model/packetView";
+
+/** 구성 검사 (시뮬레이션을 한 번 돌려 ISP 가 DHCP 로 나눠 준 주소를 알게 — 앱과 같다) */
+const lintTopology = (t: Parameters<typeof loadTopology>[0]) => loadTopology(t).lint();
 
 const LAP = "출장 노트북";
 const HOME = "집 ipTIME";
@@ -34,7 +36,7 @@ const secondLaptop = (t: Topology): Topology => {
   return { ...t, devices, cables: [...t.cables, { id: "lap2", a: { device: hotel.id, port: 2 }, b: { device: lap.id, port: 0 } }] };
 };
 
-/** 공유기 뒤 공유기: 통신사 모뎀 공유기(203.0.113.20)가 UDP 500·4500 을 안쪽 ipTIME(WAN 192.168.1.2)으로 포워딩 */
+/** 공유기 뒤 공유기: 통신사 모뎀 공유기(ISP 에서 받은 공인 주소)가 UDP 500·4500 을 안쪽 ipTIME(WAN 192.168.1.2)으로 포워딩 */
 const doubleNat = (): Topology => {
   const t = exampleIptimeVpnTopology();
   const devices = [...t.devices];
@@ -43,7 +45,7 @@ const doubleNat = (): Topology => {
     ...modem.router!,
     lanIp: "192.168.1.1",
     lanPrefix: 24,
-    wan: { ipMode: "static", ip: "203.0.113.20", prefix: 24, gateway: "203.0.113.1" },
+    wan: { ...DEFAULT_WAN },
     forwards: [
       { publicPort: 500, lanIp: "192.168.1.2", lanPort: 500, proto: "udp" },
       { publicPort: 4500, lanIp: "192.168.1.2", lanPort: 4500, proto: "udp" },
@@ -58,12 +60,13 @@ const doubleNat = (): Topology => {
   return { ...t, devices: devices.map((d) => (d.id === home.id ? home2 : d)), cables };
 };
 
-/** 노트북을 호텔 NAT 없이 공인 주소 203.0.113.100 으로 통신사 구간에 바로 */
+/** 노트북을 호텔 NAT 없이 통신사 구간에 바로 (ISP 에서 공인 주소를 받는다) */
 const publicLaptop = (t: Topology): Topology => {
   const lapDev = t.devices.find((d) => d.name === LAP)!;
   const hotel = t.devices.find((d) => d.name === "호텔 공유기")!;
   const isp = t.devices.find((d) => d.name === ISP)!;
-  const lap2: Device = { ...lapDev, host: { ...lapDev.host!, ipMode: "static", ip: "203.0.113.100", prefix: 24, gateway: "203.0.113.1" } };
+  // 호텔 공유기가 빠지면 모뎀 공유기가 ISP 의 첫 가입자 대역(203.0.113.2)을 받는다 — 노트북은 그 주소로 접속
+  const lap2: Device = { ...lapDev, host: { ...lapDev.host!, ipMode: "dhcp", ip: "", prefix: 24, gateway: "", ra: { ...lapDev.host!.ra!, server: "203.0.113.2" } } };
   return {
     ...t,
     devices: t.devices.filter((d) => d.id !== hotel.id).map((d) => (d.id === lapDev.id ? lap2 : d)),
@@ -71,7 +74,7 @@ const publicLaptop = (t: Topology): Topology => {
   };
 };
 
-/** 재택근무 예제의 회사 VPN 장비(IKEv2)를 회사 공유기(공인 203.0.113.11, VPN 서버 켬) 뒤로: 공유기가 UDP 500·4500 을 안쪽으로 포워딩 */
+/** 재택근무 예제의 회사 VPN 장비(IKEv2)를 회사 공유기(ISP 에서 받은 공인 주소, VPN 서버 켬) 뒤로: 공유기가 UDP 500·4500 을 안쪽으로 포워딩 */
 const ikev2BehindRouterWithVpnServer = (): Topology => {
   const t = exampleRemoteVpnTopology();
   const devices = [...t.devices];
@@ -83,7 +86,7 @@ const ikev2BehindRouterWithVpnServer = (): Topology => {
     lanIp: "192.168.1.1",
     lanPrefix: 24,
     dhcp: { enabled: false, start: "192.168.1.100", end: "192.168.1.199" },
-    wan: { ipMode: "static", ip: "203.0.113.11", prefix: 24, gateway: "203.0.113.1" },
+    wan: { ...DEFAULT_WAN },
     forwards: [
       { publicPort: 500, lanIp: "192.168.1.2", lanPort: 500, proto: "udp" },
       { publicPort: 4500, lanIp: "192.168.1.2", lanPort: 4500, proto: "udp" },
@@ -91,7 +94,7 @@ const ikev2BehindRouterWithVpnServer = (): Topology => {
     vpnServer: { enabled: true, psk: "office-l2tp", poolStart: "192.168.1.50", poolEnd: "192.168.1.59", users: [{ name: "boss", password: "pw" }] },
   };
   devices.push(edge);
-  const fw2: Device = { ...fw, l3: { ...fw.l3!, interfaces: fw.l3!.interfaces.map((c, i) => (i === 0 ? { ...c, ip: "192.168.1.2", gateway: "192.168.1.1" } : c)) } };
+  const fw2: Device = { ...fw, l3: { ...fw.l3!, interfaces: fw.l3!.interfaces.map((c, i) => (i === 0 ? { ...c, ipMode: "static" as const, ip: "192.168.1.2", gateway: "192.168.1.1" } : c)) } };
   const cables = t.cables.filter((c) => !([c.a.device, c.b.device].includes(fw.id) && [c.a.device, c.b.device].includes(isp.id)));
   cables.push({ id: "c-edge-isp", a: { device: isp.id, port: 6 }, b: { device: edge.id, port: 0 } }, { id: "c-edge-fw", a: { device: edge.id, port: 1 }, b: { device: fw.id, port: 0 } });
   return { ...t, devices: devices.map((d) => (d.id === fw.id ? fw2 : d)), cables };
@@ -123,7 +126,7 @@ describe("리뷰: 공유기 VPN 서버 (L2TP/IPsec)", () => {
   it("2a. CHAP 실패 뒤 서버 'VPN 접속' 표에 유령 줄이 남는다 (AGENTS: CHAP 실패면 서버가 그 SA 를 지움)", () => {
     const x = loadTopology(patchLaptop(exampleIptimeVpnTopology(), { password: "nope" }));
     expect(x.host(LAP).ra.state).toBe("failed");
-    // 지금: [["-","인증 대기","203.0.113.100:40001","NAT-T"]]
+    // 지금: [["-","인증 대기","203.0.113.2:40001","NAT-T"]]
     expect(x.node<Router>(HOME).vpnServer.rows()).toEqual([]);
   });
 
@@ -152,14 +155,16 @@ describe("리뷰: 공유기 VPN 서버 (L2TP/IPsec)", () => {
     expect(x.host(LAP).ra.state).not.toBe("up");
   });
 
-  it("3c. 공유기 WAN 링크가 끊겼다 이어지면 서버는 세션을 비우는데 노트북은 '연결됨' 그대로 → 수동 WAN 은 주소가 그대로라 양쪽 모두 유지 (결정)", () => {
+  it("3c. 공유기 WAN(자동)이 끊겼다 이어지면 주소를 잃어 서버는 세션을 비우고, 같은 대역을 다시 받은 뒤 노트북은 INVALID-SPI 로 알아 다시 접속해 이어진다", () => {
     const x = loadTopology(exampleIptimeVpnTopology());
     const wan = linkBetween(x.t, HOME, ISP);
     x.apply({ ...x.t, cables: x.t.cables.filter((c) => c.id !== wan.id) });
+    expect(x.node<Router>(HOME).vpnServer.connected).toEqual([]);
     x.apply(x.t);
-    expect(x.node<Router>(HOME).vpnServer.connected.map((c) => c.vip)).toEqual(["192.168.0.50"]);
-    expect(x.host(LAP).ra.state).toBe("up");
+    expect(x.node<Router>(HOME).wan.ip).toBe("203.0.113.10"); // 같은 기기는 같은 가입자 대역
     x.act({ kind: "ping", nodeId: x.id(LAP), dst: "192.168.0.20" });
+    x.act({ kind: "ping", nodeId: x.id(LAP), dst: "192.168.0.20" });
+    expect(x.host(LAP).ra.state).toBe("up");
     expect(x.host(LAP).pings.at(-1)!.status).toBe("ok");
   });
 

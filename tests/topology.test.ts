@@ -3,6 +3,7 @@ import { effectiveDnsServer, effectiveFirewall, effectiveForwards, effectiveL3, 
 import { lintTopology } from "../src/model/lint";
 import { createDevice, devicesInZone, normalizeTopology, planCable, zoneAround, type Device, type Topology } from "../src/model/topology";
 import { EXAMPLE_LIST } from "../src/model/examples";
+import { loadTopology } from "./helpers";
 
 describe("normalizeTopology", () => {
   it("저장된 게이트웨이의 서브 인터페이스·방화벽·포워딩 설정을 잃지 않는다", () => {
@@ -130,6 +131,8 @@ describe("예제 토폴로지", () => {
     for (const ex of EXAMPLE_LIST) {
       const t = ex.build();
       expect(lintTopology(t), ex.id).toEqual([]);
+      // 앱처럼 시뮬레이션을 돌려 ISP 가 나눠 준 주소를 알려 줘도 이슈 0 (VPN 서버·포트 포워딩을 주소로 찾는다)
+      expect(loadTopology(t).lint(), `${ex.id} (ISP 임대)`).toEqual([]);
       expect(normalizeTopology(t).cables.length, ex.id).toBe(t.cables.length); // 정규화가 버리는 케이블이 없다
       expect(new Set(t.devices.map((d) => d.name)).size, ex.id).toBe(t.devices.length);
     }

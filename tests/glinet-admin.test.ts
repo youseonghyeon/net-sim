@@ -5,8 +5,10 @@ import { exampleWireguardTopology } from "../src/model/examples";
 import type { Router } from "../src/core/nodes/router";
 import type { Internet } from "../src/core/nodes/internet";
 import type { RouterSettings, Topology } from "../src/model/topology";
-import { lintTopology } from "../src/model/lint";
 import { exampleDropInTopology } from "../src/model/examples";
+
+/** 구성 검사 (시뮬레이션을 한 번 돌려 ISP 가 DHCP 로 나눠 준 주소를 알게 — 앱과 같다) */
+const lintTopology = (t: Parameters<typeof loadTopology>[0]) => loadTopology(t).lint();
 
 const HOME = "집 Brume 3";
 const NAS = "집 NAS";
@@ -39,15 +41,15 @@ describe("관리 화면 접근 제어", () => {
 
   it("인터넷에서 공인 주소의 관리 화면: 기본은 드롭, 원격 접근을 켜면 열린다, 그 포트를 포워딩하면 포워딩이 이긴다", () => {
     let L = loadTopology(admin(exampleWireguardTopology()));
-    let tr = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.30", port: 443 });
+    let tr = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.10", port: 443 });
     expect(tr.some((e) => e.kind === "fw.deny" && e.summary.includes("WAN 에서의 관리 접근이 꺼져"))).toBe(true);
     L = loadTopology(admin(exampleWireguardTopology(), { remote: true }));
-    tr = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.30", port: 443 });
+    tr = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.10", port: 443 });
     expect(tr.some((e) => e.kind === "fw.allow" && e.summary.includes("WAN 원격 접근"))).toBe(true);
     expect(L.node<Router>(HOME).admin.rows().some((r) => r.join(" ").includes("198.51.100.7"))).toBe(true);
     const fwd = router(admin(exampleWireguardTopology(), { remote: true }), HOME, { forwards: [{ publicPort: 443, lanIp: "192.168.8.20", lanPort: 80 }] });
     L = loadTopology(fwd);
-    tr = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.30", port: 443 });
+    tr = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.10", port: 443 });
     expect(tr.some((e) => e.summary.includes("관리 접근 제어"))).toBe(false);
     expect(tr.some((e) => e.nodeId === L.id(NAS) && e.kind === "tcp.syn.received")).toBe(true);
   });
@@ -106,7 +108,7 @@ describe("네트워크 저장소 (Samba)", () => {
     const tr = L.act({ kind: "tcp-connect", nodeId: L.id(NAS), dst: "192.168.8.1", port: 445 });
     expect(L.lastConn(NAS).state).toBe("CLOSED");
     expect(tr.some((e) => e.summary.includes("SMB 파일 목록"))).toBe(true);
-    const tr2 = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.30", port: 445 });
+    const tr2 = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.10", port: 445 });
     expect(tr2.some((e) => e.kind === "fw.deny" && e.summary.includes("SMB"))).toBe(true);
     expect(lintTopology(router(t, HOME, { samba: { enabled: true, wan: true } })).map((i) => i.code)).toContain("samba.wan-open");
     expect(lintTopology(router(t, HOME, { forwards: [{ publicPort: 445, lanIp: "192.168.8.20", lanPort: 445 }] })).map((i) => i.code)).toContain("nat.forward-smb");

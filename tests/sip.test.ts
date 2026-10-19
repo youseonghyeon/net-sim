@@ -12,7 +12,7 @@ const call = (L: ReturnType<typeof loadTopology>) => L.act({ kind: "sip-call", n
 describe("인터넷 전화와 SIP ALG", () => {
   it("둘 다 등록되고, 서버는 Contact 의 사설 주소 대신 실제로 온 곳을 기억한다", () => {
     const L = loadTopology(exampleSipTopology());
-    expect(lintTopology(L.t)).toEqual([]);
+    expect(L.lint()).toEqual([]);
     expect(L.host("민지 전화기").sip.registered).toBe(true);
     const rows = L.node<Internet>("internet-1").sip.rows();
     expect(rows.find((r) => r[0] === "minji")![1]).toMatch(/^192\.168\.0\./);

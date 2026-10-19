@@ -122,9 +122,9 @@ describe("WireGuard 리뷰: 킬 스위치", () => {
     const L = loadTopology(patchClient(exampleWireguardTopology(), { address: "" }));
     const tr = L.act({ kind: "ping", nodeId: L.id("여행 노트북"), dst: "8.8.8.8" });
     const leaked = tr.some((e) => e.nodeId === L.id("호텔 공유기") && e.kind === "nat.translate" && e.summary.includes("ICMP"));
-    log("3a leaked", leaked, L.host("여행 노트북").pings.at(-1)!.status, lintTopology(L.t).map((i) => i.code));
+    log("3a leaked", leaked, L.host("여행 노트북").pings.at(-1)!.status, L.lint().map((i) => i.code));
     expect(leaked).toBe(false);
-    expect(lintTopology(L.t).map((i) => i.code)).toContain("wg.no-address");
+    expect(L.lint().map((i) => i.code)).toContain("wg.no-address");
   });
 
   it("3b VPN 정책에서 뺀 기기도 킬 스위치에 이름 해석이 막힌다 (DNS 포워더가 VPN 쪽)", () => {

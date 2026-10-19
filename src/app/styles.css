@@ -1205,6 +1205,14 @@ select.btn.example {
   display: flex;
   gap: 6px;
 }
+/* ISP 대역: 칸이 넓게, 무작위 버튼은 내용 폭 */
+.ping-row.isp-net .input {
+  flex: 1;
+  min-width: 0;
+}
+.ping-row.isp-net + .field-error {
+  margin-top: 6px;
+}
 .route-row {
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr) auto 56px 30px;

@@ -30,7 +30,7 @@ const withoutWan1 = (t: Topology): Topology => {
 describe("예제: 망분리 사무실 재택 접속 (WireGuard 공유기)", () => {
   it("구성 검사 0, 재택 노트북 WireGuard 연결", () => {
     const L = loadTopology(exampleSeparatedRemoteTopology());
-    expect(lintTopology(L.t)).toEqual([]);
+    expect(L.lint()).toEqual([]);
     expect(L.host("재택 노트북").ra.state).toBe("up");
   });
 
@@ -78,8 +78,8 @@ describe("예제: 망분리 사무실 재택 접속 (WireGuard 공유기)", () =
     const table = L.s.net.nodes.get(L.id(OFFICE))!.snapshot().tables!.find((x) => x.title === "라우팅 테이블 (main)")!;
     expect(table.rows).toEqual([
       ["lan", "192.168.8.0/24", "", "직접 연결"],
-      ["wan", "203.0.113.0/24", "", "직접 연결"],
-      ["wan", "0.0.0.0/0", "203.0.113.1", "디폴트 라우트"],
+      ["wan", "203.0.113.24/29", "", "직접 연결"],
+      ["wan", "0.0.0.0/0", "203.0.113.25", "디폴트 라우트"],
       ["wan2", "10.50.10.0/24", "", "직접 연결"],
       ["wan2", "192.168.111.0/24", "10.50.10.254", "스태틱"],
       ["wan2", "192.168.112.0/24", "10.50.10.254", "스태틱"],
@@ -198,7 +198,7 @@ describe("스태틱 라우트", () => {
 
 // 리뷰(2026-10-19) 회귀
 describe("review: 스태틱 라우트·main 테이블", () => {
-  it("멀티 WAN 예제: WAN1 이 손실 100% 로 끊겨도 WireGuard 서버는 WAN2 로 답하고 폰이 로밍으로 따라온다 (평평한 인터넷의 WAN1 대역에 묶지 않음)", () => {
+  it("멀티 WAN 예제: WAN1 이 손실 100% 로 끊겨도 WireGuard 서버는 WAN2 로 답하고 폰이 로밍으로 따라온다", () => {
     const t = exampleMultiWanPolicyTopology();
     const L = loadTopology(t);
     L.act({ kind: "ping", nodeId: L.id("카페 폰"), dst: "8.8.8.8" });

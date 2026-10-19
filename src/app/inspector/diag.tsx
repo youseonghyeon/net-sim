@@ -4,12 +4,14 @@ import { useState } from "preact/hooks";
 import { Host } from "../../core/nodes/host";
 import { endpoint, TCP_STATE_LABEL } from "../../core/nodes/tcp";
 import { isIpv6, sameSubnet6 } from "../../core/addr6";
-import { Internet } from "../../core/nodes/internet";
+import { DEFAULT_ISP_NET, Internet, SUBSCRIBER_PREFIX } from "../../core/nodes/internet";
+import { intToIp, ipToInt } from "../../core/addr";
+import { effectiveIspNet, ispGatewayOf, ispNetProblem, randomIspNet } from "../../model/isp";
 import { L3Node } from "../../core/nodes/l3";
 import type { SnapshotTable as SnapshotTableData } from "../../core/nodes/node";
 import { Router } from "../../core/nodes/router";
 import { sim, simVersion } from "../../model/sim";
-import { topology } from "../../model/store";
+import { topology, updateDevice } from "../../model/store";
 import { looksLikeName, PUBLIC_ZONE, type QType } from "../../core/nodes/dns";
 import { type Device } from "../../model/topology";
 import { Icon } from "../Icons";
@@ -120,6 +122,45 @@ export function IspRenumberSection({ d }: { d: Device }) {
           </button>
         </div>
       ))}
+    </Section>
+  );
+}
+
+/** ISP 대역: 직접 입력·무작위. 가입자는 이 대역을 /29 로 쪼갠 것을 DHCP 로 받는다 */
+export function IspNetSection({ d }: { d: Device }) {
+  const saved = d.internet?.net ?? `${DEFAULT_ISP_NET.ip}/${DEFAULT_ISP_NET.prefix}`;
+  // 입력하는 동안에는 적용하지 않는다 (칸을 떠나거나 Enter 에 적용) — 한 글자마다 가입자 전체에 FORCERENEW 가 가지 않게
+  const [draft, setDraft] = useState<string | undefined>(undefined);
+  const text = draft ?? saved;
+  const set = (net: string) => {
+    setDraft(undefined);
+    if (net !== saved) updateDevice(d.id, (x) => ({ ...x, internet: { net } }));
+  };
+  const problem = ispNetProblem(text);
+  const net = effectiveIspNet(saved);
+  return (
+    <Section title="ISP 대역">
+      <div class="ping-row isp-net">
+        <input
+          class="input mono"
+          value={text}
+          placeholder="203.0.113.0/24"
+          title="ISP 대역 (공인 /16 ~ /28) — 칸을 떠나거나 Enter 에 적용"
+          onInput={(e) => setDraft(e.currentTarget.value)}
+          onChange={(e) => set(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") set(e.currentTarget.value);
+          }}
+        />
+        <button class="btn" title="사설·특수 대역과 겹치지 않는 공인 /24 를 무작위로" onClick={() => set(randomIspNet())}>
+          <Icon name="refresh" size={14} />
+          무작위
+        </button>
+      </div>
+      {problem && <div class="field-error">{problem} — {draft !== undefined ? "적용하면 " : ""}기본 대역 {DEFAULT_ISP_NET.ip}/{DEFAULT_ISP_NET.prefix} 로 동작합니다</div>}
+      <p class="note">
+        가입자(공유기·NAT 의 WAN)는 DHCP 로 이 대역을 /{SUBSCRIBER_PREFIX} 씩 나눠 받습니다 — 대역의 첫 주소가 ISP 게이트웨이, 둘째가 가입자입니다(예: {ispGatewayOf(net)} 게이트웨이 · {intToIp(ipToInt(net.ip) + 2)}/{SUBSCRIBER_PREFIX}). 가입자끼리는 같은 서브넷이 아니라 ISP 라우터를 거칩니다. 같은 기기는 늘 같은 대역을 받습니다. 손으로 적은 공인 주소는 ISP 가 몰라 통신이 안 됩니다. 대역을 바꾸면 지금 가입자들은 FORCERENEW 를 받고 새 대역에서 다시 받습니다.
+      </p>
     </Section>
   );
 }

@@ -40,7 +40,7 @@ describe("Tor 리뷰", () => {
     // 친구네 공유기(포트 포워딩 80 → 친구 웹 서버)에 Tor 를 켬
     const L = loadTopology(patchRouter(exampleTorTopology(), FRIEND, { tor: true }));
     expect(L.node<Router>(FRIEND).tor.up).toBe(true);
-    const tr = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.50", port: 80 });
+    const tr = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.10", port: 80 });
     // 실제: 웹 서버의 SYN·ACK 가 lanToWan → forwardToWan → Tor 회로로 → 출구 198.51.100.133 에서 나가 인터넷 클라이언트가 모르는 연결
     expect(tr.some((e) => e.nodeId === L.id(FRIEND) && e.kind === "tor.relay" && e.summary.includes("세 겹 감싸"))).toBe(false);
     const inet = L.node<Internet>("internet-1");
@@ -128,20 +128,19 @@ describe("Tor 리뷰", () => {
 
   it("Tor 를 켜도 공유기 방화벽의 아웃바운드 거부 규칙은 지켜진다", () => {
     const t = patchRouter(exampleTorTopology(), BRUME, {
-      firewall: { enabled: true, defaultPolicy: "allow", stateful: true, rules: [{ action: "deny", proto: "tcp", direction: "out", src: "", dst: "203.0.113.50", dstPort: "80" }] },
+      firewall: { enabled: true, defaultPolicy: "allow", stateful: true, rules: [{ action: "deny", proto: "tcp", direction: "out", src: "", dst: "203.0.113.10", dstPort: "80" }] },
     });
     const L = loadTopology(t);
-    L.act({ kind: "tcp-connect", nodeId: L.id("노트북"), dst: "203.0.113.50", port: 80 });
+    L.act({ kind: "tcp-connect", nodeId: L.id("노트북"), dst: "203.0.113.10", port: 80 });
     // 실제: forwardToWan 이 방화벽 검사 전에 Tor 로 넘겨 거부 규칙을 건너뜀 → 연결 성공
     expect(L.serverConns("친구 웹 서버").length).toBe(0);
   });
 
-  it("인터넷 노드를 바꿔 가드가 회로를 잊어도 첫 이름 해석이 실패하지 않는다 (DESTROY 를 받으면 버린 패킷을 새 회로로)", () => {
+  it("가드가 회로를 잊어도(릴레이 재시작) 첫 이름 해석이 실패하지 않는다 (DESTROY 를 받으면 버린 패킷을 새 회로로)", () => {
     const t = exampleTorTopology();
     const L = loadTopology(t);
-    const inet = t.devices.find((d) => d.name === "internet-1")!;
-    L.apply({ ...t, devices: t.devices.filter((d) => d !== inet), cables: t.cables.filter((c) => c.a.device !== inet.id && c.b.device !== inet.id) });
-    L.apply(t);
+    // 가드 릴레이가 다시 시작해 회로 기록을 잃음 — 공유기는 모른다 (인터넷 노드를 새로 붙이면 공유기도 주소를 다시 받아 회로를 새로 만든다)
+    L.node<Internet>("internet-1").tor.circuits.clear();
     expect(L.node<Router>(BRUME).tor.up).toBe(true);
     const tr = L.act({ kind: "tcp-connect", nodeId: L.id("노트북"), dst: "example.com", port: 80 });
     // 실제: 가드 "모르는 회로 → DESTROY", 그 DNS 질의는 버려져 포워더 timeout → SERVFAIL → 연결 실패 (다음 시도부터 됨)
@@ -159,7 +158,7 @@ describe("Tor 리뷰", () => {
     expect(tor.up).toBe(true);
     traces.length = 0;
     // UDP 53 으로 서버를 둔 WireGuard (포털 우회 흔한 수법)
-    const wg = { kind: "ipv4", src: "192.168.8.100", dst: "203.0.113.50", ttl: 63, payload: { kind: "udp", srcPort: 40000, dstPort: 53, payload: { kind: "wg", type: "initiation" } } } as unknown as Ipv4Packet;
+    const wg = { kind: "ipv4", src: "192.168.8.100", dst: "203.0.113.10", ttl: 63, payload: { kind: "udp", srcPort: 40000, dstPort: 53, payload: { kind: "wg", type: "initiation" } } } as unknown as Ipv4Packet;
     tor.sendInner(wg, ctx);
     // 실제: dstPort 53 만 보고 DNS 로 여겨 세 겹 감싸 가드로 (tor.relay) — 출구가 그 UDP 를 목적지에 그대로 내보냄
     expect(traces).toContain("tor.drop");

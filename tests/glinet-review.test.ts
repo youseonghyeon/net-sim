@@ -4,7 +4,9 @@ import { loadTopology } from "./helpers";
 import { exampleDropInTopology, exampleDualStackHomeTopology, exampleMultiWanTopology, exampleWireguardTopology } from "../src/model/examples";
 import type { Router } from "../src/core/nodes/router";
 import type { RouterSettings, Topology } from "../src/model/topology";
-import { lintTopology } from "../src/model/lint";
+
+/** 구성 검사 (시뮬레이션을 한 번 돌려 ISP 가 DHCP 로 나눠 준 주소를 알게 — 앱과 같다) */
+const lintTopology = (t: Parameters<typeof loadTopology>[0]) => loadTopology(t).lint();
 
 const HOME = "집 Brume 3";
 const NAS = "집 NAS";
@@ -111,7 +113,7 @@ describe("관리 접근", () => {
   it("헤어핀이 꺼져 있어도 관리 화면을 켠 공유기는 LAN 에서 자기 공인 주소:443 에 관리 화면으로 답한다 (OpenWrt: DNAT 는 wan 인터페이스에만)", () => {
     const t = router(admin(exampleWireguardTopology(), HOME), HOME, { forwards: [{ publicPort: 443, lanIp: "192.168.8.20", lanPort: 80 }] });
     const L = loadTopology(t);
-    const tr = L.act({ kind: "tcp-connect", nodeId: L.id(NAS), dst: "203.0.113.30", port: 443 });
+    const tr = L.act({ kind: "tcp-connect", nodeId: L.id(NAS), dst: "203.0.113.10", port: 443 });
     // 실제: "헤어핀 NAT 꺼짐 … 드롭" — 관리 화면이 켜진 뒤로는 사실이 아님 (실무의 "공유기 로그인 화면이 뜬다" 증상)
     expect(tr.some((e) => e.nodeId === L.id(HOME) && e.kind === "fw.allow" && e.summary.includes("관리 접근 제어"))).toBe(true);
   });

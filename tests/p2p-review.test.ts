@@ -103,7 +103,7 @@ describe("결함: P2P 시그널링·상태", () => {
 
   it("F6 NAT 없이 공인 주소를 쓰는 상대(host 후보만 있음)와 홀 펀칭으로 직접 연결된다 (TURN 불필요)", () => {
     let t = exampleNatTraversalTopology();
-    t = addHost(t, "pc", "공인 PC", { ipMode: "static", ip: "203.0.113.77", prefix: 24, gateway: "203.0.113.1", dns: "8.8.8.8", p2p: { enabled: true, name: "pub" } }, "통신사 구간", 5);
+    t = addHost(t, "pc", "공인 PC", { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", dns: "8.8.8.8", p2p: { enabled: true, name: "pub" } }, "통신사 구간", 5); // ISP 에서 공인 주소를 바로 받는다
     const x = loadTopology(t);
     expect(summary(x, "공인 PC")).toContain("등록됨");
     const tr = x.act({ kind: "p2p-connect", nodeId: x.id("민수 PC"), peer: "pub" });

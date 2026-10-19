@@ -2,13 +2,15 @@
 import { describe, expect, it } from "vitest";
 import { loadTopology } from "./helpers";
 import { exampleOpenVpnTopology } from "../src/model/examples";
-import { lintTopology } from "../src/model/lint";
 import type { Router } from "../src/core/nodes/router";
 import type { Host } from "../src/core/nodes/host";
 import type { OvpnClient } from "../src/core/nodes/openvpn";
 import { NetworkSync } from "../src/model/netSync";
 import type { OvpnClientSettings, RouterOvpnServerSettings, Topology } from "../src/model/topology";
 import { headerLayers, practitionerLines, tcpdumpLine } from "../src/model/packetView";
+
+/** 구성 검사 (시뮬레이션을 한 번 돌려 ISP 가 DHCP 로 나눠 준 주소를 알게 — 앱과 같다) */
+const lintTopology = (t: Parameters<typeof loadTopology>[0]) => loadTopology(t).lint();
 
 const LAPTOP = "카페 노트북";
 const HOME = "집 Brume 3";
@@ -30,7 +32,7 @@ describe("OpenVPN", () => {
     expect(L.serverConns("집 NAS").at(-1)!.remoteIp).toBe("10.8.0.2");
     expect(tr.some((e) => e.kind === "vpn.encap")).toBe(true);
     expect(L.node<Router>(HOME).ovpn.rows()[0]![0]).toBe(LAPTOP);
-    expect(lintTopology(L.t)).toEqual([]);
+    expect(L.lint()).toEqual([]);
     // 이름은 PUSH 받은 DNS(서버 터널 주소)로 — 집 공유기 DNS 포워더가 답한다
     const tr2 = L.act({ kind: "ping", nodeId: L.id(LAPTOP), dst: "naver.com" });
     expect(tr2.some((e) => e.nodeId === L.id(HOME) && e.kind.startsWith("dns.") && e.summary.includes("10.8.0.2"))).toBe(true);

@@ -1054,6 +1054,13 @@ export interface Device {
   wifi?: WifiClientSettings;
   /** 투명 방화벽 장비의 규칙 */
   firewall?: FirewallSettings;
+  /** 인터넷 노드(ISP) */
+  internet?: InternetSettings;
+}
+
+/** 인터넷 노드: ISP 대역 (가입자마다 /29 를 나눠 준다). 없으면 203.0.113.0/24 */
+export interface InternetSettings {
+  net: string;
 }
 
 export interface PortRef {
@@ -1539,6 +1546,7 @@ export function normalizeTopology(t: Topology): Topology {
     }
     if (fixed.host) fixed.host = normalizeHostExtras(fixed.host);
     if (spec.role === "ap" && !fixed.ap) fixed.ap = { ...DEFAULT_WIFI_BASE };
+    if (spec.role === "internet" && fixed.internet) fixed.internet = { net: typeof (fixed.internet as Partial<InternetSettings>).net === "string" ? fixed.internet.net : "" };
     if (spec.role === "firewall") fixed.firewall = fixed.firewall ? { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.firewall, rules: fixed.firewall.rules ?? [] } : { ...DEFAULT_FIREWALL_SETTINGS, enabled: true, rules: [] };
     if (spec.role === "switch" && !fixed.switch) fixed.switch = { vlans: {} };
     if (fixed.switch && fixed.switch.igmpSnooping !== undefined) fixed.switch = { ...fixed.switch, igmpSnooping: fixed.switch.igmpSnooping === true };

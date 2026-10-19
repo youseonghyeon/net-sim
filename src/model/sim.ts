@@ -3,10 +3,10 @@
 import { effect, signal } from "@preact/signals";
 import type { ActionSpec, Transmission } from "../core/network";
 import type { SimNode } from "../core/nodes/node";
-import { NetworkSync } from "./netSync";
+import { leaseHints, NetworkSync } from "./netSync";
 import { advanceClock, EVENT_BURST_LIMIT, settleTimeOf } from "./simClock";
 import { hostStatusOf, ipv6StatusOf, serviceBadgesOf, wanStatusOf, type StatusLine } from "./status";
-import { topology } from "./store";
+import { ispLeases, topology } from "./store";
 import { DEVICE_SPECS, type Topology } from "./topology";
 
 /** 보관하는 이벤트 로그 상한. 넘으면 오래된 것부터 지운다 (로그 창은 이 중 최근 일부만 그리고, "더 보기" 로 늘린다) */
@@ -124,7 +124,16 @@ class SimController {
   private bump(): void {
     if (this.net.trace.length > TRACE_CAP) this.net.trace.splice(0, this.net.trace.length - TRACE_CAP + 500);
     simVersion.value = simVersion.peek() + 1;
+    // ISP 임대가 바뀌었을 때만 구성 검사를 다시 (매 프레임 다시 돌리지 않게)
+    const leases = leaseHints(this.net);
+    const key = JSON.stringify(leases);
+    if (key !== this.leaseKey) {
+      this.leaseKey = key;
+      ispLeases.value = leases;
+    }
   }
+
+  private leaseKey = "{}";
 
   // ---------- 조회 ----------
 

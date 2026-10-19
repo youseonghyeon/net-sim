@@ -133,11 +133,12 @@ describe("메시 VPN 리뷰", () => {
     t = mesh(t, HOME, { enabled: false });
     t = edit(t, HOME, (d) => ({
       ...d,
-      router: { ...d.router!, wan: { ipMode: "static", ip: "203.0.113.40", prefix: 24, gateway: "203.0.113.1" }, ovpnServer: { ...DEFAULT_OVPN_SERVER_SETTINGS, redirectGateway: true } },
+      router: { ...d.router!, ovpnServer: { ...DEFAULT_OVPN_SERVER_SETTINGS, redirectGateway: true } },
     }));
+    const homeIp = loadTopology(t).node<Router>(HOME).wan.ip!; // ISP 에서 받는 집 공인 주소
     const home = t.devices.find((d) => d.name === HOME)!;
     const ca = ovpnCaOfDevice(home);
-    t = edit(t, LAPTOP, (d) => ({ ...d, host: { ...d.host!, ra: { enabled: true, type: "openvpn", server: "203.0.113.40", psk: "", ovpn: { proto: "udp", port: 1194, ca, cn: LAPTOP, certCa: ca, tlsCrypt: ovpnTlsCryptOfDevice(home) } } } }));
+    t = edit(t, LAPTOP, (d) => ({ ...d, host: { ...d.host!, ra: { enabled: true, type: "openvpn", server: homeIp, psk: "", ovpn: { proto: "udp", port: 1194, ca, cn: LAPTOP, certCa: ca, tlsCrypt: ovpnTlsCryptOfDevice(home) } } } }));
     const L = loadTopology(t);
     expect(L.host(LAPTOP).ra.summary()).toMatch(/연결/);
     expect(L.host(LAPTOP).mesh.up).toBe(true);

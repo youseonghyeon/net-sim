@@ -1,6 +1,6 @@
 // 예제 묶음 "보안". 등록(메뉴 순서·설명)은 ../examples.ts 의 EXAMPLES.
 import { type Cable, DEFAULT_DHCP_SERVER, type Device, type Topology, newId, zoneAround } from "../topology";
-import { builder, cable, iface } from "./build";
+import { builder, cable, dhcpIface, iface } from "./build";
 
 /** 방화벽: 공유기가 나가는 TCP 80 만 막는다. ping 은 되고 웹 연결만 차단되는 걸 본다 */
 export function exampleFirewallTopology(): Topology {
@@ -61,7 +61,8 @@ export function exampleFirewallApplianceTopology(): Topology {
 }
 
 /**
- * 방화벽 이중화 (VRRP 식): NAT 박스 두 대가 가상 주소(바깥 203.0.113.10, 안쪽 192.168.0.1)를 함께 두고 한 대만 일한다.
+ * 방화벽 이중화 (VRRP 식): NAT 박스 두 대가 가상 주소(바깥 10.0.0.10, 안쪽 192.168.0.1)를 함께 두고 한 대만 일한다.
+ * 가상 주소는 수동 주소라 ISP 구간에 바로 둘 수 없어(ISP 는 DHCP 로 준 가입자 주소만 안다) 앞에 엣지 라우터를 둔다 — 엣지 라우터가 ISP 에서 공인 주소를 받고, 두 방화벽은 그 뒤 10.0.0.0/24 에 선다.
  * 호스트의 기본 게이트웨이는 가상 주소라, master(방화벽 A)의 케이블을 뽑거나 지워도 backup(방화벽 B)이 이어받아 설정 변경 없이 계속 나간다.
  * 두 대의 규칙은 같게 둔다 (실제 HA 쌍은 설정을 자동으로 맞추지만 여기서는 손으로).
  */
@@ -76,21 +77,24 @@ export function exampleHaTopology(): Topology {
     stateful: true,
     rules: [{ action: "allow" as const, proto: "any" as const, direction: "out" as const, src: "", dst: "", dstPort: "" }],
   });
-  const inet = add("internet", 344, -296, "internet-1");
+  const inet = add("internet", 344, -456, "internet-1");
+  // 엣지 라우터: ISP 에서 공인 주소를 받고(DHCP) 뒤의 10.0.0.0/24 를 NAT
+  const edge = add("nat", 344, -320, "엣지 라우터");
+  edge.l3 = { interfaces: [dhcpIface(), iface("10.0.0.1")], routes: [] };
   const swOut = add("switch", 344, -168, "outside 스위치");
   const fwA = add("nat", 200, -24, "방화벽 A");
   fwA.l3 = {
-    interfaces: [iface("203.0.113.11", "203.0.113.1"), iface("192.168.0.2")],
+    interfaces: [iface("10.0.0.11", "10.0.0.1"), iface("192.168.0.2")],
     routes: [],
     firewall: firewall(),
-    ha: { enabled: true, vrid: 10, priority: 200, vips: ["203.0.113.10", "192.168.0.1"] },
+    ha: { enabled: true, vrid: 10, priority: 200, vips: ["10.0.0.10", "192.168.0.1"] },
   };
   const fwB = add("nat", 488, -24, "방화벽 B");
   fwB.l3 = {
-    interfaces: [iface("203.0.113.12", "203.0.113.1"), iface("192.168.0.3")],
+    interfaces: [iface("10.0.0.12", "10.0.0.1"), iface("192.168.0.3")],
     routes: [],
     firewall: firewall(),
-    ha: { enabled: true, vrid: 10, priority: 100, vips: ["203.0.113.10", "192.168.0.1"] },
+    ha: { enabled: true, vrid: 10, priority: 100, vips: ["10.0.0.10", "192.168.0.1"] },
   };
   const swIn = add("switch", 344, 136, "inside 스위치");
   const pc1 = add("pc", 216, 296, "pc-1");
@@ -100,7 +104,8 @@ export function exampleHaTopology(): Topology {
   staticHost(pc2, "192.168.0.11");
   staticHost(laptop, "192.168.0.12");
   const cables: Cable[] = [
-    cable(swOut, 3, inet, 0),
+    cable(edge, 0, inet, 0),
+    cable(swOut, 3, edge, 1),
     cable(swOut, 1, fwA, 0),
     cable(swOut, 6, fwB, 0),
     cable(fwA, 1, swIn, 1),
@@ -110,7 +115,7 @@ export function exampleHaTopology(): Topology {
     cable(swIn, 5, laptop, 0),
   ];
   const t: Topology = { devices, cables };
-  t.zones = [{ id: newId("zone"), label: "HA 쌍 · 가상 주소 203.0.113.10 / 192.168.0.1", tint: "amber", ...zoneAround(t, [fwA.id, fwB.id], 24)! }];
+  t.zones = [{ id: newId("zone"), label: "HA 쌍 · 가상 주소 10.0.0.10 / 192.168.0.1", tint: "amber", ...zoneAround(t, [fwA.id, fwB.id], 24)! }];
   return t;
 }
 

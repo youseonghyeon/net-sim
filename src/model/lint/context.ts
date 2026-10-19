@@ -23,6 +23,8 @@ export interface LintContext {
   t: Topology;
   m: Model;
   add: (i: LintIssue) => void;
+  /** ISP 가 DHCP 로 준 주소를 수동처럼 둔 인터페이스 ("장치 id:포트") — 실제로는 자동이라 "손으로 적은 공인 주소" 가 아니다 */
+  leased?: Set<string>;
 }
 
 // ---------- 규칙 도우미 ----------

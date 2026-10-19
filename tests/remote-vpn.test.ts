@@ -1,6 +1,6 @@
 // 원격 접속 VPN: 집 공유기 NAT 뒤 노트북이 회사 VPN 방화벽에 붙어 가상 주소를 받고, 사내 대역만 터널로 (split tunnel)
 import { describe, expect, it } from "vitest";
-import { lintTopology } from "../src/model/lint";
+
 import { loadTopology } from "./helpers";
 import { exampleRemoteVpnTopology } from "../src/model/examples";
 import { createDevice, parseTopology, serializeTopology, type Device, type RaClientSettings, type RaServerSettings, type Topology } from "../src/model/topology";
@@ -9,6 +9,8 @@ import type { TraceEvent } from "../src/core/trace";
 import type { IkeMessage } from "../src/core/packet";
 
 const load = (t: Topology = exampleRemoteVpnTopology()) => loadTopology(t);
+/** 구성 검사 (ISP 가 나눠 준 주소를 알도록 한 번 돌려서) */
+const lintTopology = (t: Topology) => loadTopology(t).lint();
 
 describe("원격 접속 VPN", () => {
   it("노트북이 켜지면서 NAT-T 로 접속해 가상 주소를 받고, 사내 서버에 SSH 가 열린다", () => {
@@ -74,7 +76,7 @@ describe("원격 접속 VPN", () => {
     const rt = { ...createDevice("router", 120, 300, devices), name: "집2 공유기" };
     devices.push(rt);
     const lap = { ...createDevice("laptop", 120, 460, devices), name: "재택 노트북 2" };
-    lap.host = { ...lap.host!, ra: { enabled: true, server: "203.0.113.11", psk: "remote-psk", user: "lee", password: "lee-pass" } };
+    lap.host = { ...lap.host!, ra: { enabled: true, server: "203.0.113.10", psk: "remote-psk", user: "lee", password: "lee-pass" } };
     devices.push(lap);
     const isp = t.devices.find((d) => d.name === "통신사 구간")!;
     return { devices, cables: [...t.cables, { id: "h2w", a: { device: isp.id, port: 2 }, b: { device: rt.id, port: 0 } }, { id: "h2l", a: { device: rt.id, port: 1 }, b: { device: lap.id, port: 0 } }] };
@@ -195,7 +197,7 @@ describe("원격 접속 VPN — 사용자 계정 인증 (EAP)", () => {
       ["kim", false, "response"],
     ]);
     const srv = x.l3(FW);
-    expect(srv.ra.rows()).toEqual([["kim", "10.99.0.10", expect.stringMatching(/^203\.0\.113\.100:\d+$/), "NAT-T"]]);
+    expect(srv.ra.rows()).toEqual([["kim", "10.99.0.10", expect.stringMatching(/^203\.0\.113\.2:\d+$/), "NAT-T"]]);
     expect(srv.snapshot().info.find(([k]) => k === "원격 접속 VPN 서버")![1]).toContain("접속 1명 (kim 10.99.0.10)");
     x.act({ kind: "ping", nodeId: x.id(LAPTOP), dst: "10.50.10.20" });
     expect(x.host(LAPTOP).pings.at(-1)!.status).toBe("ok");
@@ -313,7 +315,7 @@ describe("원격 접속 VPN — 사용자 계정 인증 (EAP)", () => {
     const base = exampleRemoteVpnTopology();
     const fw = base.devices.find((d) => d.name === FW)!;
     const pair = (bUsers: RaServerSettings["users"]): Topology => {
-      const a: Device = { ...fw, l3: { ...fw.l3!, interfaces: fw.l3!.interfaces.map((c, i) => (i === 0 ? { ...c, ip: "203.0.113.12" } : c)), ha: { enabled: true, vrid: 1, priority: 200, vips: ["203.0.113.11", "10.50.10.1"] } } };
+      const a: Device = { ...fw, l3: { ...fw.l3!, interfaces: fw.l3!.interfaces.map((c, i) => (i === 0 ? { ...c, ip: "203.0.113.12" } : c)), ha: { enabled: true, vrid: 1, priority: 200, vips: ["203.0.113.10", "10.50.10.1"] } } };
       const b: Device = { ...createDevice("nat", 700, -24, base.devices), name: "회사 VPN 방화벽 B" };
       b.l3 = { ...a.l3!, interfaces: a.l3!.interfaces.map((c, i) => (i === 0 ? { ...c, ip: "203.0.113.13" } : c)), ha: { ...a.l3!.ha!, priority: 100 }, ra: { ...a.l3!.ra!, users: bUsers } };
       return { ...base, devices: [...base.devices.map((d) => (d.id === fw.id ? a : d)), b] };
@@ -331,7 +333,7 @@ describe("원격 접속 VPN — 사용자 계정 인증 (EAP)", () => {
       { name: "kim", password: "kim-pass" },
       { name: "lee", password: "lee-pass" },
     ]);
-    expect(back.devices.find((d) => d.name === LAPTOP)!.host!.ra).toEqual({ enabled: true, server: "203.0.113.11", psk: "remote-psk", user: "kim", password: "kim-pass" });
+    expect(back.devices.find((d) => d.name === LAPTOP)!.host!.ra).toEqual({ enabled: true, server: "203.0.113.10", psk: "remote-psk", user: "kim", password: "kim-pass" });
     const old = JSON.parse(serializeTopology(t)) as Topology;
     for (const d of old.devices) {
       if (d.l3?.ra) delete d.l3.ra.users;
@@ -342,7 +344,7 @@ describe("원격 접속 VPN — 사용자 계정 인증 (EAP)", () => {
     }
     const oldBack = parseTopology(JSON.stringify(old)).topology!;
     expect(oldBack.devices.find((d) => d.name === FW)!.l3!.ra!.users).toBeUndefined();
-    expect(oldBack.devices.find((d) => d.name === LAPTOP)!.host!.ra).toEqual({ enabled: true, server: "203.0.113.11", psk: "remote-psk" });
+    expect(oldBack.devices.find((d) => d.name === LAPTOP)!.host!.ra).toEqual({ enabled: true, server: "203.0.113.10", psk: "remote-psk" });
     expect(loadTopology(oldBack).host(LAPTOP).ra.state).toBe("up");
   });
 
@@ -430,19 +432,43 @@ describe("원격 접속 VPN — DPD", () => {
 // ---------- 리뷰: EAP·DPD 뒤 결함 ----------
 describe("원격 접속 VPN — 리뷰 (이중화·응답 손실·NAT 뒤 서버·늦은 응답·불러오기)", () => {
   const FW_B = "회사 VPN 방화벽 B";
-  /** 회사 VPN 방화벽을 이중화 쌍으로 (A 우선순위 200, B 100, 가상 주소 = 원래 주소 203.0.113.11 / 10.50.10.1) */
+  /**
+   * 회사 VPN 방화벽을 이중화 쌍으로 (A 우선순위 200, B 100, 가상 주소 10.0.0.10 / 10.50.10.1). 가상 주소는 수동이라 ISP 구간에 바로 둘 수 없어
+   * 앞에 엣지 NAT(ISP 에서 공인 주소를 받음)가 UDP 500·4500 을 가상 주소로 포워딩한다
+   */
   const haPair = (): Topology => {
     const base = exampleRemoteVpnTopology();
     const fw = base.devices.find((d) => d.name === FW)!;
     const iface = (ip: string, gateway = "") => ({ ipMode: "static" as const, ip, prefix: 24, gateway });
-    const a: Device = { ...fw, l3: { ...fw.l3!, interfaces: [iface("203.0.113.12", "203.0.113.1"), iface("10.50.10.2")], ha: { enabled: true, vrid: 1, priority: 200, vips: ["203.0.113.11", "10.50.10.1"] } } };
+    const a: Device = { ...fw, l3: { ...fw.l3!, interfaces: [iface("10.0.0.11", "10.0.0.1"), iface("10.50.10.2")], ha: { enabled: true, vrid: 1, priority: 200, vips: ["10.0.0.10", "10.50.10.1"] } } };
     const b: Device = { ...createDevice("nat", 760, -24, base.devices), name: FW_B };
-    b.l3 = { ...a.l3!, interfaces: [iface("203.0.113.13", "203.0.113.1"), iface("10.50.10.3")], ha: { ...a.l3!.ha!, priority: 100 } };
+    b.l3 = { ...a.l3!, interfaces: [iface("10.0.0.12", "10.0.0.1"), iface("10.50.10.3")], ha: { ...a.l3!.ha!, priority: 100 } };
+    const devices = [...base.devices.map((d) => (d.id === fw.id ? a : d)), b];
+    const edge: Device = { ...createDevice("nat", 568, -160, devices), name: "회사 엣지 NAT" };
+    edge.l3 = {
+      interfaces: [{ ipMode: "dhcp", ip: "", prefix: 24, gateway: "" }, iface("10.0.0.1")],
+      routes: [],
+      forwards: [
+        { publicPort: 500, lanIp: "10.0.0.10", lanPort: 500, proto: "udp" },
+        { publicPort: 4500, lanIp: "10.0.0.10", lanPort: 4500, proto: "udp" },
+      ],
+    };
+    devices.push(edge);
+    const outSw: Device = { ...createDevice("switch", 568, -96, devices), name: "회사 바깥 스위치" };
+    devices.push(outSw);
     const isp = base.devices.find((d) => d.name === "통신사 구간")!;
     const sw = base.devices.find((d) => d.name === "사내 스위치")!;
+    const wan = cableOf(base, FW, "통신사 구간");
     return {
-      devices: [...base.devices.map((d) => (d.id === fw.id ? a : d)), b],
-      cables: [...base.cables, { id: "b-wan", a: { device: isp.id, port: 2 }, b: { device: b.id, port: 0 } }, { id: "b-lan", a: { device: b.id, port: 1 }, b: { device: sw.id, port: 5 } }],
+      devices,
+      cables: [
+        ...base.cables.filter((c) => c.id !== wan.id),
+        { id: "e-wan", a: { device: isp.id, port: 6 }, b: { device: edge.id, port: 0 } },
+        { id: "e-in", a: { device: edge.id, port: 1 }, b: { device: outSw.id, port: 0 } },
+        { id: "a-out", a: { device: outSw.id, port: 1 }, b: { device: fw.id, port: 0 } },
+        { id: "b-out", a: { device: outSw.id, port: 2 }, b: { device: b.id, port: 0 } },
+        { id: "b-lan", a: { device: b.id, port: 1 }, b: { device: sw.id, port: 5 } },
+      ],
     };
   };
   const cableOf = (t: Topology, a: string, b: string) => {
@@ -534,13 +560,13 @@ describe("원격 접속 VPN — 리뷰 (이중화·응답 손실·NAT 뒤 서버
     expect(ping(x, LAPTOP, "10.50.10.20")).toBe("ok");
   });
 
-  /** 회사 VPN 방화벽을 엣지 NAT 뒤로 (엣지 NAT 가 공인 주소 203.0.113.11 을 갖고 UDP 500·4500 을 포워딩) */
+  /** 회사 VPN 방화벽을 엣지 NAT 뒤로 (엣지 NAT 가 ISP 에서 공인 주소를 받고 UDP 500·4500 을 포워딩) */
   const behindNat = (t0: Topology = exampleRemoteVpnTopology()): Topology => {
     const iface = (ip: string, gateway = "") => ({ ipMode: "static" as const, ip, prefix: 24, gateway });
     const devices: Device[] = t0.devices.map((d) => (d.name === FW ? { ...d, l3: { ...d.l3!, interfaces: [iface("10.0.0.2", "10.0.0.1"), d.l3!.interfaces[1]!] } } : d));
     const edge: Device = { ...createDevice("nat", 568, -104, devices), name: "회사 엣지 NAT" };
     edge.l3 = {
-      interfaces: [iface("203.0.113.11", "203.0.113.1"), iface("10.0.0.1")],
+      interfaces: [{ ipMode: "dhcp", ip: "", prefix: 24, gateway: "" }, iface("10.0.0.1")],
       routes: [],
       forwards: [
         { publicPort: 500, lanIp: "10.0.0.2", lanPort: 500, proto: "udp" },
@@ -566,7 +592,7 @@ describe("원격 접속 VPN — 리뷰 (이중화·응답 손실·NAT 뒤 서버
     expect(codes(behindNat(withLaptop({ psk: "other" })))).toContain("ra.psk-mismatch");
     // 포워딩 대상이 원격 접속 서버를 켜지 않았으면 그 장비를 짚는다
     const off = behindNat(withServer({ enabled: false }));
-    expect(lintTopology(off).filter((i) => i.code === "ra.server-off").map((i) => i.message)).toEqual([expect.stringContaining("회사 VPN 방화벽 (회사 엣지 NAT 가 203.0.113.11 의 UDP 500 을 포워딩하는 대상)")]);
+    expect(lintTopology(off).filter((i) => i.code === "ra.server-off").map((i) => i.message)).toEqual([expect.stringContaining("회사 VPN 방화벽 (회사 엣지 NAT 가 203.0.113.10 의 UDP 500 을 포워딩하는 대상)")]);
   });
 
   it("리뷰: DPD 응답을 기다리다 '다시 연결' 하면, 늦게 온 DPD 응답은 VPN 클라이언트가 받아 무시한다 (UDP 포트 없음·ICMP 없음)", () => {

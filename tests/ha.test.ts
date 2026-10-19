@@ -24,7 +24,7 @@ describe("이중화 (HA)", () => {
     expect(host("pc-1").pings.at(-1)!.status).toBe("ok");
     const nat = tr.find((e) => e.kind === "nat.translate")!;
     expect(nat.nodeId).toBe(id("방화벽 A"));
-    expect(nat.summary).toContain("203.0.113.10");
+    expect(nat.summary).toContain("10.0.0.10");
     // 호스트의 ARP 캐시: 게이트웨이(가상 주소) = 가상 MAC
     expect(host("pc-1").iface.arpCache.get("192.168.0.1")?.mac).toBe("00:00:5e:00:01:0a");
   });
@@ -75,10 +75,10 @@ describe("이중화 (HA)", () => {
     const patch = (name: string, f: (d: Topology["devices"][number]) => Topology["devices"][number]): Topology => ({ ...base, devices: base.devices.map((d) => (d.name === name ? f(d) : d)) });
     const codes = (t: Topology) => lintTopology(t).map((i) => i.code);
     expect(codes(patch("방화벽 B", (d) => ({ ...d, l3: { ...d.l3!, ha: { ...d.l3!.ha!, vrid: 11 } } })))).toContain("ha.vrid-mismatch");
-    expect(codes(patch("방화벽 B", (d) => ({ ...d, l3: { ...d.l3!, ha: { ...d.l3!.ha!, vips: ["203.0.113.10", "192.168.0.254"] } } })))).toContain("ha.vip-mismatch");
+    expect(codes(patch("방화벽 B", (d) => ({ ...d, l3: { ...d.l3!, ha: { ...d.l3!.ha!, vips: ["10.0.0.10", "192.168.0.254"] } } })))).toContain("ha.vip-mismatch");
     expect(codes(patch("pc-1", (d) => ({ ...d, host: { ...d.host!, gateway: "192.168.0.2" } })))).toContain("ha.host-real-gw");
     expect(codes(patch("방화벽 B", (d) => ({ ...d, l3: { ...d.l3!, ha: { ...d.l3!.ha!, enabled: false } } })))).toContain("ha.no-peer");
-    expect(codes(patch("방화벽 A", (d) => ({ ...d, l3: { ...d.l3!, ha: { ...d.l3!.ha!, vips: ["203.0.113.10", "10.9.9.1"] } } })))).toContain("ha.vip-outside-subnet");
+    expect(codes(patch("방화벽 A", (d) => ({ ...d, l3: { ...d.l3!, ha: { ...d.l3!.ha!, vips: ["10.0.0.10", "10.9.9.1"] } } })))).toContain("ha.vip-outside-subnet");
   });
 
   it("그룹 번호가 다르면 서로를 짝으로 보지 않아 둘 다 master 가 된다 (구성 검사가 경고하는 이유)", () => {
@@ -96,8 +96,8 @@ describe("이중화 (HA)", () => {
   it("리뷰: 우선순위가 같고 인터페이스마다 주소 크기 순서가 엇갈려도 한 대만 master (광고가 끝없이 오가지 않음)", () => {
     let t = exampleHaTopology();
     const iface = (ip: string, gateway = "") => ({ ipMode: "static" as const, ip, prefix: 24, gateway });
-    t = setL3(t, "방화벽 A", (l) => ({ ...l, interfaces: [iface("203.0.113.11", "203.0.113.1"), iface("192.168.0.3")], ha: { ...l.ha!, priority: 100 } }));
-    t = setL3(t, "방화벽 B", (l) => ({ ...l, interfaces: [iface("203.0.113.12", "203.0.113.1"), iface("192.168.0.2")], ha: { ...l.ha!, priority: 100 } }));
+    t = setL3(t, "방화벽 A", (l) => ({ ...l, interfaces: [iface("10.0.0.11", "10.0.0.1"), iface("192.168.0.3")], ha: { ...l.ha!, priority: 100 } }));
+    t = setL3(t, "방화벽 B", (l) => ({ ...l, interfaces: [iface("10.0.0.12", "10.0.0.1"), iface("192.168.0.2")], ha: { ...l.ha!, priority: 100 } }));
     const x = load(t);
     expect(x.s.net.trace.length).toBeLessThan(2000);
     expect(masters(x)).toHaveLength(1);
@@ -116,6 +116,12 @@ describe("이중화 (HA)", () => {
   it("리뷰: 바깥 인터페이스가 DHCP 여도 주소를 받으면 선출이 시작된다", () => {
     let t = exampleHaTopology();
     for (const n of ["방화벽 A", "방화벽 B"]) t = setL3(t, n, (l) => ({ ...l, interfaces: [{ ipMode: "dhcp", ip: "", prefix: 24, gateway: "" }, l.interfaces[1]!] }));
+    // 바깥(엣지 라우터 뒤 10.0.0.0/24)에 DHCP 서버 하나
+    const devices = [...t.devices];
+    const srv = { ...createDevice("server", 600, -168, devices), name: "outside DHCP" };
+    srv.host = { ...srv.host!, ipMode: "static", ip: "10.0.0.5", prefix: 24, gateway: "10.0.0.1", services: [], dhcpServer: { enabled: true, start: "10.0.0.100", end: "10.0.0.150", router: "10.0.0.1", dns: "8.8.8.8" } };
+    devices.push(srv);
+    t = { ...t, devices, cables: [...t.cables, { id: "dh", a: { device: t.devices.find((d) => d.name === "outside 스위치")!.id, port: 5 }, b: { device: srv.id, port: 0 } }] };
     const x = load(t);
     expect(masters(x)).toEqual(["방화벽 A"]);
     x.act({ kind: "ping", nodeId: x.id("pc-1"), dst: "8.8.8.8" });
@@ -163,12 +169,12 @@ describe("이중화 (HA)", () => {
     const devices = [...base.devices];
     const mk = (name: string, ip: string, prio: number) => {
       const d = { ...createDevice("nat", 700, -24, devices), name };
-      d.l3 = { interfaces: [{ ipMode: "static", ip, prefix: 24, gateway: "203.0.113.1" }, { ipMode: "static", ip: prio === 200 ? "10.0.0.2" : "10.0.0.3", prefix: 24, gateway: "" }], routes: [], ha: { enabled: true, vrid: 10, priority: prio, vips: ["203.0.113.20", "10.0.0.1"] } };
+      d.l3 = { interfaces: [{ ipMode: "static", ip, prefix: 24, gateway: "10.0.0.1" }, { ipMode: "static", ip: prio === 200 ? "172.16.0.2" : "172.16.0.3", prefix: 24, gateway: "" }], routes: [], ha: { enabled: true, vrid: 10, priority: prio, vips: ["10.0.0.20", "172.16.0.1"] } };
       devices.push(d);
       return d;
     };
-    const c = mk("방화벽 C", "203.0.113.21", 200);
-    const d = mk("방화벽 D", "203.0.113.22", 100);
+    const c = mk("방화벽 C", "10.0.0.21", 200);
+    const d = mk("방화벽 D", "10.0.0.22", 100);
     const sw = base.devices.find((x) => x.name === "outside 스위치")!;
     const cables = [...base.cables, { id: "c0", a: { device: sw.id, port: 0 }, b: { device: c.id, port: 0 } }, { id: "d0", a: { device: sw.id, port: 2 }, b: { device: d.id, port: 0 } }];
     const codes = lintTopology({ devices, cables }).map((i) => i.code);

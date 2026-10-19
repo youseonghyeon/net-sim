@@ -1006,6 +1006,28 @@ section("stp", async () => {
   await page.screenshot({ path: `${OUT}/53-stp.png` });
 });
 
+// ISP 대역: 인터넷 노드 설정의 대역 칸·무작위 버튼·오류 문구, 바꾸면 가입자(공유기 WAN)가 새 대역에서 다시 받는다
+section("isp", async () => {
+  await loadEx("wireguard");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitIdle();
+  await clickDevice("internet-1");
+  await goTab("설정");
+  const sec = page.locator(".inspector section", { has: page.locator("h3", { hasText: /^ISP 대역$/ }) });
+  const input = sec.locator("input.input");
+  console.log("isp net:", await input.inputValue());
+  await input.fill("192.168.50.0/24");
+  console.log("isp private error:", (await sec.locator(".field-error").first().textContent())?.trim());
+  await sec.locator("button", { hasText: "무작위" }).click();
+  const net = await input.inputValue();
+  console.log("isp random:", net, "| error:", await sec.locator(".field-error").count());
+  await page.screenshot({ path: `${OUT}/18b-isp-net.png` });
+  await page.click(".transport .ff");
+  const prefix = net.split(".").slice(0, 3).join(".") + ".";
+  await page.waitForFunction((p) => [...document.querySelectorAll("[data-device]")].some((el) => /집 Brume 3/.test(el.textContent ?? "") && (el.textContent ?? "").includes(p)), prefix, { timeout: 30000 });
+  console.log("isp brume wan in new net: yes");
+});
+
 // 망분리 재택 접속 (WireGuard 공유기): 재택 노트북 → WireGuard → 사무실 공유기 → 스태틱 라우트(WAN2) → IPsec → NCP dev-1 ping·SSH.
 // 사무실 공유기의 스태틱 라우트 섹션·WAN2 "디폴트 라우트로 사용" 토글·표의 라우팅 테이블. 이어서 dev-1 의 "SSH 점프 허용" 을 켜고 ssh -J dev-1 → dev-2
 section("ncpwg", async () => {

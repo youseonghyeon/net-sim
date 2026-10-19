@@ -198,7 +198,7 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     id: "mwanvpn",
     group: "인터넷",
     label: "VPN 은 WAN1, 인터넷은 WAN2 (멀티 WAN 정책 규칙)",
-    blurb: "집 Brume 3 은 WAN1(고정 공인 주소 203.0.113.30)에서 WireGuard 서버를 열고, lan4 를 WAN2 로 바꿔 다른 통신사의 5G 라우터를 꽂았습니다. 멀티 WAN 의 정책 규칙 \"10.0.0.0/24 → WAN2\" 가 VPN 대역의 인터넷 트래픽만 WAN2 로 보냅니다. 카페 폰(WireGuard 앱, 모든 트래픽을 터널로)에서 8.8.8.8 로 ping 해 보세요 — 암호화된 UDP 51820 은 WAN1 으로 오가고, 집에서 풀린 ping 은 5G 라우터를 거쳐 다른 공인 주소로 나갑니다(표 탭의 mwan3 rules·NAT 테이블 (WAN2)). 집 NAS 에서 8.8.8.8 로 ping 하면 규칙이 없어 WAN1 으로 나갑니다. 규칙을 지우면 폰의 트래픽도 WAN1 으로, 5G 라우터 케이블을 지우면 규칙의 회선이 끊겨 지금 회선(WAN1)으로 나갑니다.",
+    blurb: "집 Brume 3 은 WAN1(ISP 에서 받는 공인 주소 203.0.113.10)에서 WireGuard 서버를 열고, lan4 를 WAN2 로 바꿔 다른 통신사의 5G 라우터를 꽂았습니다. 멀티 WAN 의 정책 규칙 \"10.0.0.0/24 → WAN2\" 가 VPN 대역의 인터넷 트래픽만 WAN2 로 보냅니다. 카페 폰(WireGuard 앱, 모든 트래픽을 터널로)에서 8.8.8.8 로 ping 해 보세요 — 암호화된 UDP 51820 은 WAN1 으로 오가고, 집에서 풀린 ping 은 5G 라우터를 거쳐 다른 공인 주소로 나갑니다(표 탭의 mwan3 rules·NAT 테이블 (WAN2)). 집 NAS 에서 8.8.8.8 로 ping 하면 규칙이 없어 WAN1 으로 나갑니다. 규칙을 지우면 폰의 트래픽도 WAN1 으로, 5G 라우터 케이블을 지우면 규칙의 회선이 끊겨 지금 회선(WAN1)으로 나갑니다.",
     build: exampleMultiWanPolicyTopology,
   },
   vpn: {
@@ -275,7 +275,7 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     id: "tor",
     group: "VPN",
     label: "Tor (양파 라우팅)",
-    blurb: "Brume 3 에서 Tor 를 켰습니다. 노트북에서 친구 웹 서버(공인 203.0.113.50:80)에 TCP 연결해 보세요 — 패킷이 세 겹으로 감싸져 가드 → 중간 → 출구를 거치고, 친구 웹 서버는 노트북이 아니라 출구 주소 198.51.100.133 에서 온 연결로 봅니다(서버의 표). 가드는 보낸 곳만, 출구는 목적지만 압니다. 8.8.8.8 로 ping 하면 Tor 가 ICMP 를 나르지 못해 버려집니다. Tor 를 끄면 친구 웹 서버는 Brume 의 공인 주소를 봅니다.",
+    blurb: "Brume 3 에서 Tor 를 켰습니다. 노트북에서 친구 웹 서버(공인 203.0.113.10:80 — 친구네 공유기의 포트 포워딩)에 TCP 연결해 보세요 — 패킷이 세 겹으로 감싸져 가드 → 중간 → 출구를 거치고, 친구 웹 서버는 노트북이 아니라 출구 주소 198.51.100.133 에서 온 연결로 봅니다(서버의 표). 가드는 보낸 곳만, 출구는 목적지만 압니다. 8.8.8.8 로 ping 하면 Tor 가 ICMP 를 나르지 못해 버려집니다. Tor 를 끄면 친구 웹 서버는 Brume 의 공인 주소를 봅니다.",
     build: exampleTorTopology,
   },
   dpi: {
@@ -331,7 +331,7 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     id: "company",
     group: "종합",
     label: "중소기업 전체 (본사·지사·재택·고객)",
-    blurb: "앞의 예제들이 한 그림에 모입니다. 지사 PC-1 에서 intranet.corp 로 TCP 80 을 보내면 사내 DNS 에 물어(지사 → 본사 IPsec 터널) 사내 위키에 닿습니다. 재택 노트북은 켜지면서 원격 접속 VPN(계정 kim)으로 붙어 있어 10.1.20.20 으로 SSH(22) 가 됩니다. 사무 PC 는 VLAN 10 에서 코어 게이트웨이의 DHCP 릴레이로 주소를 받고 www.corp 로 연결하면 웹 LB 가 web-1·web-2 로 나눕니다. 카페의 고객 폰에서 회사 공인 주소 203.0.113.10:80 으로 연결하면 본사 방화벽의 포트 포워딩 → 웹 LB 로 들어옵니다. 손님 폰(VLAN 30 손님 Wi-Fi)은 8.8.8.8 은 되지만 사내 위키(10.1.20.20)는 코어 방화벽에 막힙니다.",
+    blurb: "앞의 예제들이 한 그림에 모입니다. 지사 PC-1 에서 intranet.corp 로 TCP 80 을 보내면 사내 DNS 에 물어(지사 → 본사 IPsec 터널) 사내 위키에 닿습니다. 재택 노트북은 켜지면서 원격 접속 VPN(계정 kim)으로 붙어 있어 10.1.20.20 으로 SSH(22) 가 됩니다. 사무 PC 는 VLAN 10 에서 코어 게이트웨이의 DHCP 릴레이로 주소를 받고 www.corp 로 연결하면 웹 LB 가 web-1·web-2 로 나눕니다. 카페의 고객 폰에서 회사 공인 주소 203.0.113.18:80 으로 연결하면 본사 방화벽의 포트 포워딩 → 웹 LB 로 들어옵니다. 손님 폰(VLAN 30 손님 Wi-Fi)은 8.8.8.8 은 되지만 사내 위키(10.1.20.20)는 코어 방화벽에 막힙니다.",
     build: exampleCompanyTopology,
   },
 };

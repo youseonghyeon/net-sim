@@ -8,7 +8,7 @@ describe("WAN + NAT", () => {
     const net = buildHomeLan(true, true);
     net.runToIdle();
     const rt = net.nodes.get("rt") as Router;
-    expect(rt.wan.ip).toBe("203.0.113.100");
+    expect(rt.wan.ip).toBe("203.0.113.2");
     expect(rt.wan.gateway).toBe("203.0.113.1");
     expect(rt.wanClient.state).toBe("bound");
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "dhcp.bound" && e.summary.startsWith("[wan]"))).toBe(true);
@@ -39,7 +39,7 @@ describe("WAN + NAT", () => {
     }
     // 인터넷으로 나간 패킷의 출발지는 공인 주소, TTL 은 하나 줄어 있다
     const out = net.transmissions.find((t) => t.from.node === "rt" && t.to.node === "inet" && t.frame.payload.kind === "ipv4" && t.frame.payload.payload.kind === "icmp");
-    expect(out?.frame.payload.kind === "ipv4" && out.frame.payload.src).toBe("203.0.113.100");
+    expect(out?.frame.payload.kind === "ipv4" && out.frame.payload.src).toBe("203.0.113.2");
     expect(out?.frame.payload.kind === "ipv4" && out.frame.payload.ttl).toBe(63);
     expect(net.pendingEvents).toBe(0);
   });
@@ -85,11 +85,11 @@ describe("WAN + NAT", () => {
     const rt = net.nodes.get("rt") as Router;
     // ISP 가 라우터 공인 주소로 ping
     const ctx = net.contextFor("inet");
-    inet.iface.sendIp({ kind: "ipv4", src: "203.0.113.1", dst: "203.0.113.100", ttl: 64, payload: { kind: "icmp", type: "echo-request", id: 1, seq: 1 } }, ctx, (f) => ctx.send(0, f));
+    inet.iface.sendIp({ kind: "ipv4", src: "203.0.113.1", dst: "203.0.113.2", ttl: 64, payload: { kind: "icmp", type: "echo-request", id: 1, seq: 1 } }, ctx, (f) => ctx.send(0, f));
     net.runToIdle();
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "icmp.reply.sent")).toBe(true);
     // 요청한 적 없는 Echo 응답이 공인 주소로 오면 NAT 미스
-    inet.iface.sendIp({ kind: "ipv4", src: "203.0.113.1", dst: "203.0.113.100", ttl: 64, payload: { kind: "icmp", type: "echo-reply", id: 12345, seq: 1 } }, net.contextFor("inet"), (f) => net.contextFor("inet").send(0, f));
+    inet.iface.sendIp({ kind: "ipv4", src: "203.0.113.1", dst: "203.0.113.2", ttl: 64, payload: { kind: "icmp", type: "echo-reply", id: 12345, seq: 1 } }, net.contextFor("inet"), (f) => net.contextFor("inet").send(0, f));
     net.runToIdle();
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "nat.miss")).toBe(true);
     expect(rt.nat.size).toBe(0);

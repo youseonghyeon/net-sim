@@ -24,7 +24,7 @@ import {
 } from "../model/store";
 import { cableAt, DEFAULT_FIREWALL_SETTINGS, defaultL3, peerOf, specOf, type Device } from "../model/topology";
 import { Icon } from "./Icons";
-import { CloudManageSection, DiagSection, InternetDiagSection, IspRenumberSection, LiveTables, StatusSection } from "./inspector/diag";
+import { CloudManageSection, DiagSection, InternetDiagSection, IspNetSection, IspRenumberSection, LiveTables, StatusSection } from "./inspector/diag";
 import { MeshSection } from "./inspector/mesh";
 import { IgmpSection, McastSection } from "./inspector/mcast";
 import { SipCallSection, SipPhoneSection } from "./inspector/sip";
@@ -138,7 +138,7 @@ function DevicePanel({ d }: { d: Device }) {
   const issues = lintIssues.value.filter((i) => i.deviceId === d.id);
   const worst = issues.some((i) => i.severity === "error") ? "error" : issues.length ? "warn" : addr?.tone === "warn" || wan?.tone === "warn" || v6?.tone === "warn" ? "warn" : "ok";
   const hasConfig =
-    !!d.host || !!d.router || spec.role === "l3" || d.kind === "switch" || d.kind === "ap" || d.kind === "firewall" || !!d.wifi;
+    !!d.host || !!d.router || spec.role === "l3" || d.kind === "switch" || d.kind === "ap" || d.kind === "firewall" || !!d.wifi || spec.role === "internet";
   return (
     <>
       <header class={`panel-head device-head role-${roleGroupOf(d)}`}>
@@ -224,10 +224,11 @@ function DevicePanel({ d }: { d: Device }) {
         <>
           {!hasConfig && (
             <Section>
-              <p class="note">이 장치는 설정할 것이 없습니다. {spec.role === "hub" ? "허브는 받은 프레임을 모든 포트로 반복할 뿐입니다." : spec.role === "internet" ? "인터넷 노드는 ISP 역할을 고정으로 합니다." : ""}</p>
+              <p class="note">이 장치는 설정할 것이 없습니다. {spec.role === "hub" ? "허브는 받은 프레임을 모든 포트로 반복할 뿐입니다." : ""}</p>
             </Section>
           )}
           {d.kind === "ap" && <WifiBaseSection d={d} />}
+          {spec.role === "internet" && <IspNetSection d={d} />}
           {d.kind === "firewall" && (
             <FirewallSection value={d.firewall ?? { ...DEFAULT_FIREWALL_SETTINGS, enabled: true }} onChange={(v) => updateDevice(d.id, (x) => ({ ...x, firewall: v }))} uplinkName="outside" />
           )}

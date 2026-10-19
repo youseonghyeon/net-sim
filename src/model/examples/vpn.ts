@@ -1,10 +1,10 @@
 // 예제 묶음 "VPN" 중 GL.iNet(Brume 3) 식 공유기 VPN. 다른 VPN 예제는 internet.ts. 등록(메뉴 순서·설명)은 ../examples.ts 의 EXAMPLES.
-import { type Cable, DEFAULT_DHCP_SERVER, DEFAULT_OVPN_SERVER_SETTINGS, type Topology, newId, ovpnCaOfDevice, ovpnTlsCryptOfDevice, wgPublicKeyOf, zoneAround } from "../topology";
+import { type Cable, DEFAULT_DHCP_SERVER, DEFAULT_WAN, DEFAULT_OVPN_SERVER_SETTINGS, type Topology, newId, ovpnCaOfDevice, ovpnTlsCryptOfDevice, wgPublicKeyOf, zoneAround } from "../topology";
 import { builder, cable } from "./build";
 
 /**
  * GL.iNet 식 VPN 게이트웨이 (WireGuard):
- * - 집 Brume 3 = WireGuard 서버 (WAN 수동 공인 주소 203.0.113.30, 터널 10.0.0.1/24). 피어 = 여행용 공유기(10.0.0.2)·출장 폰(10.0.0.3)의 공개 키
+ * - 집 Brume 3 = WireGuard 서버 (WAN 은 ISP 에서 받는 공인 주소 203.0.113.10, 터널 10.0.0.1/24). 피어 = 여행용 공유기(10.0.0.2)·출장 폰(10.0.0.3)의 공개 키
  * - 출장지 호텔 공유기 뒤의 여행용 공유기 = WireGuard 클라이언트: 뒤에 꽂은 노트북은 아무 설정 없이 모든 트래픽이 집을 거친다 (full tunnel, 킬 스위치)
  * - 출장 폰 = WireGuard 앱으로 호텔 Wi-Fi 에서 직접. AllowedIPs 를 집 대역만 적어 split tunnel (인터넷은 호텔로 바로)
  * 공개 키는 장치마다 정해진 키라 예제를 만들 때 서로의 공개 키를 적어 둔다 (실제로는 GL.iNet 관리 화면이 설정 파일·QR 을 만든다)
@@ -26,7 +26,7 @@ export function exampleWireguardTopology(): Topology {
     lanIp: "192.168.8.1",
     lanPrefix: 24,
     dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
-    wan: { ipMode: "static", ip: "203.0.113.30", prefix: 24, gateway: "203.0.113.1" },
+    wan: { ...DEFAULT_WAN },
     wgServer: {
       enabled: true,
       address: "10.0.0.1/24",
@@ -46,13 +46,13 @@ export function exampleWireguardTopology(): Topology {
     lanIp: "192.168.9.1",
     lanPrefix: 24,
     dhcp: { enabled: true, start: "192.168.9.100", end: "192.168.9.199" },
-    wgClient: { enabled: true, server: "203.0.113.30", port: 51820, serverKey, address: "10.0.0.2/32", allowedIps: "0.0.0.0/0", dns: "10.0.0.1", killSwitch: true, policy: { mode: "all", devices: [] } },
+    wgClient: { enabled: true, server: "203.0.113.10", port: 51820, serverKey, address: "10.0.0.2/32", allowedIps: "0.0.0.0/0", dns: "10.0.0.1", killSwitch: true, policy: { mode: "all", devices: [] } },
   };
   // 폰: 호텔 Wi-Fi + WireGuard 앱 (집 대역만 터널로)
   phone.wifi = { ssid: "hotel" };
   phone.host = {
     ...phone.host!,
-    ra: { enabled: true, type: "wireguard", server: "203.0.113.30", psk: "", wg: { address: "10.0.0.3/32", port: 51820, serverKey, allowedIps: "10.0.0.0/24, 192.168.8.0/24", dns: "" } },
+    ra: { enabled: true, type: "wireguard", server: "203.0.113.10", psk: "", wg: { address: "10.0.0.3/32", port: 51820, serverKey, allowedIps: "10.0.0.0/24, 192.168.8.0/24", dns: "" } },
   };
   const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, hotel, 0), cable(isp, 6, home, 0), cable(hotel, 1, travel, 0), cable(travel, 1, laptop, 0), cable(home, 1, nas, 0)];
   const t: Topology = { devices, cables };
@@ -132,13 +132,13 @@ export function exampleDpiTopology(): Topology {
     lanIp: "192.168.8.1",
     lanPrefix: 24,
     dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
-    wan: { ipMode: "static", ip: "203.0.113.30", prefix: 24, gateway: "203.0.113.1" },
+    wan: { ...DEFAULT_WAN },
     wgServer: { enabled: true, address: "10.0.0.1/24", port: 51820, peers: [{ name: "직원 노트북", publicKey: wgPublicKeyOf(laptop, "host"), ip: "10.0.0.2" }], lanAccess: true },
   };
   nas.host = { ipMode: "static", ip: "192.168.8.20", prefix: 24, gateway: "192.168.8.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   laptop.host = {
     ...laptop.host!,
-    ra: { enabled: true, type: "wireguard", server: "203.0.113.30", psk: "", wg: { address: "10.0.0.2/32", port: 51820, serverKey: wgPublicKeyOf(home, "server"), allowedIps: "10.0.0.0/24, 192.168.8.0/24", dns: "" } },
+    ra: { enabled: true, type: "wireguard", server: "203.0.113.10", psk: "", wg: { address: "10.0.0.2/32", port: 51820, serverKey: wgPublicKeyOf(home, "server"), allowedIps: "10.0.0.0/24, 192.168.8.0/24", dns: "" } },
   };
   const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, office, 0), cable(isp, 6, home, 0), cable(office, 1, sw, 0), cable(sw, 1, laptop, 0), cable(sw, 2, pc, 0), cable(home, 1, nas, 0)];
   const t: Topology = { devices, cables };
@@ -184,14 +184,14 @@ export function exampleOpenVpnTopology(): Topology {
     lanIp: "192.168.8.1",
     lanPrefix: 24,
     dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
-    wan: { ipMode: "static", ip: "203.0.113.40", prefix: 24, gateway: "203.0.113.1" },
+    wan: { ...DEFAULT_WAN },
     ovpnServer: { ...DEFAULT_OVPN_SERVER_SETTINGS, proto: "tcp", port: 443 },
   };
   nas.host = { ipMode: "static", ip: "192.168.8.20", prefix: 24, gateway: "192.168.8.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
   const ca = ovpnCaOfDevice(home);
   laptop.host = {
     ...laptop.host!,
-    ra: { enabled: true, type: "openvpn", server: "203.0.113.40", psk: "", ovpn: { proto: "tcp", port: 443, ca, cn: "카페 노트북", certCa: ca, tlsCrypt: ovpnTlsCryptOfDevice(home) } },
+    ra: { enabled: true, type: "openvpn", server: "203.0.113.10", psk: "", ovpn: { proto: "tcp", port: 443, ca, cn: "카페 노트북", certCa: ca, tlsCrypt: ovpnTlsCryptOfDevice(home) } },
   };
   const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, cafe, 0), cable(isp, 6, home, 0), cable(cafe, 1, laptop, 0), cable(home, 1, nas, 0)];
   const t: Topology = { devices, cables };
@@ -297,7 +297,7 @@ export function exampleTorTopology(): Topology {
     lanIp: "192.168.0.1",
     lanPrefix: 24,
     dhcp: { enabled: true, start: "192.168.0.100", end: "192.168.0.199" },
-    wan: { ipMode: "static", ip: "203.0.113.50", prefix: 24, gateway: "203.0.113.1" },
+    wan: { ...DEFAULT_WAN },
     forwards: [{ publicPort: 80, lanIp: "192.168.0.20", lanPort: 80 }],
   };
   const web = add("server", 568, 152, "친구 웹 서버");

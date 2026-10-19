@@ -938,9 +938,7 @@ export class Router implements SimNode {
    * 가장 긴 것이 LAN 이거나 맞는 경로가 없으면 undefined. 스태틱 라우트는 넥스트 홉이 그 인터페이스 대역 안일 때만 들어간다
    * (리눅스는 넥스트 홉에 닿을 수 없는 경로를 넣지 않는다 — "Nexthop has invalid gateway"), 넥스트 홉이 없으면 그 인터페이스로 바로(on-link).
    * 0.0.0.0/0 은 디폴트 라우트라 mwan3_connected 가 아니다 (회선 설정·mwan3 정책이 정함).
-   * 경로는 주소가 있는 동안 남는다 — 수동 주소 회선은 케이블이 빠져도(netifd force_link 1), DHCP 회선은 주소를 잃으면 빠진다.
-   * 단 mwan3 의 회선(WAN1, 디폴트 라우트로 쓰는 WAN2)에 직접 연결된 대역은 그 회선이 살아 있을 때만 본다: 이 시뮬레이터의 인터넷은
-   * 203.0.113.0/24 하나라 WAN 대역이 곧 다른 집·회사 전부인데, 실제로는 그들이 같은 대역에 있지 않다 — 끊긴 회선에 묶지 않고 mwan3 가 살아 있는 회선으로 보내게
+   * 경로는 주소가 있는 동안 남는다 — 수동 주소 회선은 케이블이 빠져도(netifd force_link 1), DHCP 회선은 주소를 잃으면 빠진다
    */
   private mainRoute(dst: Ip): MainRoute | undefined {
     let best: { prefix: number; route?: MainRoute } | undefined;
@@ -948,8 +946,8 @@ export class Router implements SimNode {
       if (sameSubnet(dst, ip, prefix) && (!best || prefix > best.prefix)) best = { prefix, ...(route ? { route } : {}) };
     };
     if (this.lan.ip) offer(this.lan.ip, this.lan.prefix);
-    if (this.wan.ip && (!this.wan2On || this.mwan.usable("wan"))) offer(this.wan.ip, this.wan.prefix, { line: "wan" });
-    if (this.wan2On && this.wan2.ip && (!this.mwan.wan2Member || this.mwan.usable("wan2"))) offer(this.wan2.ip, this.wan2.prefix, { line: "wan2" });
+    if (this.wan.ip) offer(this.wan.ip, this.wan.prefix, { line: "wan" });
+    if (this.wan2On && this.wan2.ip) offer(this.wan2.ip, this.wan2.prefix, { line: "wan2" });
     this.routes.forEach((r, i) => {
       if (r.dest.prefix === 0) return;
       const i4 = r.iface === "wan2" ? (this.wan2On ? this.wan2 : undefined) : this.wan;
@@ -990,16 +988,14 @@ export class Router implements SimNode {
   /** 표시용: LuCI 상태 → 라우트 처럼 main 테이블 (디폴트 라우트는 그 회선을 디폴트 라우트로 쓸 때만) */
   private routeRows(): string[][] {
     const rows: string[][] = [];
-    const conn = (name: string, i: NetInterface, member: WanName | undefined) => {
-      if (!i.ip) return;
-      const off = this.wan2On && member && !this.mwan.usable(member) ? " (회선 끊김 — 살아 있는 회선으로)" : "";
-      rows.push([name, `${networkOf(i.ip, i.prefix)}/${i.prefix}`, "", `직접 연결${off}`]);
+    const conn = (name: string, i: NetInterface) => {
+      if (i.ip) rows.push([name, `${networkOf(i.ip, i.prefix)}/${i.prefix}`, "", "직접 연결"]);
     };
-    conn("lan", this.lan, undefined);
-    conn("wan", this.wan, "wan");
+    conn("lan", this.lan);
+    conn("wan", this.wan);
     if (this.wan.ip && this.wan.gateway) rows.push(["wan", "0.0.0.0/0", this.wan.gateway, "디폴트 라우트"]);
     if (this.wan2On) {
-      conn("wan2", this.wan2, this.mwan.wan2Member ? "wan2" : undefined);
+      conn("wan2", this.wan2);
       if (this.wan2.ip && this.wan2.gateway && this.mwan.wan2Member) rows.push(["wan2", "0.0.0.0/0", this.wan2.gateway, "디폴트 라우트 (예비)"]);
     }
     for (const r of this.routes) {

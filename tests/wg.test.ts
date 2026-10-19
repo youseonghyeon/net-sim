@@ -2,11 +2,13 @@
 import { describe, expect, it } from "vitest";
 import { loadTopology } from "./helpers";
 import { exampleWireguardTopology } from "../src/model/examples";
-import { lintTopology } from "../src/model/lint";
 import type { Router } from "../src/core/nodes/router";
 import { WgClient, wgPrivateKey, wgPublicKey, validWgKey } from "../src/core/nodes/wg";
 import { headerLayers, practitionerLines, tcpdumpLine } from "../src/model/packetView";
 import type { RouterWgClientSettings, RouterWgServerSettings, Topology } from "../src/model/topology";
+
+/** 구성 검사 (시뮬레이션을 한 번 돌려 ISP 가 DHCP 로 나눠 준 주소를 알게 — 앱과 같다) */
+const lintTopology = (t: Parameters<typeof loadTopology>[0]) => loadTopology(t).lint();
 
 const load = (t: Topology = exampleWireguardTopology()) => loadTopology(t);
 const patchServer = (t: Topology, patch: Partial<RouterWgServerSettings>): Topology => ({
@@ -60,9 +62,9 @@ describe("GL.iNet 식 WireGuard", () => {
     // 여행용 공유기의 DNS 포워더가 VPN DNS 10.0.0.1 에 터널로 묻는다 (호텔·통신사 DNS 로 새지 않음)
     expect(tr.some((e) => e.nodeId === id("여행용 공유기") && e.kind === "dns.forward" && e.summary.includes("10.0.0.1"))).toBe(true);
     expect(tr.some((e) => e.nodeId === id("집 Brume 3") && e.kind === "dns.query.received" && e.summary.includes("10.0.0.2"))).toBe(true);
-    // ping 은 집 Brume 의 NAT 로 공인 주소 203.0.113.30 이 되어 나간다
+    // ping 은 집 Brume 의 NAT 로 공인 주소 203.0.113.10 이 되어 나간다
     const homeNat = tr.find((e) => e.kind === "nat.translate" && e.nodeId === id("집 Brume 3") && e.summary.includes("ICMP"));
-    expect(homeNat?.summary).toContain("203.0.113.30");
+    expect(homeNat?.summary).toContain("203.0.113.10");
     // 호텔 공유기가 변환한 것은 WireGuard UDP 뿐
     expect(tr.filter((e) => e.kind === "nat.translate" && e.nodeId === id("호텔 공유기")).every((e) => e.summary.includes("UDP"))).toBe(true);
   });
@@ -93,7 +95,7 @@ describe("GL.iNet 식 WireGuard", () => {
     expect(srv.length).toBe(3);
     expect(srv[0]!.summary).toContain("피어 목록에 없음");
     // 서버는 Response 를 한 번도 보내지 않았다
-    expect(s.net.trace.some((e) => e.nodeId === id("집 Brume 3") && e.kind === "vpn.handshake" && e.summary.includes("203.0.113.100:4000") && e.summary.includes("폰"))).toBe(false);
+    expect(s.net.trace.some((e) => e.nodeId === id("집 Brume 3") && e.kind === "vpn.handshake" && e.summary.includes("203.0.113.2:4000") && e.summary.includes("폰"))).toBe(false);
     expect(host("출장 폰").ra.summary()).toContain("응답하지 않음");
   });
 
@@ -232,7 +234,7 @@ describe("WireGuard 구성 검사", () => {
   it("서버가 다른 공유기 뒤에 있으면 그 공유기의 UDP 포워딩을 따라간다 (포워딩 대상의 키로 판단)", () => {
     const t = exampleWireguardTopology();
     // 집 Brume 의 WAN 을 ISP 모뎀 공유기 뒤 사설 주소로 두고, 모뎀이 51820 을 포워딩하는 구성은 따라가기만 확인 (서버 꺼짐을 대상에서 찾는다)
-    const modem = { ...t.devices.find((d) => d.name === "호텔 공유기")!, id: "modem", name: "모뎀", router: { ...t.devices.find((d) => d.name === "호텔 공유기")!.router!, wan: { ipMode: "static" as const, ip: "203.0.113.40", prefix: 24, gateway: "203.0.113.1" }, forwards: [{ publicPort: 51820, lanIp: "203.0.113.30", lanPort: 51820, proto: "udp" as const }] } };
+    const modem = { ...t.devices.find((d) => d.name === "호텔 공유기")!, id: "modem", name: "모뎀", router: { ...t.devices.find((d) => d.name === "호텔 공유기")!.router!, wan: { ipMode: "static" as const, ip: "203.0.113.40", prefix: 24, gateway: "203.0.113.1" }, forwards: [{ publicPort: 51820, lanIp: "203.0.113.10", lanPort: 51820, proto: "udp" as const }] } };
     const moved: Topology = { ...t, devices: [...t.devices.map((d) => (d.name === "출장 폰" ? { ...d, host: { ...d.host!, ra: { ...d.host!.ra!, server: "203.0.113.40" } } } : d)), modem] };
     expect(codes(moved).filter((c) => c.startsWith("출장 폰"))).toEqual([]);
     expect(codes(patchServer(moved, { enabled: false })).filter((c) => c.startsWith("출장 폰"))).toEqual(["출장 폰:wg.server-off"]);

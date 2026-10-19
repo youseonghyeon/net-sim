@@ -68,7 +68,7 @@ describe("게이트웨이 / NAT 박스 / DHCP 서버 호스트", () => {
   it("NAT 박스 outside 가 ISP 에서 공인 주소를 받는다", () => {
     const net = build();
     const nat = net.nodes.get("nat") as L3Node;
-    expect(nat.ifaces[0]!.ip).toBe("203.0.113.100");
+    expect(nat.ifaces[0]!.ip).toBe("203.0.113.2");
     expect(nat.ifaces[0]!.gateway).toBe("203.0.113.1");
   });
 

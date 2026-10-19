@@ -16,7 +16,7 @@ const nodeNat = (t: Topology, natType: NatTypeSetting): Topology => ({
 describe("k3s 안의 Tailscale (이중 NAT)", () => {
   it("예제: 노드 NAT 가 symmetric 이라 노트북 ↔ pod 는 홀 펀칭 실패 → DERP 릴레이, 그래도 ping 은 된다", () => {
     const L = loadTopology(exampleK3sTailscaleTopology());
-    expect(lintTopology(L.t)).toEqual([]);
+    expect(L.lint()).toEqual([]);
     expect(L.host(POD).mesh.summary()).toContain("100.64.0.");
     // pod 가 STUN 으로 본 바깥 주소는 집 공유기의 공인 주소 (NAT 두 겹을 지난 뒤)
     const home = L.s.net.trace.find((e) => e.nodeId === L.id(POD) && e.kind === "mesh.endpoint");

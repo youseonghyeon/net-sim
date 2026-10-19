@@ -29,7 +29,7 @@ function buildHome(): { net: Network; rt: Router } {
   net.connect("srv", 0, "sw", 2);
   net.runToIdle();
   const rt = net.nodes.get("rt") as Router;
-  expect(rt.wan.ip).toBe("203.0.113.100");
+  expect(rt.wan.ip).toBe("203.0.113.2");
   return { net, rt };
 }
 
@@ -73,7 +73,7 @@ describe("포트 포워딩 — 가정용 라우터", () => {
     const client = remoteClientConns(net)[0]!;
     expect(client.state).toBe("CLOSED");
     expect(client.bytesReceived).toBe(3000);
-    expect(client.remoteIp).toBe("203.0.113.100");
+    expect(client.remoteIp).toBe("203.0.113.2");
     expect(client.remotePort).toBe(80);
 
     const server = [...net.getHost("srv").tcp.conns.values()][0]!;
@@ -88,7 +88,7 @@ describe("포트 포워딩 — 가정용 라우터", () => {
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "nat.miss")).toBe(false);
     // 인터넷으로 나간 응답의 출발지는 공인 주소:80
     const out = net.transmissions.find((t) => t.from.node === "rt" && t.to.node === "inet" && t.frame.payload.kind === "ipv4" && t.frame.payload.payload.kind === "tcp");
-    expect(out?.frame.payload.kind === "ipv4" && out.frame.payload.src).toBe("203.0.113.100");
+    expect(out?.frame.payload.kind === "ipv4" && out.frame.payload.src).toBe("203.0.113.2");
     expect(out?.frame.payload.kind === "ipv4" && out.frame.payload.payload.kind === "tcp" && out.frame.payload.payload.srcPort).toBe(80);
     expect(net.pendingEvents).toBe(0);
 
@@ -224,11 +224,11 @@ describe("포트 포워딩 — NAT 박스", () => {
   it("규칙(:80 → 192.168.2.20:80)이 있으면 두 홉 안쪽의 웹 서버와 통신한다", () => {
     const net = buildParts();
     const nat = net.nodes.get("nat") as L3Node;
-    expect(nat.ifaces[0]!.ip).toBe("203.0.113.100");
+    expect(nat.ifaces[0]!.ip).toBe("203.0.113.2");
     nat.setForwards([{ publicPort: 80, lanIp: "192.168.2.20", lanPort: 80 }], net.contextFor("nat"));
     expect(net.trace.filter((e) => e.nodeId === "nat" && e.kind === "ip.config").at(-1)?.summary).toBe("포트 포워딩 규칙 변경: 1개");
 
-    net.scheduleAction(net.now, { kind: "inet-connect", nodeId: "inet", dst: "203.0.113.100", port: 80 });
+    net.scheduleAction(net.now, { kind: "inet-connect", nodeId: "inet", dst: "203.0.113.2", port: 80 });
     net.runToIdle();
 
     const client = remoteClientConns(net)[0]!;

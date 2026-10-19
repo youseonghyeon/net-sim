@@ -117,7 +117,7 @@ describe("TCP", () => {
     expect(entries[0]).toMatchObject({ proto: "tcp", lanIp: "192.168.0.100", innerId: 49152 });
     const inet = net.nodes.get("inet") as Internet;
     const server = [...inet.tcp.conns.values()][0]!;
-    expect(server.remoteIp).toBe("203.0.113.100"); // 서버가 보는 상대는 공인 주소
+    expect(server.remoteIp).toBe("203.0.113.2"); // 서버가 보는 상대는 공인 주소
     expect(server.remotePort).toBe(entries[0]!.publicId);
     expect(server.state).toBe("CLOSED");
     expect(net.pendingEvents).toBe(0);

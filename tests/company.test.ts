@@ -1,8 +1,10 @@
 // 종합 예제 "중소기업 전체": 앞의 예제들의 기능이 한 구성에서 함께 동작한다
 import { describe, expect, it } from "vitest";
-import { lintTopology } from "../src/model/lint";
 import { loadTopology } from "./helpers";
 import { exampleCompanyTopology } from "../src/model/examples";
+
+/** 구성 검사 (시뮬레이션을 한 번 돌려 ISP 가 DHCP 로 나눠 준 주소를 알게 — 앱과 같다) */
+const lintTopology = (t: Parameters<typeof loadTopology>[0]) => loadTopology(t).lint();
 
 describe("중소기업 전체 (본사·지사·재택·고객)", () => {
   const x = loadTopology(exampleCompanyTopology());
@@ -36,7 +38,7 @@ describe("중소기업 전체 (본사·지사·재택·고객)", () => {
   });
 
   it("카페 고객 폰 → 회사 공인 주소:80 은 포트 포워딩으로 웹 LB 에", () => {
-    x.act({ kind: "tcp-connect", nodeId: x.id("고객 폰"), dst: "203.0.113.10", port: 80 });
+    x.act({ kind: "tcp-connect", nodeId: x.id("고객 폰"), dst: "203.0.113.18", port: 80 });
     expect(x.lastConn("고객 폰")).toMatchObject({ state: "CLOSED", bytesReceived: 3000 });
   });
 

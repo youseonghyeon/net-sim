@@ -1,4 +1,5 @@
 // OpenVPN 리뷰: 결함 재현 (고치기 전에는 실패해야 한다)
+import type { Router } from "../src/core/nodes/router";
 import { describe, expect, it } from "vitest";
 import { loadTopology } from "./helpers";
 import { exampleOpenVpnTopology } from "../src/model/examples";
@@ -119,7 +120,9 @@ describe("OpenVPN 리뷰 (실무 로그)", () => {
 
   it("서버가 WAN 주소 변경으로 세션을 비운 일을 서버의 'Inactivity timeout (--ping-restart)' 로 옮기지 않는다", () => {
     const L = loadTopology(exampleOpenVpnTopology());
-    const tr = L.apply({ ...L.t, devices: L.t.devices.map((d) => (d.name === HOME ? { ...d, router: { ...d.router!, wan: { ...d.router!.wan!, ip: "203.0.113.41" } } } : d)) });
+    // ISP 가 집 공인 주소를 바꾼다 (FORCERENEW) — 노트북은 옛 주소로 계속 보낸다
+    const tr = L.act({ kind: "isp-renumber", nodeId: L.id("internet-1"), ip: L.node<Router>(HOME).wan.ip! });
+    tr.push(...L.act({ kind: "ping", nodeId: L.id(LAPTOP), dst: "192.168.8.20" }));
     const ev = tr.filter((e) => e.nodeId === L.id(HOME) && e.kind === "vpn.drop" && e.summary.includes("WAN 주소"));
     expect(ev.length).toBe(1);
     expect(ev.flatMap((e) => practitionerLines(e, {}).map((l) => l.line)).filter((l) => l.includes("Inactivity timeout"))).toEqual([]);
@@ -135,9 +138,9 @@ describe("OpenVPN 리뷰 (멀티 WAN)", () => {
       ...base,
       devices: base.devices.map((d) =>
         d.id === home.id
-          ? { ...d, router: { ...d.router!, wan2: { enabled: true, ipMode: "static" as const, ip: "203.0.113.41", prefix: 24, gateway: "203.0.113.1", track: "" } } }
+          ? { ...d, router: { ...d.router!, wan2: { enabled: true, ipMode: "dhcp" as const, ip: "", prefix: 24, gateway: "", track: "" } } }
           : d.name === LAPTOP
-            ? { ...d, host: { ...d.host!, ra: { ...d.host!.ra!, server: "203.0.113.41" } } }
+            ? { ...d, host: { ...d.host!, ra: { ...d.host!.ra!, server: "203.0.113.18" } } } // WAN2 가 ISP 에서 받는 주소
             : d,
       ),
       cables: [...base.cables, { id: "c-wan2", a: { device: isp.id, port: 7 }, b: { device: home.id, port: 4 } }],
@@ -165,7 +168,7 @@ describe("OpenVPN 리뷰 (이름)", () => {
   });
 });
 
-/** 집: 앞 공유기(203.0.113.40, OpenVPN 꺼짐, TCP 443 → 안쪽 Brume:1194 포워딩) 뒤에 안쪽 Brume(WAN 192.168.8.2, OpenVPN TCP 1194, DDNS myhome) */
+/** 집: 앞 공유기(ISP 에서 받은 공인 주소, OpenVPN 꺼짐, TCP 443 → 안쪽 Brume:1194 포워딩) 뒤에 안쪽 Brume(WAN 192.168.8.2, OpenVPN TCP 1194, DDNS myhome) */
 function behindFront(): Topology {
   const base = exampleOpenVpnTopology();
   const front = base.devices.find((d) => d.name === HOME)!;

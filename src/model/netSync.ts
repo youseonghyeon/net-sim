@@ -8,6 +8,7 @@ import { FirewallBridge } from "../core/nodes/fwbridge";
 import { Host } from "../core/nodes/host";
 import { Hub } from "../core/nodes/hub";
 import { Internet } from "../core/nodes/internet";
+import { effectiveIspNet } from "./isp";
 import { L3Node } from "../core/nodes/l3";
 import type { SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
@@ -708,6 +709,7 @@ export function effectiveApSsid(d: Device): string {
 
 export function configKey(d: Device): string {
   if (d.kind === "ap") return JSON.stringify({ mac: d.mac, ssid: effectiveApSsid(d) });
+  if (d.kind === "internet") return JSON.stringify({ mac: d.mac, net: effectiveIspNet(d.internet?.net) });
   if (d.kind === "firewall") return JSON.stringify({ mac: d.mac, fw: effectiveFirewall(d.firewall) });
   if (d.kind === "switch") return JSON.stringify({ mac: d.mac, vlans: [...effectiveSwitchVlans(d).entries()], stp: effectiveStp(d), igmp: d.switch?.igmpSnooping === true });
   if (d.host) return JSON.stringify({ mac: d.mac, host: effectiveHost(d) });
@@ -728,7 +730,7 @@ export function makeNode(d: Device): SimNode {
   if (spec.role === "ap") return new AccessPoint(d.id, effectiveApSsid(d));
   if (spec.role === "firewall") return new FirewallBridge(d.id, effectiveFirewall(d.firewall));
   if (spec.role === "router") return new Router({ id: d.id, mac: d.mac, wanMac: wanMacOf(d.mac), ...effectiveRouter(d) });
-  if (spec.role === "internet") return new Internet({ id: d.id, mac: d.mac });
+  if (spec.role === "internet") return new Internet({ id: d.id, mac: d.mac, net: effectiveIspNet(d.internet?.net) });
   if (spec.role === "l3") {
     const cfg = effectiveL3(d);
     return new L3Node({
@@ -765,6 +767,7 @@ export function applyConfig(net: Network, d: Device): void {
     node.ssid = effectiveApSsid(d);
     net.contextFor(d.id).trace("ip.config", "sys", `SSID 변경: "${node.ssid}"`, { ssid: node.ssid });
   } else if (node instanceof Router && d.router) node.configure(effectiveRouter(d, node), net.contextFor(d.id));
+  else if (node instanceof Internet) node.setNet(effectiveIspNet(d.internet?.net), net.contextFor(d.id));
   else if (node instanceof L3Node) {
     const cfg = effectiveL3(d);
     node.configure(cfg.interfaces, net.contextFor(d.id));
@@ -782,4 +785,29 @@ export function applyConfig(net: Network, d: Device): void {
     node.setRa(cfg.ra, net.contextFor(d.id));
     node.setIpv6(cfg.ipv6, net.contextFor(d.id));
   }
+}
+
+/**
+ * ISP(인터넷 노드)가 DHCP 로 나눠 준 공인 주소: "장치 id:포트" → 주소. 구성 검사가 자동(DHCP) WAN 의 주소를 알게 해
+ * VPN 서버·포트 포워딩을 주소로 찾을 수 있게 한다 (모르는 것은 지금처럼 침묵)
+ */
+export function leaseHints(net: Network): Record<string, string> {
+  // MAC → 인터페이스 ("장치 id:포트") 와 지금 그 인터페이스의 주소 (임대가 남아 있어도 주소를 잃었으면 — 케이블을 뺀 자동 WAN — 넘기지 않는다)
+  const byMac = new Map<string, { key: string; ip: string | undefined }>();
+  for (const [id, n] of net.nodes) {
+    if (n instanceof Router) {
+      byMac.set(n.wan.mac, { key: `${id}:0`, ip: n.wan.ip });
+      if (n.wan2On) byMac.set(n.wan2.mac, { key: `${id}:${Router.WAN2_PORT}`, ip: n.wan2.ip });
+    } else if (n instanceof L3Node) n.ifaces.forEach((f, i) => byMac.set(f.mac, { key: `${id}:${i}`, ip: f.ip }));
+    else if (n instanceof Host) byMac.set(n.iface.mac, { key: `${id}:0`, ip: n.iface.ip });
+  }
+  const out: Record<string, string> = {};
+  for (const n of net.nodes.values()) {
+    if (!(n instanceof Internet)) continue;
+    for (const [ip, l] of n.dhcpServer.leases) {
+      const at = byMac.get(l.mac);
+      if (at && at.ip === ip) out[at.key] = ip;
+    }
+  }
+  return out;
 }

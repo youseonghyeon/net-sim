@@ -1,6 +1,5 @@
 // 공유기 VPN (ipTIME 식 L2TP/IPsec): 출장지 호텔 NAT 뒤 노트북이 집 공유기의 VPN 서버에 붙어 집 LAN 주소를 받고, 모든 트래픽이 집으로 간다 (full tunnel)
 import { describe, expect, it } from "vitest";
-import { lintTopology } from "../src/model/lint";
 import { loadTopology } from "./helpers";
 import { exampleIptimeVpnTopology } from "../src/model/examples";
 import { createDevice, type Device, type RouterVpnServerSettings, type Topology } from "../src/model/topology";
@@ -8,6 +7,9 @@ import { L2tpClient } from "../src/core/nodes/l2tp";
 import { RaClient } from "../src/core/nodes/ravpn";
 import type { Router } from "../src/core/nodes/router";
 import { headerLayers, practitionerLines, tcpdumpLine } from "../src/model/packetView";
+
+/** 구성 검사 (시뮬레이션을 한 번 돌려 ISP 가 DHCP 로 나눠 준 주소를 알게 — 앱과 같다) */
+const lintTopology = (t: Parameters<typeof loadTopology>[0]) => loadTopology(t).lint();
 
 const load = (t: Topology = exampleIptimeVpnTopology()) => loadTopology(t);
 const patchLaptop = (t: Topology, patch: Partial<NonNullable<NonNullable<Device["host"]>["ra"]>>, name = "출장 노트북"): Topology => ({
@@ -37,7 +39,7 @@ describe("공유기 VPN (L2TP/IPsec)", () => {
     expect(lap.ra.state).toBe("up");
     expect(lap.ra.vip).toBe("192.168.0.50");
     expect((lap.ra as L2tpClient).dns).toBe("192.168.0.1");
-    expect(node<Router>("집 ipTIME").vpnServer.connected).toEqual([{ user: "me", vip: "192.168.0.50", peer: "203.0.113.100", natT: true }]);
+    expect(node<Router>("집 ipTIME").vpnServer.connected).toEqual([{ user: "me", vip: "192.168.0.50", peer: "203.0.113.2", natT: true }]);
     // 순서: Main Mode(NAT 감지) → Main Mode(PSK) → Quick Mode → SCCRQ → ICRQ → LCP → CHAP → IPCP
     const steps = s.net.trace.filter((e) => e.nodeId === t.devices.find((d) => d.name === "출장 노트북")!.id && /^vpn\.(ike|eap|up)$/.test(e.kind) && !e.summary.includes("다시 보냄")).map((e) => e.summary.split(":")[1]!.trim().slice(0, 12));
     expect(steps.length).toBe(9);
@@ -68,7 +70,7 @@ describe("공유기 VPN (L2TP/IPsec)", () => {
     expect(host("출장 노트북").pings.at(-1)!.status).toBe("ok");
     const homeNat = tr.find((e) => e.kind === "nat.translate" && e.nodeId === id("집 ipTIME"));
     expect(homeNat?.summary).toContain("192.168.0.50 (ICMP");
-    expect(homeNat?.summary).toContain("203.0.113.20");
+    expect(homeNat?.summary).toContain("203.0.113.10");
     expect(tr.filter((e) => e.kind === "nat.translate" && e.nodeId === id("호텔 공유기")).every((e) => e.summary.includes("UDP 포트 4500"))).toBe(true);
   });
 
@@ -155,7 +157,7 @@ describe("공유기 VPN (L2TP/IPsec)", () => {
     const { s: sync, id } = load();
     const lines = (node: string, kind: string, pick: (e: (typeof sync.net.trace)[number]) => boolean = () => true) =>
       practitionerLines(sync.net.trace.find((e) => e.nodeId === id(node) && e.kind === kind && pick(e))!, {}).map((l) => l.line);
-    expect(lines("집 ipTIME", "vpn.ike", (e) => e.details?.l2tp === "SCCRQ")[0]).toContain("xl2tpd[1234]: Connection established to 203.0.113.100, 1701");
+    expect(lines("집 ipTIME", "vpn.ike", (e) => e.details?.l2tp === "SCCRQ")[0]).toContain("xl2tpd[1234]: Connection established to 203.0.113.2, 1701");
     expect(lines("집 ipTIME", "vpn.eap", (e) => e.details?.ppp === "success")).toEqual(["pppd[2345]: MSCHAP-v2 peer authentication succeeded for me"]);
     expect(lines("출장 노트북", "vpn.up")).toEqual(["pppd[2345]: local  IP address 192.168.0.50"]);
     expect(lines("집 ipTIME", "vpn.ike", (e) => e.details?.nat === true).join("\n")).toContain("remote host is behind NAT");

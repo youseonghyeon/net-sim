@@ -7,7 +7,8 @@ import type { SimNode } from "../src/core/nodes/node";
 import type { ActionSpec } from "../src/core/network";
 import type { Ipv4Packet } from "../src/core/packet";
 import type { TraceEvent } from "../src/core/trace";
-import { NetworkSync } from "../src/model/netSync";
+import { leaseHints, NetworkSync } from "../src/model/netSync";
+import { lintTopology } from "../src/model/lint";
 import type { Topology } from "../src/model/topology";
 
 export interface LoadOptions {
@@ -44,5 +45,7 @@ export function loadTopology(t: Topology, opts: LoadOptions = {}) {
   /** 그 장치에 도착한 IPv4 패킷 (프레임 기록 기준) */
   const wire = (name: string) =>
     [...s.net.frameLog.values()].flat().filter((x) => x.to === id(name) && x.frame.payload.kind === "ipv4").map((x) => x.frame.payload as Ipv4Packet);
-  return { s, t, id, node, host, l3, sw, act, apply, lastConn, serverConns, wire };
+  /** 구성 검사 (ISP 가 DHCP 로 나눠 준 주소를 알려 줌 — 앱과 같다) */
+  const lint = (tt: Topology = t) => lintTopology(tt, { leased: leaseHints(s.net) });
+  return { s, t, id, node, host, l3, sw, act, apply, lastConn, serverConns, wire, lint };
 }

@@ -2,9 +2,11 @@
 import { describe, expect, it } from "vitest";
 import { loadTopology } from "./helpers";
 import { exampleDpiTopology } from "../src/model/examples";
-import { lintTopology } from "../src/model/lint";
 import type { Router } from "../src/core/nodes/router";
 import type { Topology } from "../src/model/topology";
+
+/** 구성 검사 (시뮬레이션을 한 번 돌려 ISP 가 DHCP 로 나눠 준 주소를 알게 — 앱과 같다) */
+const lintTopology = (t: Parameters<typeof loadTopology>[0]) => loadTopology(t).lint();
 
 const load = (t: Topology = exampleDpiTopology()) => loadTopology(t);
 const obfuscate = (t: Topology, laptop: boolean, server: boolean): Topology => ({
@@ -24,7 +26,7 @@ describe("DPI", () => {
 
   it("양쪽 난독화를 켜면 알아볼 수 없는 UDP 가 되어 지나가고, 한쪽만 켜면 구성 검사가 짚고 서버는 침묵한다", () => {
     const L = load(obfuscate(exampleDpiTopology(), true, true));
-    expect(lintTopology(L.t)).toEqual([]);
+    expect(L.lint()).toEqual([]);
     expect(L.host("직원 노트북").ra.state).toBe("up");
     expect(L.s.net.trace.some((e) => e.kind === "dpi.app" && e.summary.includes("알 수 없음"))).toBe(true);
     L.act({ kind: "ping", nodeId: L.id("직원 노트북"), dst: "192.168.8.20" });

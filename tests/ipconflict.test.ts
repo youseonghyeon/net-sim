@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { Network } from "../src/core/network";
 import { Host } from "../src/core/nodes/host";
-import { Internet } from "../src/core/nodes/internet";
 import { L3Node } from "../src/core/nodes/l3";
 import { Switch } from "../src/core/nodes/switch";
 
-/** 통신사 스위치 아래 인터넷 + 두 집의 NAT (outside 고정 주소) */
+/**
+ * 공용 구간(203.0.113.0/24)의 고정 주소 장비 "inet"(203.0.113.1) + 두 집의 NAT (outside 고정 주소).
+ * 인터넷 노드(ISP)는 손으로 적은 공인 주소를 받지 않으므로(IP Source Guard) 여기서는 고정 주소 장비끼리의 구간으로 충돌 규칙만 본다
+ */
 function twoNats(bIp: string) {
   const net = new Network();
-  net.addNode(new Internet({ id: "inet", mac: "02:00:00:ff:00:01" }));
+  net.addNode(new Host({ id: "inet", mac: "02:00:00:ff:00:01", ipMode: "static", ip: "203.0.113.1", prefix: 24, gateway: "" }));
   net.addNode(new Switch("isp", 4));
   const nat = (id: string, n: number, ip: string) =>
     new L3Node({
@@ -35,7 +37,7 @@ function twoNats(bIp: string) {
 describe("IP 충돌 (RFC 5227 축소판)", () => {
   it("두 장비가 동시에 같은 주소를 쓰려 하면 둘 다 포기하고, 한쪽이 주소를 바꾸면 다른 쪽이 다시 확인해 되찾는다", () => {
     const net = new Network();
-    net.addNode(new Internet({ id: "inet", mac: "02:00:00:ff:00:01" }));
+    net.addNode(new Host({ id: "inet", mac: "02:00:00:ff:00:01", ipMode: "static", ip: "203.0.113.1", prefix: 24, gateway: "" }));
     net.addNode(new Switch("isp", 4));
     const mk = (id: string, n: number) =>
       new L3Node({
@@ -68,7 +70,7 @@ describe("IP 충돌 (RFC 5227 축소판)", () => {
     );
     net.runToIdle();
     expect(a.ifaces[0]!.conflict).toBeUndefined();
-    net.scheduleAction(net.now, { kind: "ping", nodeId: "pcA", dst: "1.1.1.1" });
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "pcA", dst: "203.0.113.1" });
     net.runToIdle();
     expect(net.getHost("pcA").pings.at(-1)).toMatchObject({ status: "ok" });
   });
@@ -86,9 +88,9 @@ describe("IP 충돌 (RFC 5227 축소판)", () => {
     const b = net.nodes.get("b") as L3Node;
     expect(b.ifaces[0]!.conflict).toMatchObject({ refused: true, mac: "02:00:00:10:00:01" });
     expect(net.trace.some((e) => e.nodeId === "b" && e.kind === "ip.conflict" && e.summary.includes("쓰지 않음"))).toBe(true);
-    // b 는 이 주소로 Gratuitous ARP 를 보내지 않았다 → 인터넷의 ARP 캐시는 a 그대로
+    // b 는 이 주소로 Gratuitous ARP 를 보내지 않았다 → 공용 구간 장비의 ARP 캐시는 a 그대로
     expect(net.transmissions.some((t) => t.from.node === "b" && t.frame.payload.kind === "arp" && t.frame.payload.senderIp === "203.0.113.101")).toBe(false);
-    net.scheduleAction(net.now, { kind: "ping", nodeId: "pcA", dst: "1.1.1.1" });
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "pcA", dst: "203.0.113.1" });
     net.runToIdle();
     expect(net.getHost("pcA").pings.at(-1)).toMatchObject({ status: "ok" });
     // 다른 주소로 바꾸면 충돌 상태가 풀린다
@@ -106,8 +108,8 @@ describe("IP 충돌 (RFC 5227 축소판)", () => {
   it("쓰는 중에 다른 장비가 같은 주소를 주장하면 충돌을 기록하고 Gratuitous ARP 로 방어한다 (10초에 한 번)", () => {
     const net = twoNats("203.0.113.102");
     const a = net.nodes.get("a") as L3Node;
-    // 인터넷이 .101 → a 를 배운 상태에서
-    net.scheduleAction(net.now, { kind: "ping", nodeId: "pcA", dst: "1.1.1.1" });
+    // 공용 구간의 장비가 .101 → a 를 배운 상태에서
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "pcA", dst: "203.0.113.1" });
     net.runToIdle();
     // 장비 b 가 확인 없이 .101 을 주장하는 Gratuitous ARP 를 두 번 보낸다
     const ctx = net.contextFor("b");
@@ -119,12 +121,12 @@ describe("IP 충돌 (RFC 5227 축소판)", () => {
         dst: "ff:ff:ff:ff:ff:ff",
         payload: { kind: "arp", op: "request", senderMac: "02:00:00:10:00:02", senderIp: "203.0.113.101", targetMac: "00:00:00:00:00:00", targetIp: "203.0.113.101" },
       });
-    const inet = net.nodes.get("inet") as Internet;
+    const inet = net.nodes.get("inet") as Host;
     garp();
     net.runToIdle();
-    // 첫 주장: 인터넷 캐시가 b 로 바뀌었다가 a 의 방어(Gratuitous ARP)로 a 로 돌아온다 → 응답이 옆집으로 새지 않는다
+    // 첫 주장: 그 장비의 캐시가 b 로 바뀌었다가 a 의 방어(Gratuitous ARP)로 a 로 돌아온다 → 응답이 옆집으로 새지 않는다
     expect(inet.iface.arpCache.get("203.0.113.101")?.mac).toBe("02:00:00:10:00:01");
-    net.scheduleAction(net.now, { kind: "ping", nodeId: "pcA", dst: "1.1.1.1" });
+    net.scheduleAction(net.now, { kind: "ping", nodeId: "pcA", dst: "203.0.113.1" });
     net.runToIdle();
     expect(net.getHost("pcA").pings.at(-1)).toMatchObject({ status: "ok" });
     // 10초 안의 두 번째 주장은 기록만 한다 (서로 방어하며 폭주하지 않게)

@@ -49,7 +49,7 @@ describe("DPI 리뷰", () => {
     const t: Topology = {
       ...base,
       devices: base.devices.map((d) => {
-        if (d.id === office.id) return { ...d, router: { ...d.router!, wgClient: { enabled: true, server: "203.0.113.30", port: 51820, serverKey: wgPublicKeyOf(home, "server"), address: "10.0.0.3/32", allowedIps: "0.0.0.0/0", dns: "", killSwitch: false, policy: { mode: "all" as const, devices: [] } } } };
+        if (d.id === office.id) return { ...d, router: { ...d.router!, wgClient: { enabled: true, server: "203.0.113.10", port: 51820, serverKey: wgPublicKeyOf(home, "server"), address: "10.0.0.3/32", allowedIps: "0.0.0.0/0", dns: "", killSwitch: false, policy: { mode: "all" as const, devices: [] } } } };
         if (d.id === home.id) return { ...d, router: { ...d.router!, wgServer: { ...d.router!.wgServer!, peers: [...d.router!.wgServer!.peers, { name: "회사", publicKey: wgPublicKeyOf(office, "client"), ip: "10.0.0.3" }] } } };
         if (d.name === "직원 노트북") return { ...d, host: { ...d.host!, ra: { ...d.host!.ra!, enabled: false } } };
         return d;
@@ -67,7 +67,7 @@ describe("DPI 리뷰", () => {
     t = withRouter(t, "집 Brume 3", { dpi: { enabled: true, blockApps: ["ssh"], blockCategories: [] }, forwards: [{ publicPort: 22, lanIp: "192.168.8.20", lanPort: 22 }] });
     t = { ...t, devices: t.devices.map((d) => (d.name === "집 NAS" ? { ...d, host: { ...d.host!, services: [80, 22] } } : d)) };
     const L = loadTopology(t);
-    const tr = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.30", port: 22 });
+    const tr = L.act({ kind: "inet-connect", nodeId: L.id("internet-1"), dst: "203.0.113.10", port: 22 });
     const blocks = tr.filter((e) => e.kind === "dpi.block");
     expect(blocks.length).toBe(1);
     expect(blocks[0]!.summary).toContain("바깥에서 시작한 흐름");

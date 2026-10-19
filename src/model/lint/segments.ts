@@ -2,6 +2,7 @@
 // 세그먼트마다 라우터 인터페이스·호스트·주소·DHCP 서버를 모은다. 규칙들은 이 모델(`analyze`)을 본다.
 import { DEVICE_SPECS, ROUTER_WAN2_PORT, portVlanOf, specOf, wirelessLinks, type Device, type PortRef, type Topology } from "../topology";
 import { subnetOf, validIp, type Subnet } from "./addr";
+import { effectiveIspNet, ispGatewayOf } from "../isp";
 
 // ---------- L2 세그먼트 ----------
 
@@ -111,8 +112,6 @@ export interface Model {
   membersOf(key: string): Members | undefined;
 }
 
-const INTERNET_IP = "203.0.113.1";
-const INTERNET_PREFIX = 24;
 
 export function portName(d: Device, port: number): string {
   return specOf(d).ports[port]?.name ?? `포트 ${port}`;
@@ -332,7 +331,9 @@ export function analyze(t: Topology): Model {
       // DHCP 모드 호스트의 DHCP 서비스는 동작하지 않는다 ("내 주소가 고정이 아님") → 서버로 세지 않음
       if (h.dhcpServer.enabled && ip) m.dhcp.push({ device: d, key });
     } else if (spec.role === "internet") {
-      addGw({ device: d, key: `${d.id}:0`, label: `${d.name} ISP`, ifName: "isp", ip: INTERNET_IP, subnet: subnetOf(INTERNET_IP, INTERNET_PREFIX), inside: true, uplink: false, gwKind: "internet", port: 0 });
+      // ISP 게이트웨이는 가입자 대역마다 하나지만, 세그먼트 규칙에는 대역 전체(첫 주소)로 둔다
+      const isp = effectiveIspNet(d.internet?.net);
+      addGw({ device: d, key: `${d.id}:0`, label: `${d.name} ISP`, ifName: "isp", ip: ispGatewayOf(isp), subnet: subnetOf(isp.ip, isp.prefix), inside: true, uplink: false, gwKind: "internet", port: 0 });
     } else if (spec.role === "router" && d.router) {
       const r = d.router;
       const wanKey = `${d.id}:0`;

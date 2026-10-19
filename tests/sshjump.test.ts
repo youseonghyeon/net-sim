@@ -168,7 +168,7 @@ describe("망분리 사무실 재택 접속 (VPN + 점프 서버, tests/fixtures
   const conn = (L: ReturnType<typeof loadTopology>, name: string) => [...L.host(name).tcp.conns.values()].filter((c) => c.role === "client").at(-1)!;
   it("구성 검사 0, 재택 노트북은 VPN 으로 DMZ 경로만 받는다", () => {
     const L = loadTopology(exampleSeparatedRemoteTopology());
-    expect(lintTopology(L.t)).toEqual([]);
+    expect(L.lint()).toEqual([]);
     expect(L.host("재택 노트북").ra.state).toBe("up");
   });
   it("ssh -J 점프 서버 → 내부망 PC 1: 열린다. 내부망 PC 에게는 점프 서버가 접속, 방화벽 두 개가 각 구간만 들인다", () => {

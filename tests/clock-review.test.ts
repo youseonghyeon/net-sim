@@ -43,8 +43,8 @@ describe("리뷰: 이중화 주기 광고", () => {
   it("[1b] 같은 뿌리: 주기 광고를 backup 만 켜면(ha.advert-mismatch) 한 번 넘어갔다 물러난 뒤 A 가 master 인데도 LAN 이 끊긴다 (문구는 '오감' 만 경고)", () => {
     const l = loadTopology(advert(exampleHaTopology(), ["방화벽 B"]));
     const { s, act, l3, host, id } = l;
+    // 먼저 한 번 통신 (pc-1 이 가상 주소의 MAC 을 기억). 엣지 라우터를 지나는 왕복 동안 B 의 첫 Master_Down 이 겹치면 이 ping 은 실패할 수 있다 — 볼 것은 그 뒤
     act({ kind: "ping", nodeId: id("pc-1"), dst: "8.8.8.8" });
-    expect(host("pc-1").pings.at(-1)!.status).toBe("ok");
     const from = s.net.trace.length;
     s.net.runUntil(s.net.now + 5_000);
     expect(s.net.trace.slice(from).some((e) => e.kind === "ha.master" && e.nodeId === id("방화벽 B"))).toBe(true);

@@ -1,5 +1,5 @@
 // DHCP 클라이언트/서버. 호스트(클라이언트), 라우터(LAN 서버 + WAN 클라이언트), 인터넷(서버)이 공유한다.
-import { intToIp, ipToInt, prefixToMask, sameSubnet, type Ip, type Mac } from "../addr";
+import { intToIp, ipToInt, networkOf, prefixToMask, sameSubnet, type Ip, type Mac } from "../addr";
 import { DHCP_CLIENT_PORT, DHCP_SERVER_PORT, LIMITED_BROADCAST_IP, UNSPECIFIED_IP, type DhcpMessage, type Ipv4Packet } from "../packet";
 import type { Emit, NetInterface } from "./iface";
 import type { NodeContext, TimerHandle } from "./node";
@@ -290,6 +290,13 @@ export class DhcpServer {
   private readonly offers = new Map<Mac, Ip>();
   /** 같은 장비의 다른 인터페이스 주소 (공유기의 WAN). 풀에 들어 있어도 빌려주지 않는다 — dnsmasq 도 이미 쓰는 주소는 건너뛴다 */
   ownAddresses: () => (Ip | undefined)[] = () => [];
+  /**
+   * 가입자마다 대역 하나 (ISP): 풀을 이 길이(예: /29)로 쪼개 클라이언트마다 한 대역을 주고, 그 대역의 첫 주소가 게이트웨이·둘째 주소가 클라이언트.
+   * 가입자끼리는 같은 서브넷이 아니라 ISP 라우터를 거친다. 없으면 풀 전체가 한 서브넷
+   */
+  perClient: number | undefined;
+  /** 예전에 쓰던 내 서버 주소 (ISP 대역을 바꿈): 그 서버 식별자로 온 Request 도 내 것으로 보고 Nak */
+  readonly formerIds = new Set<Ip>();
 
   constructor(
     public config: DhcpServerConfig,
@@ -412,6 +419,7 @@ export class DhcpServer {
         return;
       }
       this.offers.set(msg.clientMac, ip);
+      const net = this.leaseNet(ip, pool);
       const offer: DhcpMessage = {
         kind: "dhcp",
         op: "offer",
@@ -420,12 +428,12 @@ export class DhcpServer {
         yiaddr: ip,
         serverId: me,
         giaddr: msg.giaddr,
-        options: { prefix: pool.prefix, router: pool.router, dns: pool.dns, leaseTime: LEASE_TIME },
+        options: { prefix: net.prefix, router: net.router, dns: pool.dns, leaseTime: LEASE_TIME },
       };
       ctx.trace(
         "dhcp.offer.sent",
         "app",
-        `DHCP Offer: ${msg.clientMac} 에게 ${ip}/${pool.prefix} 제안 (기본 게이트웨이 옵션 ${pool.router ?? "없음"}) → ${msg.giaddr ? `릴레이 ${msg.giaddr} 로 유니캐스트` : "클라이언트 MAC 으로 유니캐스트"}`,
+        `DHCP Offer: ${msg.clientMac} 에게 ${ip}/${net.prefix} 제안 (기본 게이트웨이 옵션 ${net.router ?? "없음"}${this.perClient !== undefined ? ` — 가입자마다 대역 /${this.perClient}` : ""}) → ${msg.giaddr ? `릴레이 ${msg.giaddr} 로 유니캐스트` : "클라이언트 MAC 으로 유니캐스트"}`,
         { ...offer },
       );
       this.reply(offer, ip, msg, ctx, emit);
@@ -457,6 +465,7 @@ export class DhcpServer {
         }
         this.offers.delete(msg.clientMac);
         this.leases.set(ip, { mac: msg.clientMac, at: ctx.now });
+        const net = this.leaseNet(ip, pool);
         const ack: DhcpMessage = {
           kind: "dhcp",
           op: "ack",
@@ -465,13 +474,13 @@ export class DhcpServer {
           yiaddr: ip,
           serverId: me,
           giaddr: msg.giaddr,
-          options: { prefix: pool.prefix, router: pool.router, dns: pool.dns, leaseTime: LEASE_TIME },
+          options: { prefix: net.prefix, router: net.router, dns: pool.dns, leaseTime: LEASE_TIME },
         };
         ctx.trace("dhcp.ack.sent", "app", `DHCP Ack (INIT-REBOOT): ${msg.clientMac} 의 임대 ${ip} 가 아직 유효 → 그대로 쓰라고 확인${msg.giaddr ? ` → 릴레이 ${msg.giaddr} 로` : ""}`, { ...ack });
         this.reply(ack, ip, msg, ctx, emit);
         return;
       }
-      if (msg.serverId !== me) {
+      if (msg.serverId !== me && !this.formerIds.has(msg.serverId)) {
         ctx.trace("dhcp.ignore", "app", `클라이언트가 다른 서버(${msg.serverId})를 선택 → 내 제안 철회`, {}, frameId);
         this.offers.delete(msg.clientMac);
         return;
@@ -482,7 +491,8 @@ export class DhcpServer {
       if (!ok) {
         const nak: DhcpMessage = { kind: "dhcp", op: "nak", xid: msg.xid, clientMac: msg.clientMac, serverId: me, giaddr: msg.giaddr };
         const taken = this.avoid.get(msg.clientMac) === msg.requestedIp;
-        ctx.trace("dhcp.nak.sent", "app", taken ? `DHCP Nak: ${msg.requestedIp} 는 서버가 거둬 간 주소 (주소 바꾸기) → 다시 Discover 하라고 거부` : `DHCP Nak: ${msg.requestedIp} 는 ${msg.clientMac} 에게 제안한 주소가 아님 → 거부`, { ...nak });
+        const former = msg.serverId !== me ? ` (서버 식별자 ${msg.serverId} 는 내 예전 주소)` : "";
+        ctx.trace("dhcp.nak.sent", "app", taken ? `DHCP Nak: ${msg.requestedIp} 는 서버가 거둬 간 주소 (주소 바꾸기)${former} → 다시 Discover 하라고 거부` : `DHCP Nak: ${msg.requestedIp} 는 ${msg.clientMac} 에게 제안한 주소가 아님${former} → 거부`, { ...nak });
         this.reply(nak, LIMITED_BROADCAST_IP, msg, ctx, emit);
         return;
       }
@@ -490,6 +500,7 @@ export class DhcpServer {
       const pool = this.pools().find((p) => this.inPool(ip, p)) ?? this.pools()[0]!;
       this.offers.delete(msg.clientMac);
       this.leases.set(ip, { mac: msg.clientMac, at: ctx.now });
+      const net = this.leaseNet(ip, pool);
       const ack: DhcpMessage = {
         kind: "dhcp",
         op: "ack",
@@ -498,10 +509,10 @@ export class DhcpServer {
         yiaddr: ip,
         serverId: me,
         giaddr: msg.giaddr,
-        options: { prefix: pool.prefix, router: pool.router, dns: pool.dns, leaseTime: LEASE_TIME },
+        options: { prefix: net.prefix, router: net.router, dns: pool.dns, leaseTime: LEASE_TIME },
       };
       ctx.trace("dhcp.lease", "app", `임대 할당: ${ip} → ${msg.clientMac}`, { ip, mac: msg.clientMac });
-      ctx.trace("dhcp.ack.sent", "app", `DHCP Ack: ${msg.clientMac} 에게 ${ip}/${pool.prefix} 확정 (게이트웨이 ${pool.router ?? "안내 없음"}, DNS ${pool.dns ?? "안내 없음"})${msg.giaddr ? ` → 릴레이 ${msg.giaddr} 로` : ""}`, { ...ack });
+      ctx.trace("dhcp.ack.sent", "app", `DHCP Ack: ${msg.clientMac} 에게 ${ip}/${net.prefix} 확정 (게이트웨이 ${net.router ?? "안내 없음"}, DNS ${pool.dns ?? "안내 없음"})${msg.giaddr ? ` → 릴레이 ${msg.giaddr} 로` : ""}`, { ...ack });
       this.reply(ack, ip, msg, ctx, emit);
       return;
     }
@@ -535,6 +546,8 @@ export class DhcpServer {
 
   /** 고객마다 다시 주지 않을 주소 (ISP 가 주소를 바꾼 고객의 옛 주소) */
   private readonly avoid = new Map<Mac, Ip>();
+  /** 가입자마다 대역일 때 다시 주지 않을 옛 대역 */
+  private readonly avoidNet = new Map<Mac, Ip>();
 
   /**
    * ISP 의 고객 주소 바꾸기: 그 임대를 지우고(옛 주소는 그 고객에게 다시 주지 않음) FORCERENEW 로 알린다 (RFC 3203).
@@ -548,10 +561,17 @@ export class DhcpServer {
     }
     this.leases.delete(ip);
     this.avoid.set(lease.mac, ip);
+    if (this.perClient !== undefined) this.avoidNet.set(lease.mac, networkOf(ip, this.perClient));
     ctx.trace("dhcp.lease", "app", `고객 ${lease.mac} 의 공인 주소 ${ip} 임대를 지우고 다른 주소를 주기로 함 → DHCP FORCERENEW 로 알림 (가정용 회선의 공인 주소가 바뀌는 순간 — 그래서 DDNS 가 필요하다)`, { ip, mac: lease.mac, renumber: true });
     const msg: DhcpMessage = { kind: "dhcp", op: "forcerenew", xid: 0, clientMac: lease.mac, serverId: this.iface.ip };
     this.iface.sendToMac(lease.mac, this.packet(msg, ip), ctx, emit);
     return lease.mac;
+  }
+
+  /** 이 주소에 안내할 프리픽스·게이트웨이 (가입자마다 대역이면 그 주소의 대역과 그 대역의 첫 주소) */
+  leaseNet(ip: Ip, pool: DhcpPool): { prefix: number; router?: Ip } {
+    if (this.perClient === undefined) return { prefix: pool.prefix, router: pool.router };
+    return { prefix: this.perClient, router: intToIp(ipToInt(networkOf(ip, this.perClient)) + 1) };
   }
 
   /** 기존 임대 → 기존 제안 → 풀 안의 첫 빈 주소 (기존 것이 그 풀 밖이면 버린다) */
@@ -574,6 +594,18 @@ export class DhcpServer {
     }
     const taken = new Set([...this.leases.keys(), ...this.offers.values(), this.iface.ip, ...own]);
     const avoid = this.avoid.get(mac);
+    if (this.perClient !== undefined) {
+      // 대역마다 둘째 주소 (첫 주소는 ISP 쪽 게이트웨이). 주소를 바꾼 가입자에게는 옛 대역을 피하되, 빈 대역이 그것뿐이면 그것을
+      const size = 2 ** (32 - this.perClient);
+      const first = ipToInt(networkOf(intToIp(start), this.perClient));
+      for (const strict of [true, false]) {
+        for (let b = first; b + 2 <= end; b += size) {
+          const ip = intToIp(b + 2);
+          if (b + 2 >= start && !taken.has(ip) && (!strict || (ip !== avoid && this.avoidNet.get(mac) !== intToIp(b)))) return ip;
+        }
+      }
+      return undefined;
+    }
     for (let n = start; n <= end; n++) {
       const ip = intToIp(n);
       if (!taken.has(ip) && ip !== avoid) return ip;

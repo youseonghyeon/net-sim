@@ -8,7 +8,7 @@ import type { Topology } from "../src/model/topology";
 describe("드롭인 게이트웨이", () => {
   it("아이 PC(게이트웨이 = Brume)만 Brume 의 DPI 에 걸리고, 아빠 PC 는 기존 공유기로 바로", () => {
     const L = loadTopology(exampleDropInTopology());
-    expect(lintTopology(L.t)).toEqual([]);
+    expect(L.lint()).toEqual([]);
     let tr = L.act({ kind: "tcp-connect", nodeId: L.id("아이 PC"), dst: "roblox.com", port: 443 });
     expect(L.lastConn("아이 PC").state).toBe("FAILED");
     expect(tr.some((e) => e.kind === "dpi.block" && e.summary.includes("Roblox"))).toBe(true);

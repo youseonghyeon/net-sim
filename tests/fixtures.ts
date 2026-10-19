@@ -51,7 +51,7 @@ export function twoHomesTopology(): Topology {
 /**
  * 망분리 사무실의 재택 접속 (원격 접속 VPN + 점프 서버): NCP 예제의 사무실에 재택 노트북과 DMZ 를 더한다.
  * (2026-10-19 까지 예제 "망분리 사무실 재택 접속" — 예제는 WireGuard 공유기 구성으로 바뀌고, SSH 점프 시나리오 테스트가 이 구성을 쓴다)
- * - 외부망 방화벽 NAT 가 원격 접속 VPN 서버 (고정 공인 주소 203.0.113.12, IPsec + EAP 계정). VPN 이 노트북에 내려 주는 경로는 DMZ(10.255.1.0/24) 뿐
+ * - 외부망 방화벽 NAT 가 원격 접속 VPN 서버 (ISP 에서 받는 공인 주소, IPsec + EAP 계정). VPN 이 노트북에 내려 주는 경로는 DMZ(10.255.1.0/24) 뿐
  * - 두 망 사이에 경로를 열지 않는다: 외부망 게이트웨이 → DMZ 방화벽 → 망간 게이트웨이 → 점프 서버(10.255.1.10), 망간 게이트웨이 → 내부망 접근통제 방화벽 → 내부망 게이트웨이.
  *   DMZ 방화벽은 VPN 대역 → 점프 서버 SSH 만, 내부망 접근통제 방화벽은 점프 서버 → 내부망 SSH 만 들인다 (반대 방향 시작은 모두 막음)
  * - 재택 노트북은 ssh -J 10.255.1.10 10.50.10.1 로 내부망 PC 1 에 닿는다. 내부망 PC 에게는 점프 서버가 접속한 것으로 보인다.
@@ -70,7 +70,7 @@ export function separatedJumpTopology(): Topology {
   // VPN 서버는 고정 공인 주소, 원격 접속 VPN (내려 주는 경로는 DMZ 뿐), VPN 대역이 DMZ 로 가는 경로
   natOut.l3 = {
     ...natOut.l3!,
-    interfaces: [iface("203.0.113.12", "203.0.113.1"), natOut.l3!.interfaces[1]!],
+    interfaces: [natOut.l3!.interfaces[0]!, natOut.l3!.interfaces[1]!], // 바깥은 ISP 에서 받는 공인 주소 (DHCP)
     // DMZ·망간 연결 구간으로 가는 경로 (VPN 사용자 → 점프 서버, 그 응답)
     routes: [...natOut.l3!.routes, { dest: "10.255.1.0", prefix: 24, via: "10.255.0.6" }, { dest: "10.255.0.8", prefix: 29, via: "10.255.0.6" }],
     ra: { enabled: true, psk: "office-ra-psk", poolStart: "10.99.0.10", poolEnd: "10.99.0.50", routes: [{ dest: "10.255.1.0", prefix: 24 }], users: [{ name: "kim", password: "kim-pass" }] },
@@ -82,9 +82,12 @@ export function separatedJumpTopology(): Topology {
   gwOut.l3 = { ...gwOut.l3!, interfaces: [gwOut.l3!.interfaces[0]!, gwOut.l3!.interfaces[1]!, { ipMode: "static", ip: "10.255.0.9", prefix: 30, gateway: "" }], routes: [...gwOut.l3!.routes, { dest: "10.255.1.0", prefix: 24, via: "10.255.0.10" }, { dest: "10.255.0.12", prefix: 30, via: "10.255.0.10" }] };
   const gwIn = byName("내부망 게이트웨이");
   gwIn.l3 = { ...gwIn.l3!, interfaces: [gwIn.l3!.interfaces[0]!, gwIn.l3!.interfaces[1]!, { ipMode: "static", ip: "10.255.0.14", prefix: 30, gateway: "" }], routes: [...gwIn.l3!.routes, { dest: "10.255.1.0", prefix: 24, via: "10.255.0.13" }] };
-  // 내부망 방화벽 NAT 가 망간 연결 구간을 알게 (내부망 게이트웨이 뒤의 구간 — 응답이 길을 잃지 않게)
+  // 내부망 방화벽 NAT 가 망간 연결 구간을 알게 (내부망 게이트웨이 뒤의 구간 — 응답이 길을 잃지 않게).
+  // 집 공유기가 더해져 ISP 가 나눠 주는 순서가 바뀐다: IPsec 상대 주소를 이 구성에서 받는 주소로
   const natIn = byName("내부망 방화벽 NAT");
-  natIn.l3 = { ...natIn.l3!, routes: [...natIn.l3!.routes, { dest: "10.255.0.12", prefix: 30, via: "10.255.0.2" }] };
+  natIn.l3 = { ...natIn.l3!, routes: [...natIn.l3!.routes, { dest: "10.255.0.12", prefix: 30, via: "10.255.0.2" }], vpn: { ...natIn.l3!.vpn!, peer: "203.0.113.18" } };
+  const ncpGw = byName("NCP VPN Gateway");
+  ncpGw.l3 = { ...ncpGw.l3!, vpn: { ...ncpGw.l3!.vpn!, peer: "203.0.113.10" } };
   const pcIn1 = byName("내부망 PC 1");
   pcIn1.host = { ...pcIn1.host!, services: [22] };
 
@@ -106,7 +109,7 @@ export function separatedJumpTopology(): Topology {
   // 재택: 집 공유기 뒤 노트북 (원격 접속 VPN 계정 kim)
   const home = add("router", -120, -440, "집 공유기");
   const laptop = add("laptop", -120, -280, "재택 노트북");
-  laptop.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER }, ra: { enabled: true, server: "203.0.113.12", psk: "office-ra-psk", user: "kim", password: "kim-pass" } };
+  laptop.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER }, ra: { enabled: true, server: "203.0.113.34", psk: "office-ra-psk", user: "kim", password: "kim-pass" } };
   const isp = byName("통신사 구간");
   t.devices = devices;
   t.cables = [

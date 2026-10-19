@@ -1,6 +1,6 @@
 // 예제 묶음 "인터넷". 등록(메뉴 순서·설명)은 ../examples.ts 의 EXAMPLES.
-import { type Cable, DEFAULT_DHCP_SERVER, type Device, type Topology, newId, wgPublicKeyOf, zoneAround } from "../topology";
-import { builder, cable, iface } from "./build";
+import { type Cable, DEFAULT_DHCP_SERVER, DEFAULT_WAN, type Device, type Topology, newId, wgPublicKeyOf, zoneAround } from "../topology";
+import { builder, cable, dhcpIface, iface } from "./build";
 
 /**
  * 인터넷의 뼈대: 가장자리는 트리, 중심은 그물.
@@ -240,13 +240,13 @@ export function exampleNcpVpnTopology(): Topology {
   // 내부망(업무망): 방화벽 NAT(IPsec) → 방화벽 → 게이트웨이 → 스위치 두 대(적층) → 고정 주소 PC·맥북
   const natIn = add("nat", 680, 24, "내부망 방화벽 NAT");
   natIn.l3 = {
-    interfaces: [iface("203.0.113.11", "203.0.113.1"), { ipMode: "static", ip: "10.255.0.1", prefix: 30, gateway: "" }],
+    interfaces: [dhcpIface(), { ipMode: "static", ip: "10.255.0.1", prefix: 30, gateway: "" }],
     routes: [{ dest: "10.50.10.0", prefix: 24, via: "10.255.0.2" }],
     vpn: {
       enabled: true,
       mode: "ipsec",
       psk: PSK,
-      peer: "203.0.113.50",
+      peer: "203.0.113.10", // NCP VPN Gateway 가 ISP 에서 받는 주소 (같은 기기는 늘 같은 대역)
       remote: [
         { dest: "192.168.111.0", prefix: 24 },
         { dest: "192.168.112.0", prefix: 24 },
@@ -302,12 +302,12 @@ export function exampleNcpVpnTopology(): Topology {
   const ncpInet = add("switch", 1840, -480, "인터넷 (NCP 쪽)");
   const ncpGw = add("nat", 1840, -360, "NCP VPN Gateway");
   ncpGw.l3 = {
-    interfaces: [iface("203.0.113.50", "203.0.113.1"), iface("10.250.0.1")],
+    interfaces: [dhcpIface(), iface("10.250.0.1")],
     routes: [
       { dest: "192.168.0.0", prefix: 16, via: "10.250.0.2" },
       { dest: "172.21.0.0", prefix: 16, via: "10.250.0.3" },
     ],
-    vpn: { enabled: true, mode: "ipsec", psk: PSK, peer: "203.0.113.11", remote: [{ dest: "10.50.10.0", prefix: 24 }] },
+    vpn: { enabled: true, mode: "ipsec", psk: PSK, peer: "203.0.113.2", remote: [{ dest: "10.50.10.0", prefix: 24 }] }, // 내부망 방화벽 NAT 가 ISP 에서 받는 주소
     // ACG 역할: 사무실 내부망에서 터널로 들어오는 SSH·ping 만 허용, 서버가 나가는 것은 허용 (응답은 Stateful 검사로)
     firewall: {
       enabled: true,
@@ -396,7 +396,7 @@ export function exampleNcpVpnTopology(): Topology {
 
 /**
  * 망분리 사무실 재택 접속 (WireGuard 공유기): NCP 예제의 사무실에 GL.iNet 식 공유기를 하나 두고 재택 노트북이 WireGuard 로 붙는다.
- * - 사무실 공유기: WAN1 은 KT 모뎀(외부망 회선)에 바로 — 고정 공인 주소 203.0.113.13, WireGuard 서버(10.1.0.1/24).
+ * - 사무실 공유기: WAN1 은 KT 모뎀(외부망 회선)에 바로 — ISP 에서 받는 공인 주소 203.0.113.26, WireGuard 서버(10.1.0.1/24).
  *   WAN2(lan4)는 내부망 스위치에 10.50.10.18/24 수동, 디폴트 라우트로 쓰지 않음(mwan3 에서 뺌) — 인터넷 트래픽은 WAN2 로 새지 않는다
  * - 스태틱 라우트: NCP 대역(192.168.111~113.0/24·172.21.4.0/24) → 넥스트 홉 10.50.10.254 (WAN2). 내부망 10.50.10.0/24 는 WAN2 에 직접 연결된 대역
  * - WAN2 로 나갈 때 MASQUERADE 로 출발지가 10.50.10.18 이 되어, 기존 IPsec 터널(내부망 10.50.10.0/24 ↔ NCP)과 NCP 방화벽(ACG)을 그대로 지난다
@@ -408,6 +408,11 @@ export function exampleSeparatedRemoteTopology(): Topology {
   const byName = (n: string) => t.devices.find((d) => d.name === n)!;
   const pcIn1 = byName("내부망 PC 1");
   pcIn1.host = { ...pcIn1.host!, services: [22] };
+  // 집 공유기·사무실 공유기가 더해져 ISP 가 나눠 주는 순서가 바뀐다: IPsec 상대 주소를 이 구성에서 받는 주소로
+  const natIn = byName("내부망 방화벽 NAT");
+  natIn.l3 = { ...natIn.l3!, vpn: { ...natIn.l3!.vpn!, peer: "203.0.113.18" } };
+  const ncpGw = byName("NCP VPN Gateway");
+  ncpGw.l3 = { ...ncpGw.l3!, vpn: { ...ncpGw.l3!.vpn!, peer: "203.0.113.10" } };
   const { devices, add } = builder();
   devices.push(...t.devices);
   const office = add("router", 264, 104, "사무실 공유기");
@@ -419,14 +424,14 @@ export function exampleSeparatedRemoteTopology(): Topology {
     lanIp: "192.168.8.1",
     lanPrefix: 24,
     dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
-    wan: { ipMode: "static", ip: "203.0.113.13", prefix: 24, gateway: "203.0.113.1" },
+    wan: { ...DEFAULT_WAN },
     wan2: { enabled: true, ipMode: "static", ip: "10.50.10.18", prefix: 24, gateway: "", track: "", defaultRoute: false },
     routes: ncp.map((dest) => ({ iface: "wan2" as const, dest, via: "10.50.10.254" })),
     wgServer: { enabled: true, address: "10.1.0.1/24", port: 51820, peers: [{ name: "재택 노트북", publicKey: wgPublicKeyOf(laptop, "host"), ip: "10.1.0.2" }], lanAccess: true },
   };
   laptop.host = {
     ...laptop.host!,
-    ra: { enabled: true, type: "wireguard", server: "203.0.113.13", psk: "", wg: { address: "10.1.0.2/32", port: 51820, serverKey: wgPublicKeyOf(office, "server"), allowedIps: ["10.1.0.0/24", "10.50.10.0/24", ...ncp].join(", "), dns: "" } },
+    ra: { enabled: true, type: "wireguard", server: "203.0.113.26", psk: "", wg: { address: "10.1.0.2/32", port: 51820, serverKey: wgPublicKeyOf(office, "server"), allowedIps: ["10.1.0.0/24", "10.50.10.0/24", ...ncp].join(", "), dns: "" } },
   };
   t.devices = devices;
   t.cables = [...t.cables, cable(byName("KT 모뎀 (외부망 회선)"), 3, office, 0), cable(office, 4, byName("내부망 스위치 1"), 2), cable(byName("통신사 구간"), 2, home, 0), cable(home, 1, laptop, 0)];
@@ -458,11 +463,11 @@ export function exampleRemoteVpnTopology(): Topology {
   // 집: 공유기(WAN 은 통신사 DHCP, LAN 은 DHCP 로 노트북에 주소) + 재택 노트북
   const home = add("router", 120, -24, "집 공유기");
   const laptop = add("laptop", 120, 152, "재택 노트북");
-  laptop.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER }, ra: { enabled: true, server: "203.0.113.11", psk: "remote-psk", user: "kim", password: "kim-pass" } };
+  laptop.host = { ipMode: "dhcp", ip: "", prefix: 24, gateway: "", services: [], dhcpServer: { ...DEFAULT_DHCP_SERVER }, ra: { enabled: true, server: "203.0.113.10", psk: "remote-psk", user: "kim", password: "kim-pass" } };
   // 회사: VPN 방화벽(NAT 박스, 원격 접속 VPN 서버) → 사내 스위치 → 사내 서버·PC
   const fw = add("nat", 568, -24, "회사 VPN 방화벽");
   fw.l3 = {
-    interfaces: [iface("203.0.113.11", "203.0.113.1"), iface("10.50.10.1")],
+    interfaces: [dhcpIface(), iface("10.50.10.1")],
     routes: [],
     firewall: {
       enabled: true,
@@ -531,13 +536,13 @@ export function exampleIptimeVpnTopology(): Topology {
     gateway: "",
     services: [],
     dhcpServer: { ...DEFAULT_DHCP_SERVER },
-    ra: { enabled: true, type: "l2tp", server: "203.0.113.20", psk: "home-psk", user: "me", password: "my-pass" },
+    ra: { enabled: true, type: "l2tp", server: "203.0.113.10", psk: "home-psk", user: "me", password: "my-pass" },
   };
   // 집: ipTIME 공유기(VPN 서버 켬) + NAS
   const home = add("router", 568, -24, "집 ipTIME");
   home.router = {
     ...home.router!,
-    wan: { ipMode: "static", ip: "203.0.113.20", prefix: 24, gateway: "203.0.113.1" },
+    wan: { ...DEFAULT_WAN },
     // 할당 IP 는 DHCP 범위(100~199) 밖의 LAN 주소
     vpnServer: { enabled: true, psk: "home-psk", poolStart: "192.168.0.50", poolEnd: "192.168.0.59", users: [{ name: "me", password: "my-pass" }] },
   };
@@ -577,7 +582,7 @@ export function exampleNatTraversalTopology(): Topology {
   // 통신사 CGNAT: 고객에게 100.64.x(공유 주소)를 주고 공인 주소 하나로 여러 고객을 내보낸다 — 대개 symmetric
   const cgnat = add("nat", 1104, -64, "통신사 CGNAT");
   cgnat.l3 = {
-    interfaces: [iface("203.0.113.30", "203.0.113.1"), { ipMode: "static", ip: "100.64.0.1", prefix: 24, gateway: "" }],
+    interfaces: [dhcpIface(), { ipMode: "static", ip: "100.64.0.1", prefix: 24, gateway: "" }],
     routes: [],
     natType: "symmetric",
   };
@@ -623,7 +628,7 @@ export function exampleMultiWanTopology(): Topology {
 
 /**
  * 멀티 WAN 정책 규칙 (mwan3 rule): VPN 은 WAN1 으로 받고, 터널에서 풀린 인터넷 트래픽은 WAN2 로
- * - 집 Brume 3: WAN1 = 고정 공인 주소 203.0.113.30 (WireGuard 서버, 터널 10.0.0.1/24), WAN2(lan4) = 다른 통신사의 5G 라우터
+ * - 집 Brume 3: WAN1 = ISP 에서 받는 공인 주소 203.0.113.10 (WireGuard 서버, 터널 10.0.0.1/24), WAN2(lan4) = 다른 통신사의 5G 라우터
  * - 정책 규칙 10.0.0.0/24 → WAN2: 출발지가 VPN 대역이면 WAN2 로 NAT. 집 LAN(192.168.8.0/24)은 규칙이 없어 WAN1
  * - 카페 폰 = WireGuard 앱(모든 트래픽을 터널로). 바깥 UDP 51820 은 WAN1 으로 오가고(받은 회선으로 답함), 풀린 패킷만 WAN2 로 나간다
  */
@@ -644,7 +649,7 @@ export function exampleMultiWanPolicyTopology(): Topology {
     lanIp: "192.168.8.1",
     lanPrefix: 24,
     dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
-    wan: { ipMode: "static", ip: "203.0.113.30", prefix: 24, gateway: "203.0.113.1" },
+    wan: { ...DEFAULT_WAN },
     wan2: { enabled: true, ipMode: "dhcp", ip: "", prefix: 24, gateway: "", track: "8.8.8.8", rules: [{ src: "10.0.0.0/24", line: "wan2" }] },
     wgServer: { enabled: true, address: "10.0.0.1/24", port: 51820, peers: [{ name: "카페 폰", publicKey: wgPublicKeyOf(phone, "host"), ip: "10.0.0.2" }], lanAccess: true },
   };
@@ -652,7 +657,7 @@ export function exampleMultiWanPolicyTopology(): Topology {
   phone.wifi = { ssid: "cafe" };
   phone.host = {
     ...phone.host!,
-    ra: { enabled: true, type: "wireguard", server: "203.0.113.30", psk: "", wg: { address: "10.0.0.2/32", port: 51820, serverKey: wgPublicKeyOf(home, "server"), allowedIps: "0.0.0.0/0", dns: "" } },
+    ra: { enabled: true, type: "wireguard", server: "203.0.113.10", psk: "", wg: { address: "10.0.0.2/32", port: 51820, serverKey: wgPublicKeyOf(home, "server"), allowedIps: "0.0.0.0/0", dns: "" } },
   };
   const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, cafe, 0), cable(isp, 6, home, 0), cable(isp, 7, lte, 0), cable(lte, 1, home, 4), cable(home, 1, nas, 0)];
   const t: Topology = { devices, cables };

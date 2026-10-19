@@ -2,7 +2,7 @@ import { MESH_SERVERS, MeshCoordinator } from "./tailscale";
 import { CloudService } from "./glinet";
 import { SipServer } from "./sip";
 import { TorNetwork } from "./tor";
-import { isMulticastMac, isPrivateIp, sameSubnet, type Ip, type Mac } from "../addr";
+import { intToIp, ipToInt, isMulticastMac, isPrivateIp, networkOf, sameSubnet, type Ip, type Mac } from "../addr";
 import { ALL_NODES, canonIp6, formatIp6, isGlobal6, isIpv6, isMulticast6, parseIp6, sameSubnet6 } from "../addr6";
 import { TOR_EXIT, TOR_GUARD, TOR_PORT, SIP_PORT, SIP_SERVER, CLOUD_PORT, CLOUD_SERVER,
   DHCP_CLIENT_PORT,
@@ -13,6 +13,7 @@ import { TOR_EXIT, TOR_GUARD, TOR_PORT, SIP_PORT, SIP_SERVER, CLOUD_PORT, CLOUD_
   DNS_PORT,
   describeFrame,
   icmpLabel,
+  TOR_MIDDLE,
   isControl,
   isNdp,
   UNREACHABLE_LABEL,
@@ -45,9 +46,31 @@ import { TCP_TIMER_TAG, TcpStack } from "./tcp";
 export interface InternetConfig {
   id: string;
   mac: Mac;
-  ip?: Ip;
-  prefix?: number;
-  pool?: { start: Ip; end: Ip };
+  /** ISP 대역 (가입자에게 /29 씩 나눠 준다). 없으면 203.0.113.0/24 */
+  net?: { ip: Ip; prefix: number };
+}
+
+/** ISP 대역 기본값 (RFC 5737 TEST-NET-3) */
+export const DEFAULT_ISP_NET = { ip: "203.0.113.0", prefix: 24 };
+/** 가입자 한 명이 받는 대역 길이: 첫 주소 = ISP 쪽 게이트웨이, 둘째 = 가입자 */
+export const SUBSCRIBER_PREFIX = 29;
+
+/** 인터넷 노드가 흉내 내는 공인 서버·클라이언트 주소 (ISP 대역과 겹치면 안 된다) */
+export function simulatedPublicIps(): Ip[] {
+  return [
+    ...Object.keys(KNOWN_SERVERS),
+    Internet.REMOTE_CLIENT,
+    ...STUN_SERVERS,
+    SIGNAL_SERVER,
+    TURN_SERVER,
+    TOR_GUARD,
+    TOR_MIDDLE,
+    TOR_EXIT,
+    SIP_SERVER,
+    CLOUD_SERVER,
+    ...Object.values(MESH_SERVERS).flatMap((m) => [m.control, m.relay]),
+    ...FILTER_ZONE.map((r) => r.ip),
+  ];
 }
 
 /** 이름이 알려진 공인 서버 (ping 대상 제안용) */
@@ -106,7 +129,7 @@ export class Internet implements SimNode {
     toClient: (to, m, ctx) => this.iface.sendIp({ kind: "ipv4", src: TOR_GUARD, dst: to.ip, ttl: 54, payload: { kind: "udp", srcPort: TOR_PORT, dstPort: to.port, payload: m } }, ctx, this.emit(ctx)),
     // 출구가 목적지로: 통신사 구간(같은 서브넷)의 장치면 선으로, 아니면 인터넷이 흉내 내는 서버
     deliver: (pkt, ctx, frameId) => {
-      if (this.iface.ip && sameSubnet(pkt.dst, this.iface.ip, this.iface.prefix)) this.iface.sendIp(pkt, ctx, this.emit(ctx));
+      if (this.inIsp(pkt.dst)) this.iface.sendIp(pkt, ctx, this.emit(ctx)); // 임대하지 않은 주소면 outbound 가 막는다
       else this.handleIp(pkt, frameId, ctx);
     },
   });
@@ -117,12 +140,21 @@ export class Internet implements SimNode {
   /** Tailscale·ZeroTier 조정 서버와 릴레이 (DERP·root) */
   readonly mesh = new MeshCoordinator({ send: (src, srcPort, to, m, ctx) => this.iface.sendIp({ kind: "ipv4", src, dst: to.ip, ttl: 54, payload: { kind: "udp", srcPort, dstPort: to.port, payload: m } }, ctx, this.emit(ctx)) });
 
+  /** ISP 대역: 가입자마다 /29 를 나눠 주고 그 대역의 첫 주소가 ISP 게이트웨이(같은 선 위의 보조 주소들) */
+  net: { ip: Ip; prefix: number };
+
   constructor(cfg: InternetConfig) {
     this.id = cfg.id;
-    this.iface = new NetInterface(cfg.mac, { ip: cfg.ip ?? "203.0.113.1", prefix: cfg.prefix ?? 24 });
-    // Tor 출구 주소로 가는 답(인터넷이 흉내 내는 서버의 응답)은 회로로 감싸 돌려보낸다
-    this.iface.outbound = (pkt, ctx) => this.tor.back(pkt, ctx);
-    this.dhcpServer = new DhcpServer({ enabled: true, ...(cfg.pool ?? { start: "203.0.113.100", end: "203.0.113.199" }) }, this.iface);
+    this.net = { ...(cfg.net ?? DEFAULT_ISP_NET) };
+    this.iface = new NetInterface(cfg.mac, { ip: this.gatewayOf(this.net.ip), prefix: this.net.prefix });
+    // Tor 출구 주소로 가는 답(인터넷이 흉내 내는 서버의 응답)은 회로로 감싸 돌려보낸다. ISP 대역 안이지만 임대하지 않은 주소로는 보내지 않는다
+    this.iface.outbound = (pkt, ctx) => this.tor.back(pkt, ctx) || this.unleasedOut(pkt, ctx);
+    // 가입자 대역마다 ISP 게이트웨이 주소가 하나씩: 그 주소의 ARP 에 답하고, 가입자에게 물을 때도 그 대역의 게이트웨이 주소로 묻는다
+    this.iface.proxyArp = (ip) => this.isGateway(ip);
+    this.iface.proxyArpWhy = (ip) => `ISP 게이트웨이 — 가입자 대역 ${networkOf(ip, SUBSCRIBER_PREFIX)}/${SUBSCRIBER_PREFIX} 마다 ISP 라우터가 이 주소를 하나씩 갖는다`;
+    this.iface.arpSource = (target) => (this.inIsp(target) ? this.gatewayOf(target) : undefined);
+    this.dhcpServer = new DhcpServer({ enabled: true, ...this.poolOf(this.net) }, this.iface);
+    this.dhcpServer.perClient = SUBSCRIBER_PREFIX;
     this.tcp = new TcpStack({ send: (pkt, ctx) => ctx.timer(Internet.LATENCY * 2, "inet-send", { pkt }) });
     this.v6 = new Ipv6Interface(cfg.mac, true, "isp");
     this.v6.startQuiet({ enabled: true, addrs: [{ ip: Internet.ISP_V6, prefix: 64 }], ra: true, raDns: PUBLIC_DNS6[0] });
@@ -134,6 +166,94 @@ export class Internet implements SimNode {
 
   private emit(ctx: NodeContext): Emit {
     return (f) => ctx.send(0, f);
+  }
+
+  /** ISP 대역 안의 주소인가 */
+  inIsp(ip: Ip): boolean {
+    return !isIpv6(ip) && sameSubnet(ip, this.net.ip, this.net.prefix);
+  }
+
+  /** 그 주소가 속한 가입자 대역의 ISP 게이트웨이 (대역의 첫 주소) */
+  gatewayOf(ip: Ip): Ip {
+    return intToIp(ipToInt(networkOf(ip, SUBSCRIBER_PREFIX)) + 1);
+  }
+
+  /** ISP 게이트웨이 주소인가 (가입자 대역마다 하나) */
+  private isGateway(ip: Ip): boolean {
+    return this.inIsp(ip) && ip === this.gatewayOf(ip);
+  }
+
+  private poolOf(net: { ip: Ip; prefix: number }): { start: Ip; end: Ip } {
+    const base = ipToInt(networkOf(net.ip, net.prefix));
+    return { start: intToIp(base), end: intToIp(base + 2 ** (32 - net.prefix) - 1) };
+  }
+
+  /**
+   * ISP 대역 바꾸기: 지금 가입자들에게 FORCERENEW 로 알려(쓰던 주소로 Request → Nak → Discover) 새 대역에서 다시 받게 하고,
+   * 게이트웨이 주소·임대 범위를 새 대역으로
+   */
+  setNet(net: { ip: Ip; prefix: number }, ctx: NodeContext): void {
+    if (net.ip === this.net.ip && net.prefix === this.net.prefix) return;
+    const old = `${this.net.ip}/${this.net.prefix}`;
+    for (const ip of [...this.dhcpServer.leases.keys()]) this.dhcpServer.renumber(ip, ctx, this.emit(ctx));
+    // 가입자는 FORCERENEW 뒤 옛 서버 주소로 Request 한다 — 옛 주소도 내 것으로 보고 Nak 해 바로 Discover 하게
+    if (this.iface.ip) this.dhcpServer.formerIds.add(this.iface.ip);
+    this.net = { ...net };
+    this.iface.configure(this.gatewayOf(net.ip), net.prefix, undefined);
+    this.iface.arpCache.clear();
+    this.iface.clearPending();
+    this.dhcpServer.setConfig({ enabled: true, ...this.poolOf(net) }, ctx);
+    ctx.trace("ip.config", "sys", `ISP 대역 변경: ${old} → ${net.ip}/${net.prefix} — 가입자마다 /${SUBSCRIBER_PREFIX} 를 새 대역에서 다시 나눠 준다 (가입자는 FORCERENEW 를 받고 새 주소를 받는다)`, { net: `${net.ip}/${net.prefix}` });
+  }
+
+  /** ISP 가 DHCP 로 임대한 가입자 주소인가 (손으로 적은 공인 주소는 ISP 가 모른다) */
+  private leased(ip: Ip): boolean {
+    return this.dhcpServer.leases.has(ip);
+  }
+
+  /**
+   * IP Source Guard (DHCP snooping 바인딩): 가입자 쪽에서 들어온 공인 출발지는 ISP 가 그 MAC 에 임대한 주소여야 한다 —
+   * 손으로 적은 공인 주소(ISP 대역 안이든 밖이든), 남의 임대 주소를 가져다 쓴 것은 받지 않는다. 사설 출발지는 아래에서 "NAT 가 필요" 로 드롭한다.
+   * 드롭했으면 true
+   */
+  private sourceGuard(pkt: Ipv4Packet, srcMac: Mac | undefined, frameId: number, ctx: NodeContext): boolean {
+    if (isPrivateIp(pkt.src) || pkt.src === "0.0.0.0" || this.isGateway(pkt.src)) return false;
+    const lease = this.dhcpServer.leases.get(pkt.src);
+    if (lease && (srcMac === undefined || lease.mac === srcMac)) return false;
+    const why = lease ? `${pkt.src} 는 다른 기기(${lease.mac})에 임대한 주소 — 보낸 기기 ${srcMac}` : this.inIsp(pkt.src) ? `${pkt.src} 는 ISP 대역 안이지만 DHCP 로 임대한 가입자 주소가 아님` : `${pkt.src} 는 이 ISP 가 준 주소가 아님 (ISP 대역 ${this.net.ip}/${this.net.prefix} 밖)`;
+    ctx.trace("ip.drop", "L3", `ISP: 출발지 ${why} → 드롭 (IP Source Guard — 손으로 적은 공인 주소는 ISP 가 몰라 통신이 안 된다. WAN 을 자동(DHCP)으로. 인터넷 노드를 새로 붙여 임대 기록이 없으면 WAN 케이블을 다시 꽂거나 DHCP 임대 갱신)`, { src: pkt.src }, frameId);
+    return true;
+  }
+
+  /** ISP 가 보내려는 패킷의 목적지가 ISP 대역 안인데 임대하지 않은 주소면 내보내지 않는다 (갈 곳이 없다). 막았으면 true */
+  private unleasedOut(pkt: Ipv4Packet, ctx: NodeContext): boolean {
+    if (!this.inIsp(pkt.dst) || this.isGateway(pkt.dst) || this.leased(pkt.dst) || pkt.dst === networkOf(pkt.dst, this.net.prefix)) return false;
+    ctx.trace("ip.no-route", "L3", `ISP: ${pkt.dst} 는 ISP 대역 안이지만 DHCP 로 임대한 가입자 주소가 아님 → 보낼 곳이 없어 드롭 (손으로 적은 공인 주소는 ISP 가 모른다)`, { dst: pkt.dst });
+    return true;
+  }
+
+  /** 가입자 대역으로 가는 패킷 (다른 가입자·이 ISP 의 가입자 주소): ISP 라우터가 그 가입자에게 넘긴다. 처리했으면 true */
+  private toSubscriber(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): boolean {
+    if (!this.inIsp(pkt.dst) || this.isGateway(pkt.dst)) return false;
+    if (isPrivateIp(pkt.src)) {
+      ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} → 응답을 돌려줄 수 없어 드롭 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
+      return true;
+    }
+    if (!this.leased(pkt.dst)) {
+      ctx.trace("ip.no-route", "L3", `ISP 라우터: ${pkt.dst} 는 ISP 대역 안이지만 DHCP 로 임대한 가입자 주소가 아님 → 갈 곳이 없어 드롭하고 Destination Net Unreachable (손으로 적은 공인 주소는 ISP 가 모른다)`, { dst: pkt.dst }, frameId);
+      const notice = this.iface.unreachable(pkt, "net", ctx, frameId, this.gatewayOf(pkt.src));
+      if (notice) this.iface.sendIp(notice, ctx, this.emit(ctx));
+      return true;
+    }
+    if (pkt.ttl <= 1) {
+      const notice = this.iface.timeExceeded(pkt, ctx, frameId, this.inIsp(pkt.src) ? this.gatewayOf(pkt.src) : this.iface.ip);
+      if (notice) this.iface.sendIp(notice, ctx, this.emit(ctx));
+      return true;
+    }
+    const block = `${networkOf(pkt.dst, SUBSCRIBER_PREFIX)}/${SUBSCRIBER_PREFIX}`;
+    ctx.trace("ip.forward", "L3", `ISP 라우터: ${pkt.dst} 는 가입자 대역 ${block} (게이트웨이 ${this.gatewayOf(pkt.dst)}) → 그 가입자에게 전달 (TTL ${pkt.ttl} → ${pkt.ttl - 1})`, { dst: pkt.dst, block }, frameId);
+    this.iface.sendIp({ ...pkt, ttl: pkt.ttl - 1 }, ctx, this.emit(ctx));
+    return true;
   }
 
   /** 인터넷 저편의 클라이언트가 dst:port 로 TCP 연결을 시작한다 (포트 포워딩 시연용) */
@@ -193,7 +313,7 @@ export class Internet implements SimNode {
       this.iface.handleArp(frame.payload, frame.id, ctx, this.emit(ctx));
       return;
     }
-    if (frame.payload.kind === "ipv4") this.handleIp(frame.payload, frame.id, ctx);
+    if (frame.payload.kind === "ipv4") this.handleIp(frame.payload, frame.id, ctx, frame.src);
     else if (frame.payload.kind === "ipv6") this.handleIp6(frame.payload, frame, ctx);
   }
 
@@ -443,9 +563,14 @@ export class Internet implements SimNode {
     return false;
   }
 
-  private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
+  /** srcMac = 선으로 받은 프레임의 출발지 MAC (Tor 출구가 넘긴 것처럼 ISP 안에서 만든 패킷이면 없음 — Source Guard 를 보지 않는다) */
+  private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext, srcMac?: Mac): void {
     const emit = this.emit(ctx);
+    // DHCP (임대 전·갱신)는 출발지를 보지 않는다
+    const dhcp = pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dhcp";
+    if (srcMac !== undefined && !dhcp && this.sourceGuard(pkt, srcMac, frameId, ctx)) return;
     if (pkt.dst === TOR_EXIT && this.tor.back(pkt, ctx)) return;
+    if (this.toSubscriber(pkt, frameId, ctx)) return;
     if (pkt.payload.kind === "udp") {
       const udp = pkt.payload;
       const m = udp.payload;
@@ -487,7 +612,7 @@ export class Internet implements SimNode {
       ctx.trace("ip.drop", "L3", `ESP(IPsec) ${pkt.src} → ${pkt.dst}: 이 주소에 VPN 장비가 없음 → 시뮬레이션 밖이므로 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
-    if (pkt.dst === this.iface.ip) {
+    if (this.isGateway(pkt.dst)) {
       if (p.kind === "tcp") {
         ctx.trace("ip.drop", "L4", `ISP 게이트웨이는 TCP 서비스를 열지 않음 → 드롭`, {}, frameId);
         return;
@@ -497,7 +622,7 @@ export class Internet implements SimNode {
         return;
       }
       ctx.trace("icmp.echo.received", "app", `ISP 게이트웨이가 ICMP Echo 요청 수신 (from ${pkt.src})`, { from: pkt.src }, frameId);
-      const reply: Ipv4Packet = { kind: "ipv4", src: this.iface.ip, dst: pkt.src, ttl: 64, payload: { ...p, type: "echo-reply" } };
+      const reply: Ipv4Packet = { kind: "ipv4", src: pkt.dst, dst: pkt.src, ttl: 64, payload: { ...p, type: "echo-reply" } };
       ctx.trace("icmp.reply.sent", "app", `ICMP Echo 응답 생성 → ${pkt.src}`, { to: pkt.src });
       this.iface.sendIp(reply, ctx, emit);
       return;
@@ -510,9 +635,9 @@ export class Internet implements SimNode {
       ctx.trace("ip.drop", "L3", `출발지가 사설 주소 ${pkt.src} → 응답을 돌려줄 수 없어 드롭 (NAT 가 공인 주소로 바꿔야 함)`, { src: pkt.src }, frameId);
       return;
     }
-    // ISP 라우터(203.0.113.1)를 지나 공인 서버로 가는 것도 홉 하나: TTL 이 다 됐으면 ISP 라우터가 통지한다
+    // ISP 라우터를 지나 공인 서버로 가는 것도 홉 하나: TTL 이 다 됐으면 ISP 라우터가 (보낸 가입자 대역의 게이트웨이 주소로) 통지한다
     if (pkt.ttl <= 1) {
-      const notice = this.iface.timeExceeded(pkt, ctx, frameId);
+      const notice = this.iface.timeExceeded(pkt, ctx, frameId, this.inIsp(pkt.src) ? this.gatewayOf(pkt.src) : this.iface.ip);
       if (notice) this.iface.sendIp(notice, ctx, emit);
       return;
     }
@@ -649,7 +774,8 @@ export class Internet implements SimNode {
       type: this.type,
       label: this.id,
       info: [
-        ["ISP 게이트웨이", `${this.iface.ip}/${this.iface.prefix}`],
+        ["ISP 대역", `${this.net.ip}/${this.net.prefix} · 가입자마다 /${SUBSCRIBER_PREFIX} (첫 주소 = ISP 게이트웨이, 둘째 = 가입자)`],
+        ["ISP 게이트웨이", `${this.iface.ip} 외 가입자 대역마다 하나`],
         ["공인 주소 임대", `${pool.start} ~ ${pool.end}`],
         ["외부 클라이언트", Internet.REMOTE_CLIENT],
         ["ISP IPv6", `${Internet.ISP_V6}/64 · RA 로 알림 · 위임 풀 ${Internet.PD_POOL}/40 (고객마다 /${Internet.PD_LENGTH})`],

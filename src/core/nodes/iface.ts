@@ -51,12 +51,16 @@ export class NetInterface {
   readonly pending = new Map<Ip, PendingPacket[]>();
   /** 내보낼 IP 패킷을 먼저 가로챌 기회 (원격 접속 VPN 클라이언트가 사내 대역 패킷을 터널로). true 면 처리됨 */
   outbound: ((pkt: Ipv4Packet, ctx: NodeContext) => boolean) | undefined;
+  /** ARP 요청의 보낸이 주소 (보조 주소가 여럿인 인터페이스 — ISP 는 상대 대역의 게이트웨이 주소로 묻는다). 없으면 내 주소 */
+  arpSource: ((target: Ip) => Ip | undefined) | undefined;
   /** 장치의 라우팅 테이블이 이 인터페이스로 정한 넥스트 홉 (공유기의 스태틱 라우트). 같은 서브넷이 아닐 때 게이트웨이보다 먼저 */
   nextHop: ((dst: Ip) => Ip | undefined) | undefined;
   /** 이중화(HA) master 일 때만: 이 인터페이스가 함께 쓰는 가상 주소·가상 MAC (ARP 응답·수신을 이것으로도 한다) */
   vip: { ip: Ip; mac: Mac } | undefined;
   /** 프록시 ARP: 이 주소들의 ARP 요청에 내 MAC 으로 대신 답한다 (공유기 VPN 서버가 VPN 클라이언트의 LAN 주소를) */
   proxyArp: ((ip: Ip) => boolean) | undefined;
+  /** 프록시 ARP 로 답할 때 로그에 붙일 이유 (없으면 공유기 VPN 서버의 설명) */
+  proxyArpWhy: ((ip: Ip) => string) | undefined;
   private readonly arpTimers = new Map<Ip, TimerHandle>();
 
   constructor(mac: Mac, cfg: { ip?: Ip; prefix?: number; gateway?: Ip; dns?: Ip } = {}) {
@@ -167,8 +171,8 @@ export class NetInterface {
    * Time Exceeded 패킷(출발지 = 이 인터페이스 주소)을 만든다. 보내는 방법은 장치마다 다르므로 호출자가 보낸다.
    * 통지를 만들 수 없으면(주소 없음, ICMP 오류에 대한 오류, 출발지 0.0.0.0) undefined
    */
-  timeExceeded(pkt: Ipv4Packet, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
-    const notice = this.ip ? timeExceededFor(this.ip, pkt) : undefined;
+  timeExceeded(pkt: Ipv4Packet, ctx: NodeContext, frameId?: number, from: Ip | undefined = this.ip): Ipv4Packet | undefined {
+    const notice = from ? timeExceededFor(from, pkt) : undefined;
     if (!notice) {
       ctx.trace("ip.ttl-expired", "L3", `TTL ${pkt.ttl} 로 도착한 ${pkt.src} → ${pkt.dst}: 더 넘기면 0 → 드롭 (통지는 보내지 않음)`, { src: pkt.src, dst: pkt.dst }, frameId);
       return undefined;
@@ -176,8 +180,8 @@ export class NetInterface {
     ctx.trace(
       "icmp.ttl-exceeded",
       "L3",
-      `TTL ${pkt.ttl} 로 도착한 ${pkt.src} → ${pkt.dst}: 한 홉 더 넘기면 0 → 드롭하고 ${this.ip} 이름으로 보낸 이에게 Time Exceeded 통지 (traceroute 는 이 통지로 경로의 홉을 알아낸다)`,
-      { src: pkt.src, dst: pkt.dst, from: this.ip, ttl: pkt.ttl },
+      `TTL ${pkt.ttl} 로 도착한 ${pkt.src} → ${pkt.dst}: 한 홉 더 넘기면 0 → 드롭하고 ${from} 이름으로 보낸 이에게 Time Exceeded 통지 (traceroute 는 이 통지로 경로의 홉을 알아낸다)`,
+      { src: pkt.src, dst: pkt.dst, from, ttl: pkt.ttl },
       frameId,
     );
     return notice;
@@ -187,8 +191,8 @@ export class NetInterface {
    * 더 넘길 수 없는 패킷(경로 없음·ARP 무응답·닫힌 UDP 포트)을 보낸 이에게 알릴 ICMP Destination Unreachable (출발지 = 이 인터페이스 주소).
    * 보내는 방법은 장치마다 달라 호출자가 보낸다. 만들 수 없으면(내 주소 없음, ICMP 오류·브로드캐스트에 대한 것) undefined
    */
-  unreachable(pkt: Ipv4Packet, code: UnreachableCode, ctx: NodeContext, frameId?: number): Ipv4Packet | undefined {
-    const notice = this.ip ? icmpErrorFor(this.ip, pkt, { type: "unreachable", code }) : undefined;
+  unreachable(pkt: Ipv4Packet, code: UnreachableCode, ctx: NodeContext, frameId?: number, from: Ip | undefined = this.ip): Ipv4Packet | undefined {
+    const notice = from ? icmpErrorFor(from, pkt, { type: "unreachable", code }) : undefined;
     if (!notice) return undefined;
     const why = code === "net" ? "그 목적지로 가는 경로가 없음" : code === "host" ? "그 주소의 장치가 ARP 에 응답하지 않음" : "그 UDP 포트를 듣는 프로그램이 없음";
     ctx.trace("icmp.unreachable.sent", "L3", `${pkt.src} 에게 ICMP ${UNREACHABLE_LABEL[code]} 통지 (원래 ${pkt.src} → ${pkt.dst}) — ${why}. 보낸 쪽은 timeout 을 기다리지 않고 바로 실패를 안다`, { to: pkt.src, dst: pkt.dst, code }, frameId);
@@ -232,9 +236,10 @@ export class NetInterface {
   }
 
   private sendArpRequest(targetIp: Ip, ctx: NodeContext, emit: Emit): void {
-    const arp: ArpPacket = { kind: "arp", op: "request", senderMac: this.mac, senderIp: this.ip!, targetMac: ZERO_MAC, targetIp };
+    const sender = this.arpSource?.(targetIp) ?? this.ip!;
+    const arp: ArpPacket = { kind: "arp", op: "request", senderMac: this.mac, senderIp: sender, targetMac: ZERO_MAC, targetIp };
     const frame: EthernetFrame = { kind: "ethernet", id: ctx.nextPacketId(), src: this.mac, dst: BROADCAST_MAC, payload: arp };
-    ctx.trace("arp.request.sent", "L2", `ARP 요청 브로드캐스트: "${targetIp} 의 MAC은?" (나는 ${this.ip} / ${this.mac})`, { targetIp }, frame.id);
+    ctx.trace("arp.request.sent", "L2", `ARP 요청 브로드캐스트: "${targetIp} 의 MAC은?" (나는 ${sender} / ${this.mac})`, { targetIp }, frame.id);
     emit(frame);
   }
 
@@ -386,7 +391,7 @@ export class NetInterface {
       ctx.trace(
         "arp.reply.sent",
         "L2",
-        `ARP 응답 송신: "${me.ip} 는 ${me.mac}"${asVip ? " (이중화 가상 주소 — master 인 내가 답함)" : asProxy ? ` (프록시 ARP — ${me.ip} 는 VPN 으로 붙은 기기라 공유기가 대신 답하고 받은 것을 터널로 넘김)` : ""} → ${arp.senderMac} 에게 유니캐스트`,
+        `ARP 응답 송신: "${me.ip} 는 ${me.mac}"${asVip ? " (이중화 가상 주소 — master 인 내가 답함)" : asProxy ? ` (${this.proxyArpWhy?.(me.ip) ?? `프록시 ARP — ${me.ip} 는 VPN 으로 붙은 기기라 공유기가 대신 답하고 받은 것을 터널로 넘김`})` : ""} → ${arp.senderMac} 에게 유니캐스트`,
         { to: arp.senderMac, ...(asProxy ? { proxy: true } : {}) },
         frame.id,
       );

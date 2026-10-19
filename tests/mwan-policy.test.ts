@@ -15,7 +15,7 @@ const load = (t: Topology = exampleMultiWanPolicyTopology()) => loadTopology(t);
 describe("멀티 WAN 정책 규칙", () => {
   it("예제: VPN 대역(10.0.0.0/24)의 인터넷 트래픽은 WAN2 로, 바깥 WireGuard 는 WAN1 으로, 집 LAN 은 WAN1 으로", () => {
     const L = load();
-    expect(lintTopology(L.t)).toEqual([]);
+    expect(L.lint()).toEqual([]);
     const r = L.node<Router>("집 Brume 3");
     expect(r.mwan.active).toBe("wan");
     expect(L.host("카페 폰").ra.state).toBe("up");
@@ -30,7 +30,7 @@ describe("멀티 WAN 정책 규칙", () => {
     // 응답은 WAN2 로 들어와 터널로 돌아간다 (바깥 UDP 는 WAN1 주소에서)
     const enc = brume.filter((e) => e.kind === "vpn.encap");
     expect(enc.length).toBeGreaterThan(0);
-    expect(enc.every((e) => e.summary.includes(`UDP 203.0.113.30:51820`))).toBe(true);
+    expect(enc.every((e) => e.summary.includes(`UDP 203.0.113.10:51820`))).toBe(true);
     expect(r.mwan.hits).toEqual([1]);
     expect(r.mwan.ruleRows()).toEqual([["1", "10.0.0.0/24", "WAN2", "그 회선으로", "1"]]);
     // 집 NAS 는 규칙이 없어 WAN1
@@ -154,7 +154,7 @@ describe("멀티 WAN 정책 규칙: 모델·구성 검사", () => {
 // 리뷰(2026-10-19) 회귀
 describe("review: 멀티 WAN 정책 규칙", () => {
   it("두 회선 주소가 같으면(같은 대역의 모뎀 두 대) WireGuard 답은 지금 회선으로 — 끊긴 WAN2 로 보내지 않는다", () => {
-    const t = patchDev(exampleMultiWanPolicyTopology(), "집 Brume 3", (d) => ({ ...d, router: { ...d.router!, wan2: { ...d.router!.wan2!, ipMode: "static", ip: "203.0.113.30", prefix: 24, gateway: "203.0.113.1" } } }));
+    const t = patchDev(exampleMultiWanPolicyTopology(), "집 Brume 3", (d) => ({ ...d, router: { ...d.router!, wan2: { ...d.router!.wan2!, ipMode: "static", ip: "203.0.113.10", prefix: 29, gateway: "203.0.113.9" } } })); // WAN1 이 ISP 에서 받는 주소와 같게
     const L = load(t);
     const lte = portCable(t, L.id("집 Brume 3"), 4);
     L.apply({ ...t, cables: t.cables.filter((c) => c.id !== lte.id) });

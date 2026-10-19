@@ -22,7 +22,7 @@ const reached = (L: ReturnType<typeof loadTopology>, from: number) =>
 describe("IGMP 스누핑", () => {
   it("스누핑이 없으면 TV 만 가입해도 스트림이 모든 포트로, 받는 건 TV 뿐", () => {
     const L = loadTopology(exampleIgmpTopology());
-    expect(lintTopology(L.t)).toEqual([]);
+    expect(L.lint()).toEqual([]);
     L.act({ kind: "mcast-join", nodeId: L.id("거실 TV"), group: G });
     const t0 = L.s.net.now;
     const tr = L.act({ kind: "mcast-send", nodeId: L.id("IPTV 서버"), group: G });

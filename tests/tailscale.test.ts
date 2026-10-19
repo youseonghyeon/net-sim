@@ -19,7 +19,7 @@ const codes = (t: Topology) => lintTopology(t).map((i) => `${t.devices.find((d) 
 describe("Tailscale", () => {
   it("예제: 셋이 로그인해 netmap 을 받고, 노트북 → 집은 홀 펀칭으로 직접, → 회사 PC 는 DERP 릴레이, 집 NAS 는 서브넷 라우터로", () => {
     const L = loadTopology(exampleTailscaleTopology());
-    expect(lintTopology(L.t)).toEqual([]);
+    expect(L.lint()).toEqual([]);
     const lap = L.host(LAPTOP);
     expect(lap.mesh.summary()).toContain("100.64.0.");
     // MagicDNS 이름으로 회사 PC

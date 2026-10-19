@@ -108,7 +108,7 @@ describe("strongSwan (원격 접속 계정 인증·DPD)", () => {
 
   it("목록에 없는 사용자: no EAP key found for hosts '<서버 ID>' - '<사용자>'", () => {
     const x = loadTopology(patch({ user: "park", password: "park-pass" }));
-    expect(swan(x, serverFail(x))).toEqual(["12[IKE] no EAP key found for hosts '203.0.113.11' - 'park'", "12[IKE] EAP method EAP_MSCHAPV2 failed for peer park"]);
+    expect(swan(x, serverFail(x))).toEqual(["12[IKE] no EAP key found for hosts '203.0.113.10' - 'park'", "12[IKE] EAP method EAP_MSCHAPV2 failed for peer park"]);
   });
 
   it("DPD 의 Message ID: EAP 로 붙으면 IKE_AUTH 가 두 번(1·2)이라 3, PSK 만이면 2", () => {

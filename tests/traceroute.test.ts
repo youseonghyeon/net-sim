@@ -16,7 +16,7 @@ function home() {
   net.runToIdle();
   const rt = net.nodes.get("rt") as Router;
   expect(net.getHost("pc1").ip).toBe("192.168.0.100");
-  expect(rt.wan.ip).toBe("203.0.113.100");
+  expect(rt.wan.ip).toBe("203.0.113.2");
   return { net, rt };
 }
 
