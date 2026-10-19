@@ -1,5 +1,5 @@
 // 예제 묶음 "인터넷". 등록(메뉴 순서·설명)은 ../examples.ts 의 EXAMPLES.
-import { type Cable, DEFAULT_DHCP_SERVER, type Device, type Topology, newId, zoneAround } from "../topology";
+import { type Cable, DEFAULT_DHCP_SERVER, type Device, type Topology, newId, wgPublicKeyOf, zoneAround } from "../topology";
 import { builder, cable, iface } from "./build";
 
 /**
@@ -567,5 +567,47 @@ export function exampleMultiWanTopology(): Topology {
   const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, brume, 0), cable(isp, 6, hotspot, 0), cable(hotspot, 1, brume, 4), cable(brume, 1, pc, 0)];
   const t: Topology = { devices, cables };
   t.zones = [{ id: newId("zone"), label: "사무실 192.168.8.0/24 · WAN1 유선 + WAN2 핫스팟", tint: "blue", ...zoneAround(t, [brume.id, pc.id], 56)! }];
+  return t;
+}
+
+/**
+ * 멀티 WAN 정책 규칙 (mwan3 rule): VPN 은 WAN1 으로 받고, 터널에서 풀린 인터넷 트래픽은 WAN2 로
+ * - 집 Brume 3: WAN1 = 고정 공인 주소 203.0.113.30 (WireGuard 서버, 터널 10.0.0.1/24), WAN2(lan4) = 다른 통신사의 5G 라우터
+ * - 정책 규칙 10.0.0.0/24 → WAN2: 출발지가 VPN 대역이면 WAN2 로 NAT. 집 LAN(192.168.8.0/24)은 규칙이 없어 WAN1
+ * - 카페 폰 = WireGuard 앱(모든 트래픽을 터널로). 바깥 UDP 51820 은 WAN1 으로 오가고(받은 회선으로 답함), 풀린 패킷만 WAN2 로 나간다
+ */
+export function exampleMultiWanPolicyTopology(): Topology {
+  const { devices, add } = builder();
+  const inet = add("internet", 344, -296, "internet-1");
+  const isp = add("switch", 344, -168, "통신사 구간");
+  const cafe = add("router", 120, -24, "카페 공유기");
+  cafe.router = { ...cafe.router!, lanIp: "10.20.0.1", lanPrefix: 24, dhcp: { enabled: true, start: "10.20.0.100", end: "10.20.0.199" }, wifi: { enabled: true, ssid: "cafe" } };
+  const phone = add("phone", 120, 152, "카페 폰");
+  const lte = add("router", 880, -24, "5G 라우터");
+  // 5G 라우터(다른 통신사)의 LAN 대역 — 공유기 WAN2 는 여기서 DHCP 로 받는다
+  lte.router = { ...lte.router!, lanIp: "192.168.225.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.225.100", end: "192.168.225.199" } };
+  const home = add("router", 568, 104, "집 Brume 3");
+  const nas = add("server", 568, 296, "집 NAS");
+  home.router = {
+    ...home.router!,
+    lanIp: "192.168.8.1",
+    lanPrefix: 24,
+    dhcp: { enabled: true, start: "192.168.8.100", end: "192.168.8.199" },
+    wan: { ipMode: "static", ip: "203.0.113.30", prefix: 24, gateway: "203.0.113.1" },
+    wan2: { enabled: true, ipMode: "dhcp", ip: "", prefix: 24, gateway: "", track: "8.8.8.8", rules: [{ src: "10.0.0.0/24", line: "wan2" }] },
+    wgServer: { enabled: true, address: "10.0.0.1/24", port: 51820, peers: [{ name: "카페 폰", publicKey: wgPublicKeyOf(phone, "host"), ip: "10.0.0.2" }], lanAccess: true },
+  };
+  nas.host = { ipMode: "static", ip: "192.168.8.20", prefix: 24, gateway: "192.168.8.1", services: [80], dhcpServer: { ...DEFAULT_DHCP_SERVER } };
+  phone.wifi = { ssid: "cafe" };
+  phone.host = {
+    ...phone.host!,
+    ra: { enabled: true, type: "wireguard", server: "203.0.113.30", psk: "", wg: { address: "10.0.0.2/32", port: 51820, serverKey: wgPublicKeyOf(home, "server"), allowedIps: "0.0.0.0/0", dns: "" } },
+  };
+  const cables: Cable[] = [cable(isp, 3, inet, 0), cable(isp, 1, cafe, 0), cable(isp, 6, home, 0), cable(isp, 7, lte, 0), cable(lte, 1, home, 4), cable(home, 1, nas, 0)];
+  const t: Topology = { devices, cables };
+  t.zones = [
+    { id: newId("zone"), label: "카페 10.20.0.0/24", tint: "green", ...zoneAround(t, [cafe.id, phone.id], 56)! },
+    { id: newId("zone"), label: "집 192.168.8.0/24 · WireGuard 10.0.0.0/24", tint: "blue", ...zoneAround(t, [home.id, nas.id], 56)! },
+  ];
   return t;
 }

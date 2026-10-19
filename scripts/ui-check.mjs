@@ -1619,7 +1619,34 @@ section("mwan", async () => {
   console.log("after wan1 removed:", await device("사무실 Brume 3").locator("text.uplink").textContent(), "| badge:", await device("사무실 Brume 3").locator(".badge", { hasText: "WAN2 사용 중" }).count());
 });
 
-// AdGuard Home: 아빠 PC 의 광고 이름 차단, 공유기 "앱" 묶음, 쿼리 로그
+// 멀티 WAN 정책 규칙: 카페 폰(WireGuard)의 인터넷 트래픽은 WAN2, 설정의 규칙 목록·잘못된 출발지 오류, 표의 mwan3 rules
+section("mwan-rules", async () => {
+  await loadEx("mwanvpn");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await waitIdle();
+  await clickDevice("카페 폰");
+  await page.fill(".ping-row .input", "8.8.8.8");
+  await page.click(".ping-row .btn");
+  await page.waitForFunction(() => /응답 \d+ms|실패/.test(document.querySelector(".ping-log li")?.textContent ?? ""), null, { timeout: 30000 });
+  console.log("mwan-rules phone ping:", (await page.locator(".ping-log li").first().innerText()).replace(/\s+/g, " "));
+  await clickDevice("집 Brume 3");
+  await goTab("표");
+  const rulesTable = page.locator(".inspector .section", { hasText: "멀티 WAN 정책 규칙" });
+  console.log("mwan-rules table:", (await rulesTable.locator("tbody tr").allInnerTexts()).map((r) => r.replace(/\s+/g, " ")));
+  await goTab("설정");
+  await goGroup("인터넷");
+  const mw = page.locator(".inspector section", { has: page.locator("h3", { hasText: /^멀티 WAN$/ }) });
+  await mw.scrollIntoViewIfNeeded();
+  console.log("mwan-rules rows:", await mw.locator(".mwan-rule").count());
+  await page.screenshot({ path: `${OUT}/101b-mwan-rules.png` });
+  // 규칙 추가 → 잘못된 출발지는 칸 아래 오류
+  await mw.locator("button", { hasText: "규칙 추가" }).click();
+  await mw.locator(".mwan-rule").nth(1).locator("input").fill("10.0.0/33");
+  console.log("mwan-rules bad src error:", (await mw.locator(".mwan-rule").nth(1).locator(".error").textContent())?.trim());
+  await mw.locator(".mwan-rule").nth(1).locator(".icon-btn").click();
+  console.log("mwan-rules rows after delete:", await mw.locator(".mwan-rule").count());
+});
+
 section("adguard", async () => {
   await loadEx("adguard");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});

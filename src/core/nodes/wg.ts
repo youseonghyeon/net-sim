@@ -124,6 +124,8 @@ interface Session {
 export interface WgPeerState {
   cfg: WgPeer;
   endpoint?: { ip: Ip; port: number };
+  /** 이 피어가 나에게 보낸 바깥 목적지 = 내 쪽 주소 (멀티 WAN 이면 그 회선으로 답한다 — 실제 WireGuard 가 출발지 주소를 기억해 두는 것) */
+  local?: Ip;
   session?: Session;
   /** 직전 세션: 새 세션을 맺은 직후에도 상대가 아직 옛 세션으로 보낸 데이터를 받는다 (실제 WireGuard 의 previous keypair — 양쪽이 동시에 핸드셰이크했을 때 엇갈리지 않게) */
   prevSession?: Session;
@@ -151,8 +153,8 @@ export interface WgPeerState {
 
 /** 바깥(인터넷 쪽) 송신: 장치가 정한다 — 공유기는 WAN, 노트북은 지금 쓰는 NIC */
 export interface WgIo {
-  /** 상대 엔드포인트로 갈 때 바깥 패킷의 출발지 (없으면 보낼 수 없음) */
-  source(dst: Ip): Ip | undefined;
+  /** 상대 엔드포인트로 갈 때 바깥 패킷의 출발지 (없으면 보낼 수 없음). local = 그 상대가 나에게 보내던 내 주소 (아직 쓸 수 있으면 그대로) */
+  source(dst: Ip, local?: Ip): Ip | undefined;
   send(outer: Ipv4Packet, ctx: NodeContext, frameId?: number): void;
 }
 
@@ -301,7 +303,7 @@ export class WgInterface {
   /** 핸드셰이크 시작 (Initiation) */
   private initiate(p: WgPeerState, ctx: NodeContext, frameId: number | undefined, why: string, tries = 1, local = this.nextIdx++): void {
     const ep = p.endpoint;
-    const src = ep ? this.io.source(ep.ip) : undefined;
+    const src = ep ? this.io.source(ep.ip, p.local) : undefined;
     if (!ep || !src) {
       this.fail(p, `${this.peerName(p)} 의 주소 ${ep ? `${ep.ip}` : "(모름)"} 로 갈 바깥 경로가 없음 (WAN·주소 확인)`, ctx, frameId);
       return;
@@ -345,6 +347,7 @@ export class WgInterface {
     p.prevEndpoint = undefined;
     if (!p.endpoint || p.endpoint.ip !== ep.ip || p.endpoint.port !== ep.port) {
       p.endpoint = { ...ep };
+      p.local = undefined;
       p.session = undefined;
       p.prevSession = undefined;
       p.pending = undefined;
@@ -376,7 +379,7 @@ export class WgInterface {
   private transmit(p: WgPeerState, inner: Ipv4Packet | undefined, ctx: NodeContext, frameId?: number): void {
     const s = p.session!;
     const ep = p.endpoint!;
-    const src = this.io.source(ep.ip);
+    const src = this.io.source(ep.ip, p.local);
     if (!src) {
       ctx.trace("vpn.drop", "L3", `${this.label}: ${this.peerName(p)} 의 주소 ${ep.ip} 로 갈 바깥 경로가 없음 → 드롭`, { wg: true }, frameId);
       return;
@@ -473,7 +476,7 @@ export class WgInterface {
         ctx.trace("vpn.drop", "L4", `${this.label}: ${from.ip}:${from.port} 의 Initiation — 보낸 공개 키 ${shortKey(m.static ?? "")} 가 피어 목록에 없음 → 응답 없이 버림 (Invalid handshake initiation. WireGuard 는 모르는 상대에게 답하지 않는다 — 피어에 그 공개 키를 등록하세요)`, { wg: true, from: from.ip, reason: "unknown-key" }, frameId);
         return null;
       }
-      this.roam(p, from, ctx, frameId);
+      this.roam(p, from, outer.dst, ctx, frameId);
       const local = this.nextIdx++;
       // 내가 시작한 핸드셰이크(pending)가 있어도 지우지 않는다: 양쪽이 동시에 시작했으면 그 Response 도 곧 온다 (세션은 두 칸이라 둘 다 받는다)
       this.install(p, { local, remote: m.sender ?? 0, since: ctx.now, counter: 0 });
@@ -492,7 +495,7 @@ export class WgInterface {
         ctx.trace("vpn.drop", "L4", `${this.label}: ${from.ip} 의 Response (세션 ${m.receiver}) — 지금 기다리는 핸드셰이크가 아님 (늦게 온 응답) → 무시`, { wg: true, from: from.ip, late: true }, frameId);
         return null;
       }
-      this.roam(p, from, ctx, frameId);
+      this.roam(p, from, outer.dst, ctx, frameId);
       this.install(p, { local: m.receiver!, remote: m.sender ?? 0, since: ctx.now, counter: 0 });
       p.pending = undefined;
       p.lastHandshake = ctx.now;
@@ -509,7 +512,7 @@ export class WgInterface {
       ctx.trace("vpn.drop", "L4", `${this.label}: ${from.ip}:${from.port} 의 데이터가 모르는 세션 ${m.receiver} 로 옴 (이 장비가 재시작·설정 변경으로 세션을 잊음) → 버림. 상대는 ${WG_DEAD / 1000}초 동안 답이 없으면 새로 핸드셰이크한다`, { wg: true, from: from.ip, reason: "unknown-session" }, frameId);
       return null;
     }
-    this.roam(p, from, ctx, frameId);
+    this.roam(p, from, outer.dst, ctx, frameId);
     p.unansweredSince = undefined;
     const inner = m.inner;
     if (!inner) {
@@ -538,7 +541,8 @@ export class WgInterface {
   }
 
   /** 인증된 패킷의 바깥 출발지가 바뀌었으면 그 피어의 새 주소로 (엔드포인트 로밍) */
-  private roam(p: WgPeerState, from: { ip: Ip; port: number }, ctx: NodeContext, frameId?: number): void {
+  private roam(p: WgPeerState, from: { ip: Ip; port: number }, local: Ip, ctx: NodeContext, frameId?: number): void {
+    p.local = local;
     const e = p.endpoint;
     if (e && e.ip === from.ip && e.port === from.port) return;
     p.endpoint = { ...from };
@@ -560,6 +564,7 @@ export class WgInterface {
       p.queue = [];
       p.unansweredSince = undefined;
       p.failed = undefined;
+      p.local = undefined;
       if (!p.cfg.endpoint) p.endpoint = undefined;
     }
   }

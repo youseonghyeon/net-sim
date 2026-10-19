@@ -1,6 +1,7 @@
-// 공유기 관리 규칙: 관리 화면을 인터넷에 연 것, 드롭인 게이트웨이의 WAN 주소
+// 공유기 관리 규칙: 관리 화면을 인터넷에 연 것, 드롭인 게이트웨이의 WAN 주소, 멀티 WAN 정책 규칙의 출발지
 import type { LintContext } from "./context";
 import { natOn } from "../topology";
+import { parseCidr } from "../netSync";
 
 // 규칙 20g: 공유기 관리
 export function glinetRules({ t, add }: LintContext): void {
@@ -25,5 +26,10 @@ export function glinetRules({ t, add }: LintContext): void {
 
     if (r.dropIn && r.wan?.ipMode !== "static")
       add({ deviceId: d.id, severity: "warn", code: "dropin.wan-dhcp", message: `드롭인 게이트웨이인데 WAN 주소가 자동(DHCP)임 → 주소가 바뀌면 이 공유기를 게이트웨이로 적은 기기들이 나가지 못함`, fix: `${d.name} → 인터넷 → WAN 을 수동 주소로 (기존 공유기 LAN 안의 쓰지 않는 주소)` });
+
+    // 멀티 WAN 정책 규칙: 출발지를 대역으로 읽을 수 없으면 그 규칙은 쓰지 않는다 (그 출발지는 페일오버대로 지금 회선으로)
+    const badRules = r.wan2?.enabled ? (r.wan2.rules ?? []).flatMap((x, i) => (parseCidr(x.src, 32) ? [] : [`${i + 1}번(${x.src.trim() ? `"${x.src.trim()}"` : "비어 있음"})`])) : [];
+    if (badRules.length)
+      add({ deviceId: d.id, severity: "error", code: "mwan.rule-invalid", message: `멀티 WAN 정책 규칙 ${badRules.join(", ")} 의 출발지는 대역이 아님 → 그 규칙은 쓰지 않아 그 출발지도 지금 회선으로 나감`, fix: `${d.name} → 인터넷 → 멀티 WAN → 정책 규칙의 출발지 (예: 10.0.0.0/24, 주소 하나면 192.168.8.50)` });
   }
 }

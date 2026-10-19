@@ -5,8 +5,10 @@
 //   (mwan3 의 interval·down·up). 케이블이 빠지면(링크 다운) 기다리지 않고 바로 끊김
 // - 넘어갈 때 진행 중이던 연결은 끊긴다: 새 회선의 공인 주소로 NAT 되어 상대에게는 다른 출발지(다른 연결)로 보인다 — 실제 mwan3 도 같다
 // - 추적 주소를 비우면 링크·주소만 본다 (회선이 링크는 살아 있는데 인터넷이 안 되는 장애는 모른다)
-// 생략: 로드 밸런싱(회선 나눠 쓰기), 회선 3개 이상, 추적 주소 여러 개(reliability), 회선마다 다른 추적 주소
-import type { Ip } from "../addr";
+// - 정책 규칙(mwan3 rule): 출발지 대역 → 회선. 위에서부터 처음 맞는 규칙의 회선이 살아 있으면 그 회선, 끊겼으면 지금 회선
+//   (mwan3 의 wan2_wan1 같은 순서 policy). 맞는 규칙이 없으면 페일오버 그대로. 출발지는 NAT 전 주소라 VPN 대역(터널에서 풀린 것)도 고른다
+// 생략: 로드 밸런싱(회선 나눠 쓰기), 회선 3개 이상, 추적 주소 여러 개(reliability), 회선마다 다른 추적 주소, 목적지·포트 규칙, "그 회선만"(끊기면 드롭) policy
+import { type Ip, sameSubnet } from "../addr";
 import type { NodeContext } from "./node";
 
 export const MWAN_TIMER_TAG = "mwan-tick";
@@ -21,6 +23,16 @@ export const MWAN_ICMP_ID = 0x4d57;
 
 export type WanName = "wan" | "wan2";
 export const WAN_LABEL: Record<WanName, string> = { wan: "WAN1", wan2: "WAN2" };
+
+/** 정책 규칙: 출발지가 이 대역이면 이 회선으로 */
+export interface MwanRule {
+  src: { ip: Ip; prefix: number };
+  line: WanName;
+}
+
+export function mwanRuleLabel(r: MwanRule): string {
+  return `${r.src.ip}/${r.src.prefix} → ${WAN_LABEL[r.line]}`;
+}
 
 interface LineState {
   /** 지금 살아 있다고 보는지 */
@@ -49,6 +61,10 @@ export class MultiWan {
   readonly lines: Record<WanName, LineState> = { wan: fresh(), wan2: fresh() };
   /** 지금 내보내는 회선 */
   active: WanName = "wan";
+  /** 정책 규칙 (위에서부터) */
+  rules: MwanRule[] = [];
+  /** 규칙마다 그 규칙으로 회선을 고른 새 흐름 수 */
+  hits: number[] = [];
   private seq = 0;
   private tick = 0;
 
@@ -68,6 +84,26 @@ export class MultiWan {
     ctx.trace("mwan.config", "sys", `멀티 WAN (페일오버) 켜짐: WAN1 이 주 회선, WAN2(lan4) 가 예비. ${track ? `${MWAN_INTERVAL / 1000}초마다 회선마다 ${track} 에 ping — ${MWAN_DOWN}번 이어 실패하면 끊김, ${MWAN_UP}번 이어 답하면 살아남` : "추적 주소가 없어 링크·주소만 본다"}`, { track: track ?? "" });
     this.decide(ctx, "설정");
     this.arm(ctx);
+  }
+
+  /** 정책 규칙을 바꿈 (적중 수는 처음부터) */
+  setRules(rules: MwanRule[], ctx: NodeContext): void {
+    if (rules.length === this.rules.length && rules.every((r, i) => mwanRuleLabel(r) === mwanRuleLabel(this.rules[i]!))) return;
+    this.rules = rules.map((r) => ({ src: { ...r.src }, line: r.line }));
+    this.hits = rules.map(() => 0);
+    if (this.enabled) ctx.trace("mwan.config", "sys", rules.length ? `멀티 WAN 정책 규칙: ${rules.map(mwanRuleLabel).join(", ")} — 출발지가 맞으면 그 회선으로 (끊겼으면 지금 회선), 나머지는 페일오버대로` : `멀티 WAN 정책 규칙 없음 → 모든 새 연결은 지금 회선으로`, { rules: rules.length });
+  }
+
+  /** 출발지가 처음 맞는 규칙 */
+  ruleFor(src: Ip): { rule: MwanRule; index: number } | undefined {
+    if (!this.enabled) return undefined;
+    const index = this.rules.findIndex((r) => sameSubnet(src, r.src.ip, r.src.prefix));
+    return index < 0 ? undefined : { rule: this.rules[index]!, index };
+  }
+
+  /** 표시용: mwan3 status 의 규칙 줄 */
+  ruleRows(): string[][] {
+    return this.rules.map((r, i) => [`${i + 1}`, `${r.src.ip}/${r.src.prefix}`, WAN_LABEL[r.line], this.lines[r.line].online ? "그 회선으로" : `끊김 → ${WAN_LABEL[this.active]}`, `${this.hits[i] ?? 0}`]);
   }
 
   private arm(ctx: NodeContext): void {

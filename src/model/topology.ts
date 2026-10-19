@@ -813,6 +813,14 @@ export interface RouterWan2Settings extends WanSettings {
   enabled: boolean;
   /** 회선이 살았는지 ping 할 주소 (비우면 링크·주소만 본다) */
   track: string;
+  /** 정책 규칙 (mwan3 rule): 출발지 대역 → 회선, 위에서부터 처음 맞는 것. 없으면 페일오버만 */
+  rules?: MwanRuleSetting[];
+}
+
+/** 멀티 WAN 정책 규칙: src = 출발지 대역 (CIDR, 주소 하나면 /32) */
+export interface MwanRuleSetting {
+  src: string;
+  line: "wan" | "wan2";
 }
 
 export const DEFAULT_ROUTER_WAN2: RouterWan2Settings = { enabled: true, ipMode: "dhcp", ip: "", prefix: 24, gateway: "", track: "8.8.8.8" };
@@ -905,6 +913,13 @@ function normalizeWan2(v: Partial<RouterWan2Settings>): RouterWan2Settings {
     prefix: typeof v.prefix === "number" && Number.isInteger(v.prefix) && v.prefix >= 1 && v.prefix <= 32 ? v.prefix : 24,
     gateway: str(v.gateway),
     track: typeof v.track === "string" ? v.track : "8.8.8.8",
+    ...(Array.isArray(v.rules)
+      ? {
+          rules: (v.rules as unknown[])
+            .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+            .map((x) => ({ src: str(x.src), line: x.line === "wan" ? ("wan" as const) : ("wan2" as const) })),
+        }
+      : {}),
   };
 }
 

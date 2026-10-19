@@ -8,7 +8,7 @@ import { exampleTwoGatewaysTopology, exampleBackboneTopology, exampleRipTopology
 import { exampleIgmpTopology, exampleHubTopology, exampleVlanTopology, exampleStpTopology } from "./examples/l2";
 import { exampleDropInTopology, exampleFirewallTopology, exampleFirewallApplianceTopology, exampleHaTopology } from "./examples/security";
 import { exampleSipTopology, exampleLoadBalancerTopology, exampleProxyTopology, exampleDockerTopology, exampleAdguardTopology } from "./examples/services";
-import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology, exampleMultiWanTopology } from "./examples/internet";
+import { exampleInternetTopology, examplePublishTopology, exampleNatTraversalTopology, exampleVpnTopology, exampleNcpVpnTopology, exampleRemoteVpnTopology, exampleIptimeVpnTopology, exampleMultiWanPolicyTopology, exampleMultiWanTopology } from "./examples/internet";
 import { exampleDdnsTopology, exampleDpiTopology, exampleK3sTailscaleTopology, exampleOpenVpnTopology, exampleTailscaleTopology, exampleTorTopology, exampleWireguardTopology } from "./examples/vpn";
 import { exampleRoamingTopology } from "./examples/wireless";
 import { exampleCompanyTopology } from "./examples/overview";
@@ -26,7 +26,7 @@ export * from "./examples/wireless";
 export * from "./examples/ipv6";
 export * from "./examples/overview";
 
-export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "igmp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "k3s" | "tor" | "dpi" | "lb" | "proxy" | "adguard" | "sip" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
+export type ExampleId = "starter" | "router" | "parts" | "backbone" | "rip" | "gateways" | "hub" | "vlan" | "stp" | "igmp" | "firewall" | "fwbox" | "dropin" | "ha" | "publish" | "p2p" | "mwan" | "mwanvpn" | "internet" | "vpn" | "ncp" | "remote" | "iptime" | "wireguard" | "ddns" | "openvpn" | "tailscale" | "k3s" | "tor" | "dpi" | "lb" | "proxy" | "adguard" | "sip" | "roaming" | "docker" | "ipv6" | "slaac" | "dualstack" | "home6" | "company";
 
 export interface ExampleSpec {
   id: ExampleId;
@@ -193,6 +193,13 @@ export const EXAMPLES: Record<ExampleId, ExampleSpec> = {
     label: "멀티 WAN 페일오버 (유선 + 휴대폰 핫스팟)",
     blurb: "사무실 Brume 3 은 lan4 를 WAN2 로 바꿔 휴대폰 핫스팟을 예비 회선으로 꽂았습니다(표 탭의 멀티 WAN). 사무실 PC 에서 8.8.8.8 로 ping 하면 유선(WAN1)으로 나갑니다. Brume 3 ↔ 통신사 구간 케이블의 손실을 100% 로 바꾸고(링크는 살아 있는데 인터넷이 안 되는 장애) \"+10초\" 를 두어 번 누르면, 5초마다 보내던 추적 ping 이 3번 실패한 뒤 WAN2 로 넘어갑니다. 다시 ping 하면 핫스팟을 거쳐 다른 공인 주소로 나갑니다. 손실을 0% 로 되돌리면 추적 ping 이 2번 답한 뒤 WAN1 으로 돌아옵니다. 케이블을 지우면 기다리지 않고 바로 넘어갑니다.",
     build: exampleMultiWanTopology,
+  },
+  mwanvpn: {
+    id: "mwanvpn",
+    group: "인터넷",
+    label: "VPN 은 WAN1, 인터넷은 WAN2 (멀티 WAN 정책 규칙)",
+    blurb: "집 Brume 3 은 WAN1(고정 공인 주소 203.0.113.30)에서 WireGuard 서버를 열고, lan4 를 WAN2 로 바꿔 다른 통신사의 5G 라우터를 꽂았습니다. 멀티 WAN 의 정책 규칙 \"10.0.0.0/24 → WAN2\" 가 VPN 대역의 인터넷 트래픽만 WAN2 로 보냅니다. 카페 폰(WireGuard 앱, 모든 트래픽을 터널로)에서 8.8.8.8 로 ping 해 보세요 — 암호화된 UDP 51820 은 WAN1 으로 오가고, 집에서 풀린 ping 은 5G 라우터를 거쳐 다른 공인 주소로 나갑니다(표 탭의 mwan3 rules·NAT 테이블 (WAN2)). 집 NAS 에서 8.8.8.8 로 ping 하면 규칙이 없어 WAN1 으로 나갑니다. 규칙을 지우면 폰의 트래픽도 WAN1 으로, 5G 라우터 케이블을 지우면 규칙의 회선이 끊겨 지금 회선(WAN1)으로 나갑니다.",
+    build: exampleMultiWanPolicyTopology,
   },
   vpn: {
     id: "vpn",

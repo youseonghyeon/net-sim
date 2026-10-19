@@ -234,3 +234,16 @@ describe("HTTPS·CONNECT", () => {
     expect(practitionerLines(deny, {})[0]!.line).toContain("TCP_DENIED/403 200 CONNECT naver.com:443 - HIER_NONE/- text/html");
   });
 });
+
+describe("멀티 WAN 정책 규칙", () => {
+  it("규칙으로 회선을 고른 전달은 mwan3 status 의 user rules 줄 (규칙이 없으면 없음)", () => {
+    const L = loadTopology(EXAMPLES.mwanvpn.build());
+    const tr = L.act({ kind: "ping", nodeId: L.id("카페 폰"), dst: "8.8.8.8" });
+    const fwd = tr.find((e) => e.nodeId === L.id("집 Brume 3") && e.kind === "ip.forward" && e.details?.rule !== undefined)!;
+    const line = practitionerLines(fwd, L.s.net.framesAt(fwd.packetId!, fwd.nodeId, fwd.time)).find((l) => l.tool === "OpenWrt mwan3 status")!.line;
+    expect(line).toBe("Active ipv4 user rules:\n    1     - wan2_wan  all  --  *      *       10.0.0.0/24          0.0.0.0/0");
+    const tr2 = L.act({ kind: "ping", nodeId: L.id("집 NAS"), dst: "8.8.8.8" });
+    const f2 = tr2.find((e) => e.nodeId === L.id("집 Brume 3") && e.kind === "ip.forward" && e.details?.dst === "8.8.8.8")!;
+    expect(practitionerLines(f2, L.s.net.framesAt(f2.packetId!, f2.nodeId, f2.time)).some((l) => l.tool === "OpenWrt mwan3 status")).toBe(false);
+  });
+});

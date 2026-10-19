@@ -7,6 +7,7 @@ import {
   DEFAULT_ROUTER_IPV6,
   DEFAULT_ROUTER_VPN_SERVER,
   DEFAULT_ROUTER_WAN2,
+  type MwanRuleSetting,
   type RouterWan2Settings,
   DEFAULT_WAN,
   type Device,
@@ -23,6 +24,7 @@ import { FirewallSection, ForwardSection, NatTypeSection } from "./rules";
 import { Icon } from "../Icons";
 import { ConfigGroups, Field, IfaceFields, Section, Toggle, ipError, validIp } from "./ui";
 import { WAN_LABEL } from "../../core/nodes/mwan";
+import { parseCidr } from "../../model/netSync";
 import { DdnsSection, WgClientSection, WgServerSection } from "./wg";
 import { OvpnServerSection } from "./ovpn";
 import { MeshSection } from "./mesh";
@@ -325,6 +327,8 @@ export function MultiWanSection({ d, r }: { d: Device; r: RouterSettings }) {
   const w = r.wan2 ?? { ...DEFAULT_ROUTER_WAN2, enabled: false };
   const set = (patch: Partial<RouterWan2Settings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, wan2: { ...(x.router!.wan2 ?? DEFAULT_ROUTER_WAN2), ...patch } } }));
   const node = sim.node(d.id);
+  const rules = w.rules ?? [];
+  const setRules = (next: MwanRuleSetting[]) => set({ rules: next });
   return (
     <Section title="멀티 WAN">
       <label class="toggle-row">
@@ -353,11 +357,38 @@ export function MultiWanSection({ d, r }: { d: Device; r: RouterSettings }) {
               </b>
             </div>
           )}
-          <p class="note">5초마다 회선마다 추적 주소에 ping 해 3번 이어 답이 없으면 끊긴 것으로 보고, 끊긴 회선이 2번 이어 답하면 살아난 것으로 봅니다(시간이 흐를 때만 — "+10초"). 넘어가면 공인 주소가 바뀌어 끊긴 회선으로 오가던 연결은 끊깁니다(살아 있는 회선의 연결은 그대로). L2TP VPN 서버·IPv6·이 공유기 자신의 이름 해석은 WAN1 만 씁니다(WireGuard 는 지금 회선을 따라갑니다).</p>
+          <p class="note">5초마다 회선마다 추적 주소에 ping 해 3번 이어 답이 없으면 끊긴 것으로 보고, 끊긴 회선이 2번 이어 답하면 살아난 것으로 봅니다(시간이 흐를 때만 — "+10초"). 넘어가면 공인 주소가 바뀌어 끊긴 회선으로 오가던 연결은 끊깁니다(살아 있는 회선의 연결은 그대로). L2TP VPN 서버·IPv6·이 공유기 자신의 이름 해석은 WAN1 만 씁니다(WireGuard 서버는 상대가 보내온 회선으로 답하고 그 회선이 끊기면 지금 회선으로 옮겨 가며, WireGuard 클라이언트는 지금 회선을 따라갑니다).</p>
+          <h3 class="sub">정책 규칙</h3>
+          {rules.length === 0 && <p class="note">출발지 대역마다 나갈 회선을 정합니다(mwan3 rule). 예를 들어 WireGuard 서버 대역(10.0.0.0/24)을 WAN2 로 두면 VPN 은 WAN1 으로 받고, 터널에서 풀린 인터넷 트래픽은 WAN2 로 나갑니다. 규칙이 없으면 모든 새 연결이 지금 회선으로 나갑니다.</p>}
+          {rules.map((x, i) => (
+            <div key={i} class="lb-row mwan-rule">
+              <input class="input mono" value={x.src} placeholder="10.0.0.0/24" title="출발지 대역 (주소 하나면 /32)" onInput={(e) => setRules(rules.map((y, k) => (k === i ? { ...y, src: e.currentTarget.value } : y)))} />
+              <span class="mono muted">→</span>
+              <select class="input" value={x.line} title="나갈 회선" onChange={(e) => setRules(rules.map((y, k) => (k === i ? { ...y, line: e.currentTarget.value as MwanRuleSetting["line"] } : y)))}>
+                <option value="wan">{WAN_LABEL.wan}</option>
+                <option value="wan2">{WAN_LABEL.wan2}</option>
+              </select>
+              <button class="icon-btn" title="규칙 삭제" onClick={() => setRules(rules.filter((_, k) => k !== i))}>
+                <Icon name="trash" size={15} />
+              </button>
+              {cidrError(x.src) && <div class="error lb-error">{cidrError(x.src)}</div>}
+            </div>
+          ))}
+          <button class="btn wide" onClick={() => setRules([...rules, { src: "", line: "wan2" }])}>
+            <Icon name="plus" size={14} />
+            규칙 추가
+          </button>
+          {rules.length > 0 && <p class="note">위에서부터 처음 맞는 규칙의 회선으로 나갑니다. 그 회선이 끊겨 있으면 지금 회선으로 나갑니다. 이미 시작한 연결은 규칙을 바꿔도 처음 나간 회선을 계속 씁니다. 출발지는 NAT 전 주소라 LAN 기기와 VPN 으로 붙은 기기(WireGuard·OpenVPN·메시 대역) 모두 고를 수 있습니다.</p>}
         </>
       )}
     </Section>
   );
+}
+
+/** 정책 규칙의 출발지 칸: IPv4 주소 또는 대역 */
+function cidrError(v: string): string | undefined {
+  if (!v.trim()) return "출발지 대역을 적으세요 (예: 10.0.0.0/24)";
+  return parseCidr(v, 32) ? undefined : "대역이 아닙니다 (예: 10.0.0.0/24, 주소 하나면 192.168.8.50)";
 }
 
 export function WanSection({ d, w }: { d: Device; w: WanSettings }) {

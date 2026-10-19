@@ -1011,6 +1011,10 @@ select.btn.example {
 .lb-row.proxy-row {
   grid-template-columns: minmax(0, 1fr) 30px;
 }
+/* 멀티 WAN 정책 규칙: 출발지 → 회선(WAN1·WAN2 가 다 보이게) */
+.lb-row.mwan-rule {
+  grid-template-columns: minmax(0, 1fr) auto 96px 30px;
+}
 .lb-error {
   grid-column: 1 / -1;
 }

@@ -1,5 +1,5 @@
 // 토폴로지(편집 모델) → Network(코어) 변환과 diff 동기화. 신호·DOM 에 의존하지 않아 유닛 테스트가 가능하다.
-import { ipToInt } from "../core/addr";
+import { ipToInt, networkOf } from "../core/addr";
 import { canonIp6, isLinkLocal6 } from "../core/addr6";
 import type { Ipv6Settings } from "../core/nodes/ipv6";
 import { Network } from "../core/network";
@@ -501,6 +501,11 @@ export function effectiveRouter(d: Device, current?: Router) {
         enabled: w2?.enabled === true,
         ...(w2?.ipMode === "static" ? { mode: "static" as const, ip: validIp(w2.ip), prefix: w2.prefix, gateway: validIp(w2.gateway) } : { mode: "dhcp" as const }),
         ...(validIp(w2?.track?.trim()) ? { track: w2!.track.trim() } : {}),
+        // 정책 규칙: 대역을 읽을 수 없는 줄(편집 중·잘못 적음 — 구성 검사 mwan.rule-invalid)은 뺀다
+        rules: (w2?.rules ?? []).flatMap((x) => {
+          const c = parseCidr(x.src, 32);
+          return c ? [{ src: { ip: networkOf(c.ip, c.prefix), prefix: c.prefix }, line: x.line }] : [];
+        }),
       };
     })(),
     mesh: effectiveMesh(d),
