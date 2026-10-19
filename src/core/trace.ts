@@ -275,6 +275,8 @@ export type TraceKind =
   | "ha.backup"
   | "ha.sync"
   | "ssh.open"
+  | "ssh.jump"
+  | "ssh.jump.fail"
   | "stp.config"
   | "stp.bpdu"
   | "stp.root"
@@ -310,6 +312,7 @@ export const BAD_KINDS: ReadonlySet<TraceKind> = new Set<TraceKind>([
   "tcp.out-of-order",
   "proxy.deny",
   "proxy.fail",
+  "ssh.jump.fail",
   "tls.fail",
   "arp.timeout",
   "ndp.timeout",

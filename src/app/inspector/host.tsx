@@ -285,6 +285,24 @@ export function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
         <Toggle on={has(22)} onToggle={() => toggle(22)} />
       </label>
       {has(22) && <p class="note">포트 22 로 연결을 받습니다. 진단에서 TCP 22 로 연결해 보세요(연결 과정만 보여 주고, 암호화된 SSH 대화 내용은 다루지 않습니다).</p>}
+      {(has(22) || h.sshJump === true) && (
+        <>
+          <label class="toggle-row">
+            <span>
+              SSH 점프 허용 <span class="mono muted">AllowTcpForwarding</span>
+              <small class="muted">ssh -J 의 중간 서버 (bastion)</small>
+            </span>
+            <Toggle on={h.sshJump === true} onToggle={() => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, sshJump: !(x.host!.sshJump === true) } }))} />
+          </label>
+          {h.sshJump === true && (
+            <p class={`note${has(22) ? "" : " error-note"}`}>
+              {has(22)
+                ? "이 서버에 SSH 로 로그인한 사용자가 이 서버를 거쳐 다른 서버로 접속할 수 있습니다(ssh -J). 대상에게는 이 서버가 접속한 것으로 보여, 안쪽 망의 방화벽은 이 서버에서 오는 22 만 열면 됩니다. 접속 기록은 표 탭의 SSH 점프 기록에 남습니다."
+                : "SSH 서버(22)가 꺼져 있어 아무도 로그인할 수 없으니 점프도 할 수 없습니다. 위의 SSH 서버를 켜세요."}
+            </p>
+          )}
+        </>
+      )}
       <label class="toggle-row">
         <span>
           HTTPS 서버 <span class="mono muted">TCP 443</span>

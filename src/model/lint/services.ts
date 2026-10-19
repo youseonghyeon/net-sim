@@ -1,4 +1,4 @@
-// 서비스 규칙: 포트 포워딩 대상이 그 포트를 열지 않음, 공유기 DNS 포워더 꺼짐, HTTP 프록시 설정이 가리키는 곳에 프록시 없음.
+// 서비스 규칙: 포트 포워딩 대상이 그 포트를 열지 않음, 공유기 DNS 포워더 꺼짐, HTTP 프록시 설정이 가리키는 곳에 프록시 없음, SSH 점프를 허용했는데 SSH 서버가 꺼짐.
 import { natOn, type Device } from "../topology";
 import { validIp, validPort } from "./addr";
 import type { LintContext } from "./context";
@@ -103,5 +103,13 @@ export function proxyPortClashRule({ t, add }: LintContext): void {
       message: `프록시 포트 ${p.port} 를 이 장비의 로드밸런서도 받음 → 로드밸런서가 먼저 받아 요청 대상과 상관없이 자기 백엔드로 보냄 (프록시로 동작하지 않음)`,
       fix: `${d.name} → 서비스에서 프록시 포트(보통 3128)나 로드밸런서 포트를 바꾸기`,
     });
+  }
+}
+
+// SSH 점프를 허용했는데 SSH 서버(22)가 꺼져 있음: 아무도 로그인할 수 없어 점프도 못 한다
+export function sshJumpRule({ t, add }: LintContext): void {
+  for (const d of t.devices) {
+    if (d.host?.sshJump !== true || (d.host.services ?? []).includes(22)) continue;
+    add({ deviceId: d.id, severity: "warn", code: "ssh.jump-no-sshd", message: `SSH 점프를 허용했는데 SSH 서버(TCP 22)가 꺼져 있음 → 아무도 로그인할 수 없어 ssh -J 가 연결 거부(RST)로 끝남`, fix: `${d.name} → 서비스 → SSH 서버 켜기` });
   }
 }

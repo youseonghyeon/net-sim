@@ -363,9 +363,9 @@ function P2pDiag({ d, node, peer, setPeer }: { d: Device; node: Host; peer: stri
 
 /** ping, TCP 연결, DHCP 임대 갱신 */
 /** 진단 입력값을 장치별로 기억 (다른 장치에 갔다 와도 마지막 값이 남는다) */
-export const diagMemory = new Map<string, { ping?: string; tcp?: string; port?: string; inet?: string; inetPort?: string; p2p?: string; dns?: string; dnsServer?: string; dnsType?: string; pingCount?: string }>();
+export const diagMemory = new Map<string, { ping?: string; tcp?: string; port?: string; jump?: string; inet?: string; inetPort?: string; p2p?: string; dns?: string; dnsServer?: string; dnsType?: string; pingCount?: string }>();
 
-export function useDiagField(deviceId: string, key: "ping" | "tcp" | "port" | "inet" | "inetPort" | "p2p" | "dns" | "dnsServer" | "dnsType" | "pingCount", initial: string): [string, (v: string) => void] {
+export function useDiagField(deviceId: string, key: "ping" | "tcp" | "port" | "jump" | "inet" | "inetPort" | "p2p" | "dns" | "dnsServer" | "dnsType" | "pingCount", initial: string): [string, (v: string) => void] {
   const mem = diagMemory.get(deviceId) ?? {};
   const [v, setV] = useState(mem[key] ?? initial);
   const set = (next: string) => {
@@ -382,6 +382,7 @@ export function DiagSection({ d }: { d: Device }) {
   const [pingCount, setPingCount] = useDiagField(d.id, "pingCount", "1");
   const [tcpDst, setTcpDst] = useDiagField(d.id, "tcp", "");
   const [tcpPort, setTcpPort] = useDiagField(d.id, "port", "80");
+  const [tcpJump, setTcpJump] = useDiagField(d.id, "jump", "");
   const [p2pPeer, setP2pPeer] = useDiagField(d.id, "p2p", "");
   if (!(node instanceof Host)) return null;
 
@@ -399,11 +400,18 @@ export function DiagSection({ d }: { d: Device }) {
   };
   const tr = node.traceroutes.at(-1);
   const port = Math.min(65535, Math.max(1, Number(tcpPort) || 80));
+  // ssh -J: SSH(22)일 때만 점프 서버 칸을 쓴다
+  const jump = port === 22 ? tcpJump.trim() : "";
   const connect = () => {
     const dst = tcpDst.trim();
-    if (!dst || !okTarget(dst)) return;
-    sim.act({ kind: "tcp-connect", nodeId: d.id, dst, port });
+    if (!dst || !okTarget(dst) || (jump && !okTarget(jump))) return;
+    sim.act({ kind: "tcp-connect", nodeId: d.id, dst, port, ...(jump ? { jump } : {}) });
   };
+  // 점프 서버 후보: SSH 점프를 허용한 서버
+  const jumpHosts = port === 22 ? topology.value.devices.flatMap((x) => {
+    const n = sim.node(x.id);
+    return x.id !== d.id && n instanceof Host && n.jump.enabled && n.ip ? [{ ip: n.ip, name: x.name }] : [];
+  }) : [];
   return (
     <Section>
       <div class="ping-row">
@@ -467,11 +475,23 @@ export function DiagSection({ d }: { d: Device }) {
       <div class="ping-row tcp-row">
         <TargetPicker value={tcpDst} onInput={setTcpDst} onSubmit={connect} placeholder="서버 주소 또는 이름" load={() => probeTargetsCached(topology.peek(), d.id, "tcp", port)} />
         <input class="input mono port" type="number" min={1} max={65535} value={tcpPort} onInput={(e) => setTcpPort(e.currentTarget.value)} title="포트" />
-        <button class="btn" onClick={connect} title={port === 22 ? "SSH 접속 (3-way handshake → 버전·키 교환·인증 → 세션을 열어 둠)" : port === 443 ? "HTTPS 연결 (3-way handshake → TLS 핸드셰이크 → 암호화된 요청·응답 → 종료)" : "TCP 연결 (3-way handshake → 요청 → 응답 → 종료)"}>
+        <button class="btn" onClick={connect} title={jump ? `ssh -J ${jump}: 점프 서버에 먼저 로그인한 뒤 그 서버가 대상까지 이어 준 채널 위에서 대상과 SSH` : port === 22 ? "SSH 접속 (3-way handshake → 버전·키 교환·인증 → 세션을 열어 둠)" : port === 443 ? "HTTPS 연결 (3-way handshake → TLS 핸드셰이크 → 암호화된 요청·응답 → 종료)" : "TCP 연결 (3-way handshake → 요청 → 응답 → 종료)"}>
           <Icon name="send" size={14} />
           {port === 22 ? "SSH 접속" : port === 443 ? "HTTPS 연결" : "연결"}
         </button>
       </div>
+      {port === 22 && (
+        <div class="ping-row dns-server-row jump-row">
+          <input class="input mono" list={`jumps-${d.id}`} value={tcpJump} placeholder="점프 서버 (비우면 바로 접속 · ssh -J)" onInput={(e) => setTcpJump(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && connect()} title="ssh -J: 이 서버에 먼저 로그인해 대상까지 이어 달라고 합니다" />
+          <datalist id={`jumps-${d.id}`}>
+            {jumpHosts.map((x) => (
+              <option key={x.ip} value={x.ip}>
+                {x.name}
+              </option>
+            ))}
+          </datalist>
+        </div>
+      )}
       {(() => {
         const clients = [...node.tcp.conns.values()].filter((c) => c.role === "client" && !c.probe);
         // 열린 SSH 세션은 오래됐어도 항상 보인다 (연결 해제 버튼)
@@ -486,9 +506,9 @@ export function DiagSection({ d }: { d: Device }) {
               const cookie = c.setCookie ? ` · 쿠키 받음` : c.cookie ? ` · 쿠키 보냄` : "";
               return (
                 <li key={c.id} class={c.state === "FAILED" || httpErr ? "failed" : (c.state === "CLOSED" && c.bytesReceived > 0) || (c.ssh?.open && c.state === "ESTABLISHED") ? "ok" : ""} title={c.setCookie ? `Set-Cookie: ${c.setCookie}` : c.cookie ? `Cookie: ${c.cookie}` : undefined}>
-                  <span class="mono" title={c.target ? `프록시 ${c.remoteIp}:${c.remotePort} 경유` : undefined}>
-                    {c.target ?? endpoint(c.remoteIp, c.remotePort)}
-                    {c.target && <small class="via">프록시 경유</small>}
+                  <span class="mono" title={c.jump ? `점프 서버 ${c.remoteIp} 경유 (ssh -J)` : c.target ? `프록시 ${c.remoteIp}:${c.remotePort} 경유` : undefined}>
+                    {c.jump ? c.jump.target : (c.target ?? endpoint(c.remoteIp, c.remotePort))}
+                    {c.jump ? <small class="via">점프 {c.remoteIp} 경유</small> : c.target && <small class="via">프록시 경유</small>}
                   </span>
                   <span>
                     {c.state === "FAILED"
@@ -497,7 +517,11 @@ export function DiagSection({ d }: { d: Device }) {
                         ? `${c.status}${c.servedBy ? ` · ${c.servedBy}` : ""}`
                         : c.state === "CLOSED"
                           ? `종료됨 · 받음 ${c.bytesReceived}B${c.servedBy ? ` · 응답 ${c.servedBy}` : ""}${cookie}`
-                          : c.ssh?.open && c.state === "ESTABLISHED"
+                          : c.jump && c.jump.state !== "up" && c.state === "ESTABLISHED"
+                            ? c.jump.state === "wait"
+                              ? "점프 서버가 대상에 연결하는 중"
+                              : `점프 서버에 로그인 중 (${c.ssh?.step ?? 0}/6)`
+                            : c.ssh?.open && c.state === "ESTABLISHED"
                             ? "SSH 세션 열림"
                             : c.ssh && c.state === "ESTABLISHED"
                               ? `SSH 키 교환 중 (${c.ssh.step}/6)`
@@ -520,7 +544,7 @@ export function DiagSection({ d }: { d: Device }) {
       })()}
       {node.p2p.config.enabled && <P2pDiag d={d} node={node} peer={p2pPeer} setPeer={setP2pPeer} />}
       <p class="note">
-        TCP 연결은 3-way handshake 뒤 "GET /" 요청을 보내고, 서버 응답 3세그먼트를 받은 다음 FIN 으로 닫습니다. 포트 443 은 HTTPS 로, TLS 핸드셰이크 뒤 같은 요청·응답을 암호화해 주고받습니다. 포트 22 는 SSH 로, 키 교환·인증 뒤 세션을 열어 둡니다 — 그 사이 경로를 바꿔 보고 "연결 해제" 로 닫아 보세요. 자세한 기록은 "표" 탭의 TCP 연결 표와 로그에서 봅니다.
+        TCP 연결은 3-way handshake 뒤 "GET /" 요청을 보내고, 서버 응답 3세그먼트를 받은 다음 FIN 으로 닫습니다. 포트 443 은 HTTPS 로, TLS 핸드셰이크 뒤 같은 요청·응답을 암호화해 주고받습니다. 포트 22 는 SSH 로, 키 교환·인증 뒤 세션을 열어 둡니다 — 그 사이 경로를 바꿔 보고 "연결 해제" 로 닫아 보세요. 점프 서버를 적으면 그 서버에 먼저 로그인해 대상까지 이어 달라고 합니다(ssh -J). 자세한 기록은 "표" 탭의 TCP 연결 표와 로그에서 봅니다.
       </p>
       {node.ipMode === "dhcp" && (
         <button class="btn wide" onClick={() => sim.act({ kind: "dhcp-renew", nodeId: d.id })} disabled={!node.linkUp}>

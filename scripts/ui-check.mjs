@@ -1007,6 +1007,32 @@ section("stp", async () => {
 });
 
 // 재택근무 원격 접속 VPN: 노트북이 접속(배지), 사내 서버로 SSH
+// 망분리 재택 접속: 재택 노트북 → VPN → ssh -J 점프 서버 → 내부망 PC 1. 점프 서버의 "SSH 점프 허용" 토글, 표의 SSH 점프 기록
+section("ncpjump", async () => {
+  await loadEx("ncpjump");
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => [...document.querySelectorAll("[data-device]")].some((el) => /재택 노트북/.test(el.textContent ?? "") && /VPN 연결됨/.test(el.textContent ?? "")), null, { timeout: 30000 });
+  await page.screenshot({ path: `${OUT}/55a-ncpjump.png` });
+  await clickDevice("재택 노트북");
+  await goTab("진단");
+  await page.fill(".tcp-row .input:not(.port)", "10.50.10.1");
+  await page.keyboard.press("Escape");
+  await page.fill(".tcp-row .input.port", "22");
+  await page.fill(".jump-row .input", "10.255.1.10");
+  await page.click(".tcp-row .btn");
+  await page.click(".transport .ff"); // 홉이 많아 애니메이션을 기다리지 않고 10초를 흘려보낸다
+  await page.waitForFunction(() => /세션 열림|실패/.test(document.querySelector(".inspector .tcp-log li")?.textContent ?? ""), null, { timeout: 60000 });
+  console.log("ncpjump ssh -J:", (await page.locator(".inspector .tcp-log li").first().innerText()).replace(/\s+/g, " "));
+  await page.screenshot({ path: `${OUT}/55b-ncpjump-diag.png` });
+  await clickDevice("점프 서버");
+  await goTab("표");
+  const jt = page.locator(".inspector .section", { hasText: "SSH 점프 기록" });
+  console.log("ncpjump log:", (await jt.locator("tbody tr").allInnerTexts()).map((r) => r.replace(/\s+/g, " ")));
+  await goTab("설정");
+  const svc = page.locator(".inspector section", { has: page.locator("h3", { hasText: /^서비스$/ }) });
+  console.log("ncpjump toggle:", (await svc.locator(".toggle-row", { hasText: "SSH 점프 허용" }).count()) === 1 ? "yes" : "NO");
+});
+
 section("remote", async () => {
   await loadEx("remote");
   await page.locator(".toast").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});

@@ -50,7 +50,7 @@ export type ActionSpec =
   /** nslookup: 캐시를 거치지 않고 DNS 서버에 그 이름의 A·AAAA 를 묻는다. server 가 있으면 그 서버에, 없으면 설정된 DNS 에 */
   | { kind: "dns-lookup"; nodeId: string; name: string; qtype: "A" | "AAAA"; server?: Ip }
   | { kind: "dhcp-renew"; nodeId: string }
-  | { kind: "tcp-connect"; nodeId: string; dst: Ip; port: number }
+  | { kind: "tcp-connect"; nodeId: string; dst: Ip; port: number; jump?: string }
   /** 원격 접속 VPN 다시 연결 (실패했거나 서버가 다시 켜졌을 때) */
   | { kind: "ra-reconnect"; nodeId: string }
   /** IPsec 상대 확인 (DPD, 빈 INFORMATIONAL): 게이트웨이·NAT 박스면 사이트 간 VPN 의 상대, 호스트면 원격 접속 서버 */
@@ -384,8 +384,8 @@ export class Network {
         this.getHost(action.nodeId).renewDhcp(ctx);
         break;
       case "tcp-connect":
-        ctx.trace("action", "sys", `[사용자] ${action.dst}:${action.port} 에 TCP 연결`, { ...action });
-        this.getHost(action.nodeId).connect(action.dst, action.port, ctx);
+        ctx.trace("action", "sys", action.jump ? `[사용자] ssh -J ${action.jump} ${action.dst}${action.port !== 22 ? ` -p ${action.port}` : ""}` : `[사용자] ${action.dst}:${action.port} 에 TCP 연결`, { ...action });
+        this.getHost(action.nodeId).connect(action.dst, action.port, ctx, action.jump);
         break;
       case "p2p-connect":
         ctx.trace("action", "sys", `[사용자] P2P 연결 → ${action.peer}`, { ...action });

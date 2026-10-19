@@ -8,6 +8,8 @@
 //   중간 장비는 SNI 와 길이만 보고, 요청·응답 내용은 두 끝만 안다
 // - 프록시 CONNECT: 끝 클라이언트가 프록시에게 "CONNECT 호스트:443" → 200 Connection established 뒤 같은 연결로 대상과 TLS.
 //   프록시의 두 연결(relay)은 앱 흉내 없이 받은 것을 앱(proxy.ts)에게 넘겨 반대편으로 그대로 보낸다
+// - SSH 점프 (ssh -J 점프서버 대상): 점프 서버와 SSH 세션을 연 뒤 "대상:포트 로 채널을 열어 달라"(direct-tcpip) 고 부탁하고,
+//   점프 서버(sshjump.ts)가 대상에 TCP 를 열어 두 연결을 잇는다. 그 채널 위에서 대상과 SSH 를 처음부터 다시 맺는다 (대상에게는 점프 서버가 클라이언트)
 import type { Ip } from "../addr";
 import { isIpv6 } from "../addr6";
 import { tcpFlags, type IpPacket, type TcpSegment } from "../packet";
@@ -49,6 +51,14 @@ const TLS_SERVER_HELLO = { len: 1400, data: "ServerHello·인증서·Finished" }
 const TLS_CLIENT_FINISHED = { len: 80, data: "Finished" };
 /** 프록시가 CONNECT 터널을 열었다는 응답 */
 export const CONNECT_ESTABLISHED = "HTTP 200 Connection established";
+/** SSH 점프: 클라이언트가 점프 서버에게 보내는 채널 열기 요청 (대상은 세그먼트의 target) */
+export const SSH_CHANNEL_OPEN = "SSH 채널 열기 요청 direct-tcpip";
+/** 점프 서버가 대상에 연결해 채널을 열었다는 응답 */
+export const SSH_CHANNEL_CONFIRM = "SSH 채널 열림 (CHANNEL_OPEN_CONFIRMATION)";
+/** 점프 서버가 채널을 열지 못했다는 응답의 머리 (뒤에 OpenSSH 의 이유) */
+export const SSH_CHANNEL_FAIL = "SSH 채널 열기 실패: ";
+/** 점프 채널 안의 SSH 메시지: 바깥 SSH 로 한 번 더 암호화돼 클라이언트 ↔ 점프 서버 구간에서는 이렇게 보인다 */
+export const SSH_CHANNEL_DATA = "SSH 채널 데이터 (바깥 SSH 로 암호화됨 · 안: ";
 /** SSH 세션을 여는 주고받기 (클라이언트 → 서버 → 클라이언트 → …). 마지막 서버 메시지를 받으면 세션이 열린다 */
 const SSH_STEPS: { from: "client" | "server"; len: number; data: string }[] = [
   { from: "client", len: 40, data: "SSH-2.0 버전 알림" },
@@ -108,6 +118,8 @@ export interface TcpConn {
   readTimer?: TimerHandle;
   /** SSH 흉내 (포트 22): 지금까지 주고받은 메시지 수, 세션이 열렸는지 */
   ssh?: { step: number; open: boolean };
+  /** 클라이언트의 SSH 점프 (ssh -J): 대상 "호스트:포트", 점프 서버와 세션을 여는 중 → 채널 응답 대기 → 채널 위에서 대상과 SSH */
+  jump?: { target: string; state: "login" | "wait" | "up" };
   /** 요청 메서드 CONNECT (클라이언트: 프록시에게 보냄, 서버: 받음) */
   method?: "CONNECT";
   /** 끝 클라이언트의 CONNECT 터널: 프록시의 응답을 기다림 → 열림 (그 뒤 이 연결로 대상과 TLS) */
@@ -136,6 +148,8 @@ export interface TcpHost {
   onFinish?(conn: TcpConn, ctx: NodeContext): void;
   /** 중계 연결(relay)이 맺어짐 (프록시가 CONNECT 대상에 연결됨) */
   onEstablished?(conn: TcpConn, ctx: NodeContext): void;
+  /** 열린 SSH 세션(서버)으로 채널 열기 요청(direct-tcpip)이 옴: true 면 앱(점프 서버)이 맡는다. 없거나 false 면 거절 (AllowTcpForwarding no) */
+  onChannelOpen?(conn: TcpConn, target: string, ctx: NodeContext): boolean;
   /** 중계 연결로 데이터(세그먼트)나 FIN(undefined)이 옴: 앱이 반대편 연결로 넘긴다 */
   onRelay?(conn: TcpConn, seg: TcpSegment | undefined, ctx: NodeContext): void;
 }
@@ -160,6 +174,8 @@ export interface ConnectOptions {
   onCreated?: (conn: TcpConn) => void;
   /** CONNECT: 프록시에게 target 까지 터널을 열어 달라고 한다 (HTTPS) */
   method?: "CONNECT";
+  /** SSH 점프 (ssh -J): 이 연결(점프 서버의 22)로 세션을 연 뒤 이 "호스트:포트" 로 채널을 열어 그 위에서 SSH */
+  jump?: string;
   /** 중계 연결: 맺어지면 요청을 보내지 않고 host.onEstablished, 받은 것은 host.onRelay 로 */
   relay?: boolean;
   /**
@@ -273,6 +289,7 @@ export class TcpStack {
       ...(method ? { method } : {}),
       ...(relay ? { relay } : {}),
       ...(probe ? { probe } : {}),
+      ...(opts.jump ? { jump: { target: opts.jump, state: "login" as const } } : {}),
     };
     this.conns.set(conn.id, conn);
     this.prune();
@@ -356,7 +373,7 @@ export class TcpStack {
             this.host.onEstablished?.(conn, ctx);
             return;
           }
-          if (conn.remotePort === SSH_PORT && conn.via === undefined) {
+          if ((conn.remotePort === SSH_PORT || conn.jump) && conn.via === undefined) {
             conn.ssh = { step: 0, open: false };
             this.sshNext(conn, ctx);
             return;
@@ -541,6 +558,21 @@ export class TcpStack {
       if (seg.target !== undefined) conn.target = seg.target;
       if (seg.method !== undefined) conn.method = seg.method;
     }
+    // SSH 점프: 점프 서버의 채널 응답 (열림이면 그 채널 위에서 대상과 SSH 를 처음부터)
+    if (conn.jump?.state === "wait" && conn.state === "ESTABLISHED") {
+      this.jumpReply(conn, seg, ctx);
+      return;
+    }
+    // 열린 SSH 세션(서버)으로 온 채널 열기 요청: 점프 서버 앱이 맡거나 거절
+    if (conn.role === "server" && conn.ssh?.open && seg.target !== undefined && conn.state === "ESTABLISHED") {
+      ctx.trace("ssh.jump", "app", `SSH 채널 열기 요청 수신: ${endpoint(conn.remoteIp, conn.remotePort)} 가 ${seg.target} 로 이어 달라고 함 (direct-tcpip — ssh -J)`, { conn: conn.id, target: seg.target, role: "jump", request: true });
+      if (this.host.onChannelOpen?.(conn, seg.target, ctx)) {
+        if (conn.state === "ESTABLISHED" && !conn.relay) this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt}) — ${seg.target} 에 연결하는 대로 채널 응답`, "tcp.ack.sent");
+        return;
+      }
+      this.channelFail(conn, seg.target, "administratively prohibited: open failed", "이 서버는 TCP 포워딩을 허용하지 않음 (sshd AllowTcpForwarding no — 점프 서버로 쓰려면 \"SSH 점프 허용\" 을 켬)", ctx);
+      return;
+    }
     // SSH 흉내: 상대 메시지를 받으면 다음 차례 메시지를 보낸다
     if (conn.ssh && conn.state === "ESTABLISHED") {
       conn.ssh.step++;
@@ -595,18 +627,28 @@ export class TcpStack {
     conn.readTimer?.cancel();
     conn.readTimer = undefined;
     if (ssh.step >= SSH_STEPS.length) {
-      this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
       if (!ssh.open) {
         ssh.open = true;
+        if (conn.jump?.state === "login") {
+          // 점프 서버에 로그인함: 셸 대신 대상까지 채널을 부탁한다 (ACK 는 요청에 실어 보낸다)
+          ctx.trace("ssh.open", "app", `SSH 세션 열림: 점프 서버 ${endpoint(conn.remoteIp, conn.remotePort)} 와 키 교환·인증 끝 → 셸 대신 ${conn.jump.target} 까지 채널을 열어 달라고 부탁 (ssh -J)`, { conn: conn.id, jump: true });
+          this.sendChannelOpen(conn, ctx);
+          return;
+        }
+        this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
         ctx.trace(
           "ssh.open",
           "app",
           conn.role === "client"
-            ? `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 와 키 교환·인증 끝 → 연결을 열어 둔 채 유지 (명령은 주고받지 않음. "연결 해제" 로 닫음)`
+            ? conn.jump
+              ? `SSH 세션 열림: ${conn.jump.target} 와 (점프 서버 ${conn.remoteIp} 의 채널 위에서) 키 교환·인증 끝 → 연결을 열어 둔 채 유지. 대상에게는 점프 서버가 접속한 것으로 보인다`
+              : `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 와 키 교환·인증 끝 → 연결을 열어 둔 채 유지 (명령은 주고받지 않음. "연결 해제" 로 닫음)`
             : `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 가 인증함 → 연결을 열어 둔 채 유지`,
-          { conn: conn.id },
+          { conn: conn.id, ...(conn.jump ? { jump: true, target: conn.jump.target } : {}) },
         );
+        return;
       }
+      this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt})`, "tcp.ack.sent");
       return;
     }
     const step = SSH_STEPS[ssh.step]!;
@@ -622,8 +664,43 @@ export class TcpStack {
     if (opens) ssh.open = true;
     // 클라이언트: 서버의 다음 메시지를 기다린다 (영원히 안 오면 끝나지 않으므로 timeout)
     if (conn.role === "client") conn.readTimer = ctx.timer(TCP_READ_TIMEOUT, TCP_TIMER_TAG, { conn: conn.id, read: true, step: ssh.step });
-    this.transmit(conn, { ackFlag: true, len: step.len, data: step.data }, ctx, `SSH ${n + 1}/${SSH_STEPS.length}: ${step.data} ${step.len}B 전송 (seq=${conn.sndNxt})`, "tcp.data.sent");
+    // 점프 채널 위의 SSH: 바깥 SSH 로 한 번 더 감싸 보낸다 (점프 서버가 풀어 대상에게 넘긴다)
+    const inner = conn.jump?.state === "up";
+    const data = inner ? `${SSH_CHANNEL_DATA}${step.data})` : step.data;
+    this.transmit(conn, { ackFlag: true, len: inner ? step.len + 32 : step.len, data }, ctx, `SSH ${n + 1}/${SSH_STEPS.length}: ${step.data} ${step.len}B 전송${inner ? ` — ${conn.jump!.target} 에게, 점프 서버 채널 안으로` : ""} (seq=${conn.sndNxt})`, "tcp.data.sent");
     if (opens) ctx.trace("ssh.open", "app", `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 가 인증함 → 연결을 열어 둔 채 유지`, { conn: conn.id });
+  }
+
+  /** SSH 점프 클라이언트: 점프 서버에게 대상까지 채널을 부탁 (direct-tcpip). 응답이 없으면 timeout */
+  private sendChannelOpen(conn: TcpConn, ctx: NodeContext): void {
+    const jump = conn.jump!;
+    jump.state = "wait";
+    this.transmit(conn, { ackFlag: true, len: 120, data: SSH_CHANNEL_OPEN, target: jump.target }, ctx, `SSH 채널 열기 요청 전송: direct-tcpip ${jump.target} 120B (seq=${conn.sndNxt}, 암호화됨) — 점프 서버가 대신 연결해 이어 준다`, "tcp.data.sent");
+    this.armRead(conn, ctx);
+  }
+
+  /** SSH 점프 클라이언트: 점프 서버의 채널 응답 */
+  private jumpReply(conn: TcpConn, seg: TcpSegment, ctx: NodeContext): void {
+    const jump = conn.jump!;
+    conn.setupReceived = (conn.setupReceived ?? 0) + seg.len;
+    if (seg.data === SSH_CHANNEL_CONFIRM) {
+      // 상태를 먼저 세우고 보낸다 (대상이 점프 서버 자신이면 그 자리에서 대상의 답까지 돌아온다)
+      jump.state = "up";
+      conn.ssh = { step: 0, open: false };
+      ctx.trace("ssh.jump", "app", `점프 서버 ${conn.remoteIp} 가 ${jump.target} 까지 채널을 열었음 → 이 채널 위에서 대상과 SSH 를 처음부터 (버전·키 교환·인증은 대상과 직접 — 점프 서버는 안을 풀지 못한다)`, { conn: conn.id, target: jump.target, role: "client" });
+      this.sshNext(conn, ctx);
+      return;
+    }
+    const why = seg.data?.startsWith(SSH_CHANNEL_FAIL) ? seg.data.slice(SSH_CHANNEL_FAIL.length) : (seg.data ?? "?");
+    ctx.trace("ssh.jump.fail", "app", `ssh -J 실패: 점프 서버 ${conn.remoteIp} 가 ${jump.target} 채널을 열지 못함 — channel 0: open failed: ${why} → 점프 서버와의 연결을 끊음`, { conn: conn.id, target: jump.target, why, role: "client" });
+    this.reset(conn, `점프 실패 · ${why}`, ctx);
+  }
+
+  /** 점프 서버: 채널을 열지 못했다고 알린다 (연결은 클라이언트가 끊는다) */
+  channelFail(conn: TcpConn, target: string, why: string, detail: string, ctx: NodeContext): void {
+    if (conn.state !== "ESTABLISHED") return;
+    ctx.trace("ssh.jump.fail", "app", `SSH 채널 열기 거절: ${target} — ${why} (${detail})`, { conn: conn.id, target, why, role: "jump" });
+    this.transmit(conn, { ackFlag: true, len: 80, data: `${SSH_CHANNEL_FAIL}${why}` }, ctx, `SSH 채널 열기 실패 응답 전송 80B (seq=${conn.sndNxt}, 암호화됨): ${why}`, "tcp.data.sent");
   }
 
   /** 앱: 요청 전송 (TLS 가 끝났으면 암호화해서). 응답이 영원히 안 오면 끝나지 않으므로 응답 대기 timeout 을 건다 */
@@ -882,9 +959,9 @@ export class TcpStack {
       conn.readTimer = undefined;
       if (conn.state !== "ESTABLISHED") return;
       // SSH: 기다리던 단계에서 멈춰 있을 때만. HTTP: 마지막으로 받은 뒤 10초 (받을 때마다 다시 건다)
-      if (conn.ssh && (conn.ssh.open || conn.ssh.step !== step)) return;
-      // 핸드셰이크 단계에서 멈춤 (프록시가 CONNECT 에 답하지 않음·서버가 ClientHello 에 답하지 않음)
-      const phase = conn.tunnel === "wait" ? "프록시의 CONNECT 응답" : conn.tls && !conn.tls.done ? "TLS ServerHello" : undefined;
+      if (conn.ssh && conn.jump?.state !== "wait" && (conn.ssh.open || conn.ssh.step !== step)) return;
+      // 핸드셰이크 단계에서 멈춤 (프록시가 CONNECT 에 답하지 않음·서버가 ClientHello 에 답하지 않음·점프 서버가 채널에 답하지 않음)
+      const phase = conn.jump?.state === "wait" ? "점프 서버의 채널 응답" : conn.tunnel === "wait" ? "프록시의 CONNECT 응답" : conn.tls && !conn.tls.done ? "TLS ServerHello" : undefined;
       // 응답 내용을 일부 받았는지 (TLS 면 핸드셰이크 말고 응답 — 상태 줄을 받았는지로)
       const partial = !conn.ssh && !phase && (conn.tls ? conn.status !== undefined : conn.bytesReceived > 0);
       // 요청은 상대가 받았는데(ACK) 응답이 오지 않거나 중간에 멈춤: 중간 로드밸런서가 끊겼거나 백엔드에서 멈춤. RST 로 알리고 포기
@@ -900,7 +977,7 @@ export class TcpStack {
         "tcp.failed",
         "L4",
         phase
-          ? `응답 timeout: ${endpoint(conn.remoteIp, conn.remotePort)} 에서 ${phase} 을(를) ${TCP_READ_TIMEOUT / 1000}초 동안 받지 못함 → RST 로 끊음. ${conn.tunnel === "wait" ? "프록시가 대상에 연결 중인지 확인" : "그 포트가 HTTPS 서버인지, 터널 너머 대상이 답하는지 확인"}`
+          ? `응답 timeout: ${endpoint(conn.remoteIp, conn.remotePort)} 에서 ${phase} 을(를) ${TCP_READ_TIMEOUT / 1000}초 동안 받지 못함 → RST 로 끊음. ${conn.jump?.state === "wait" ? `점프 서버가 ${conn.jump.target} 에 연결 중인지(그 사이 방화벽·경로) 확인` : conn.tunnel === "wait" ? "프록시가 대상에 연결 중인지 확인" : "그 포트가 HTTPS 서버인지, 터널 너머 대상이 답하는지 확인"}`
           : partial
             ? `응답 timeout: ${endpoint(conn.remoteIp, conn.remotePort)} 의 응답을 ${conn.bytesReceived}B 받은 뒤 ${TCP_READ_TIMEOUT / 1000}초 동안 더 오지 않음 → RST 로 끊음. 상대(또는 그 뒤의 서버)가 중간에 끊겼는지 확인`
             : `응답 timeout: 요청은 ${endpoint(conn.remoteIp, conn.remotePort)} 가 받았지만(ACK) ${TCP_READ_TIMEOUT / 1000}초 동안 응답이 없음 → RST 로 끊음. 상대 뒤의 서버(로드밸런서의 백엔드 등)를 확인`,

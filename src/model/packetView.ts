@@ -880,6 +880,9 @@ function conntrackNew(inside: Ipv4Packet, outside: Ipv4Packet): string {
 
 // ---------- 장치 판단을 실무 명령 출력으로 ----------
 
+/** "호스트:포트" 의 호스트 (IPv6 대괄호는 벗긴다) */
+const hostOf = (target: string): string => target.replace(/:\d+$/, "").replace(/^\[(.*)\]$/, "$1");
+
 const detail = (ev: TraceEvent, key: string): string | undefined => {
   const v = ev.details?.[key];
   return v === undefined || v === null ? undefined : String(v);
@@ -1078,8 +1081,31 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       const [local, remote] = (detail(ev, "conn") ?? "").split("-");
       const [rip, rport] = (remote ?? "?:?").split(":");
       if (ev.summary.includes("가 인증함")) out.push({ tool: "sshd (auth.log)", line: `Accepted publickey for user from ${rip} port ${rport} ssh2` });
+      // 점프 채널 위에서 대상과 인증: OpenSSH 는 "(via proxy)" 로 적는다
+      else if (detail(ev, "target")) out.push({ tool: "ssh -v", line: `debug1: Authenticated to ${hostOf(detail(ev, "target")!)} (via proxy) using "publickey".` });
       else out.push({ tool: "ssh -v", line: `debug1: Authenticated to ${rip} ([${rip}]:${rport}) using "publickey".` });
       void local;
+      break;
+    }
+    case "ssh.jump":
+    case "ssh.jump.fail": {
+      const target = detail(ev, "target") ?? "?:22";
+      const [, remote] = (detail(ev, "conn") ?? "").split("-");
+      const [rip, rport] = (remote ?? "?:?").split(":");
+      const tgt = `${hostOf(target)} port ${target.split(":").at(-1)}`;
+      if (detail(ev, "role") === "client" && detail(ev, "start") === "true") {
+        out.push({ tool: "ssh -v", line: `debug1: Setting implicit ProxyCommand from ProxyJump: ssh -v -W '[%h]:%p' ${detail(ev, "jump") ?? "?"}` });
+        out.push({ tool: "ssh -v", line: `debug1: Executing proxy command: exec ssh -v -W '[${hostOf(target)}]:${target.split(":").at(-1)}' ${detail(ev, "jump") ?? "?"}` });
+      } else if (detail(ev, "role") === "jump" && detail(ev, "request") === "true") {
+        out.push({ tool: "sshd -d", line: `debug1: server_input_channel_open: ctype direct-tcpip rchan 2 win 2097152 max 32768` });
+        out.push({ tool: "sshd -d", line: `debug1: server_request_direct_tcpip: originator ${rip} port ${rport}, target ${tgt}` });
+      } else if (ev.kind === "ssh.jump.fail" && detail(ev, "role") === "jump") {
+        const why = detail(ev, "why") ?? "";
+        if (why.startsWith("administratively")) out.push({ tool: "sshd (auth.log)", line: `refused local port forward: originator ${rip} port ${rport}, target ${tgt}` });
+        else if (why) out.push({ tool: "sshd (auth.log)", line: `error: connect_to ${tgt}: failed.` });
+      } else if (ev.kind === "ssh.jump.fail" && detail(ev, "role") === "client" && detail(ev, "why")) {
+        out.push({ tool: "ssh", line: `channel 0: open failed: ${detail(ev, "why")}\nstdio forwarding failed\nkex_exchange_identification: Connection closed by remote host` });
+      }
       break;
     }
     case "vpn.ike":

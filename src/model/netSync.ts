@@ -178,6 +178,7 @@ export class NetworkSync {
             const proxy = effectiveProxy(d);
             if (proxy) node.setProxy(proxy, net.contextFor(d.id));
             node.setHttpProxy(effectiveHttpProxy(d), net.contextFor(d.id));
+            node.setSshJump(d.host?.sshJump === true, net.contextFor(d.id));
             node.setRemoteVpn(effectiveRaClient(d) ?? { enabled: false, psk: "" }, net.contextFor(d.id));
             node.setP2p(effectiveP2p(d), net.contextFor(d.id));
             node.setMesh(effectiveMesh(d), net.contextFor(d.id));
@@ -740,7 +741,7 @@ export function makeNode(d: Device): SimNode {
       ipv6: cfg.ipv6,
     });
   }
-  return new Host({ id: d.id, mac: d.mac, ...(d.kind === "laptop" ? { wlanMac: wlanMacOf(d.mac) } : {}), p2p: effectiveP2p(d), ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d), lb: effectiveLb(d), proxy: effectiveProxy(d), httpProxy: effectiveHttpProxy(d), ipv6: effectiveHost6(d) });
+  return new Host({ id: d.id, mac: d.mac, ...(d.kind === "laptop" ? { wlanMac: wlanMacOf(d.mac) } : {}), p2p: effectiveP2p(d), ...effectiveHost(d), services: d.host?.services ?? [], dhcpServer: effectiveDhcpServer(d), dnsServer: effectiveDnsServer(d), lb: effectiveLb(d), proxy: effectiveProxy(d), sshJump: d.host?.sshJump === true, httpProxy: effectiveHttpProxy(d), ipv6: effectiveHost6(d) });
 }
 
 export function applyConfig(net: Network, d: Device): void {

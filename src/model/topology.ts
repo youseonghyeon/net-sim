@@ -185,6 +185,8 @@ export interface HostSettings {
   lb?: LbSettings;
   /** 이 호스트가 포워드 프록시(Squid 식) 역할을 할 때 */
   proxy?: ProxySettings;
+  /** SSH 점프 서버 (sshd AllowTcpForwarding): SSH 로 로그인한 사용자가 이 서버를 거쳐 다른 서버로 (ssh -J). 없으면 꺼짐 */
+  sshJump?: boolean;
   /** 이 호스트의 HTTP 프록시 설정 (http_proxy). 없으면 직접 */
   httpProxy?: HttpProxySettings;
   /** 원격 접속 VPN 클라이언트. 없으면 꺼짐 */
@@ -434,6 +436,10 @@ function normalizeHostExtras(h: HostSettings): HostSettings {
   if (h.httpProxy) {
     const p = h.httpProxy as Partial<HttpProxySettings>;
     out.httpProxy = { enabled: p.enabled === true, server: typeof p.server === "string" ? p.server : typeof p.server === "number" ? String(p.server) : "", port: port(p.port, 3128) };
+  }
+  if (h.sshJump !== undefined) {
+    if (h.sshJump === true) out.sshJump = true;
+    else delete out.sshJump;
   }
   if (h.ipv6) out.ipv6 = normalizeIpv6Host(h.ipv6 as Partial<Ipv6HostSettings>);
   if (h.p2p) {

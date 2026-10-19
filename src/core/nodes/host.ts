@@ -28,8 +28,9 @@ import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLik
 import { NetInterface } from "./iface";
 import { LB_ALGORITHM_LABEL, LB_CHECK_TAG, LB_MODE_LABEL, LB_STICKY_LABEL, LoadBalancer, type LbConfig } from "./lb";
 import { ForwardProxy, type ProxyConfig } from "./proxy";
+import { SshJump } from "./sshjump";
 import type { NodeContext, NodeSnapshot, SimNode, TimerHandle } from "./node";
-import { endpoint, HTTPS_PORT, TCP_TIMER_TAG, TcpStack, type TcpConn } from "./tcp";
+import { endpoint, HTTPS_PORT, SSH_PORT, TCP_TIMER_TAG, TcpStack, type TcpConn } from "./tcp";
 import { L2tpClient } from "./l2tp";
 import { P2P_TIMER_TAG, P2pAgent, type P2pConfig } from "./p2p";
 import { RA_DPD_TAG, RA_TIMER_TAG, RaClient, type RaClientConfig } from "./ravpn";
@@ -67,6 +68,8 @@ export interface HostConfig {
   lb?: LbConfig;
   /** 이 호스트가 포워드 프록시(Squid 식) 역할을 할 때 */
   proxy?: ProxyConfig;
+  /** SSH 점프 서버 (AllowTcpForwarding): SSH 로 로그인한 사용자가 이 서버를 거쳐 다른 서버로 (ssh -J) */
+  sshJump?: boolean;
   /** 이 호스트의 HTTP 프록시 설정 (http_proxy·https_proxy): 포트 80 요청은 대신 받아 달라고, 443 은 CONNECT 터널로 이 프록시에게 부탁한다 */
   httpProxy?: HttpProxySetting;
   /** 원격 접속 VPN 클라이언트 */
@@ -227,6 +230,8 @@ export class Host implements SimNode {
   /** 로드밸런서 서비스 (꺼져 있으면 아무것도 안 함) */
   readonly lb: LoadBalancer;
   readonly proxy: ForwardProxy;
+  /** SSH 점프 서버 (ssh -J 의 중간) */
+  readonly jump: SshJump;
   httpProxy: HttpProxySetting | undefined;
   /** 원격 접속 VPN 클라이언트: 회사 VPN 장비(IKEv2) 또는 공유기 VPN 서버(L2TP/IPsec) — 설정의 종류에 따라 바꿔 낀다 */
   ra: RaClient | L2tpClient | WgClient | OvpnClient;
@@ -282,9 +287,10 @@ export class Host implements SimNode {
     this.tcp = new TcpStack({
       send: (pkt, ctx) => this.sendAny(pkt, ctx),
       onRequest: (conn, ctx) => this.lb.onRequest(conn, ctx) || this.proxy.onRequest(conn, ctx),
-      onFinish: (conn, ctx) => void (this.lb.onFinish(conn, ctx) || this.proxy.onFinish(conn, ctx) || this.happyEyeballs(conn, ctx)),
-      onEstablished: (conn, ctx) => void (this.lb.onEstablished(conn, ctx) || this.proxy.onEstablished(conn, ctx)),
-      onRelay: (conn, seg, ctx) => this.proxy.onRelay(conn, seg, ctx),
+      onFinish: (conn, ctx) => void (this.lb.onFinish(conn, ctx) || this.proxy.onFinish(conn, ctx) || this.jump.onFinish(conn, ctx) || this.happyEyeballs(conn, ctx)),
+      onEstablished: (conn, ctx) => void (this.lb.onEstablished(conn, ctx) || this.jump.onEstablished(conn, ctx) || this.proxy.onEstablished(conn, ctx)),
+      onRelay: (conn, seg, ctx) => void (this.jump.onRelay(conn, seg, ctx) || this.proxy.onRelay(conn, seg, ctx)),
+      onChannelOpen: (conn, target, ctx) => this.jump.onChannelOpen(conn, target, ctx),
     });
     this.lb = new LoadBalancer(this.tcp, () => this.iface.ip);
     this.tcp.reservedPort = (p) => this.lb.usesNatPort(p);
@@ -294,6 +300,10 @@ export class Host implements SimNode {
       this.resolver.resolve(name, ctx, this.emit(ctx), (ip, err) => (ip === "0.0.0.0" || ip === "::" ? done(undefined, `DNS 가 막은 이름 (${ip})`) : done(ip, err))),
     );
     if (cfg.proxy) this.proxy.config = { ...cfg.proxy, deny: [...cfg.proxy.deny] };
+    this.jump = new SshJump(this.tcp, () => this.iface.ip, (name, ctx, done) =>
+      this.resolver.resolve(name, ctx, this.emit(ctx), (ip, err) => (ip === "0.0.0.0" || ip === "::" ? done(undefined, `DNS 가 막은 이름 (${ip})`) : done(ip, err))),
+    );
+    this.jump.enabled = cfg.sshJump === true;
     this.httpProxy = cfg.httpProxy ? { ...cfg.httpProxy } : undefined;
     this.services = [...(cfg.services ?? [])];
     this.syncListening();
@@ -524,6 +534,11 @@ export class Host implements SimNode {
   setProxy(cfg: ProxyConfig, ctx: NodeContext): void {
     this.proxy.setConfig(cfg, ctx);
     this.syncListening(ctx);
+  }
+
+  /** SSH 점프 서버 (AllowTcpForwarding) 켜기·끄기 */
+  setSshJump(on: boolean, ctx: NodeContext): void {
+    this.jump.setEnabled(on, ctx);
   }
 
   /** HTTP 프록시 설정(http_proxy) 교체 */
@@ -1208,7 +1223,11 @@ export class Host implements SimNode {
   }
 
   /** TCP 연결 시작 (클라이언트) */
-  connect(target: string, port: number, ctx: NodeContext): void {
+  connect(target: string, port: number, ctx: NodeContext, jump?: string): void {
+    if (jump) {
+      this.connectViaJump(target, port, jump, ctx);
+      return;
+    }
     if (isIpv6(target)) {
       this.connect6(canonIp6(target)!, port, ctx);
       return;
@@ -1275,6 +1294,28 @@ export class Host implements SimNode {
     this.tcp.connect(this.iface.ip!, target, port, ctx);
   }
 
+  /**
+   * ssh -J 점프서버 대상: 점프 서버(22)에 먼저 SSH 로그인하고, 그 세션으로 대상까지 채널을 부탁해 그 위에서 대상과 SSH.
+   * 대상의 이름은 점프 서버가 푼다 (대상이 점프 서버 너머 망에 있어 내 DNS 로는 모를 수 있다). 점프 서버는 IPv4 만
+   */
+  private connectViaJump(target: string, port: number, jump: string, ctx: NodeContext): void {
+    const fail = (why: string, reason: string) => {
+      ctx.trace("ssh.jump.fail", "app", `ssh -J ${jump} ${target}: ${why}`, { dst: target, jump, role: "client" });
+      this.tcp.recordFailure(this.iface.ip ?? "0.0.0.0", jump, SSH_PORT, reason, ctx);
+    };
+    if (!this.iface.ip) return fail("내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)", "IP 미설정");
+    if (isIpv6(jump) || (!looksLikeName(jump) && !isValidIp(jump))) return fail(`점프 서버 ${jump} 는 IPv4 주소나 이름이 아님 (점프 서버는 IPv4 만)`, "잘못된 점프 서버 주소");
+    // 대상도 IPv4 주소나 이름만 (이름은 점프 서버가 A 로 푼다) — IPv6 대상은 이 시뮬레이터의 점프가 다루지 않는다
+    if (isIpv6(target) || (!looksLikeName(target) && !isValidIp(target))) return fail(`대상 ${target} 는 IPv4 주소나 이름이 아님 (SSH 점프의 대상은 IPv4 만)`, "점프 대상은 IPv4 만");
+    const go = (ip: Ip) => {
+      if (!this.iface.ip) return;
+      ctx.trace("ssh.jump", "app", `ssh -J ${jump} ${target}${port !== SSH_PORT ? ` -p ${port}` : ""}: 대상에 바로 가지 않고 점프 서버 ${ip}:22 에 먼저 SSH 로그인한 뒤, 그 세션으로 ${target}:${port} 까지 채널을 부탁한다`, { dst: target, jump: ip, target: `${target}:${port}`, role: "client", start: true });
+      this.tcp.connect(this.iface.ip, ip, SSH_PORT, ctx, { jump: `${target}:${port}` });
+    };
+    if (isValidIp(jump)) return go(jump);
+    this.resolveName(jump, ctx, (ip, err) => (ip && !isIpv6(ip) ? go(ip) : fail(`점프 서버 이름 ${jump} 를 IPv4 주소로 바꾸지 못함 (${err ?? "IPv4 주소 없음"})`, err ?? "점프 서버 이름 해석 실패")), undefined, true);
+  }
+
   /** 이 호스트가 IPv6 글로벌 주소를 쓸 수 있는지 (이름을 AAAA 로 먼저 물을지) */
   private hasV6Global(): boolean {
     return this.v6.enabled && this.v6.globals.length > 0;
@@ -1283,9 +1324,9 @@ export class Host implements SimNode {
   /**
    * 이름 → 주소 (getaddrinfo 흉내): IPv6 글로벌 주소가 있으면 AAAA 먼저 (RFC 6724 기본 정책: IPv6 우선), AAAA 레코드가 없거나
    * 묻지 못하면 IPv4 주소가 있을 때 A 로 다시. 없는 이름(NXDOMAIN)이면 A 도 없으니 다시 묻지 않는다.
-   * IPv6 글로벌 주소가 없으면 예전처럼 A 만 (쓸 수 없는 주소 종류는 묻지 않는다 — AI_ADDRCONFIG)
+   * IPv6 글로벌 주소가 없으면 예전처럼 A 만 (쓸 수 없는 주소 종류는 묻지 않는다 — AI_ADDRCONFIG). v4Only 면 늘 A 만 (IPv4 만 쓰는 곳 — SSH 점프 서버)
    */
-  private resolveName(name: string, ctx: NodeContext, done0: (ip: Ip | undefined, error?: string) => void, alive: () => boolean = () => true): void {
+  private resolveName(name: string, ctx: NodeContext, done0: (ip: Ip | undefined, error?: string) => void, alive: () => boolean = () => true, v4Only = false): void {
     // MagicDNS: 메시 피어의 이름은 기기 안(100.100.100.100)에서 바로 푼다 — DNS 서버에 묻지 않는다
     const magic = this.mesh.resolve(name);
     if (magic) {
@@ -1302,7 +1343,7 @@ export class Host implements SimNode {
       }
       done0(ip, error);
     };
-    if (!this.hasV6Global()) {
+    if (v4Only || !this.hasV6Global()) {
       this.resolver.resolve(name, ctx, this.emit(ctx), (ip, err) => done(ip, err));
       return;
     }
@@ -1876,6 +1917,7 @@ export class Host implements SimNode {
           : []),
         ...(this.httpProxy ? [["HTTP 프록시", `http://${this.httpProxy.server}:${this.httpProxy.port} (웹 요청 80·443)`] as [string, string]] : []),
         ...(this.proxy.config.enabled ? [["프록시", `켜짐 · 포트 ${this.proxy.config.port}${this.proxy.config.deny.length ? ` · 차단 ${this.proxy.config.deny.length}개` : ""}`] as [string, string]] : []),
+        ...(this.jump.enabled ? [["SSH 점프", `허용 (AllowTcpForwarding yes)${this.services.includes(SSH_PORT) ? "" : " · SSH(22) 서비스가 꺼져 있어 로그인할 수 없음"}`] as [string, string]] : []),
         ...(this.lb.config.enabled
           ? [["로드밸런서", `켜짐 · ${LB_MODE_LABEL[this.lb.config.mode ?? "l7"]} · 포트 ${this.lb.config.port} · ${LB_ALGORITHM_LABEL[this.lb.config.algorithm]}${this.lb.config.sticky ? ` · ${LB_STICKY_LABEL[this.lb.config.sticky]}` : ""}${this.lb.config.healthCheck ? " · 액티브 헬스 체크" : ""} · 백엔드 ${this.lb.config.backends.length}대`] as [string, string]]
           : []),
@@ -1888,6 +1930,7 @@ export class Host implements SimNode {
         ...(this.lb.config.enabled ? [{ title: "로드밸런서 백엔드", columns: ["백엔드", "상태", "처리", "실패"], rows: this.lb.rows(this.clock) }] : []),
         ...(this.lb.config.enabled && this.lb.config.mode === "l4" ? [{ title: "L4 흐름", columns: ["클라이언트", "변환 → 백엔드"], rows: this.lb.flowRows() }] : []),
         ...(this.proxy.config.enabled ? [{ title: "프록시 요청 (access.log)", columns: ["클라이언트", "대상", "결과"], rows: this.proxy.rows() }] : []),
+        ...(this.jump.enabled || this.jump.log.length ? [{ title: "SSH 점프 기록 (sshd)", columns: ["시각", "클라이언트", "대상", "결과"], rows: this.jump.rows() }] : []),
         ...(this.resolver.cache.size > 0 ? [{ title: "DNS 캐시 (리졸버)", columns: ["이름", "IP", "시각"], rows: this.resolver.rows() }] : []),
         { title: "TCP 연결", columns: ["상대", "상태", "보냄 / 받음"], rows: this.tcp.rows() },
         { title: "ARP 캐시", columns: ["IP", "MAC", "학습 시각"], rows: i.arpRows() },

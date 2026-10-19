@@ -12,7 +12,7 @@ import { loopStpRule, vlanTrunkRules } from "./lint/l2";
 import { lbRules } from "./lint/lb";
 import { relayRouteRule, returnRouteRule, routerWanLanRule, uplinkDefaultRule } from "./lint/routing";
 import { analyze } from "./lint/segments";
-import { forwardClosedRule, httpProxyRule, proxyPortClashRule, routerDnsRule } from "./lint/services";
+import { forwardClosedRule, httpProxyRule, proxyPortClashRule, routerDnsRule, sshJumpRule } from "./lint/services";
 import { remoteAccessRules, routerVpnRules, siteVpnRules } from "./lint/vpn";
 import { ddnsRules, wireguardRules } from "./lint/wg";
 import { ovpnRules } from "./lint/ovpn";
@@ -61,6 +61,7 @@ const RULES: ((ctx: LintContext) => void)[] = [
   glinetRules, // 20g
   httpProxyRule, // 21
   proxyPortClashRule, // 21b
+  sshJumpRule, // 21d
   adguardRules, // 21c
   ipv6Rules, // 22 (IPv6)
 ];
