@@ -15,6 +15,18 @@ import type { OvpnServerConfig } from "./openvpn";
 import type { MeshConfig } from "./tailscale";
 import type { WgPrefix } from "./wg";
 
+/** 공유기 포트: 0 = wan, 1~4 = lan1~4 (멀티 WAN 을 켜면 lan4 가 WAN2), 5~12 = 무선 단말 슬롯 (Wi-Fi — 브리지에서는 LAN 포트와 같게) */
+export const ROUTER_WAN_PORT = 0;
+export const ROUTER_WAN2_PORT = 4;
+export const ROUTER_LAN_PORTS = [1, 2, 3, 4];
+export const ROUTER_RADIO_PORTS = [5, 6, 7, 8, 9, 10, 11, 12];
+
+export function routerPortName(port: number): string {
+  if (port === ROUTER_WAN_PORT) return "wan";
+  if (ROUTER_RADIO_PORTS.includes(port)) return `무선 슬롯 ${port - ROUTER_RADIO_PORTS[0]! + 1}`;
+  return `lan${port}`;
+}
+
 export interface WanConfig {
   mode: "dhcp" | "static";
   ip?: Ip;

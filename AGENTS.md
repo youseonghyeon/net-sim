@@ -11,6 +11,7 @@ Packet Tracer 식으로 직접 구성하는 네트워크 학습 시뮬레이터.
   - `trace.ts` — `TraceKind` 목록. 새 이벤트 종류를 추가하면 여기에 먼저 등록
   - `packet.ts` 의 `hasPorts`·`isControl`·`IP_PROTO`: 장비들은 IPv4 안의 종류를 나열하지 않고 이 판별로 나눈다(포트가 있나 / 라우터끼리의 제어 멀티캐스트인가). 새 IP 프로토콜은 여기부터 넣는다
   - L3 장치(`nodes/l3.ts`)는 라우팅·NAT·방화벽·릴레이만 직접 하고, VPN 터널 끝은 `nodes/l3tunnel.ts`(`TunnelEnds`: 받은 터널 패킷을 사이트 간·원격 접속으로 나누고 풀기, 터널로 보내기), 이중화 세션 동기화는 `nodes/hasync.ts`(`SessionSync`)에 맡긴다. IPsec 협상(재전송·NAT 감지·SPI·패킷 조립)은 두 VPN 이 `nodes/ike.ts` 를 같이 쓴다
+  - 공유기(`nodes/router.ts`)는 수신 분기·포워딩·NAT·드롭인·헤어핀·L2TP/터널 라우팅만 직접 하고, 부품은 좁은 Host 인터페이스로 공유기에게서 빌려 쓰는 모듈에 맡긴다: 회선 `wanline.ts`(`WanLine` — WAN1·WAN2), 경로 판단 `routerroute.ts`(main 테이블·출구 회선·공유기 자신이 만든 패킷의 출발지 `ownSource`·길 `sendOwn`), 내부 스위치 `routerbridge.ts`, IPv6 `router6.ts`, WireGuard 클라이언트 `routerwgc.ts`, SIP ALG `routersip.ts`, 설정 타입·포트 번호 `routercfg.ts`, 스냅샷 `routersnap.ts`. 터널 서버(WireGuard 서버·OpenVPN·메시)는 `tunnelsvc.ts` 의 `TunnelService` 목록(`Router.tunnels`) — 새 터널 서버는 이 목록에 넣으면 보내기·터널 주소·No route·DNS 답 주소·주소 변경에 다 적용된다. 설정은 `configure` 한 경로(주소 → 테이블 → 서비스 → 터널)
   - 프레임 기록: `Network.frameLog`(프레임 id → 링크에 실린 기록, 2만 id 상한)와 `framesAt(packetId, nodeId, time)` — 로그 줄의 장치가 받은/내보낸 프레임. 라우터·NAT 는 홉마다 새 L2 프레임(새 id)을 만들므로, 받는 중에 새로 보낸 프레임은 `cause` 로 원래 id 에 이어 둔다(ARP 를 기다렸다 나중에 보낸 것은 이어지지 않음)
   - `scenarios/` — 테스트용 고정 토폴로지
 - `src/core/nodes/ipv6.ts` — `Ipv6Interface`(인터페이스별 링크 로컬 + 수동 주소, 이웃 캐시, NDP NS/NA, DAD). 호스트는 `Host.v6`, 게이트웨이·NAT 박스는 물리 인터페이스마다 `L3Node.v6[i]`(서브 인터페이스는 IPv4 만)

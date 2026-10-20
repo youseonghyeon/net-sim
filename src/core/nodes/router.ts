@@ -1,5 +1,5 @@
 import { type TorCell, isMcastIp } from "../packet";
-import { OVPN_PORT, OvpnServer, shortFp, type OvpnServerConfig } from "./openvpn";
+import { OVPN_PORT, OvpnServer, type OvpnServerConfig } from "./openvpn";
 import { MESH_SERVERS, MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
 import { CLOUD_TIMER_TAG, CloudAgent, RouterAdmin, type AdminConfig, type SambaConfig } from "./glinet";
 import { TCP_TIMER_TAG } from "./tcp";
@@ -23,9 +23,9 @@ import {
   type Ipv4Packet,
   type IpPacket,
 } from "../packet";
-import { DHCP6_STATE_LABEL, Dhcp6PdClient } from "./dhcp6";
+import { Dhcp6PdClient } from "./dhcp6";
 import { Ipv6Interface } from "./ipv6";
-import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
+import { DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, type DnsServerConfig } from "./dns";
 import { DDNS_TIMER_TAG, DdnsClient, type DdnsConfig } from "./ddns";
 import { MWAN_ICMP_ID, MWAN_TIMER_TAG, MultiWan, WAN_LABEL, mwanRuleLabel } from "./mwan";
@@ -37,6 +37,9 @@ import { PortPublish } from "./publish";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
 import { WanLine } from "./wanline";
+import { RouterBridge, type MacEntry } from "./routerbridge";
+import { ROUTER_LAN_PORTS, ROUTER_RADIO_PORTS, ROUTER_WAN2_PORT, ROUTER_WAN_PORT, routerPortName } from "./routercfg";
+import { routerSnapshot } from "./routersnap";
 import { RouterRoutes } from "./routerroute";
 import { RouterWgClient } from "./routerwgc";
 import { Router6 } from "./router6";
@@ -44,31 +47,25 @@ import { type RouterConfig, type RouterIpv6Config, type RouterStaticRoute, type 
 import type { TunnelService } from "./tunnelsvc";
 import { NAT_ID_START, NAT_TYPE_LABEL, type NatType, type PortForward } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
-import { guardLoop } from "./switch";
-import { DEFAULT_WG, WG_PORT, WG_TIMER_TAG, WgInterface, shortKey } from "./wg";
+import { DEFAULT_WG, WG_PORT, WG_TIMER_TAG, WgInterface } from "./wg";
 
 export type { DhcpServerConfig } from "./dhcp";
 export type { NatEntry, PortForward } from "./nat";
 export type { RouterConfig, RouterIpv6Config, RouterStaticRoute, RouterWgClientConfig, RouterWgServerConfig, Wan2Config, WanConfig } from "./routercfg";
 export { staticRouteLabel, WG_POLICY_LABEL } from "./routercfg";
 
-interface MacEntry {
-  port: number;
-  learnedAt: number;
-}
-
 /**
  * 가정용 라우터. LAN 포트 4개는 내부 스위치로 브리지되고 LAN 인터페이스(MAC/IP) 하나가 붙어 있다.
  * DHCP 서버(LAN), DHCP 클라이언트(WAN), 그리고 LAN ↔ WAN 사이의 NAT 를 한다.
  */
 export class Router implements SimNode {
-  static readonly WAN_PORT = 0;
+  static readonly WAN_PORT = ROUTER_WAN_PORT;
   /** 멀티 WAN 을 켜면 lan4 가 WAN2 */
-  static readonly WAN2_PORT = 4;
-  static readonly LAN_PORTS = [1, 2, 3, 4];
+  static readonly WAN2_PORT = ROUTER_WAN2_PORT;
+  static readonly LAN_PORTS = ROUTER_LAN_PORTS;
   /** 무선 단말 슬롯 (공유기의 Wi-Fi). 브리지에서는 LAN 포트와 같게 다루되 전파 송출로 표시한다 */
-  static readonly RADIO_PORTS = [5, 6, 7, 8, 9, 10, 11, 12];
-  static readonly BRIDGE_PORTS = [...Router.LAN_PORTS, ...Router.RADIO_PORTS];
+  static readonly RADIO_PORTS = ROUTER_RADIO_PORTS;
+  static readonly BRIDGE_PORTS = [...ROUTER_LAN_PORTS, ...ROUTER_RADIO_PORTS];
   static readonly NAT_ID_START = NAT_ID_START;
 
   readonly type = "router" as const;
@@ -83,8 +80,14 @@ export class Router implements SimNode {
   readonly dhcpServer: DhcpServer;
   readonly dnsForwarder: DnsServer;
   readonly firewall: Firewall;
-  readonly macTable = new Map<Mac, MacEntry>();
-  private readonly seen = new Map<number, number>();
+  /** 내부 스위치 (LAN 포트 + 무선 슬롯 — routerbridge.ts). macTable·igmp 는 그 부품 */
+  readonly bridge: RouterBridge;
+  get macTable(): Map<Mac, MacEntry> {
+    return this.bridge.macTable;
+  }
+  get igmp(): IgmpSnoop {
+    return this.bridge.igmp;
+  }
   /** IPv6 (NAT 없음 — router6.ts). lan6·wan6·pd·inbound6 은 그 부품 (쓰는 곳이 많아 이름을 남긴다) */
   readonly v6: Router6;
   readonly lan6: Ipv6Interface;
@@ -130,8 +133,6 @@ export class Router implements SimNode {
   blocked = new Set<string>();
   /** Tor (LAN 의 TCP·DNS 를 Tor 회로로) */
   readonly tor: TorClient;
-  /** 내부 스위치의 IGMP 스누핑 */
-  readonly igmp = new IgmpSnoop();
   /** DDNS 클라이언트 */
   readonly ddns: DdnsClient;
   /** 경로 판단: main 테이블·출구 회선·공유기 자신의 출발지 (routerroute.ts) */
@@ -167,6 +168,15 @@ export class Router implements SimNode {
   constructor(cfg: RouterConfig) {
     this.id = cfg.id;
     this.lan = new NetInterface(cfg.mac, { ip: cfg.lanIp, prefix: cfg.lanPrefix ?? 24 });
+    this.bridge = new RouterBridge({
+      lanMac: cfg.mac,
+      wan2On: () => this.wan2On,
+      ssid: () => this.wifi.ssid,
+      deliver: (frame, ctx) => this.deliverLan(frame, ctx),
+      multicast: (frame, ctx) => {
+        if (this.lan6.accepts(frame.dst) && frame.payload.kind === "ipv6") this.v6.handleLan(frame.payload, frame, ctx);
+      },
+    });
     this.dhcpServer = new DhcpServer({ ...cfg.dhcp }, this.lan);
     const wan = cfg.wan ?? { mode: "dhcp" };
     this.wan = new NetInterface(cfg.wanMac, wan.mode === "static" ? { ip: wan.ip, prefix: wan.prefix ?? 24, gateway: wan.gateway } : {});
@@ -624,27 +634,11 @@ export class Router implements SimNode {
   }
 
   static portName(port: number): string {
-    if (port === Router.WAN_PORT) return "wan";
-    if (Router.RADIO_PORTS.includes(port)) return `무선 슬롯 ${port - Router.RADIO_PORTS[0]! + 1}`;
-    return `lan${port}`;
+    return routerPortName(port);
   }
 
   private emitLan(ctx: NodeContext): Emit {
-    return (frame) => {
-      if (frame.dst !== BROADCAST_MAC) {
-        const entry = this.macTable.get(frame.dst);
-        if (entry) {
-          ctx.send(entry.port, frame);
-          return;
-        }
-      }
-      for (const p of this.bridgePorts()) if (ctx.isPortConnected(p)) ctx.send(p, frame);
-    };
-  }
-
-  /** LAN 브리지 포트 (멀티 WAN 이면 lan4 는 WAN2 라 빠진다) */
-  private bridgePorts(): number[] {
-    return this.wan2On ? Router.BRIDGE_PORTS.filter((p) => p !== Router.WAN2_PORT) : Router.BRIDGE_PORTS;
+    return this.bridge.emit(ctx);
   }
 
   // ---------- 설정 변경 ----------
@@ -825,16 +819,7 @@ export class Router implements SimNode {
       this.w1.release(ctx);
       return;
     }
-    if (Router.RADIO_PORTS.includes(port)) {
-      if (!up) for (const [mac, e] of this.macTable) if (e.port === port) this.macTable.delete(mac);
-      return;
-    }
-    if (up) {
-      ctx.trace("link.up", "L1", `lan${port} 포트 링크 연결됨`, { port });
-      return;
-    }
-    ctx.trace("link.down", "L1", `lan${port} 포트 링크 다운`, { port });
-    for (const [mac, e] of this.macTable) if (e.port === port) this.macTable.delete(mac);
+    this.bridge.onLink(port, up, ctx);
   }
 
   // ---------- 수신 ----------
@@ -859,74 +844,7 @@ export class Router implements SimNode {
       return;
     }
 
-    const pn = Router.portName(port);
-    if (frame.vlan !== undefined) {
-      ctx.trace("vlan.drop", "L2", `${pn} 에 VLAN ${frame.vlan} 태그 프레임 → 공유기 LAN 포트는 태그를 이해하지 못해 드롭 (스위치 쪽 포트를 액세스로)`, { port, vlan: frame.vlan }, frame.id);
-      return;
-    }
-    ctx.trace("frame.receive", "L2", `${pn} 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === BROADCAST_MAC ? "브로드캐스트" : frame.dst}]`, { port, src: frame.src, dst: frame.dst }, frame.id);
-    if (!guardLoop(this.seen, port, frame, ctx, pn)) return;
-    frame = { ...frame, hops: (frame.hops ?? 0) + 1 };
-    const existing = this.macTable.get(frame.src);
-    if ((!existing || existing.port !== port) && ctx.isPortConnected(port)) {
-      this.macTable.set(frame.src, { port, learnedAt: ctx.now });
-      ctx.trace("switch.learn", "L2", `내부 스위치 MAC 테이블 학습: ${frame.src} → ${pn}`, { mac: frame.src, port }, frame.id);
-    }
-    if (frame.dst === BROADCAST_MAC) {
-      this.floodLan(port, frame, ctx, "브로드캐스트");
-      this.deliverLan(frame, ctx);
-      return;
-    }
-    // 멀티캐스트는 내부 스위치가 모든 LAN 포트로 뿌리고, 공유기 LAN IPv6 가 가입한 그룹(모든 노드·모든 라우터·solicited-node)이면 공유기도 받는다
-    if (isMulticastMac(frame.dst)) {
-      const only = this.igmp.observe(port, 1, frame, ctx, (p) => Router.portName(p));
-      if (only) {
-        for (const p of only) if (ctx.isPortConnected(p) && this.bridgePorts().includes(p)) ctx.send(p, frame);
-        return;
-      }
-      this.floodLan(port, frame, ctx, `${frame.dst} 는 MAC 테이블에 없음`);
-      if (this.lan6.accepts(frame.dst) && frame.payload.kind === "ipv6") this.v6.handleLan(frame.payload, frame, ctx);
-      return;
-    }
-    if (frame.dst === this.lan.mac) {
-      this.deliverLan(frame, ctx);
-      return;
-    }
-    const entry = this.macTable.get(frame.dst);
-    if (!entry) {
-      this.floodLan(port, frame, ctx, `${frame.dst} 는 MAC 테이블에 없음`);
-      return;
-    }
-    if (entry.port === port) {
-      ctx.trace("switch.filter", "L2", `목적지 ${frame.dst} 가 수신 포트와 같음 → 필터링`, { port }, frame.id);
-      return;
-    }
-    const radio = Router.RADIO_PORTS.includes(entry.port);
-    ctx.trace(
-      "switch.forward",
-      "L2",
-      radio
-        ? `내부 스위치: ${frame.dst} 는 무선 단말 → 전파로 송출 (SSID ${this.wifi.ssid}; 다른 단말도 전파는 받지만 암호화되어 읽지 못한다)`
-        : `내부 스위치: ${frame.dst} → ${Router.portName(entry.port)} 로 전달`,
-      { dst: frame.dst, port: entry.port },
-      frame.id,
-    );
-    ctx.send(entry.port, frame);
-  }
-
-  private floodLan(inPort: number, frame: EthernetFrame, ctx: NodeContext, reason: string): void {
-    const ports = this.bridgePorts().filter((p) => p !== inPort && ctx.isPortConnected(p));
-    if (ports.length === 0) return;
-    const wired = ports.filter((p) => Router.LAN_PORTS.includes(p));
-    const radio = ports.filter((p) => Router.RADIO_PORTS.includes(p));
-    ctx.trace(
-      "switch.flood",
-      "L2",
-      `${reason} → 다른 LAN 포트로 플러딩 [${wired.map((p) => `lan${p}`).join(", ")}]${radio.length ? ` + 전파로 무선 단말 ${radio.length}대` : ""}`,
-      { inPort, ports, reason },
-      frame.id,
-    );
-    for (const p of ports) ctx.send(p, frame);
+    this.bridge.receive(port, frame, ctx);
   }
 
   private deliverLan(frame: EthernetFrame, ctx: NodeContext): void {
@@ -1158,14 +1076,9 @@ export class Router implements SimNode {
     this.lan.sendIp(inner, ctx, this.emitLan(ctx));
   }
 
-  /** 내부 스위치의 IGMP 스누핑 (켤 때 쿼리를 보내 가입한 기기들이 다시 알리게) */
+  /** 내부 스위치의 IGMP 스누핑 */
   setIgmp(on: boolean, ctx: NodeContext): void {
-    const was = this.igmp.enabled;
-    this.igmp.setEnabled(on, ctx, "공유기 내부 스위치");
-    if (!on || was) return;
-    ctx.trace("igmp.snoop", "L2", "IGMP 스누핑 켜짐 → General Query 를 LAN 포트로 (가입한 기기는 다시 알린다)", {});
-    const q = IgmpSnoop.query(this.lan.mac, ctx);
-    for (const p of this.bridgePorts()) if (ctx.isPortConnected(p)) ctx.send(p, q);
+    this.bridge.setIgmp(on, ctx);
   }
 
   // ---------- Tor ----------
@@ -1404,7 +1317,7 @@ export class Router implements SimNode {
     if (on !== this.wan2On) {
       this.wan2On = on;
       // 그 포트로 배운 MAC 은 버린다 (LAN 포트 ↔ WAN2 가 바뀜)
-      for (const [mac, e] of this.macTable) if (e.port === Router.WAN2_PORT) this.macTable.delete(mac);
+      this.bridge.forgetPort(Router.WAN2_PORT);
       if (on) {
         ctx.trace("ip.config", "sys", `멀티 WAN: lan4 포트를 WAN2(예비 회선)로 — 내부 스위치에서 빠진다`, { wan2: true });
         this.w2.linkUp = ctx.isPortConnected(Router.WAN2_PORT);
@@ -1690,104 +1603,9 @@ export class Router implements SimNode {
   // ---------- 스냅샷 ----------
 
   snapshot(): NodeSnapshot {
-    const wanState = this.wan.ip
-      ? `${this.wan.ip}/${this.wan.prefix}`
-      : !this.w1.linkUp
-        ? "없음 (링크 다운)"
-        : this.w1.mode === "dhcp"
-          ? `없음 (DHCP: ${DHCP_STATE_LABEL[this.w1.client.state]})`
-          : "없음 (수동 입력 필요)";
-    return {
-      id: this.id,
-      type: this.type,
-      label: this.id,
-      info: [
-        ["LAN IP", `${this.lan.ip}/${this.lan.prefix}`],
-        ["LAN MAC", this.lan.mac],
-        ["WAN IP", wanState],
-        ["WAN 게이트웨이", this.wan.gateway ?? "없음"],
-        ["DHCP 서비스", this.dhcp.enabled ? `켜짐 · ${this.dhcp.start} ~ ${this.dhcp.end}` : "꺼짐"],
-        ["DNS 포워더", this.dnsForwarder.config.enabled ? `켜짐 · 업스트림 ${this.dnsForwarder.config.upstream ?? "없음"}` : "꺼짐"],
-        ["무선", this.wifi.enabled ? `켜짐 · SSID ${this.wifi.ssid}` : "꺼짐"],
-        ["방화벽", this.firewall.config.enabled ? `켜짐 · 규칙 ${this.firewall.config.rules.length}개 · 기본 ${this.firewall.config.defaultPolicy === "allow" ? "허용" : "차단"}` : "꺼짐"],
-        ["NAT", `${NAT_TYPE_LABEL[this.w1.nat.type]}${this.hairpin ? " · 헤어핀 NAT 켜짐" : ""}`],
-        ...(this.ipv6Enabled
-          ? ([
-              ["WAN IPv6", this.wan6.summary() || "없음"],
-              ["IPv6 기본 게이트웨이", this.wan6.defaultRouter ? `${this.wan6.defaultRouter} (ISP 의 RA)` : "없음"],
-              ["프리픽스 위임", this.pd.delegated ? `${this.pd.delegated.prefix}/${this.pd.delegated.length} (DHCPv6-PD)` : DHCP6_STATE_LABEL[this.pd.state]],
-              ["LAN IPv6", this.lan6.addrs.some((a) => a.origin === "manual") ? `${this.lan6.summary()} · RA 로 알림` : "없음 (위임 대기)"],
-              ["IPv6 인바운드 기본 차단", this.inbound6.config.enabled ? "켜짐 (Stateful — 안에서 시작한 통신의 응답만)" : "꺼짐 (바깥에서 바로 들어옴)"],
-            ] as [string, string][])
-          : []),
-        ...(this.vpnServer.config.enabled
-          ? ([["VPN 서버", `켜짐 (L2TP/IPsec) · 할당 IP ${this.vpnServer.config.poolStart} ~ ${this.vpnServer.config.poolEnd} · ${this.vpnServer.clientsLabel()}`]] as [string, string][])
-          : []),
-        ...(this.mesh.config.enabled ? ([[this.mesh.brand, this.mesh.summary()!]] as [string, string][]) : []),
-        ...(this.admin.config.enabled ? ([["관리 화면", `HTTP 80·HTTPS 443${this.admin.config.ssh ? "·SSH 22" : ""} · ${this.admin.config.allow.length ? "허용 목록만" : "LAN"}${this.admin.config.remote ? " + WAN(원격)" : ""}`]] as [string, string][]) : []),
-        ...(this.cloud.enabled ? ([["GoodCloud", this.cloud.summary()!]] as [string, string][]) : []),
-        ...(this.tor.enabled ? ([["Tor", this.tor.summary()!]] as [string, string][]) : []),
-        ...(this.admin.samba.enabled ? ([["네트워크 저장소", `SMB (TCP 445) · ${this.admin.samba.wan ? "LAN + WAN (위험)" : "LAN 만"}`]] as [string, string][]) : []),
-        ...(this.dropIn ? ([["드롭인 게이트웨이", `켜짐 · WAN 쪽 LAN 기기의 게이트웨이 ${this.wan.ip ?? "?"}`]] as [string, string][]) : []),
-        ...(this.blocked.size ? ([["기기 차단", [...this.blocked].join(", ")]] as [string, string][]) : []),
-        ...(this.ovpn.enabled
-          ? ([["OpenVPN 서버", `켜짐 · ${this.ovpn.config.proto.toUpperCase()} ${this.ovpn.config.port} · 터널 ${this.ovpn.config.subnet ? `${this.ovpn.config.subnet.ip}/${this.ovpn.config.subnet.prefix}` : "대역 없음"} · CA ${shortFp(this.ovpn.config.ca)}${this.ovpn.config.tlsCrypt ? " · tls-crypt" : ""} · ${this.ovpn.connected}개 연결`]] as [string, string][])
-          : []),
-        ...(this.wgServerCfg?.enabled
-          ? ([["WireGuard 서버", `켜짐 · ${this.wgServerCfg.address ? `${this.wgServerCfg.address.ip}/${this.wgServerCfg.address.prefix}` : "터널 주소 없음"} · UDP ${this.wgServerCfg.listenPort} · 공개 키 ${shortKey(this.wgs.publicKey)} · 피어 ${this.wgServerCfg.peers.length}개 중 ${this.wgs.connected}개 연결`]] as [string, string][])
-          : []),
-        ...(this.wgClientCfg?.enabled ? ([["WireGuard 클라이언트", this.wgClientSummary()!]] as [string, string][]) : []),
-        ...(this.ddns.config.enabled ? ([["DDNS", this.ddns.summary()!]] as [string, string][]) : []),
-        ...(this.dpi.config.enabled ? ([["DPI", `켜짐${this.dpi.config.blockCategories.length + this.dpi.config.blockApps.length ? ` · 차단 ${[...this.dpi.config.blockCategories, ...this.dpi.config.blockApps.map((a) => APPS[a].label)].join(", ")}` : " · 세기만"}`]] as [string, string][]) : []),
-        ...(this.adguard.config.enabled ? ([["AdGuard Home", `${this.adguard.summary()}${this.adguard.config.forceDns ? " · DNS 가로채기" : ""}`]] as [string, string][]) : []),
-        ...(this.wan2On
-          ? ([
-              ["WAN2 (lan4)", this.wan2.ip ? `${this.wan2.ip}/${this.wan2.prefix}` : !this.w2.linkUp ? "없음 (링크 다운)" : this.w2.mode === "dhcp" ? `없음 (DHCP: ${DHCP_STATE_LABEL[this.w2.client.state]})` : "없음 (수동 입력 필요)"],
-              ["멀티 WAN", `${WAN_LABEL[this.mwan.active]} 사용 중 · WAN1 ${this.mwan.lines.wan.online ? "살아 있음" : "끊김"} · WAN2 ${this.mwan.wan2Member ? (this.mwan.lines.wan2.online ? "살아 있음" : "끊김") : "디폴트 라우트로 안 씀"}${this.mwan.track ? ` · 추적 ${this.mwan.track}` : " · 추적 안 함"}`],
-            ] as [string, string][])
-          : []),
-      ],
-      tables: [
-        { title: "DHCP 임대", columns: ["IP", "MAC", "시각"], rows: this.dhcpServer.rows() },
-        ...(this.dnsForwarder.cache.size > 0 ? [{ title: "DNS 캐시", columns: ["이름", "IP", "출처"], rows: this.dnsForwarder.rows() }] : []),
-        ...(this.dpi.config.enabled ? [{ title: "DPI 앱별 트래픽", columns: ["기기", "앱", "카테고리", "트래픽"], rows: this.dpi.rows() }] : []),
-        ...(this.adguard.config.enabled ? [{ title: "AdGuard 쿼리 로그", columns: ["시각", "기기", "질의", "결과"], rows: this.adguard.rows() }] : []),
-        { title: this.wan2On ? "NAT 테이블 (WAN1)" : "NAT 테이블", columns: ["내부", "→ 외부", "시각"], rows: this.w1.nat.rows(this.wan.ip) },
-        ...(this.wan2On
-          ? [
-              { title: "NAT 테이블 (WAN2)", columns: ["내부", "→ 외부", "시각"], rows: this.w2.nat.rows(this.wan2.ip) },
-              { title: "멀티 WAN (mwan3 status)", columns: ["회선", "상태", "사용", "추적"], rows: this.mwan.rows() },
-              ...(this.mwan.rules.length ? [{ title: "멀티 WAN 정책 규칙 (mwan3 rules)", columns: ["#", "출발지", "회선", "지금", "새 연결"], rows: this.mwan.ruleRows() }] : []),
-            ]
-          : []),
-        ...(this.rt.routes.length || this.wan2On ? [{ title: "라우팅 테이블 (main)", columns: ["네트워크", "대상", "IPv4 게이트웨이", "종류"], rows: this.rt.routeRows() }] : []),
-        ...(this.vpnServer.config.enabled ? [{ title: "VPN 접속", columns: ["사용자", "할당 IP", "접속 주소", "방식"], rows: this.vpnServer.rows() }] : []),
-        ...(this.wgServerCfg?.enabled ? [{ title: "WireGuard 서버 피어 (wg show)", columns: ["피어", "공개 키", "엔드포인트", "AllowedIPs", "최근 핸드셰이크", "전송"], rows: this.wgs.rows() }] : []),
-        ...(this.igmp.enabled ? [{ title: "IGMP 스누핑 (그룹 → 포트)", columns: ["그룹", "VLAN", "포트"], rows: this.igmp.rows((p) => Router.portName(p)) }] : []),
-        ...(this.admin.config.enabled || this.admin.samba.enabled ? [{ title: "관리 화면·저장소 연결", columns: ["연결", "상태", "보냄 / 받음"], rows: this.admin.rows() }] : []),
-        ...(this.mesh.config.enabled ? [{ title: `${this.mesh.brand} 피어 (${this.mesh.config.net === "zerotier" ? "zerotier-cli peers" : "tailscale status"})`, columns: ["이름", "메시 주소", "경로", "알린 대역", "패킷"], rows: this.mesh.rows() }] : []),
-        ...(this.ovpn.enabled ? [{ title: "OpenVPN 클라이언트 (status)", columns: ["인증서 CN", "실제 주소", "가상 주소", "계정", "상태"], rows: this.ovpn.rows() }] : []),
-        ...(this.wgClientCfg?.enabled ? [{ title: "WireGuard 클라이언트 (wg show)", columns: ["피어", "공개 키", "엔드포인트", "AllowedIPs", "최근 핸드셰이크", "전송"], rows: this.wgc.rows() }] : []),
-        ...(this.wgClientCfg?.enabled ? [{ title: "NAT 테이블 (VPN 터널)", columns: ["내부", "→ 터널 주소", "시각"], rows: this.wgClient.nat.rows(this.wgClientCfg.address?.ip) }] : []),
-        { title: "포트 포워딩", columns: ["공인 포트", "내부"], rows: this.w1.nat.forwardRows(this.wan.ip) },
-        ...(this.firewall.config.enabled ? [{ title: "방화벽 규칙", columns: ["#", "규칙"], rows: this.firewall.rows() }] : []),
-        {
-          title: "내부 스위치 MAC 테이블",
-          columns: ["MAC", "포트", "학습 시각"],
-          rows: [...this.macTable.entries()].map(([mac, e]) => [mac, Router.portName(e.port), `${e.learnedAt}ms`]),
-        },
-        { title: "ARP 캐시 (LAN)", columns: ["IP", "MAC", "학습 시각"], rows: this.lan.arpRows() },
-        { title: "ARP 캐시 (WAN)", columns: ["IP", "MAC", "학습 시각"], rows: this.wan.arpRows() },
-        ...(this.ipv6Enabled
-          ? [
-              { title: "IPv6 주소", columns: ["인터페이스", "주소", "상태"], rows: [...this.lan6.addrRows().map((r) => ["lan", r[0]!, `${r[1]} · ${r[2]}`]), ...this.wan6.addrRows().map((r) => ["wan", r[0]!, `${r[1]} · ${r[2]}`])] },
-              { title: "이웃 캐시 (LAN)", columns: ["IPv6", "MAC", "학습 시각"], rows: this.lan6.neighborRows() },
-              { title: "이웃 캐시 (WAN)", columns: ["IPv6", "MAC", "학습 시각"], rows: this.wan6.neighborRows() },
-            ]
-          : []),
-      ],
-    };
+    return routerSnapshot(this);
   }
+
 }
 
 /** 규칙 목록 비교용 키 (순서 포함) */
