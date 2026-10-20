@@ -1110,27 +1110,9 @@ export class Router implements SimNode {
     },
     ctx: NodeContext,
   ): void {
-    if (cfg.dpi) this.setDpi(cfg.dpi, ctx);
-    if (cfg.routes) this.setRoutes(cfg.routes, ctx);
-    if (cfg.adguard) this.setAdguard(cfg.adguard, ctx);
-    if (cfg.ddns) this.ddns.setConfig(cfg.ddns, ctx);
-    if (cfg.wan2) this.setWan2(cfg.wan2, ctx);
-    if (cfg.wgServer || cfg.wgClient) this.setWg(cfg.wgServer, cfg.wgClient, ctx);
-    if (cfg.ovpnServer) this.ovpn.setConfig(cfg.ovpnServer, ctx);
-
-    if (cfg.hairpin !== undefined && cfg.hairpin !== this.hairpin) {
-      this.hairpin = cfg.hairpin;
-      ctx.trace("ip.config", "sys", cfg.hairpin ? `헤어핀 NAT 켜짐: 안에서 내 공인 주소의 포워딩 포트로 접속하면 안쪽 서버로 되돌려 준다 (도메인으로 집 서버에 접속하기)` : `헤어핀 NAT 꺼짐`, { hairpin: cfg.hairpin });
-    }
-    if (cfg.natType && cfg.natType !== this.w1.nat.type) {
-      const from = this.w1.nat.type;
-      const n = this.w1.nat.setType(cfg.natType);
-      this.w2.nat.setType(cfg.natType);
-      ctx.trace("ip.config", "sys", `NAT 종류 변경: ${NAT_TYPE_LABEL[from]} → ${NAT_TYPE_LABEL[cfg.natType]} (지금 매핑 ${n}개는 그대로 두고 새 매핑부터 새 방식, 남은 매핑의 필터링도 새 방식)`, { natType: cfg.natType });
-    }
-    if (cfg.firewall) this.firewall.setConfig(cfg.firewall, ctx, "");
-    if (cfg.vpnServer) this.vpnServer.setConfig(cfg.vpnServer, ctx);
-    if (cfg.ipv6) this.setIpv6(cfg.ipv6, ctx);
+    // 단계: 주소 → 테이블(경로·NAT·방화벽·거르기) → 서비스 → 터널. 뒤 단계는 앞 단계의 결과를 본다
+    // (터널·DDNS 는 새 WAN 주소로 잇고, AdGuard 는 DNS 포워더가 켜졌는지 보고, 메시 VPN 은 포트 포워딩을 본 뒤 자기 포트를 고른다)
+    // 1. 주소
     if (cfg.wifi && (cfg.wifi.enabled !== this.wifi.enabled || cfg.wifi.ssid !== this.wifi.ssid)) {
       this.wifi = { ...cfg.wifi };
       ctx.trace("ip.config", "sys", cfg.wifi.enabled ? `무선 켜짐: SSID "${cfg.wifi.ssid}" 송출` : `무선 꺼짐`, { ...cfg.wifi });
@@ -1159,15 +1141,35 @@ export class Router implements SimNode {
       ctx.trace("ip.config", "sys", cfg.dhcp.dns ? `DHCP 가 안내할 DNS 서버(옵션 6): ${cfg.dhcp.dns} — 이미 주소를 받은 호스트는 DHCP 임대 갱신 뒤 반영` : `DHCP 가 안내할 DNS 서버: 공유기 자신(DNS 포워더)`, { dns: cfg.dhcp.dns });
     }
     if (cfg.dhcp.start !== d.start || cfg.dhcp.end !== d.end || cfg.dhcp.enabled !== d.enabled || (cfg.dhcp.dns || undefined) !== (d.dns || undefined)) this.dhcpServer.setConfig(cfg.dhcp, ctx);
-
     if (this.w1.differs(cfg.wan)) this.w1.setAddressing(cfg.wan, ctx);
+    if (cfg.wan2) this.setWan2(cfg.wan2, ctx);
+    if (cfg.ipv6) this.setIpv6(cfg.ipv6, ctx);
 
+    // 2. 테이블
+    if (cfg.routes) this.setRoutes(cfg.routes, ctx);
+    if (cfg.natType && cfg.natType !== this.w1.nat.type) {
+      const from = this.w1.nat.type;
+      const n = this.w1.nat.setType(cfg.natType);
+      this.w2.nat.setType(cfg.natType);
+      ctx.trace("ip.config", "sys", `NAT 종류 변경: ${NAT_TYPE_LABEL[from]} → ${NAT_TYPE_LABEL[cfg.natType]} (지금 매핑 ${n}개는 그대로 두고 새 매핑부터 새 방식, 남은 매핑의 필터링도 새 방식)`, { natType: cfg.natType });
+    }
+    if (cfg.hairpin !== undefined && cfg.hairpin !== this.hairpin) {
+      this.hairpin = cfg.hairpin;
+      ctx.trace("ip.config", "sys", cfg.hairpin ? `헤어핀 NAT 켜짐: 안에서 내 공인 주소의 포워딩 포트로 접속하면 안쪽 서버로 되돌려 준다 (도메인으로 집 서버에 접속하기)` : `헤어핀 NAT 꺼짐`, { hairpin: cfg.hairpin });
+    }
     if (cfg.forwards && forwardsKey(cfg.forwards) !== forwardsKey(this.w1.nat.forwards)) {
       this.w1.nat.setForwards(cfg.forwards);
       this.w2.nat.setForwards(cfg.forwards);
       ctx.trace("ip.config", "sys", `포트 포워딩 규칙 변경: ${cfg.forwards.length}개`, { forwards: cfg.forwards.map((f) => ({ ...f })) });
     }
+    if (cfg.firewall) this.firewall.setConfig(cfg.firewall, ctx, "");
+    if (cfg.blocked) this.setBlocked(cfg.blocked, ctx);
+    if (cfg.dropIn !== undefined) this.setDropIn(cfg.dropIn, ctx);
+    if (cfg.dpi) this.setDpi(cfg.dpi, ctx);
+    if (cfg.igmpSnooping !== undefined) this.setIgmp(cfg.igmpSnooping, ctx);
+    if (cfg.sipAlg !== undefined) this.setSipAlg(cfg.sipAlg, ctx);
 
+    // 3. 서비스
     if (cfg.dns) {
       const cur = this.dnsForwarder.config;
       if (cfg.dns.enabled !== cur.enabled || cfg.dns.upstream !== cur.upstream) {
@@ -1175,16 +1177,18 @@ export class Router implements SimNode {
         this.dnsForwarder.config = { ...cfg.dns, records: [] };
       }
     }
-    // 메시 VPN 은 포트 포워딩을 본 뒤에 (그 포트를 LAN 기기로 넘기면 공유기 자신은 다른 포트)
-    if (cfg.mesh) this.setMesh(cfg.mesh, ctx);
+    if (cfg.adguard) this.setAdguard(cfg.adguard, ctx);
     if (cfg.admin) this.admin.setConfig(cfg.admin, ctx);
-    if (cfg.cloud !== undefined) this.cloud.setEnabled(cfg.cloud, ctx);
-    if (cfg.blocked) this.setBlocked(cfg.blocked, ctx);
-    if (cfg.dropIn !== undefined) this.setDropIn(cfg.dropIn, ctx);
     if (cfg.samba) this.admin.setSamba(cfg.samba, ctx);
-    if (cfg.igmpSnooping !== undefined) this.setIgmp(cfg.igmpSnooping, ctx);
-    if (cfg.sipAlg !== undefined) this.setSipAlg(cfg.sipAlg, ctx);
+    if (cfg.cloud !== undefined) this.cloud.setEnabled(cfg.cloud, ctx);
+    if (cfg.ddns) this.ddns.setConfig(cfg.ddns, ctx);
     if (cfg.tor !== undefined) this.tor.setEnabled(cfg.tor, ctx);
+
+    // 4. 터널
+    if (cfg.wgServer || cfg.wgClient) this.setWg(cfg.wgServer, cfg.wgClient, ctx);
+    if (cfg.ovpnServer) this.ovpn.setConfig(cfg.ovpnServer, ctx);
+    if (cfg.vpnServer) this.vpnServer.setConfig(cfg.vpnServer, ctx);
+    if (cfg.mesh) this.setMesh(cfg.mesh, ctx);
   }
 
   /** 인터넷을 막을 LAN 기기 (MAC) */

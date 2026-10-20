@@ -29,7 +29,7 @@
 | 고침 057192c | (교란 표에서) OpenVPN 서버를 껐다 켜면 노트북이 한 번 다시 붙으려다 포기 — 실제는 connect-retry 로 계속 | openvpn.ts |
 | 아님 | (교란 표에서) L2TP 서버를 껐다 켜면 스스로 다시 붙지 않음 — StopCCN 으로 "끊김 · 다시 연결" 을 알리고, 실제 OS 클라이언트도 자동 재시도 없음 | l2tp.ts |
 | 고침 a028f50 | (경로 표에서) 드롭인 기기가 공유기 LAN 주소로 보낸 관리 화면·DNS·ping 을 "호스트끼리 직접 통신" 으로 드롭, DNS 답의 출발지가 물은 주소와 다름 | router.ts handleWanIp |
-| 고침 (TunnelService) | 공유기 메시 주소로 물은 DNS 에 LAN 주소로 답함 (DNS 포워더 `answersAt` 목록에 메시만 빠짐) — 호스트 리졸버가 답의 출발지를 보지 않아 가려져 있었고, 리졸버도 실제처럼 물은 서버의 답만 받게 고침 | router.ts answersAt, dns.ts DnsResolver.handle |
+| 고침 8462f4c | 공유기 메시 주소로 물은 DNS 에 LAN 주소로 답함 (DNS 포워더 `answersAt` 목록에 메시만 빠짐) — 호스트 리졸버가 답의 출발지를 보지 않아 가려져 있었고, 리졸버도 실제처럼 물은 서버의 답만 받게 고침 | router.ts answersAt, dns.ts DnsResolver.handle |
 | 고침 f366199 | 답을 받아도 취소하지 않는 일반 timer 가 IKE 말고도 남아, 불러온 뒤 마지막 일보다 시계가 더 감 (rip·ha·p2p·ncpwg·iptime·wireguard·ddns·openvpn·tailscale·k3s·tor·sip — 0.01~5초). 동작은 같고 시각만 밀림 — 4단계 "타이머 라우터" 에서 함께 | 각 모듈 |
 
 ## 2. 안전망 (리팩터링 전에)
@@ -49,7 +49,7 @@
 - **안쪽 분기·자신 처리 하나** — `classifyInside(dst)`(자신/터널 피어/L2TP/LAN/드롭인) + `deliverInside()`(TTL·통지 한 번) + `LocalServices.deliver()`(자신에게 온 것 6벌). 그 뒤 `lan.outbound` 의 숨은 터널 우회 제거. (M)
 - **TunnelService 인터페이스** — WireGuard·OpenVPN·메시·L2TP 서버를 `{ lines; claims; open; owns; inSubnet; sendTo; policy; onAddress(필수) }` 로. 주소 변경 알림 누락을 컴파일러가 잡는다. (M) — **함** (`nodes/tunnelsvc.ts` `{label; via; address; owns; send; noPeer; access; onAddress}`, WireGuard 서버·OpenVPN·메시). L2TP 는 넣지 않음: 붙은 기기에게 LAN 대역 주소를 주고 프록시 ARP 로 LAN 기기처럼 다루는 다른 모델이고, 트레이스 문구도 다르다. WAN 수신(`claims`)도 넣지 않음: WireGuard 포트 처리가 서버·클라이언트·"꺼짐" 안내를 함께 한다.
 - **변경 알림 하나** — 회선·주소가 바뀌는 모든 지점에서 `EgressListener` 목록에 한 함수로. (S)
-- **설정 적용 한 경로** — 생성자(일부 필드)·netSync 생성 직후 setter 13개·configure(27단계)를 "신원만 생성 → configure(initial)" 로, 단계 명시(주소 → 테이블 → 서비스 → 터널). (M)
+- **설정 적용 한 경로** — 생성자(일부 필드)·netSync 생성 직후 setter 13개·configure(27단계)를 "신원만 생성 → configure(initial)" 로, 단계 명시(주소 → 테이블 → 서비스 → 터널). (M) — **함**: netSync 의 생성 직후 setter 목록을 `configure` 한 번으로, `configure` 를 네 단계로(뒤 단계가 앞 단계의 결과를 본다 — 터널·DDNS 는 새 WAN 주소, AdGuard 는 DNS 포워더, 메시는 포트 포워딩). 생성자는 "부팅 때 설정(로그 없이)" 으로 남김: 신원만 만들고 configure 로 다 넣으면 불러오기마다 "LAN 주소 변경·DHCP 켜짐" 같은 변경 로그가 생겨 사실과 다르다. 골든 차이는 세 예제에서 "WireGuard 서버 설정" 한 줄의 순서뿐
 - **파일 분할** (위가 끝나면 기계적) — RouterBridge·Router6·VpnHub·RouterServices·Forwarder, 하위 모듈은 좁은 `RouterCore` 에만 의존. 타이머 등록 방식·snapshot 기여 방식 함께. (L, 행동 위험 낮음)
 
 ### 호스트·TCP (host.ts 1962줄, tcp.ts 1050줄)

@@ -132,28 +132,7 @@ export class NetworkSync {
         if (node instanceof Switch && d.switch?.igmpSnooping) node.setIgmp(true, net.contextFor(d.id), d.mac);
         if (node instanceof L3Node && d.l3?.ra?.enabled) node.setRa(effectiveL3(d).ra, net.contextFor(d.id));
         if (node instanceof Host && d.host?.ra?.enabled) node.setRemoteVpn(effectiveRaClient(d)!, net.contextFor(d.id));
-        if (node instanceof Router && (d.router?.wgServer?.enabled || d.router?.wgClient?.enabled)) {
-          const r = effectiveRouter(d);
-          node.setWg(r.wgServer, r.wgClient, net.contextFor(d.id));
-        }
-        if (node instanceof Router && d.router?.ddns?.enabled) node.ddns.setConfig(effectiveRouter(d).ddns, net.contextFor(d.id));
-        if (node instanceof Router && d.router?.wan2?.enabled) node.setWan2(effectiveRouter(d).wan2, net.contextFor(d.id));
-        if (node instanceof Router && d.router?.adguard?.enabled) node.setAdguard(effectiveRouter(d).adguard, net.contextFor(d.id));
-        if (node instanceof Router && d.router?.dpi?.enabled) node.setDpi(effectiveRouter(d).dpi, net.contextFor(d.id));
-        if (node instanceof Router && d.router?.ovpnServer?.enabled) node.ovpn.setConfig(effectiveRouter(d).ovpnServer, net.contextFor(d.id));
-        if (node instanceof Router && d.router?.mesh?.enabled) node.setMesh(effectiveRouter(d).mesh, net.contextFor(d.id));
-        if (node instanceof Router && (d.router?.admin?.enabled || d.router?.cloud || d.router?.blocked?.length || d.router?.dropIn || d.router?.samba?.enabled || d.router?.igmpSnooping || d.router?.sipAlg || d.router?.tor)) {
-          const r = effectiveRouter(d);
-          const c = net.contextFor(d.id);
-          node.setIgmp(r.igmpSnooping, c);
-          node.setSipAlg(r.sipAlg, c);
-          node.tor.setEnabled(r.tor, c);
-          node.setDropIn(r.dropIn, c);
-          node.admin.setSamba(r.samba, c);
-          node.admin.setConfig(r.admin, c);
-          node.cloud.setEnabled(r.cloud, c);
-          node.setBlocked(r.blocked, c);
-        }
+        if (node instanceof Router && d.router) node.configure(effectiveRouter(d, node), net.contextFor(d.id));
         if (node instanceof Host && d.host?.mesh?.enabled) node.setMesh(effectiveMesh(d), net.contextFor(d.id));
         if (node instanceof Host && d.host?.sip?.enabled) node.setSip(effectiveSip(d), net.contextFor(d.id));
       } else {
