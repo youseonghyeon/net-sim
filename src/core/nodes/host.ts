@@ -11,20 +11,17 @@ import {
   isNdp,
   type EthernetFrame,
   type IcmpPacket,
-  type IcmpTimeExceeded,
   type Icmpv6Packet,
-  type Icmpv6TimeExceeded,
   type Icmpv6Unreachable,
   type IpPacket,
   type Ipv4Packet,
   type Ipv6Packet,
-  UNREACHABLE_FLAG,
   UNREACHABLE_LABEL,
   UNREACHABLE6_LABEL,
   type IcmpUnreachable,
 } from "../packet";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
-import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, normalizeName, type DnsServerConfig, type QType, type ResolveInfo } from "./dns";
+import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, looksLikeName, type DnsServerConfig, type QType } from "./dns";
 import { NetInterface } from "./iface";
 import { LB_ALGORITHM_LABEL, LB_CHECK_TAG, LB_MODE_LABEL, LB_STICKY_LABEL, LoadBalancer, type LbConfig } from "./lb";
 import { ForwardProxy, type ProxyConfig } from "./proxy";
@@ -43,6 +40,8 @@ const STREAM_PACKETS = 5;
 import { MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
 import { CALL_STATE_LABEL, SIP_TIMER_TAG, SipPhone, type SipPhoneConfig } from "./sip";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, NUD_TIMER_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
+import { HostDiagnostics, LOOKUP_KEEP, PING_INTERVAL, PING_MAX_COUNT, PING_RUN_KEEP, PING_TIMEOUT, TRACEROUTE_KEEP, TRACEROUTE_MAX_HOPS, TRACEROUTE_TIMEOUT, type LookupRecord, type PingRecord, type PingRun, type TracerouteRecord } from "./hostdiag";
+export type { LookupRecord, PingRecord, PingRun, PingStats, TracerouteHop, TracerouteRecord } from "./hostdiag";
 
 
 /** 루프백으로 보낸 패킷을 받는 timer (같은 시각, 지금 일 다음) */
@@ -90,116 +89,18 @@ export interface HttpProxySetting {
   port: number;
 }
 
-export interface PingRecord {
-  /** 사용자가 입력한 대상 (이름 또는 IP) */
-  dst: string;
-  /** 이름이면 해석된 주소 */
-  resolved?: Ip;
-  seq: number;
-  sentAt: number;
-  status: "pending" | "ok" | "failed";
-  rtt?: number;
-  reason?: string;
-  /** 반복 ping(ping -c N)의 한 번이면 그 실행의 id */
-  run?: number;
-}
-
-/** 반복 ping 실행 (ping -c N): 1초 간격으로 보내고, 모두 끝나면 통계 */
-export interface PingRun {
-  id: number;
-  /** 사용자가 입력한 대상 (이름 또는 IP) */
-  dst: string;
-  count: number;
-  /** 지금까지 보낸 수 */
-  sent: number;
-  /** 이름이면 처음에 한 번 해석한 주소 (이후 그 주소로) */
-  resolved?: Ip;
-  /** 실제로 보내는 주소 */
-  target?: Ip;
-  done: boolean;
-  /** 첫 요청도 못 보내고 멈춤 (IP 미설정·이름 해석 실패) */
-  stopped?: string;
-  stats?: PingStats;
-}
-
-export interface PingStats {
-  transmitted: number;
-  received: number;
-  /** 패킷 손실 % */
-  loss: number;
-  min?: number;
-  avg?: number;
-  max?: number;
-  mdev?: number;
-  /** 첫 요청부터 마지막 요청까지 (ms) */
-  time: number;
-}
-
-export interface TracerouteHop {
-  ttl: number;
-  /** 응답한 홉의 주소. 시간 안에 응답이 없으면(*) 비어 있다 */
-  ip?: Ip;
-  rtt?: number;
-  /** 이 홉이 Destination Unreachable 을 돌려줌 (!N 경로 없음, !H 호스트 무응답, !P 포트 닫힘) */
-  flag?: string;
-}
-
-export interface TracerouteRecord {
-  /** 사용자가 입력한 대상 (이름 또는 IP) */
-  dst: string;
-  /** 이름이면 해석된 주소 */
-  resolved?: Ip;
-  hops: TracerouteHop[];
-  status: "running" | "done" | "failed";
-  reason?: string;
-  startedAt: number;
-}
-
-/** nslookup(DNS 조회) 한 번의 기록 */
-export interface LookupRecord {
-  seq: number;
-  name: string;
-  qtype: QType;
-  /** 물어본 DNS 서버 (사용자가 적은 서버, 아니면 설정된 DNS). 묻지도 못했으면 비어 있다 */
-  server?: Ip;
-  status: "pending" | "ok" | "failed";
-  answer?: Ip;
-  /** 답이 0.0.0.0·:: — DNS 필터(광고 차단·자녀 보호)가 막은 이름 */
-  blocked?: boolean;
-  /** MagicDNS(메시 VPN)가 기기 안에서 답함 */
-  magicDns?: boolean;
-  startedAt: number;
-  rtt?: number;
-  reason?: string;
-}
-
-/** 진행 중인 traceroute 의 현재 프로브 */
-interface ActiveTrace {
-  rec: TracerouteRecord;
-  target: Ip;
-  ttl: number;
-  seq: number;
-  sentAt: number;
-  timer?: TimerHandle;
-}
-
 export { DHCP_MAX_ATTEMPTS, DHCP_TIMEOUT, DHCP_STATE_LABEL, type DhcpState } from "./dhcp";
 
 /** 단말 호스트: 인터페이스 1개, DHCP 클라이언트, ICMP ping */
 export class Host implements SimNode {
-  static readonly PING_TIMEOUT = 2000;
-  /** 반복 ping 간격 (실제 ping 기본값 1초) */
-  static readonly PING_INTERVAL = 1000;
-  static readonly PING_MAX_COUNT = 100;
-  /** 보관하는 반복 ping 실행 수 */
-  static readonly PING_RUN_KEEP = 5;
-  /** traceroute: 홉 하나의 응답을 기다리는 시간 */
-  static readonly TRACEROUTE_TIMEOUT = 1000;
-  static readonly TRACEROUTE_MAX_HOPS = 16;
-  /** 보관하는 traceroute 기록 수 */
-  static readonly TRACEROUTE_KEEP = 5;
-  /** 보관하는 nslookup 기록 수 */
-  static readonly LOOKUP_KEEP = 5;
+  static readonly PING_TIMEOUT = PING_TIMEOUT;
+  static readonly PING_INTERVAL = PING_INTERVAL;
+  static readonly PING_MAX_COUNT = PING_MAX_COUNT;
+  static readonly PING_RUN_KEEP = PING_RUN_KEEP;
+  static readonly TRACEROUTE_TIMEOUT = TRACEROUTE_TIMEOUT;
+  static readonly TRACEROUTE_MAX_HOPS = TRACEROUTE_MAX_HOPS;
+  static readonly TRACEROUTE_KEEP = TRACEROUTE_KEEP;
+  static readonly LOOKUP_KEEP = LOOKUP_KEEP;
 
   readonly type = "host" as const;
   readonly portCount: number;
@@ -246,23 +147,20 @@ export class Host implements SimNode {
   private clock = 0;
   ipMode: IpMode;
   linkUp = false;
-  readonly pings: PingRecord[] = [];
-  /** 반복 ping 실행 (최근 PING_RUN_KEEP 개) */
-  readonly pingRuns: PingRun[] = [];
-  private pingRunSeq = 0;
-  /** traceroute 기록 (최근 TRACEROUTE_KEEP 개, 오래된 것부터) */
-  readonly traceroutes: TracerouteRecord[] = [];
-  /** nslookup 기록 (최근 LOOKUP_KEEP 개, 오래된 것부터) */
-  readonly lookups: LookupRecord[] = [];
-  private lookupSeq = 0;
-
-  private readonly icmpId: number;
-  private icmpSeq = 0;
-  private readonly pingTimers = new Map<number, TimerHandle>();
-  /** traceroute 프로브의 ICMP id. ping 의 id(0x1000 대)와 겹치지 않게 0x2000 대 */
-  private readonly trId: number;
-  private trSeq = 0;
-  private activeTrace: ActiveTrace | undefined;
+  /** ping·traceroute·nslookup (hostdiag.ts). pings·pingRuns·traceroutes·lookups 는 그 기록 */
+  readonly diag: HostDiagnostics;
+  get pings(): PingRecord[] {
+    return this.diag.pings;
+  }
+  get pingRuns(): PingRun[] {
+    return this.diag.pingRuns;
+  }
+  get traceroutes(): TracerouteRecord[] {
+    return this.diag.traceroutes;
+  }
+  get lookups(): LookupRecord[] {
+    return this.diag.lookups;
+  }
   private readonly emit = (ctx: NodeContext) => (f: EthernetFrame) => ctx.send(this.activeNic ?? 0, f);
 
   constructor(cfg: HostConfig) {
@@ -276,15 +174,13 @@ export class Host implements SimNode {
     this.portCount = this.nics.length;
     this.ipMode = cfg.ipMode ?? (cfg.ip ? "static" : "dhcp");
     this.iface = new NetInterface(cfg.mac, this.ipMode === "static" ? { ip: cfg.ip, prefix: cfg.prefix, gateway: cfg.gateway, dns: cfg.dns } : { prefix: cfg.prefix });
-    this.icmpId = 0x1000 + (Math.abs(hashCode(cfg.id)) % 0x1000);
-    this.trId = 0x2000 + (Math.abs(hashCode(cfg.id)) % 0x1000);
     this.dhcp = new DhcpClient(this.iface, hashCode(cfg.id));
     this.v6 = new Ipv6Interface(cfg.mac);
     this.v6.loopback = (pkt, ctx) => this.loopback6(pkt, ctx);
     // RA 로 SLAAC 주소가 사라지면 그 주소로 묶인 연결·traceroute 를 정리한다 (설정 변경 때와 같이)
     this.v6.onAddrRemoved = (ip, ctx) => {
       this.tcp.abortAll("IPv6 주소 사라짐", ctx, (c) => c.localIp === ip);
-      for (const rec of this.traceroutes) if (rec.status === "running" && isIpv6(rec.resolved ?? rec.dst)) this.failTrace(rec, "IPv6 주소 사라짐", ctx);
+      this.diag.cancelTraceroute("IPv6 주소 사라짐", ctx, (rec) => isIpv6(rec.resolved ?? rec.dst));
     };
     if (cfg.ipv6?.enabled) this.v6.init(cfg.ipv6);
     this.tcp = new TcpStack({
@@ -345,6 +241,18 @@ export class Host implements SimNode {
     this.iface.outbound = (pkt, ctx) => this.mesh.intercept(pkt, ctx, false) || this.ra.intercept(pkt, ctx) || this.mesh.intercept(pkt, ctx);
     // VPN 이 알려 준 DNS (L2TP 는 IPCP, WireGuard 는 설정 파일, OpenVPN 은 PUSH)
     this.resolver.vpnDns = () => this.ra.vpnDns();
+    this.diag = new HostDiagnostics(
+      {
+        iface: this.iface,
+        v6: this.v6,
+        resolver: this.resolver,
+        mesh: this.mesh,
+        emit: (ctx) => this.emit(ctx),
+        hasV6Global: () => this.hasV6Global(),
+        resolveName: (name, ctx, done, alive) => this.resolveName(name, ctx, done, alive),
+      },
+      hashCode(cfg.id),
+    );
   }
 
   private makeVpnClient(type: RaClientConfig["type"]): RaClient | L2tpClient | WgClient | OvpnClient {
@@ -475,7 +383,7 @@ export class Host implements SimNode {
     if (this.v6.effectiveDns !== dnsBefore && !this.iface.dns) this.resolver.clear("DNS 설정 변경");
     if (!changed) return;
     this.tcp.abortAll("IPv6 주소 변경", ctx, (c) => isIpv6(c.localIp));
-    for (const rec of this.traceroutes) if (rec.status === "running" && isIpv6(rec.resolved ?? rec.dst)) this.failTrace(rec, "IPv6 주소 변경", ctx);
+    this.diag.cancelTraceroute("IPv6 주소 변경", ctx, (rec) => isIpv6(rec.resolved ?? rec.dst));
   }
 
   /** IPv4·IPv6 를 알맞은 인터페이스로 */
@@ -736,7 +644,7 @@ export class Host implements SimNode {
   /** IPv4 주소를 잃음 (바뀜·DHCP 로 전환): 그 주소의 연결·traceroute 와 주소에 묶인 앱 전부를 정리 (IPv6 연결은 그대로) */
   private addressLost(ctx: NodeContext, why: string): void {
     this.tcp.abortAll(why, ctx, (c) => !isIpv6(c.localIp));
-    this.cancelTraceroute(why, ctx, (rec) => !isIpv6(rec.resolved ?? rec.dst));
+    this.diag.cancelTraceroute(why, ctx, (rec) => !isIpv6(rec.resolved ?? rec.dst));
     for (const app of this.addressApps()) app.lost(ctx, why);
   }
 
@@ -748,7 +656,7 @@ export class Host implements SimNode {
     for (const app of this.addressApps()) app.lost(ctx, why);
     this.iface.clearPending();
     this.tcp.abortAll(why, ctx);
-    this.cancelTraceroute(why, ctx);
+    this.diag.cancelTraceroute(why, ctx);
     this.resolver.clear(why);
     if (this.ipMode === "dhcp") {
       const had = this.iface.ip;
@@ -762,447 +670,22 @@ export class Host implements SimNode {
 
   /** 반복 ping 횟수를 1~PING_MAX_COUNT 정수로 (없거나 숫자가 아니면 1) */
   static pingCount(count?: number): number {
-    return Math.min(Host.PING_MAX_COUNT, Math.max(1, Math.floor(count ?? 1) || 1));
+    return HostDiagnostics.pingCount(count);
   }
 
-  /** ping. count > 1 이면 반복 ping (ping -c N): 1초 간격으로 보내고 모두 끝나면 통계를 남긴다 */
+  /** ping. count > 1 이면 반복 ping (ping -c N) */
   ping(target: string, ctx: NodeContext, count = 1): void {
-    const seq = ++this.icmpSeq;
-    const n = Host.pingCount(count);
-    const run: PingRun | undefined = n > 1 ? { id: ++this.pingRunSeq, dst: target, count: n, sent: 1, done: false } : undefined;
-    if (run) {
-      this.pingRuns.push(run);
-      // 끝나고 통계까지 남긴 실행만 밀어낸다 (진행 중인 실행을 지우면 다음 요청·통계를 잃는다)
-      while (this.pingRuns.length > Host.PING_RUN_KEEP) {
-        const i = this.pingRuns.findIndex((r) => r.stats || r.stopped);
-        if (i < 0) break;
-        this.pingRuns.splice(i, 1);
-      }
-    }
-    const rec: PingRecord = { dst: target, seq, sentAt: ctx.now, status: "pending", ...(run ? { run: run.id } : {}) };
-    this.pings.push(rec);
-    // 첫 요청을 못 보내면 반복도 멈춘다 (실제 ping 도 unknown host·Network unreachable 이면 바로 끝남)
-    const stop = (reason: string) => {
-      if (!run) return;
-      run.done = true;
-      run.stopped = reason;
-    };
-    /** 첫 요청을 보낸 뒤: 바로 실패했으면(IPv6 출발지 없음) 멈추고, 아니면 반복을 잇는다 */
-    const next = (ip: Ip) => {
-      if (!run) return;
-      if (rec.status === "failed") stop(rec.reason ?? "보내지 못함");
-      else this.continueRun(run, ip, ctx);
-    };
-    if (isIpv6(target)) {
-      this.sendPing6(rec, canonIp6(target)!, ctx);
-      next(canonIp6(target)!);
-      return;
-    }
-    if (!this.iface.ip && !(looksLikeName(target) && this.hasV6Global())) {
-      rec.status = "failed";
-      rec.reason = "IP 미설정";
-      ctx.trace("ip.no-address", "L3", `ping ${target} 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)`, { dst: target });
-      stop(rec.reason);
-      return;
-    }
-    if (!looksLikeName(target) && !isValidIp(target)) {
-      rec.status = "failed";
-      rec.reason = "잘못된 주소";
-      ctx.trace("ip.drop", "L3", `ping ${target} 실패: IP 주소도 이름도 아님`, { dst: target });
-      stop(rec.reason);
-      return;
-    }
-    if (looksLikeName(target)) {
-      // 이름이면 먼저 DNS 로 주소를 찾고, 그 다음에 ping (IPv6 주소가 있으면 AAAA 먼저 — 폴백 없음)
-      this.resolveName(target, ctx, (ip, err) => {
-        if (!ip) {
-          rec.status = "failed";
-          rec.reason = err ?? "이름 해석 실패";
-          ctx.trace("icmp.failed", "app", `ping ${target} 실패: 이름을 주소로 바꾸지 못함 (${rec.reason})`, { dst: target });
-          stop(rec.reason);
-          return;
-        }
-        rec.resolved = ip;
-        ctx.trace("dns.resolved", "app", `${target} = ${ip} → 이제 이 주소로 ping`, { name: target, ip });
-        if (isIpv6(ip)) this.sendPing6(rec, ip, ctx);
-        else this.sendPing(rec, ip, ctx);
-        if (run) run.resolved = ip;
-        next(ip);
-      });
-      return;
-    }
-    this.sendPing(rec, target, ctx);
-    next(target);
+    this.diag.ping(target, ctx, count);
   }
 
-  /** 반복 ping: 첫 요청을 보낸 뒤 — 남았으면 1초 뒤 다음, 다 보냈으면 끝났는지 본다 */
-  private continueRun(run: PingRun, target: Ip, ctx: NodeContext): void {
-    run.target = target;
-    if (run.sent < run.count) ctx.timer(Host.PING_INTERVAL, "ping-next", { run: run.id });
-    this.checkRun(run, ctx);
-  }
-
-  /** 반복 ping 의 다음 요청 (이름은 다시 풀지 않고 처음 주소로) */
-  private nextPing(runId: number, ctx: NodeContext): void {
-    const run = this.pingRuns.find((r) => r.id === runId);
-    if (!run || run.done || !run.target) return;
-    const target = run.target;
-    run.sent += 1;
-    const rec: PingRecord = { dst: run.dst, seq: ++this.icmpSeq, sentAt: ctx.now, status: "pending", run: run.id, ...(run.resolved ? { resolved: run.resolved } : {}) };
-    this.pings.push(rec);
-    if (isIpv6(target)) this.sendPing6(rec, target, ctx);
-    else if (!this.iface.ip) {
-      // 도중에 주소를 잃음: 이번 요청은 실패, 다음 요청은 계속 (실제 ping 의 sendmsg: Network is unreachable)
-      rec.status = "failed";
-      rec.reason = "IP 미설정";
-      ctx.trace("ip.no-address", "L3", `ping ${target} (seq=${rec.seq}) 실패: 내 IP 주소가 없음`, { dst: target, seq: rec.seq });
-    } else this.sendPing(rec, target, ctx);
-    if (run.sent < run.count) ctx.timer(Host.PING_INTERVAL, "ping-next", { run: run.id });
-    this.checkRun(run, ctx);
-  }
-
-  /** 다 보냈고 모두 답(또는 timeout)이 났으면 통계 — 마지막 결과 줄 뒤에 남도록 0ms 뒤에 */
-  private checkRun(run: PingRun, ctx: NodeContext): void {
-    if (run.done || run.sent < run.count) return;
-    if (this.pings.some((p) => p.run === run.id && p.status === "pending")) return;
-    run.done = true;
-    ctx.timer(0, "ping-stats", { run: run.id });
-  }
-
-  private pingStats(runId: number, ctx: NodeContext): void {
-    const run = this.pingRuns.find((r) => r.id === runId);
-    if (!run) return;
-    const recs = this.pings.filter((p) => p.run === run.id);
-    const rtts = recs.filter((p) => p.status === "ok").map((p) => p.rtt ?? 0);
-    const transmitted = recs.length;
-    const received = rtts.length;
-    const loss = transmitted ? ((transmitted - received) / transmitted) * 100 : 0;
-    const time = recs.length ? recs.at(-1)!.sentAt - recs[0]!.sentAt : 0;
-    const stats: PingStats = { transmitted, received, loss, time };
-    if (received) {
-      const avg = rtts.reduce((a, b) => a + b, 0) / received;
-      Object.assign(stats, { min: Math.min(...rtts), avg, max: Math.max(...rtts), mdev: Math.sqrt(Math.max(0, rtts.reduce((a, b) => a + b * b, 0) / received - avg * avg)) });
-    }
-    run.stats = stats;
-    const pct = +loss.toPrecision(6);
-    const dst = run.resolved ? `${run.dst} (${run.resolved})` : run.dst;
-    ctx.trace(
-      "icmp.stats",
-      "app",
-      `ping ${dst} 통계: ${transmitted}개 보냄 → ${received}개 받음, 패킷 손실 ${pct}%${received ? ` · RTT 최소/평균/최대 ${stats.min}/${Math.round(stats.avg! * 10) / 10}/${stats.max}ms` : ""}`,
-      { dst: run.dst, transmitted, received, loss: pct, time, ...(received ? { min: stats.min!, avg: stats.avg!, max: stats.max!, mdev: stats.mdev! } : {}) },
-    );
-  }
-
-  private sendPing(rec: PingRecord, dst: Ip, ctx: NodeContext): void {
-    const seq = rec.seq;
-    rec.sentAt = ctx.now;
-    if (dst === this.iface.ip || dst === "127.0.0.1") {
-      rec.status = "ok";
-      rec.rtt = 0;
-      ctx.trace("icmp.reply.received", "app", `ping ${dst}: 내 주소(루프백) → 네트워크로 나가지 않고 즉시 응답`, { dst });
-      return;
-    }
-    const pkt: Ipv4Packet = {
-      kind: "ipv4",
-      src: this.iface.ip!,
-      dst,
-      ttl: 64,
-      payload: { kind: "icmp", type: "echo-request", id: this.icmpId, seq },
-    };
-    ctx.trace("icmp.echo.sent", "app", `ping ${dst} (seq=${seq}) → ICMP Echo 요청 생성`, { dst, seq });
-    this.iface.sendIp(pkt, ctx, this.emit(ctx));
-    this.pingTimers.set(seq, ctx.timer(Host.PING_TIMEOUT, "ping-timeout", { seq }));
-  }
-
-  /** ping over IPv6 (ICMPv6 Echo) */
-  private sendPing6(rec: PingRecord, dst: Ip, ctx: NodeContext): void {
-    rec.sentAt = ctx.now;
-    if (this.v6.owns(dst) || dst === "::1") {
-      rec.status = "ok";
-      rec.rtt = 0;
-      ctx.trace("icmp.reply.received", "app", `ping ${dst}: 내 주소(루프백) → 네트워크로 나가지 않고 즉시 응답`, { dst });
-      return;
-    }
-    const src = this.v6.sourceFor(dst);
-    if (!src) {
-      rec.status = "failed";
-      rec.reason = this.v6.enabled ? "IPv6 주소 없음" : "IPv6 꺼짐";
-      ctx.trace("ip.no-address", "L3", `ping ${dst} 실패: ${this.v6.whyNoSource(dst)}`, { dst });
-      return;
-    }
-    const pkt: Ipv6Packet = { kind: "ipv6", src, dst, hopLimit: Ipv6Interface.HOP_LIMIT, payload: { kind: "icmp6", type: "echo-request", id: this.icmpId, seq: rec.seq } };
-    ctx.trace("icmp.echo.sent", "app", `ping ${dst} (seq=${rec.seq}) → ICMPv6 Echo 요청 생성 (출발지 ${src})`, { dst, seq: rec.seq });
-    this.v6.send(pkt, ctx, this.emit(ctx));
-    this.pingTimers.set(rec.seq, ctx.timer(Host.PING_TIMEOUT, "ping-timeout", { seq: rec.seq }));
-  }
-
-  private finishPing(rec: PingRecord, status: "ok" | "failed", extra: { rtt?: number; reason?: string }, ctx: NodeContext): void {
-    rec.status = status;
-    if (extra.rtt !== undefined) rec.rtt = extra.rtt;
-    if (extra.reason) rec.reason = extra.reason;
-    this.pingTimers.get(rec.seq)?.cancel();
-    this.pingTimers.delete(rec.seq);
-    const run = rec.run !== undefined ? this.pingRuns.find((r) => r.id === rec.run) : undefined;
-    if (run) this.checkRun(run, ctx);
-  }
-
-  // ---------- nslookup ----------
-
-  /**
-   * DNS 조회(nslookup): 캐시를 거치지 않고 DNS 서버에 묻고 답을 보여 준다 (캐시에도 넣지 않음).
-   * server 를 주면 그 서버에, 없으면 설정된 DNS 에. 127.0.0.1 은 내 주소(내 DNS 서버 서비스)
-   */
+  /** DNS 조회(nslookup) */
   lookup(rawName: string, qtype: QType, server: Ip | undefined, ctx: NodeContext): void {
-    const name = normalizeName(rawName);
-    const rec: LookupRecord = { seq: ++this.lookupSeq, name, qtype, status: "pending", startedAt: ctx.now };
-    this.lookups.push(rec);
-    while (this.lookups.length > Host.LOOKUP_KEEP) this.lookups.shift();
-    const cmd = `nslookup${qtype === "AAAA" ? " -type=AAAA" : ""} ${name}`;
-    const fail = (reason: string, info?: ResolveInfo) => {
-      rec.status = "failed";
-      rec.reason = reason;
-      // rcode: NXDOMAIN·SERVFAIL·NODATA(이름은 있지만 그 종류가 없음)·timeout — 실무 출력(nslookup)의 모양을 고른다
-      const rcode = info?.rcode ?? (info?.nodata ? "NODATA" : info?.timeout ? "timeout" : undefined);
-      ctx.trace("dns.lookup.failed", "app", `${cmd} 실패: ${reason}`, { name, qtype, reason, ...(rec.server ? { server: rec.server } : {}), ...(rcode ? { rcode } : {}) });
-    };
-    if (isValidIp(name) || isIpv6(name)) {
-      fail("주소로 이름을 찾는 역방향 조회(PTR)는 지원하지 않음 — 이름을 적으세요");
-      return;
-    }
-    if (!looksLikeName(name) || !/^[a-z0-9._-]+$/.test(name)) {
-      fail("이름에 쓸 수 없는 글자가 있음 (영문·숫자·점·하이픈)");
-      return;
-    }
-    if (server !== undefined) {
-      server = server.trim();
-      if (server === "127.0.0.1" && this.iface.ip) server = this.iface.ip;
-      else if (isIpv6(server)) {
-        server = canonIp6(server)!;
-        // ::1 = 내 IPv6 주소 (내 DNS 서버 서비스에 루프백). 전역 주소가 없으면 링크 로컬
-        if (server === "::1") server = this.v6.globals[0]?.ip ?? this.v6.linkLocal;
-      }
-      else if (!isValidIp(server)) {
-        fail(`DNS 서버 주소가 올바르지 않음 (${server})`);
-        return;
-      }
-    }
-    // MagicDNS: 메시 VPN 이 시스템 DNS 를 100.100.100.100(기기 안)으로 잡아 피어 이름을 바로 답한다 — 서버를 지정하지 않았을 때만
-    const magic = server === undefined && qtype === "A" ? this.mesh.resolve(name) : undefined;
-    if (magic) {
-      Object.assign(rec, { status: "ok", answer: magic, server: "100.100.100.100", magicDns: true, rtt: 0 });
-      ctx.trace("dns.lookup", "app", `${cmd} → ${magic} (MagicDNS 100.100.100.100 — ${this.mesh.brand} netmap 의 피어 이름, 기기 안에서 답함)`, { name, qtype, ip: magic, server: "100.100.100.100" });
-      return;
-    }
-    // 물을 서버를 먼저 적어 둔다: 내 DNS 서버 서비스(루프백)는 답이 이 호출 안에서 바로 온다
-    rec.server = server ?? this.resolver.server;
-    this.resolver.lookup(name, qtype, server, ctx, this.emit(ctx), (ip, err, info) => {
-      if (!ip) {
-        fail(err ?? "응답 없음", info);
-        return;
-      }
-      rec.status = "ok";
-      rec.answer = ip;
-      rec.rtt = ctx.now - rec.startedAt;
-      if (ip === "0.0.0.0" || ip === "::") rec.blocked = true;
-      ctx.trace(
-        "dns.lookup",
-        "app",
-        `${cmd} → ${ip} (서버 ${rec.server ?? "?"}, ${rec.rtt}ms)${rec.blocked ? " — DNS 가 막은 이름 (광고 차단·자녀 보호가 이 주소로 답함)" : ""}`,
-        { name, qtype, ip, server: rec.server ?? "", rtt: rec.rtt, ...(rec.blocked ? { blocked: true } : {}) },
-      );
-    });
+    this.diag.lookup(rawName, qtype, server, ctx);
   }
 
-  // ---------- traceroute ----------
-
-  /**
-   * 경로 추적: TTL 1 부터 하나씩 Echo 요청을 보내고, 각 라우터의 Time Exceeded 로 홉을 기록한다.
-   * Echo 응답이 오면 완료. 홉당 TRACEROUTE_TIMEOUT 안에 응답이 없으면 그 홉은 * 로 두고 다음 TTL.
-   */
+  /** 경로 추적 */
   traceroute(target: string, ctx: NodeContext): void {
-    this.cancelTraceroute("새 traceroute 시작으로 취소", ctx);
-    const rec: TracerouteRecord = { dst: target, hops: [], status: "running", startedAt: ctx.now };
-    this.traceroutes.push(rec);
-    while (this.traceroutes.length > Host.TRACEROUTE_KEEP) this.traceroutes.shift();
-    if (isIpv6(target)) {
-      this.startTrace6(rec, canonIp6(target)!, ctx);
-      return;
-    }
-    if (!this.iface.ip && !(looksLikeName(target) && this.hasV6Global())) {
-      this.failTrace(rec, "IP 미설정", ctx, "DHCP 로 받거나 수동 설정 필요");
-      return;
-    }
-    if (!looksLikeName(target) && !isValidIp(target)) {
-      this.failTrace(rec, "잘못된 주소", ctx, "IP 주소도 이름도 아님");
-      return;
-    }
-    if (looksLikeName(target)) {
-      this.resolveName(
-        target,
-        ctx,
-        (ip, err) => {
-          if (rec.status !== "running") return; // 기다리는 동안 취소됨
-          if (!ip) {
-            this.failTrace(rec, err ?? "이름 해석 실패", ctx, "이름을 주소로 바꾸지 못함");
-            return;
-          }
-          rec.resolved = ip;
-          ctx.trace("dns.resolved", "app", `${target} = ${ip} → 이제 이 주소로 traceroute`, { name: target, ip });
-          if (isIpv6(ip)) this.startTrace6(rec, ip, ctx);
-          else this.startTrace(rec, ip, ctx);
-        },
-        () => rec.status === "running",
-      );
-      return;
-    }
-    this.startTrace(rec, target, ctx);
-  }
-
-  private startTrace(rec: TracerouteRecord, target: Ip, ctx: NodeContext): void {
-    const ip = this.iface.ip!;
-    if (target === ip || target === "127.0.0.1") {
-      rec.hops.push({ ttl: 1, ip: target, rtt: 0 });
-      rec.status = "done";
-      ctx.trace("trace.done", "app", `traceroute ${rec.dst}: 내 주소(루프백) → 네트워크로 나가지 않고 1 홉으로 완료`, { dst: rec.dst, hops: 1 });
-      return;
-    }
-    if (!sameSubnet(target, ip, this.iface.prefix) && !this.iface.gateway) {
-      this.failTrace(rec, "게이트웨이 없음", ctx, `${target} 은(는) 다른 서브넷인데 게이트웨이 설정이 없음 — IP 설정에서 게이트웨이를 넣으세요`);
-      return;
-    }
-    ctx.trace(
-      "trace.start",
-      "app",
-      `traceroute ${rec.dst}${rec.resolved ? ` (${target})` : ""}: TTL 을 1 부터 늘려 가며 Echo 요청을 보내고, 각 라우터가 돌려주는 Time Exceeded 로 경로를 알아낸다 (최대 ${Host.TRACEROUTE_MAX_HOPS} 홉, 홉당 ${Host.TRACEROUTE_TIMEOUT}ms 대기)`,
-      { dst: rec.dst, target },
-    );
-    this.activeTrace = { rec, target, ttl: 0, seq: 0, sentAt: ctx.now };
-    this.sendProbe(ctx);
-  }
-
-  /** traceroute over IPv6 (traceroute6): Hop Limit 을 1 부터 늘린다 */
-  private startTrace6(rec: TracerouteRecord, target: Ip, ctx: NodeContext): void {
-    if (this.v6.owns(target) || target === "::1") {
-      rec.hops.push({ ttl: 1, ip: target, rtt: 0 });
-      rec.status = "done";
-      ctx.trace("trace.done", "app", `traceroute ${rec.dst}: 내 주소(루프백) → 네트워크로 나가지 않고 1 홉으로 완료`, { dst: rec.dst, hops: 1 });
-      return;
-    }
-    const src = this.v6.sourceFor(target);
-    if (!src) {
-      this.failTrace(rec, this.v6.enabled ? "IPv6 주소 없음" : "IPv6 꺼짐", ctx, this.v6.whyNoSource(target));
-      return;
-    }
-    if (!this.v6.onLink(target) && !this.v6.defaultRouter) {
-      this.failTrace(rec, "IPv6 게이트웨이 없음", ctx, `${target} 은(는) 다른 네트워크인데 IPv6 기본 게이트웨이가 없음 — IPv6 설정에서 게이트웨이를 넣으세요`);
-      return;
-    }
-    ctx.trace(
-      "trace.start",
-      "app",
-      `traceroute ${rec.dst}: Hop Limit 을 1 부터 늘려 가며 ICMPv6 Echo 요청을 보내고, 각 라우터가 돌려주는 ICMPv6 Time Exceeded 로 경로를 알아낸다 (최대 ${Host.TRACEROUTE_MAX_HOPS} 홉, 홉당 ${Host.TRACEROUTE_TIMEOUT}ms 대기)`,
-      { dst: rec.dst, target },
-    );
-    this.activeTrace = { rec, target, ttl: 0, seq: 0, sentAt: ctx.now };
-    this.sendProbe(ctx);
-  }
-
-  private sendProbe(ctx: NodeContext): void {
-    const a = this.activeTrace!;
-    a.ttl += 1;
-    a.seq = ++this.trSeq;
-    a.sentAt = ctx.now;
-    if (isIpv6(a.target)) {
-      const src = this.v6.sourceFor(a.target);
-      if (!src) {
-        this.failTrace(a.rec, "IPv6 주소 없음", ctx, this.v6.whyNoSource(a.target));
-        return;
-      }
-      const pkt: Ipv6Packet = { kind: "ipv6", src, dst: a.target, hopLimit: a.ttl, payload: { kind: "icmp6", type: "echo-request", id: this.trId, seq: a.seq } };
-      ctx.trace("trace.probe", "app", `traceroute ${a.rec.dst}: Hop Limit=${a.ttl} 로 ICMPv6 Echo 요청 송신 (seq=${a.seq}) — ${a.ttl} 번째 라우터에서 Hop Limit 이 0 이 된다`, { dst: a.rec.dst, ttl: a.ttl, seq: a.seq });
-      this.v6.send(pkt, ctx, this.emit(ctx));
-    } else {
-      const pkt: Ipv4Packet = { kind: "ipv4", src: this.iface.ip!, dst: a.target, ttl: a.ttl, payload: { kind: "icmp", type: "echo-request", id: this.trId, seq: a.seq } };
-      ctx.trace("trace.probe", "app", `traceroute ${a.rec.dst}: TTL=${a.ttl} 로 Echo 요청 송신 (seq=${a.seq}) — ${a.ttl} 번째 라우터에서 TTL 이 0 이 된다`, { dst: a.rec.dst, ttl: a.ttl, seq: a.seq });
-      this.iface.sendIp(pkt, ctx, this.emit(ctx));
-    }
-    a.timer = ctx.timer(Host.TRACEROUTE_TIMEOUT, "tr-timeout", { seq: a.seq });
-  }
-
-  /** 홉 하나를 기록한 뒤: 상한이면 실패, 아니면 다음 TTL */
-  private nextProbe(ctx: NodeContext): void {
-    const a = this.activeTrace!;
-    if (a.ttl >= Host.TRACEROUTE_MAX_HOPS) {
-      this.failTrace(a.rec, `${Host.TRACEROUTE_MAX_HOPS} 홉 안에 도달하지 못함`, ctx, "응답 없는 홉(*)이 시작된 장치의 경로·방화벽·주소를 확인");
-      return;
-    }
-    this.sendProbe(ctx);
-  }
-
-  private finishTrace(a: ActiveTrace, from: Ip, ctx: NodeContext, frameId: number): void {
-    a.timer?.cancel();
-    const rtt = ctx.now - a.sentAt;
-    a.rec.hops.push({ ttl: a.ttl, ip: from, rtt });
-    a.rec.status = "done";
-    this.activeTrace = undefined;
-    const path = a.rec.hops.map((h) => h.ip ?? "*").join(" → ");
-    ctx.trace("trace.done", "app", `traceroute ${a.rec.dst} 완료: ${from} 가 Echo 응답 (RTT ${rtt}ms) → 목적지까지 ${a.rec.hops.length} 홉 [${path}]`, { dst: a.rec.dst, hops: a.rec.hops.length, path }, frameId);
-  }
-
-  private failTrace(rec: TracerouteRecord, reason: string, ctx: NodeContext, hint?: string): void {
-    rec.status = "failed";
-    rec.reason = reason;
-    if (this.activeTrace?.rec === rec) {
-      this.activeTrace.timer?.cancel();
-      this.activeTrace = undefined;
-    }
-    ctx.trace("trace.failed", "app", `traceroute ${rec.dst} 실패: ${reason}${hint ? ` (${hint})` : ""}`, { dst: rec.dst, reason, hops: rec.hops.length });
-  }
-
-  /** 진행 중인 traceroute 를 모두 실패로 끝낸다 (이름 해석 대기 중인 것 포함) */
-  /** only 가 있으면 그 조건에 맞는 것만 (예: IPv4 주소가 바뀌면 IPv4 traceroute 만) */
-  private cancelTraceroute(reason: string, ctx: NodeContext, only?: (rec: TracerouteRecord) => boolean): void {
-    for (const rec of this.traceroutes) if (rec.status === "running" && (!only || only(rec))) this.failTrace(rec, reason, ctx);
-  }
-
-  private handleTimeExceeded(pkt: IpPacket, icmp: IcmpTimeExceeded | Icmpv6TimeExceeded, frameId: number, ctx: NodeContext): void {
-    const o = icmp.original;
-    if (o.l4.kind === "icmp" && o.l4.id === this.trId) {
-      const a = this.activeTrace;
-      if (!a || a.seq !== o.l4.seq) {
-        ctx.trace("ip.drop", "L3", `지난 traceroute 프로브(seq=${o.l4.seq})에 대한 Time Exceeded → 무시`, { seq: o.l4.seq }, frameId);
-        return;
-      }
-      a.timer?.cancel();
-      const rtt = ctx.now - a.sentAt;
-      a.rec.hops.push({ ttl: a.ttl, ip: pkt.src, rtt });
-      ctx.trace(
-        "trace.hop",
-        "app",
-        `traceroute ${a.rec.dst}: ${pkt.src} 가 Time Exceeded 회신 (${pkt.kind === "ipv6" ? "Hop Limit" : "TTL"} ${a.ttl} 이 거기서 0 이 됨) → ${a.ttl} 번째 홉 = ${pkt.src}, RTT ${rtt}ms`,
-        { dst: a.rec.dst, ttl: a.ttl, ip: pkt.src, rtt },
-        frameId,
-      );
-      this.nextProbe(ctx);
-      return;
-    }
-    if (o.l4.kind === "icmp" && o.l4.id === this.icmpId) {
-      const seq = o.l4.seq;
-      const rec = this.pings.find((p) => p.seq === seq && p.status === "pending");
-      if (rec) {
-        this.finishPing(rec, "failed", { reason: pkt.kind === "ipv6" ? "Hop Limit 초과" : "TTL 초과" }, ctx);
-        ctx.trace(
-          "icmp.ttl-received",
-          "app",
-          `${pkt.src} 로부터 Time Exceeded 수신 (원래 ${describeOriginal(o)}) → ping ${rec.dst} 실패: 경로 위에서 ${pkt.kind === "ipv6" ? "Hop Limit" : "TTL"} 이 다 됨 (라우팅 루프 의심 — 라우터들의 스태틱 라우팅·디폴트 라우트가 서로를 가리키는지 확인)`,
-          { from: pkt.src, dst: rec.dst, seq },
-          frameId,
-        );
-        return;
-      }
-    }
-    ctx.trace("icmp.ttl-received", "app", `${pkt.src} 로부터 Time Exceeded 수신 (원래 ${describeOriginal(o)}) → 기다리는 traceroute/ping 이 없어 무시`, { from: pkt.src }, frameId);
+    this.diag.traceroute(target, ctx);
   }
 
   /** ICMP Destination Unreachable: 원래 패킷으로 누가 보낸 것인지 찾아 timeout 을 기다리지 않고 바로 끝낸다 */
@@ -1212,26 +695,7 @@ export class Host implements SimNode {
     const reason = `${label} (${pkt.src})`;
     const done = (what: string) =>
       ctx.trace("icmp.unreachable.received", "app", `${pkt.src} 로부터 ${icmp.kind === "icmp6" ? "ICMPv6" : "ICMP"} ${label} 수신 (원래 ${describeOriginal(o)}) → ${what}`, { from: pkt.src, code: icmp.code }, frameId);
-    if (o.l4.kind === "icmp" && o.l4.id === this.trId) {
-      const a = this.activeTrace;
-      if (a && a.seq === o.l4.seq) {
-        a.timer?.cancel();
-        a.rec.hops.push({ ttl: a.ttl, ip: pkt.src, rtt: ctx.now - a.sentAt, flag: UNREACHABLE_FLAG[icmp.code] });
-        done(`traceroute 는 ${a.ttl} 번째 홉 ${pkt.src} ${UNREACHABLE_FLAG[icmp.code]} 에서 끝`);
-        this.failTrace(a.rec, reason, ctx, icmp.code === "net" ? "그 장치의 라우팅 테이블에 목적지 경로가 없음 — 스태틱 라우팅·디폴트 라우트·RIP 를 확인" : "그 장치 너머의 목적지 주소에 응답하는 장치가 없음");
-        return;
-      }
-    }
-    if (o.l4.kind === "icmp" && o.l4.id === this.icmpId) {
-      const seq = o.l4.seq;
-      const rec = this.pings.find((p) => p.seq === seq && p.status === "pending");
-      if (rec) {
-        this.finishPing(rec, "failed", { reason }, ctx);
-        done(`ping ${rec.dst} 실패`);
-        ctx.trace("icmp.failed", "app", `ping ${rec.dst} 실패: ${reason}`, { dst: rec.dst, seq: rec.seq });
-        return;
-      }
-    }
+    if (this.diag.onUnreachable(pkt, icmp, reason, done, ctx)) return;
     if (this.tcp.onUnreachable(o, reason, ctx)) {
       done("TCP 연결 실패");
       return;
@@ -1539,7 +1003,7 @@ export class Host implements SimNode {
 
   private handleIcmp6(pkt: Ipv6Packet, icmp: Icmpv6Packet, frameId: number, ctx: NodeContext): void {
     if (icmp.type === "time-exceeded") {
-      this.handleTimeExceeded(pkt, icmp, frameId, ctx);
+      this.diag.handleTimeExceeded(pkt, icmp, frameId, ctx);
       return;
     }
     if (icmp.type === "unreachable") {
@@ -1557,21 +1021,7 @@ export class Host implements SimNode {
       this.v6.send(reply, ctx, this.emit(ctx));
       return;
     }
-    if (icmp.id === this.trId) {
-      const a = this.activeTrace;
-      if (a && a.seq === icmp.seq) this.finishTrace(a, pkt.src, ctx, frameId);
-      else ctx.trace("ip.drop", "L3", `지난 traceroute 프로브(seq=${icmp.seq})의 Echo 응답 → 무시`, { seq: icmp.seq }, frameId);
-      return;
-    }
-    const rec = icmp.id === this.icmpId ? this.pings.find((p) => p.seq === icmp.seq && p.status === "pending") : undefined;
-    if (!rec) {
-      const done = icmp.id === this.icmpId ? this.pings.find((p) => p.seq === icmp.seq) : undefined;
-      if (done) ctx.trace("icmp.reply.received", "app", `ping ${done.dst}: ${pkt.src} 의 추가 응답 seq=${icmp.seq} (DUP! — 멀티캐스트로 보내 여러 장치가 답함)`, { from: pkt.src, seq: icmp.seq, dup: true }, frameId);
-      else ctx.trace("ip.drop", "L3", `내가 보낸 적 없는 ICMPv6 Echo 응답 (id=${icmp.id}, seq=${icmp.seq}) → 무시`, {}, frameId);
-      return;
-    }
-    this.finishPing(rec, "ok", { rtt: ctx.now - rec.sentAt }, ctx);
-    ctx.trace("icmp.reply.received", "app", `ping 성공: ${pkt.src} seq=${icmp.seq} RTT=${rec.rtt}ms`, { from: pkt.src, seq: icmp.seq, rtt: rec.rtt }, frameId);
+    this.diag.echoReply(pkt, icmp, frameId, ctx);
   }
 
   private handleIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
@@ -1702,7 +1152,7 @@ export class Host implements SimNode {
 
   private handleIcmp(pkt: Ipv4Packet, icmp: IcmpPacket, frameId: number, ctx: NodeContext): void {
     if (icmp.type === "time-exceeded") {
-      this.handleTimeExceeded(pkt, icmp, frameId, ctx);
+      this.diag.handleTimeExceeded(pkt, icmp, frameId, ctx);
       return;
     }
     if (icmp.type === "unreachable") {
@@ -1722,25 +1172,14 @@ export class Host implements SimNode {
       this.iface.sendIp(reply, ctx, this.emit(ctx));
       return;
     }
-    if (icmp.id === this.trId) {
-      const a = this.activeTrace;
-      if (a && a.seq === icmp.seq) this.finishTrace(a, pkt.src, ctx, frameId);
-      else ctx.trace("ip.drop", "L3", `지난 traceroute 프로브(seq=${icmp.seq})의 Echo 응답 → 무시`, { seq: icmp.seq }, frameId);
-      return;
-    }
-    const rec = icmp.id === this.icmpId ? this.pings.find((p) => p.seq === icmp.seq && p.status === "pending") : undefined;
-    if (!rec) {
-      ctx.trace("ip.drop", "L3", `내가 보낸 적 없는 Echo 응답 (id=${icmp.id}, seq=${icmp.seq}) → 무시`, {}, frameId);
-      return;
-    }
-    this.finishPing(rec, "ok", { rtt: ctx.now - rec.sentAt }, ctx);
-    ctx.trace("icmp.reply.received", "app", `ping 성공: ${pkt.src} seq=${icmp.seq} RTT=${rec.rtt}ms`, { from: pkt.src, seq: icmp.seq, rtt: rec.rtt }, frameId);
+    this.diag.echoReply(pkt, icmp, frameId, ctx);
   }
 
   // ---------- 타이머 ----------
 
   onTimer(tag: string, data: unknown, ctx: NodeContext): void {
     this.clock = ctx.now;
+    if (this.diag.timer(tag, data, ctx)) return;
     switch (tag) {
       case LB_CHECK_TAG:
         this.lb.onTimer(data, ctx);
@@ -1760,23 +1199,9 @@ export class Host implements SimNode {
       case ROUTER_EXPIRY_TAG:
         this.v6.onRouterExpiry(data, ctx);
         return;
-      case NDP_TIMEOUT_TAG: {
-        const { ip: nextHop } = data as { ip: Ip };
-        for (const pkt of this.v6.onNsTimeout(data, ctx)) {
-          if (pkt.payload.kind !== "icmp6" || pkt.payload.type !== "echo-request") continue;
-          const icmp = pkt.payload;
-          if (icmp.id === this.trId) {
-            const a = this.activeTrace;
-            if (a && a.seq === icmp.seq) this.failTrace(a.rec, "NDP timeout · 응답 없음", ctx, `첫 홉 ${nextHop} 이(가) NS 에 응답하지 않음 — 케이블과 IPv6 게이트웨이 주소를 확인`);
-            continue;
-          }
-          const rec = this.pings.find((p) => p.seq === icmp.seq && p.status === "pending");
-          if (!rec) continue;
-          this.finishPing(rec, "failed", { reason: "NDP timeout · 응답 없음" }, ctx);
-          ctx.trace("icmp.failed", "app", `ping ${rec.dst} 실패: 그 주소를 가진 장치가 NS 에 응답하지 않음 (Address unreachable)`, { dst: rec.dst, seq: rec.seq });
-        }
+      case NDP_TIMEOUT_TAG:
+        this.diag.neighborFailed(this.v6.onNsTimeout(data, ctx), (data as { ip: Ip }).ip, true, ctx);
         return;
-      }
       case LOOPBACK_TAG: {
         const pkt = data as IpPacket;
         if (pkt.kind === "ipv6") this.handleIp6(pkt, -1, ctx);
@@ -1807,49 +1232,9 @@ export class Host implements SimNode {
         this.streamStep(d.group, d.id, d.seq, ctx);
         return;
       }
-      case "arp-timeout": {
-        const { ip: nextHop } = data as { ip: Ip };
-        const dropped = this.iface.onArpTimeout(data, ctx);
-        for (const pkt of dropped) {
-          if (pkt.payload.kind !== "icmp" || pkt.payload.type !== "echo-request") continue;
-          const icmp = pkt.payload;
-          if (icmp.id === this.trId) {
-            const a = this.activeTrace;
-            if (a && a.seq === icmp.seq) this.failTrace(a.rec, "ARP timeout · 응답 없음", ctx, `첫 홉 ${nextHop} 이(가) 응답하지 않음 — 케이블과 게이트웨이 주소를 확인`);
-            continue;
-          }
-          const rec = this.pings.find((p) => p.seq === icmp.seq && p.status === "pending");
-          if (!rec) continue;
-          this.finishPing(rec, "failed", { reason: "ARP timeout · 응답 없음" }, ctx);
-          ctx.trace("icmp.failed", "app", `ping ${rec.dst} 실패: 그 주소를 가진 장치가 응답하지 않음 (Destination Host Unreachable)`, { dst: rec.dst, seq: rec.seq });
-        }
+      case "arp-timeout":
+        this.diag.neighborFailed(this.iface.onArpTimeout(data, ctx), (data as { ip: Ip }).ip, false, ctx);
         return;
-      }
-      case "tr-timeout": {
-        const { seq } = data as { seq: number };
-        const a = this.activeTrace;
-        if (!a || a.seq !== seq) return;
-        a.timer = undefined;
-        a.rec.hops.push({ ttl: a.ttl });
-        ctx.trace("trace.timeout", "app", `traceroute ${a.rec.dst}: ${isIpv6(a.target) ? "Hop Limit" : "TTL"}=${a.ttl} timeout (${Host.TRACEROUTE_TIMEOUT}ms 동안 응답 없음) → ${a.ttl} 번째 홉 = * (다음 ${isIpv6(a.target) ? "Hop Limit" : "TTL"} 로 계속)`, { dst: a.rec.dst, ttl: a.ttl, seq });
-        this.nextProbe(ctx);
-        return;
-      }
-      case "ping-next":
-        this.nextPing((data as { run: number }).run, ctx);
-        return;
-      case "ping-stats":
-        this.pingStats((data as { run: number }).run, ctx);
-        return;
-      case "ping-timeout": {
-        const { seq } = data as { seq: number };
-        this.pingTimers.delete(seq);
-        const rec = this.pings.find((p) => p.seq === seq && p.status === "pending");
-        if (!rec) return;
-        this.finishPing(rec, "failed", { reason: "timeout · 응답 없음" }, ctx);
-        ctx.trace("icmp.timeout", "app", `ping ${rec.dst} timeout: ${Host.PING_TIMEOUT}ms 동안 응답 없음 (Request timed out)`, { dst: rec.dst, seq });
-        return;
-      }
       case DHCP_TIMER_TAG:
         this.dhcp.onTimeout(data, ctx, this.emit(ctx));
         return;
