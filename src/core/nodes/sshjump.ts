@@ -11,13 +11,10 @@ import type { TcpSegment } from "../packet";
 import type { NodeContext } from "./node";
 import { splitTarget } from "./proxy";
 import { SSH_CHANNEL_CONFIRM, SSH_CHANNEL_DATA, type TcpConn, type TcpStack } from "./tcp";
+import { TcpSplice, type SplicePair } from "./tcpsplice";
 
 /** 채널 하나: 클라이언트 쪽(down, 점프 서버의 SSH 세션)과 대상 쪽(up) 연결 */
-interface Channel {
-  down: TcpConn;
-  up: TcpConn;
-  target: string;
-}
+type Channel = SplicePair;
 
 /** 점프 서버의 접속 기록 (sshd 로그 흉내, 최근 것만) */
 export interface JumpLogEntry {
@@ -42,8 +39,8 @@ export class SshJump {
   /** AllowTcpForwarding (꺼져 있으면 채널 요청을 거절) */
   enabled = false;
   private readonly pending = new Map<string, { down: TcpConn; target: string }>();
-  /** 연결 id (양쪽 모두) → 채널 */
-  private readonly channels = new Map<string, Channel>();
+  /** 열린 채널 (양쪽 연결로 찾는다) */
+  private readonly channels: TcpSplice<Channel>;
   readonly log: JumpLogEntry[] = [];
 
   constructor(
@@ -52,7 +49,9 @@ export class SshJump {
     private readonly localIp: () => Ip | undefined,
     /** 이름 → 주소 (점프 서버의 리졸버) */
     private readonly resolve: (name: string, ctx: NodeContext, done: (ip: Ip | undefined, err?: string) => void) => void,
-  ) {}
+  ) {
+    this.channels = new TcpSplice(tcp, () => "점프 채널");
+  }
 
   setEnabled(on: boolean, ctx: NodeContext): void {
     if (on === this.enabled) return;
@@ -102,11 +101,8 @@ export class SshJump {
       this.tcp.disconnect(up.id, ctx);
       return true;
     }
-    const ch: Channel = { down, up, target };
-    this.channels.set(up.id, ch);
-    this.channels.set(down.id, ch);
-    // 상태를 먼저 세운다: 클라이언트가 내 주소(루프백)면 채널 응답을 보내는 순간 대상과의 SSH 첫 메시지가 되돌아온다
-    down.relay = true;
+    // 잇고 나서 채널 응답을 보낸다 (그 뒤 오는 SSH 메시지는 채널로)
+    this.channels.open({ down, up, target });
     this.record(down, target, "열림", ctx);
     ctx.trace("ssh.jump", "app", `점프 서버: ${target} (${up.remoteIp}) 에 연결됨 → ${down.remoteIp} 에게 채널 열림. 이제 두 연결 사이로 바이트만 넘김 (안은 클라이언트 ↔ 대상의 SSH 로 암호화)`, { client: down.remoteIp, target, ip: up.remoteIp, role: "jump" });
     this.tcp.sendData(down, { len: 40, data: SSH_CHANNEL_CONFIRM }, ctx, `SSH 채널 열림 응답 전송`, "암호화됨");
@@ -115,12 +111,12 @@ export class SshJump {
 
   /** 채널로 온 데이터(seg)·FIN(undefined) 을 반대편으로 넘긴다. 클라이언트 쪽은 바깥 SSH 로 한 번 더 감싸고 푼다. 처리했으면 true */
   onRelay(conn: TcpConn, seg: TcpSegment | undefined, ctx: NodeContext): boolean {
-    const ch = this.channels.get(conn.id);
+    const ch = this.channels.get(conn);
     if (!ch) return false;
     const toTarget = conn === ch.down;
-    const other = toTarget ? ch.up : ch.down;
+    const other = this.channels.other(ch, conn);
     if (!seg) {
-      if (other.state === "ESTABLISHED") this.tcp.disconnect(other.id, ctx);
+      this.channels.fin(ch, conn, ctx);
       return true;
     }
     const raw = seg.data ?? "";
@@ -135,19 +131,9 @@ export class SshJump {
 
   /** 대상 연결·채널이 끝남. 처리했으면 true */
   onFinish(conn: TcpConn, ctx: NodeContext): boolean {
-    const ch = this.channels.get(conn.id);
+    const ch = this.channels.get(conn);
     if (ch) {
-      const other = conn === ch.up ? ch.down : ch.up;
-      if (other.state === "ESTABLISHED") {
-        if (conn.state === "FAILED") this.tcp.reset(other, `점프 채널 반대편 연결 실패 (${conn.reason ?? "?"})`, ctx);
-        else this.tcp.disconnect(other.id, ctx);
-      }
-      const done = (c: TcpConn) => c.state === "CLOSED" || c.state === "FAILED";
-      if (done(ch.up) && done(ch.down)) {
-        this.channels.delete(ch.up.id);
-        this.channels.delete(ch.down.id);
-        this.record(ch.down, ch.target, "닫힘", ctx);
-      }
+      if (this.channels.finish(ch, conn, ctx)) this.record(ch.down, ch.target, "닫힘", ctx);
       return true;
     }
     const p = this.pending.get(conn.id);

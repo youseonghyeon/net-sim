@@ -16,6 +16,7 @@ import { ipToInt, type Ip } from "../addr";
 import type { TcpSegment } from "../packet";
 import type { NodeContext } from "./node";
 import { CONNECT_ESTABLISHED, responseBytes, type TcpConn, type TcpStack } from "./tcp";
+import { TcpSplice, type SplicePair } from "./tcpsplice";
 
 export interface ProxyConfig {
   enabled: boolean;
@@ -64,11 +65,7 @@ interface Pending {
 }
 
 /** 열린 CONNECT 터널: 클라이언트 쪽(down)과 대상 쪽(up) 연결 */
-interface Tunnel {
-  down: TcpConn;
-  up: TcpConn;
-  target: string;
-}
+type Tunnel = SplicePair;
 
 /** 프록시가 처리한 요청 기록 (Squid access.log 흉내, 최근 것만) */
 export interface ProxyLogEntry {
@@ -85,8 +82,8 @@ const LOG_MAX = 20;
 export class ForwardProxy {
   config: ProxyConfig = { ...DEFAULT_PROXY, deny: [] };
   private readonly pending = new Map<string, Pending>();
-  /** 연결 id (양쪽 모두) → 터널 */
-  private readonly tunnels = new Map<string, Tunnel>();
+  /** 열린 터널 (양쪽 연결로 찾는다) */
+  private readonly tunnels: TcpSplice<Tunnel>;
   readonly log: ProxyLogEntry[] = [];
 
   constructor(
@@ -95,7 +92,9 @@ export class ForwardProxy {
     private readonly localIp: () => Ip | undefined,
     /** 이름 → 주소 (프록시 장비의 리졸버) */
     private readonly resolve: (name: string, ctx: NodeContext, done: (ip: Ip | undefined, err?: string) => void) => void,
-  ) {}
+  ) {
+    this.tunnels = new TcpSplice(tcp, (t) => `CONNECT ${t.target} 터널`);
+  }
 
   setConfig(cfg: ProxyConfig, ctx: NodeContext): void {
     if (JSON.stringify(cfg) === JSON.stringify(this.config)) return;
@@ -190,11 +189,8 @@ export class ForwardProxy {
       this.tcp.disconnect(up.id, ctx);
       return;
     }
-    const t: Tunnel = { down, up, target };
-    this.tunnels.set(up.id, t);
-    this.tunnels.set(down.id, t);
-    // 상태를 먼저 세운다: 클라이언트가 내 주소(루프백)면 200 을 보내는 순간 ClientHello 가 되돌아온다
-    down.relay = true;
+    // 잇고 나서 200 을 보낸다 (그 뒤 오는 ClientHello 는 터널로)
+    this.tunnels.open({ down, up, target });
     ctx.trace(
       "proxy.tunnel",
       "app",
@@ -206,13 +202,13 @@ export class ForwardProxy {
 
   /** 터널로 온 데이터(seg)·FIN(undefined) 을 반대편 연결로 그대로 넘긴다 */
   onRelay(conn: TcpConn, seg: TcpSegment | undefined, ctx: NodeContext): void {
-    const t = this.tunnels.get(conn.id);
+    const t = this.tunnels.get(conn);
     if (!t) return;
-    const other = conn === t.up ? t.down : t.up;
+    const other = this.tunnels.other(t, conn);
     const where = other === t.up ? `대상 ${t.target}` : `클라이언트 ${t.down.remoteIp}`;
     if (!seg) {
       // 한쪽이 닫으면 다른 쪽도 닫는다
-      if (other.state === "ESTABLISHED") this.tcp.disconnect(other.id, ctx);
+      this.tunnels.fin(t, conn, ctx);
       return;
     }
     const what = seg.tls === "client-hello" ? `TLS ClientHello${seg.sni ? ` (SNI ${seg.sni})` : ""}` : seg.tls ? "TLS 레코드 (암호화됨)" : "데이터";
@@ -225,7 +221,7 @@ export class ForwardProxy {
 
   /** 대상 연결이 끝남: 응답을 받았으면 전달, 아니면 503. 프록시가 처리한 연결이면 true */
   onFinish(up: TcpConn, ctx: NodeContext): boolean {
-    const t = this.tunnels.get(up.id);
+    const t = this.tunnels.get(up);
     if (t) {
       this.closeTunnel(t, up, ctx);
       return true;
@@ -281,15 +277,7 @@ export class ForwardProxy {
 
   /** 터널의 한쪽이 끝남: 다른 쪽이 열려 있으면 닫고 (실패면 RST), 둘 다 끝나면 기록 */
   private closeTunnel(t: Tunnel, conn: TcpConn, ctx: NodeContext): void {
-    const other = conn === t.up ? t.down : t.up;
-    if (other.state === "ESTABLISHED") {
-      if (conn.state === "FAILED") this.tcp.reset(other, `CONNECT ${t.target} 터널 반대편 연결 실패 (${conn.reason ?? "?"})`, ctx);
-      else this.tcp.disconnect(other.id, ctx);
-    }
-    const done = (c: TcpConn) => c.state === "CLOSED" || c.state === "FAILED";
-    if (!this.tunnels.has(conn.id) || !done(t.up) || !done(t.down)) return;
-    this.tunnels.delete(t.up.id);
-    this.tunnels.delete(t.down.id);
+    if (!this.tunnels.finish(t, conn, ctx)) return;
     ctx.trace(
       "proxy.relay",
       "app",
