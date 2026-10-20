@@ -33,8 +33,9 @@ function ruleError(list: string[]): string | undefined {
 
 export function AdguardSection({ d, r }: { d: Device; r: RouterSettings }) {
   void simVersion.value;
-  const a = r.adguard ?? { ...DEFAULT_ADGUARD_SETTINGS, enabled: false };
-  const set = (patch: Partial<RouterAdguardSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, adguard: { ...(x.router!.adguard ?? DEFAULT_ADGUARD_SETTINGS), ...patch } } }));
+  const base = { ...DEFAULT_ADGUARD_SETTINGS, enabled: false };
+  const a = r.adguard ?? base;
+  const set = (patch: Partial<RouterAdguardSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, adguard: { ...(x.router!.adguard ?? base), ...patch } } }));
   const node = sim.node(d.id);
   const setKid = (i: number, patch: Partial<RouterAdguardSettings["parental"][0]>) => set({ parental: a.parental.map((p, k) => (k === i ? { ...p, ...patch } : p)) });
   // 자녀 보호에 넣을 수 있는 LAN 기기: 수동 주소가 이 공유기 LAN 대역 안인 단말 (자동(DHCP) 기기는 주소가 바뀔 수 있어 고정이 필요)
@@ -142,8 +143,9 @@ const DPI_CATEGORIES: DpiCategory[] = ["VPN", "게임", "SNS", "동영상", "알
 /** DPI: 흐름마다 앱을 알아보고 세고, 고른 카테고리·앱을 막는다 */
 export function DpiSection({ d, r }: { d: Device; r: RouterSettings }) {
   void simVersion.value;
-  const c: RouterDpiSettings = r.dpi ?? { enabled: false, blockApps: [], blockCategories: [] };
-  const set = (patch: Partial<RouterDpiSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, dpi: { ...(x.router!.dpi ?? { enabled: true, blockApps: [], blockCategories: [] }), ...patch } } }));
+  const base: RouterDpiSettings = { enabled: false, blockApps: [], blockCategories: [] };
+  const c = r.dpi ?? base;
+  const set = (patch: Partial<RouterDpiSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, dpi: { ...(x.router!.dpi ?? base), ...patch } } }));
   const toggle = <T extends string>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   const apps = (Object.keys(APPS) as AppId[]).filter((a) => !["unknown", "https", "http", "quic", "dns", "ping"].includes(a));
   return (

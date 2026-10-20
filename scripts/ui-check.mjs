@@ -1826,6 +1826,15 @@ section("tailscale", async () => {
   await rs.scrollIntoViewIfNeeded();
   console.log("ts router toggles on:", await rs.locator(".toggle.on").count());
   await page.screenshot({ path: `${OUT}/107-ts-router.png` });
+  // 꺼진 메시의 종류만 고르면 켜지지 않는다 (보일 땐 꺼짐 기본값, 고칠 땐 켜짐 기본값이던 결함)
+  await clickDevice("카페 공유기");
+  await goTab("설정");
+  await goGroup("VPN");
+  const off = page.locator(".inspector section", { has: page.locator("h3", { hasText: "메시 VPN" }) });
+  await off.scrollIntoViewIfNeeded();
+  await off.locator("button", { hasText: "ZeroTier" }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll(".inspector section")].some((sec) => /메시 VPN/.test(sec.querySelector("h3")?.textContent ?? "") && sec.querySelector("button.on")?.textContent?.trim() === "ZeroTier"), null, { timeout: 5000 });
+  console.log("ts mesh off + ZeroTier:", (await off.locator(".toggle-row span").first().innerText()).split(/\s/)[0], "| toggles on:", await off.locator(".toggle.on").count());
 });
 
 // 드롭인 게이트웨이·관리 접근·기기 차단: 아이 PC 만 Brume 을 거침, 보안 묶음의 관리 접근·기기 차단 섹션

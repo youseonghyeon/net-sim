@@ -83,8 +83,9 @@ export function linkLocalLabel(mac: string): string {
 
 /** 호스트의 IPv6: 켜기 + 수동 주소·프리픽스·기본 게이트웨이. 링크 로컬은 MAC 에서 자동 */
 export function Ipv6Section({ d, h }: { d: Device; h: HostSettings }) {
-  const v = h.ipv6 ?? { ...DEFAULT_IPV6_HOST, enabled: false };
-  const set = (patch: Partial<Ipv6HostSettings>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ipv6: { ...(x.host!.ipv6 ?? DEFAULT_IPV6_HOST), ...patch } } }));
+  const base = { ...DEFAULT_IPV6_HOST, enabled: false };
+  const v = h.ipv6 ?? base;
+  const set = (patch: Partial<Ipv6HostSettings>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ipv6: { ...(x.host!.ipv6 ?? base), ...patch } } }));
   const ll = linkLocalLabel(d.mac);
   return (
     <Section title="IPv6">

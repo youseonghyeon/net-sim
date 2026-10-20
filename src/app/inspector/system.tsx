@@ -7,8 +7,9 @@ import { Field, Section, Toggle, cidrListError } from "./ui";
 
 export function AdminSection({ d, r }: { d: Device; r: RouterSettings }) {
   void simVersion.value;
-  const a = r.admin ?? { ...DEFAULT_ADMIN_SETTINGS, enabled: false };
-  const set = (patch: Partial<RouterAdminSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, admin: { ...(x.router!.admin ?? DEFAULT_ADMIN_SETTINGS), ...patch } } }));
+  const base = { ...DEFAULT_ADMIN_SETTINGS, enabled: false };
+  const a = r.admin ?? base;
+  const set = (patch: Partial<RouterAdminSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, admin: { ...(x.router!.admin ?? base), ...patch } } }));
   return (
     <Section title="관리 접근">
       <label class="toggle-row">

@@ -30,6 +30,7 @@
 | 아님 | (교란 표에서) L2TP 서버를 껐다 켜면 스스로 다시 붙지 않음 — StopCCN 으로 "끊김 · 다시 연결" 을 알리고, 실제 OS 클라이언트도 자동 재시도 없음 | l2tp.ts |
 | 고침 a028f50 | (경로 표에서) 드롭인 기기가 공유기 LAN 주소로 보낸 관리 화면·DNS·ping 을 "호스트끼리 직접 통신" 으로 드롭, DNS 답의 출발지가 물은 주소와 다름 | router.ts handleWanIp |
 | 고침 8462f4c | 공유기 메시 주소로 물은 DNS 에 LAN 주소로 답함 (DNS 포워더 `answersAt` 목록에 메시만 빠짐) — 호스트 리졸버가 답의 출발지를 보지 않아 가려져 있었고, 리졸버도 실제처럼 물은 서버의 답만 받게 고침 | router.ts answersAt, dns.ts DnsResolver.handle |
+| 고침 (UI 기본값) | 메시 VPN 이 꺼진 장치에서 "종류(ZeroTier)" 만 골라도 메시가 켜짐 — 보일 땐 꺼짐 기본값, 고칠 땐 켜짐 기본값(`DEFAULT_MESH_SETTINGS.enabled: true`). 같은 모양 10곳(IPv6·AdGuard·DPI·멀티 WAN·OpenVPN·관리 화면·WireGuard 서버/클라이언트)은 칸이 켜짐 게이트 안에 있어 아직 무해했지만 함께 맞춤 (ui-check tailscale) | mesh.tsx 외 |
 | 고침 (설정 적용기) | 게이트웨이 칸 하나(헤어핀 등)를 바꾸면 켠 적 없는 "이중화 꺼짐 · 원격 접속 VPN 서버 꺼짐" 이 찍힘 — 처음 넣은 설정과 정리한 설정의 모양이 달라 꺼짐 → 꺼짐을 변경으로 봄 (`tests/config-noise.test.ts`) | ha.ts·ravpn.ts setConfig |
 | 고침 f366199 | 답을 받아도 취소하지 않는 일반 timer 가 IKE 말고도 남아, 불러온 뒤 마지막 일보다 시계가 더 감 (rip·ha·p2p·ncpwg·iptime·wireguard·ddns·openvpn·tailscale·k3s·tor·sip — 0.01~5초). 동작은 같고 시각만 밀림 — 4단계 "타이머 라우터" 에서 함께 | 각 모듈 |
 
@@ -76,12 +77,12 @@
 - **구성 검사 AddrIndex** — `owners(ip)`·`publicTarget(ip, port, proto)`(공유기·게이트웨이 포워딩·포트 공개를 같은 방식으로)·`isLeased(key)`. routerWanIp 두 벌, 포워딩 따라가기 두 벌, 섞인 체인에서 침묵하는 문제 해소. 예제 공인 주소 범용 테스트도 여기서. (M) — **중복만 정리**: `lint/reach.ts`(공유기 수동 WAN 주소·포트 포워딩 따라가기·DDNS 주인·앞 공유기)로 모으고 L2TP 규칙의 따로 쓴 따라가기 루프·`routerWanIp` 두 번째 벌을 없앰(검사 결과 불변). **보류**: 게이트웨이(L3)의 포트 포워딩·포트 공개까지 같은 따라가기로 넓히는 것 — 지금 침묵하는 섞인 체인에서 새 경고가 생기는 동작 변화라 오탐 여부를 예제별로 따로 봐야 한다
 - **packetView 의 타입 있는 details** — 요약문 문자열 매칭 약 20곳, `detail()` 131곳 → 화면이 읽는 약 30개 종류만 `DetailsOf<K>` + reason 코드, 포맷터를 프로토콜별 레지스트리로. (M) — **사유 코드만 함**: 한국어 문구 매칭 22곳(원격 접속·사이트 간 IPsec·L2TP·WireGuard·OpenVPN·메시·SSH·TLS·AdGuard)을 내보내는 쪽 details 의 `cause`·`side`·`step`·`ike`·`direct`·`op` 와 값(`why`·`self`·`path`·`endpoint`)으로, `tests/packetview-guard.test.ts` 가 다시 생기지 않게 막음(허용: "OpenVPN 서버"·"VPN 서버" 이름표 접두어 두 곳, 영어 프로토콜 토큰 매칭은 남김). 골든 불변. 덤으로 OpenVPN 서버 이름 풀기 실패의 사유에 "응답 없음" 이 들어 있으면 "TLS key negotiation failed" 를 잘못 붙이던 가능성이 없어짐. `DetailsOf<K>` 타입·포맷터 레지스트리는 보류 (300개 종류의 타입화는 조사 문서 4절의 "하지 않는 것")
 - **topology.ts 분할** — specs·기능별 settings(타입·기본값·정리 한곳)·file·geometry·cables·wireless, topology.ts 는 다시 내보내기만. (S~M) — **함** (`model/topo/` 7개, settings 의 정리 함수는 `normalizeTopology` 가 쓰므로 export, 기존 import 그대로)
-- **store·sim** — 동기화 예외 처리(알림 + 다시 만들기), 임대 재계산은 DHCP 트레이스가 있을 때만. (S)
+- **store·sim** — 동기화 예외 처리(알림 + 다시 만들기), 임대 재계산은 DHCP 트레이스가 있을 때만. (S) — 예외 처리는 2단계에 함(fc1827d). 임대 재계산은 **보류**: `leaseHints` 는 장치·인터페이스를 한 번 훑는 가벼운 일이고 매 프레임 코드라 바꾸면 perf-check 가 필요 — 측정에서 문제가 보이면
 
 ### UI
 - **validate 공용 모듈** — UI `Field error=`·구성 검사·effective* 가 같은 함수 (`staticRouteProblem` 이 선례). 파싱 모듈과 같이. (M)
 - **`<IntInput>`** — 숫자 칸 16곳 통일 (프리픽스 24.5 결함). (S)
-- **`useSub(d, key)` 설정 훅** — 패치 클로저 55개, 보일 때와 고칠 때 기본값이 다른 곳 4곳(꺼진 상태에서 칸을 고치면 기능이 켜지는 잠재 결함). (S~M)
+- **`useSub(d, key)` 설정 훅** — 패치 클로저 55개, 보일 때와 고칠 때 기본값이 다른 곳 4곳(꺼진 상태에서 칸을 고치면 기능이 켜지는 잠재 결함). (S~M) — **결함만 고침**: 다른 곳은 11곳, 그중 메시의 종류 버튼이 실제로 기능을 켬 → 섹션마다 `base` 하나를 보이는 값·고칠 바탕에 같이 씀. 훅으로 55개를 바꾸는 것은 보류 (같은 한 줄 패턴을 다른 한 줄로 옮기는 셈)
 - **simView 선택자** — UI 의 `sim.node()` 16파일·instanceof 약 43회, "이 IP 는 누구" 조회 5벌, 상태 점 색 두 규칙 → 순수 함수 + `useSim(f)`(안에서 simVersion 을 읽어 4zi 를 구조로 막음). (M)
 - **`<ListEditor>`** — 목록 편집기 19벌(계정 3벌·대역 경로 5벌), 줄 오류 클래스 5종. ui-check 선택자와 같이. (M)
 - **Canvas 분리** — 팬·드래그마다 모든 장치 다시 그림, 상태 O(n²) → ViewportGroup·memo·공유 computed, 파일을 interaction·DeviceView·packets·geometry 로. 이득은 측정 먼저(perf-check 에 팬·드래그 시나리오). (M~L)

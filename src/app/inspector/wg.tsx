@@ -162,8 +162,9 @@ function ImportServer({ d, role }: { d: Device; role: "client" | "host" }) {
 
 export function WgServerSection({ d, r }: { d: Device; r: RouterSettings }) {
   void simVersion.value;
-  const s = r.wgServer ?? { ...DEFAULT_WG_SERVER, enabled: false };
-  const set = (patch: Partial<RouterWgServerSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, wgServer: { ...(x.router!.wgServer ?? DEFAULT_WG_SERVER), ...patch } } }));
+  const base = { ...DEFAULT_WG_SERVER, enabled: false };
+  const s = r.wgServer ?? base;
+  const set = (patch: Partial<RouterWgServerSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, wgServer: { ...(x.router!.wgServer ?? base), ...patch } } }));
   const setPeer = (i: number, patch: Partial<RouterWgServerSettings["peers"][0]>) => set({ peers: s.peers.map((p, k) => (k === i ? { ...p, ...patch } : p)) });
   const node = sim.node(d.id);
   const connected = node instanceof Router ? node.wgs.connected : 0;
@@ -254,8 +255,9 @@ export function WgServerSection({ d, r }: { d: Device; r: RouterSettings }) {
 
 export function WgClientSection({ d, r }: { d: Device; r: RouterSettings }) {
   void simVersion.value;
-  const c = r.wgClient ?? { ...DEFAULT_ROUTER_WG_CLIENT, enabled: false };
-  const set = (patch: Partial<RouterWgClientSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, wgClient: { ...(x.router!.wgClient ?? DEFAULT_ROUTER_WG_CLIENT), ...patch } } }));
+  const base = { ...DEFAULT_ROUTER_WG_CLIENT, enabled: false };
+  const c = r.wgClient ?? base;
+  const set = (patch: Partial<RouterWgClientSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, wgClient: { ...(x.router!.wgClient ?? base), ...patch } } }));
   const node = sim.node(d.id);
   const status = node instanceof Router ? node.wgClientSummary() : undefined;
   const mode = c.policy.mode;

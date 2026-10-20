@@ -50,8 +50,9 @@ function ProtoPick({ value, onChange }: { value: "udp" | "tcp"; onChange: (p: "u
 
 export function OvpnServerSection({ d, r }: { d: Device; r: RouterSettings }) {
   void simVersion.value;
-  const s = r.ovpnServer ?? { ...DEFAULT_OVPN_SERVER_SETTINGS, enabled: false };
-  const set = (patch: Partial<RouterOvpnServerSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, ovpnServer: { ...(x.router!.ovpnServer ?? DEFAULT_OVPN_SERVER_SETTINGS), ...patch } } }));
+  const base = { ...DEFAULT_OVPN_SERVER_SETTINGS, enabled: false };
+  const s = r.ovpnServer ?? base;
+  const set = (patch: Partial<RouterOvpnServerSettings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, ovpnServer: { ...(x.router!.ovpnServer ?? base), ...patch } } }));
   const setUser = (i: number, patch: Partial<{ name: string; password: string }>) => set({ users: s.users.map((u, k) => (k === i ? { ...u, ...patch } : u)) });
   const node = sim.node(d.id);
   const connected = node instanceof Router ? node.ovpn.connected : 0;

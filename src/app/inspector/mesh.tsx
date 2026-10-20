@@ -9,9 +9,11 @@ import { Field, Section, Toggle } from "./ui";
 
 export function MeshSection({ d }: { d: Device }) {
   void simVersion.value;
-  const m = d.host?.mesh ?? d.router?.mesh ?? { ...DEFAULT_MESH_SETTINGS, enabled: false };
+  // 보이는 값과 고칠 때의 바탕이 같은 기본값 (꺼짐) — 꺼진 채 종류를 고르면 켜지던 결함
+  const base = { ...DEFAULT_MESH_SETTINGS, enabled: false };
+  const m = d.host?.mesh ?? d.router?.mesh ?? base;
   const set = (patch: Partial<MeshSettings>) =>
-    updateDevice(d.id, (x) => (x.host ? { ...x, host: { ...x.host, mesh: { ...(x.host.mesh ?? DEFAULT_MESH_SETTINGS), ...patch } } } : { ...x, router: { ...x.router!, mesh: { ...(x.router!.mesh ?? DEFAULT_MESH_SETTINGS), ...patch } } }));
+    updateDevice(d.id, (x) => (x.host ? { ...x, host: { ...x.host, mesh: { ...(x.host.mesh ?? base), ...patch } } } : { ...x, router: { ...x.router!, mesh: { ...(x.router!.mesh ?? base), ...patch } } }));
   const node = sim.node(d.id);
   const agent = node instanceof Host || node instanceof Router ? node.mesh : undefined;
   const status = agent?.summary();

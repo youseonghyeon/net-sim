@@ -185,8 +185,9 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
 /** 공유기 IPv6: 켜면 WAN 이 ISP 의 RA 로 주소를, DHCPv6-PD 로 프리픽스를 받아 LAN 에 RA 로 알린다. NAT 없이 라우팅하고 인바운드 기본 차단으로 지킨다 */
 export function RouterIpv6Section({ d, r }: { d: Device; r: RouterSettings }) {
   void simVersion.value;
-  const v6 = r.ipv6 ?? { ...DEFAULT_ROUTER_IPV6, enabled: false };
-  const set = (patch: Partial<RouterIpv6Settings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, ipv6: { ...(x.router!.ipv6 ?? DEFAULT_ROUTER_IPV6), ...patch } } }));
+  const base = { ...DEFAULT_ROUTER_IPV6, enabled: false };
+  const v6 = r.ipv6 ?? base;
+  const set = (patch: Partial<RouterIpv6Settings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, ipv6: { ...(x.router!.ipv6 ?? base), ...patch } } }));
   const node = sim.node(d.id);
   const rt = node instanceof Router ? node : undefined;
   return (
@@ -328,8 +329,9 @@ export function RouterDnsSection({ d, r }: { d: Device; r: RouterSettings }) {
 /** 멀티 WAN 페일오버: lan4 를 WAN2(예비 회선)로, 추적 주소 */
 export function MultiWanSection({ d, r }: { d: Device; r: RouterSettings }) {
   void simVersion.value;
-  const w = r.wan2 ?? { ...DEFAULT_ROUTER_WAN2, enabled: false };
-  const set = (patch: Partial<RouterWan2Settings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, wan2: { ...(x.router!.wan2 ?? DEFAULT_ROUTER_WAN2), ...patch } } }));
+  const base = { ...DEFAULT_ROUTER_WAN2, enabled: false };
+  const w = r.wan2 ?? base;
+  const set = (patch: Partial<RouterWan2Settings>) => updateDevice(d.id, (x) => ({ ...x, router: { ...x.router!, wan2: { ...(x.router!.wan2 ?? base), ...patch } } }));
   const node = sim.node(d.id);
   const rules = w.rules ?? [];
   const setRules = (next: MwanRuleSetting[]) => set({ rules: next });
