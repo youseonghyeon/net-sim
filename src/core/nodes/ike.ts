@@ -5,7 +5,7 @@
 // 맺은 뒤의 요청(DPD: 빈 INFORMATIONAL 로 상대가 살아 있나 확인)도 같은 재전송을 쓴다.
 import type { Ip } from "../addr";
 import { NAT_T_PORT, type EspPacket, type IkeMessage, type Ipv4Packet } from "../packet";
-import type { NodeContext } from "./node";
+import type { NodeContext, TimerHandle } from "./node";
 
 /** IKE 요청마다 응답을 기다리는 시간. 지나면 같은 요청을 다시 보내고(재전송), IKE_RETRANSMITS 번 뒤에도 없으면 포기 */
 export const IKE_TIMEOUT = 1000;
@@ -55,6 +55,8 @@ export class IkeRetransmit {
   private last: { src: Ip; dst: Ip; port: number; dstPort: number; msg: IkeMessage; tries: number; id: number } | undefined;
   /** 요청 번호 (IKE 의 Message ID 격): 같은 단계의 요청이 두 번 이어져도(EAP 의 두 번째 IKE_AUTH) 앞 요청의 timer 가 뒤 요청을 끊지 않게 */
   private seq = 0;
+  /** 기다리는 재전송 timer — 답을 받으면(clear) 취소한다. 남겨 두면 할 일이 없는데도 시계가 그 시각까지 간다 */
+  private pending: TimerHandle | undefined;
 
   constructor(
     private readonly tag: string,
@@ -69,7 +71,8 @@ export class IkeRetransmit {
   private transmit(l: NonNullable<IkeRetransmit["last"]>, ctx: NodeContext, frameId?: number): void {
     this.last = l;
     this.send(ikePacket(l.src, l.dst, l.port, l.dstPort, l.msg), ctx, frameId);
-    ctx.timer(IKE_TIMEOUT, this.tag, { spi: l.msg.spi, step: l.msg.exchange, tries: l.tries, id: l.id });
+    this.pending?.cancel();
+    this.pending = ctx.timer(IKE_TIMEOUT, this.tag, { spi: l.msg.spi, step: l.msg.exchange, tries: l.tries, id: l.id });
   }
 
   /**
@@ -90,5 +93,7 @@ export class IkeRetransmit {
 
   clear(): void {
     this.last = undefined;
+    this.pending?.cancel();
+    this.pending = undefined;
   }
 }

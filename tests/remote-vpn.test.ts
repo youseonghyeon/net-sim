@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import { loadTopology } from "./helpers";
-import { exampleRemoteVpnTopology } from "../src/model/examples";
+import { exampleCompanyTopology, exampleRemoteVpnTopology } from "../src/model/examples";
 import { createDevice, parseTopology, serializeTopology, type Device, type RaClientSettings, type RaServerSettings, type Topology } from "../src/model/topology";
 import { headerLayers, practitionerLines, tcpdumpLine } from "../src/model/packetView";
 import type { TraceEvent } from "../src/core/trace";
@@ -13,6 +13,13 @@ const load = (t: Topology = exampleRemoteVpnTopology()) => loadTopology(t);
 const lintTopology = (t: Topology) => loadTopology(t).lint();
 
 describe("원격 접속 VPN", () => {
+  it("협상이 끝나면 IKE 재전송 timer 가 남지 않는다 (시계가 마지막 일에서 멈춤 — 남으면 할 일 없이 1초 가까이 흐른다)", () => {
+    for (const t of [exampleRemoteVpnTopology(), exampleCompanyTopology()]) {
+      const L = loadTopology(t);
+      expect(L.s.net.now).toBe(L.s.net.trace.at(-1)!.time);
+    }
+  });
+
   it("노트북이 켜지면서 NAT-T 로 접속해 가상 주소를 받고, 사내 서버에 SSH 가 열린다", () => {
     const { t, id, host, l3, act, lastConn, wire } = load();
     expect(lintTopology(t)).toEqual([]);
