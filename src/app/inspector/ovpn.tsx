@@ -1,7 +1,7 @@
 // OpenVPN 설정 (GL.iNet 식): 공유기 서버(전송·포트·터널 대역·PUSH·tls-crypt·계정·인증서 폐기)와 노트북·폰 앱의 설정 파일 칸·설정 파일 가져오기.
 import { Host } from "../../core/nodes/host";
 import { Router } from "../../core/nodes/router";
-import { OvpnClient, shortFp } from "../../core/nodes/openvpn";
+import { shortFp } from "../../core/nodes/openvpn";
 import { sim, simVersion } from "../../model/sim";
 import { topology, updateDevice, updateDevices } from "../../model/store";
 import { DEFAULT_OVPN_SERVER_SETTINGS, ddnsHostname, ovpnCaOfDevice, ovpnTlsCryptOfDevice, type Device, type OvpnClientSettings, type RouterOvpnServerSettings, type RouterSettings } from "../../model/topology";
@@ -180,7 +180,7 @@ export function HostOvpnFields({ d }: { d: Device }) {
   const setRa = (patch: Partial<NonNullable<typeof d.host>["ra"] & object>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ra: { ...x.host!.ra!, ...patch } } }));
   const setO = (p: Partial<OvpnClientSettings>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ra: { ...x.host!.ra!, ovpn: { ...(x.host!.ra!.ovpn ?? DEFAULT_CLIENT), ...p } } } }));
   const node = sim.node(d.id);
-  const status = node instanceof Host && node.ra instanceof OvpnClient ? node.ra.summary() : undefined;
+  const status = node instanceof Host && node.ra.kind === "openvpn" ? node.ra.summary() : undefined;
   const servers = serverRouters(d);
   return (
     <>

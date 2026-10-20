@@ -15,6 +15,7 @@ import { ipToInt, intToIp, sameSubnet, type Ip } from "../addr";
 import { IKE_PORT, NAT_T_PORT, type EspPacket, type IkeMessage, type Ipv4Packet } from "../packet";
 import { DPD_INTERVAL, IKE_RETRANSMITS, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
 import type { NodeContext } from "./node";
+import { receiveIpsec, type VpnClient } from "./vpnclient";
 
 export interface RaServerConfig {
   enabled: boolean;
@@ -411,7 +412,9 @@ export class RaServer {
 
 export type RaClientState = "off" | "init" | "auth" | "up" | "failed";
 
-export class RaClient {
+export class RaClient implements VpnClient {
+  readonly kind = "ikev2";
+  readonly label = "원격 접속 VPN";
   config: RaClientConfig = { ...DEFAULT_RA_CLIENT };
   state: RaClientState = "off";
   vip: Ip | undefined;
@@ -729,6 +732,25 @@ export class RaClient {
     this.dpdPending = false;
     this.ike.clear();
     this.connect(ctx);
+  }
+
+  vpnDns(): Ip | undefined {
+    return undefined;
+  }
+
+  receive(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): Ipv4Packet | null | undefined {
+    return receiveIpsec(this, pkt, frameId, ctx);
+  }
+
+  timer(tag: string, data: unknown, ctx: NodeContext): boolean {
+    if (tag === RA_TIMER_TAG) this.onTimer(data, ctx);
+    else if (tag === RA_DPD_TAG) this.onDpdTick(data, ctx);
+    else return false;
+    return true;
+  }
+
+  lateTcp(): string[] {
+    return [];
   }
 
   summary(): string | undefined {

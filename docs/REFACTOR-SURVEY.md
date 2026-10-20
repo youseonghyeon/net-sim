@@ -55,7 +55,7 @@
 ### 호스트·TCP (host.ts 1962줄, tcp.ts 1050줄)
 - **HostService + 주소 수명주기** — `onAddressUp / onAddressLost / onLinkDown` 을 등록된 서비스 전부에 한 함수로 (위 SIP 결함 수정). (S~M)
 - **타입 있는 타이머 라우팅** — `onTimer` case 25개, `data as` 43개, 지난 클라이언트 타이머 거르는 방식 세 가지 → `timerKey<T>()` + `TimerRouter.on()`, 모르는 태그는 테스트에서 예외. (S~M)
-- **VpnClient 인터페이스** — `RaClient | L2tpClient | WgClient | OvpnClient` instanceof 분기 9곳+UI 2곳, 빈 메서드 흉내, 늦은 패킷 목록 손 나열 → `{ claim; intercept; connect; lost; reconnect; dpd?; timers; retire() }`. (M)
+- **VpnClient 인터페이스** — `RaClient | L2tpClient | WgClient | OvpnClient` instanceof 분기 9곳+UI 2곳, 빈 메서드 흉내, 늦은 패킷 목록 손 나열 → `{ claim; intercept; connect; lost; reconnect; dpd?; timers; retire() }`. (M) — **함** (`nodes/vpnclient.ts` `{kind; label; receive; timer; vpnDns; lateTcp; …}`, 호스트의 instanceof 9곳·UI 2곳 → 0, 빈 메서드 흉내(handleIke·unwrap·onDpdTick) 제거, IPsec 둘의 받기는 `receiveIpsec` 공용). `Host.ra` 타입은 네 클래스의 합집합으로 둠(테스트가 종류별 필드를 본다). 골든·교란 표 불변. 달라진 것 하나: WireGuard·OpenVPN 클라이언트가 켜진 채 ESP 를 받으면(IKEv2 에서 종류를 바꾼 뒤 늦게 온 것) "내 원격 접속 터널 것이 아님" 대신 "지금 VPN 연결의 것이 아님 (끊었거나 종류를 바꾼 뒤 늦게 온 패킷)" 으로 무시 — 그 상황을 맞게 말한다
 - **루프백을 비동기로 (`ctx.defer`)** — 4h·4k 의 재진입 결함(루프백 수정 커밋 5건)과 `onCreated`·"상태 먼저" 코드 7곳의 근본 원인. 같은 시각, 현재 이벤트 직후 처리(리눅스 netif_rx 백로그). 루프백 테스트 약 22개의 트레이스 순서가 바뀜. (M)
 - **TCP 연결 소유자** — onFinish·onEstablished·onRelay 고리 순서가 서로 다름(실제 순서 결함 커밋 있음) → `connect(..., {owner})`·`listen(port, owner)`. 이어서 프록시 터널·SSH 점프 채널의 같은 짝 관리 코드를 `TcpSplice` 로. (M, S)
 - **진단 분리·IPv4/IPv6 쌍 통합** — ping·traceroute 등 약 480줄을 `HostDiagnostics` + `AddressFamily` 어댑터로. (M)

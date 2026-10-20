@@ -12,6 +12,7 @@ import { sameSubnet, type Ip } from "../addr";
 import { OVPN_PORT, ovpnLength, type Ipv4Packet, type OvpnMessage, type TcpSegment, type UdpPacket } from "../packet";
 import type { NodeContext, TimerHandle } from "./node";
 import { DEFAULT_RA_CLIENT, type RaClientConfig, type RaClientState } from "./ravpn";
+import type { VpnClient } from "./vpnclient";
 
 export { OVPN_PORT };
 export const OVPN_TIMER_TAG = "ovpn-timer";
@@ -561,7 +562,9 @@ interface ClientSession {
   txBytes: number;
 }
 
-export class OvpnClient {
+export class OvpnClient implements VpnClient {
+  readonly kind = "openvpn";
+  readonly label = "OpenVPN";
   config: RaClientConfig = { ...DEFAULT_RA_CLIENT, type: "openvpn" };
   readonly dpdWaiting = false;
   private s: ClientSession | undefined;
@@ -1003,14 +1006,6 @@ export class OvpnClient {
     return true;
   }
 
-  handleIke(): boolean {
-    return false;
-  }
-
-  unwrap(): undefined {
-    return undefined;
-  }
-
   /** 내보낼 패킷: 연결돼 있고 터널로 갈 목적지면 출발지를 가상 주소로 바꿔 터널로. 가로챘으면 true */
   intercept(pkt: Ipv4Packet, ctx: NodeContext): boolean {
     const s = this.s;
@@ -1097,8 +1092,6 @@ export class OvpnClient {
     }
   }
 
-  onDpdTick(): void {}
-
   /** 내 주소가 바뀌거나 잃음: 연결 상태가 있는 VPN 이라 다시 붙는다 (UDP 는 float 가 없으면 서버가 새 주소를 모른다) */
   lost(ctx: NodeContext, why: string): void {
     if (!this.s) return;
@@ -1127,6 +1120,32 @@ export class OvpnClient {
 
   dpd(ctx: NodeContext): void {
     ctx.trace("vpn.dpd", "L4", `OpenVPN 에는 IKE DPD 가 없음 — keepalive(${OVPN_PING / 1000}초마다 ping, ${OVPN_PING_RESTART / 1000}초 동안 받은 게 없으면 다시 연결)가 같은 일을 한다`, { dpd: "none" });
+  }
+
+  /** 연결되면 서버가 PUSH 로 알려 준 DNS */
+  vpnDns(): Ip | undefined {
+    return this.dns;
+  }
+
+  /** 내 포트로 온 OpenVPN (UDP) 또는 내 OpenVPN TCP 연결의 세그먼트 */
+  receive(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): Ipv4Packet | null | undefined {
+    const p = pkt.payload;
+    if (p.kind === "udp" && p.payload.kind === "ovpn" && this.config.enabled) return this.handleUdp(pkt, p.srcPort, p.dstPort, p.payload, ctx, frameId);
+    if (p.kind === "tcp" && this.ownsTcp(p, pkt.src)) {
+      if (this.handleClosing(pkt, p, ctx)) return null;
+      return this.handleTcp(pkt, p, ctx, frameId);
+    }
+    return undefined;
+  }
+
+  timer(tag: string, data: unknown, ctx: NodeContext): boolean {
+    if (tag !== OVPN_TIMER_TAG) return false;
+    this.onTimer(data, ctx);
+    return true;
+  }
+
+  lateTcp(): string[] {
+    return this.tcpKeys();
   }
 
   summary(): string | undefined {

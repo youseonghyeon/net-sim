@@ -16,6 +16,7 @@ import { sameSubnet, type Ip } from "../addr";
 import { VPN_PORT, type Ipv4Packet, type WgMessage } from "../packet";
 import type { NodeContext, TimerHandle } from "./node";
 import { DEFAULT_RA_CLIENT, type RaClientConfig, type RaClientState } from "./ravpn";
+import type { VpnClient } from "./vpnclient";
 
 export const WG_PORT = VPN_PORT;
 export const WG_TIMER_TAG = "wg-timer";
@@ -610,7 +611,9 @@ export interface WgClientIo {
  * IKEv2·L2TP 와 달리 주소를 받아 오지 않는다 — 서버 관리자가 정해 준 터널 주소를 설정 파일에 적어 둔다.
  * 켜 두면 AllowedIPs 로 가는 패킷은 늘 터널로 간다(핸드셰이크가 안 돼도 밖으로 새지 않는다 — 앱 자체가 킬 스위치처럼 동작)
  */
-export class WgClient {
+export class WgClient implements VpnClient {
+  readonly kind = "wireguard";
+  readonly label = "WireGuard";
   config: RaClientConfig = { ...DEFAULT_RA_CLIENT, type: "wireguard" };
   readonly wg: WgInterface;
   readonly dpdWaiting = false;
@@ -725,14 +728,6 @@ export class WgClient {
     this.wg.connect(ctx);
   }
 
-  handleIke(): boolean {
-    return false;
-  }
-
-  unwrap(): undefined {
-    return undefined;
-  }
-
   /** 받은 WireGuard 메시지: 풀린 패킷이면 목적지(내 터널 주소)를 실제 주소로 되돌려 돌려준다 */
   handleWg(outer: Ipv4Packet, srcPort: number, m: WgMessage, ctx: NodeContext, frameId: number): Ipv4Packet | null {
     const inner = this.wg.handle(outer, srcPort, m, ctx, frameId);
@@ -765,8 +760,6 @@ export class WgClient {
     this.wg.onTimer(data, ctx);
   }
 
-  onDpdTick(): void {}
-
   /** 주소가 바뀌거나 잃음: WireGuard 는 연결 상태가 없어 세션을 그대로 둔다 — 다음에 보내는 패킷으로 서버가 새 주소를 배운다 (로밍) */
   lost(ctx: NodeContext, why: string): void {
     if (this.state !== "up") return;
@@ -790,6 +783,28 @@ export class WgClient {
 
   dpd(ctx: NodeContext): void {
     ctx.trace("vpn.dpd", "L4", `WireGuard 에는 DPD 가 없음 — 보낸 뒤 ${WG_DEAD / 1000}초 동안 아무것도 받지 못하면 스스로 새 핸드셰이크를 한다`, { dpd: "none" });
+  }
+
+  /** 켜져 있으면 설정 파일의 DNS (핸드셰이크 전에도 — 인터페이스가 올라가면 resolv.conf 가 바뀐다) */
+  vpnDns(): Ip | undefined {
+    return this.dns;
+  }
+
+  /** 내 포트로 온 WireGuard 메시지 */
+  receive(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): Ipv4Packet | null | undefined {
+    const p = pkt.payload;
+    if (!this.config.enabled || p.kind !== "udp" || p.payload.kind !== "wg" || p.dstPort !== this.listenPort) return undefined;
+    return this.handleWg(pkt, p.srcPort, p.payload, ctx, frameId);
+  }
+
+  timer(tag: string, data: unknown, ctx: NodeContext): boolean {
+    if (tag !== WG_TIMER_TAG) return false;
+    this.onTimer(data, ctx);
+    return true;
+  }
+
+  lateTcp(): string[] {
+    return [];
   }
 
   summary(): string | undefined {

@@ -15,6 +15,7 @@ import { IKE_PORT, L2TP_PORT, NAT_T_PORT, l2tpPartLabel, type EspPacket, type Ik
 import { IKE_RETRANSMITS, IKE_TIMEOUT, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
 import type { NodeContext, TimerHandle } from "./node";
 import { RA_TIMER_TAG, type RaClientConfig, type RaClientState, type RaIo } from "./ravpn";
+import { receiveIpsec, type VpnClient } from "./vpnclient";
 
 export interface L2tpServerConfig {
   enabled: boolean;
@@ -430,7 +431,9 @@ const PHASE_LABEL: Record<Phase, string> = {
   up: "연결됨",
 };
 
-export class L2tpClient {
+export class L2tpClient implements VpnClient {
+  readonly kind = "l2tp";
+  readonly label = "VPN (L2TP/IPsec)";
   config: RaClientConfig = { enabled: false, psk: "", type: "l2tp" };
   state: RaClientState = "off";
   vip: Ip | undefined;
@@ -728,7 +731,24 @@ export class L2tpClient {
     ctx.trace("vpn.dpd", "L4", `L2TP/IPsec 연결에는 DPD 를 보내지 않음 (IKEv2 원격 접속에서만)`, { dpd: "none" });
   }
 
-  onDpdTick(): void {}
+  /** 연결된 동안 IPCP 로 받은 DNS 로 묻는다 */
+  vpnDns(): Ip | undefined {
+    return this.state === "up" ? this.dns : undefined;
+  }
+
+  receive(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): Ipv4Packet | null | undefined {
+    return receiveIpsec(this, pkt, frameId, ctx);
+  }
+
+  timer(tag: string, data: unknown, ctx: NodeContext): boolean {
+    if (tag !== RA_TIMER_TAG) return false;
+    this.onTimer(data, ctx);
+    return true;
+  }
+
+  lateTcp(): string[] {
+    return [];
+  }
 
   summary(): string | undefined {
     if (!this.config.enabled) return undefined;

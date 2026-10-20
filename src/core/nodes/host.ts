@@ -340,10 +340,8 @@ export class Host implements SimNode {
     // 사내 대역으로 가는 패킷은 원격 접속 터널로 (연결돼 있을 때만. L2TP/IPsec 은 모두)
     // 메시 피어·알린 대역은 원격 접속 VPN 보다 먼저 (더 구체적인 경로가 이긴다), exit node 는 원격 접속 VPN 뒤
     this.iface.outbound = (pkt, ctx) => this.mesh.intercept(pkt, ctx, false) || this.ra.intercept(pkt, ctx) || this.mesh.intercept(pkt, ctx);
-    // L2TP/IPsec 이 연결돼 있으면 집 공유기가 알려 준 DNS(IPCP)로 묻는다
-    // WireGuard 는 켜져 있으면 설정 파일의 DNS 를 쓴다 (핸드셰이크 전에도 — 인터페이스가 올라가면 resolv.conf 가 바뀐다)
-    // OpenVPN 은 연결되면 서버가 PUSH 로 알려 준 DNS
-    this.resolver.vpnDns = () => ((this.ra instanceof L2tpClient && this.ra.state === "up") || this.ra instanceof OvpnClient ? this.ra.dns : this.ra instanceof WgClient ? this.ra.dns : undefined);
+    // VPN 이 알려 준 DNS (L2TP 는 IPCP, WireGuard 는 설정 파일, OpenVPN 은 PUSH)
+    this.resolver.vpnDns = () => this.ra.vpnDns();
   }
 
   private makeVpnClient(type: RaClientConfig["type"]): RaClient | L2tpClient | WgClient | OvpnClient {
@@ -457,12 +455,11 @@ export class Host implements SimNode {
 
   setRemoteVpn(cfg: RaClientConfig, ctx: NodeContext): void {
     const want = cfg.type === "l2tp" || cfg.type === "wireguard" || cfg.type === "openvpn" ? cfg.type : "ikev2";
-    const have = this.ra instanceof L2tpClient ? "l2tp" : this.ra instanceof WgClient ? "wireguard" : this.ra instanceof OvpnClient ? "openvpn" : "ikev2";
-    if (want !== have) {
+    if (want !== this.ra.kind) {
       // VPN 종류가 바뀜: 붙어 있던 연결을 끊고(서버에 알림) 다른 클라이언트로 바꿔 낀다
       if (this.ra.state === "up") this.ra.disconnect(ctx, "VPN 종류가 바뀜");
       // OpenVPN TCP 연결은 서버의 FIN·ACK 가 늦게 온다 — 새 클라이언트로 바꾼 뒤에도 호스트 TCP 로 넘기지 않게 기억
-      if (this.ra instanceof OvpnClient) this.ovpnLate = [...this.ovpnLate, ...this.ra.tcpKeys()].slice(-16);
+      this.ovpnLate = [...this.ovpnLate, ...this.ra.lateTcp()].slice(-16);
       this.ra = this.makeVpnClient(want);
     }
     this.ra.setConfig(cfg, ctx);
@@ -684,7 +681,7 @@ export class Host implements SimNode {
       ctx,
       oldMac === this.iface.mac
         ? `${NIC_LABEL[want]} 로 다시 통신 (MAC ${oldMac} 그대로)`
-        : `${NIC_LABEL[want]} 로 전환: 다른 NIC 라 MAC 이 ${oldMac} → ${this.iface.mac} 로 바뀜 → ${what} (${this.ra instanceof WgClient && this.ra.config.enabled ? "열려 있던 TCP 는 끊김 · WireGuard 는 연결 상태가 없어 다음 패킷으로 서버가 새 주소를 배운다(로밍)" : "열려 있던 TCP·VPN 은 끊김"})`,
+        : `${NIC_LABEL[want]} 로 전환: 다른 NIC 라 MAC 이 ${oldMac} → ${this.iface.mac} 로 바뀜 → ${what} (${this.ra.kind === "wireguard" && this.ra.config.enabled ? "열려 있던 TCP 는 끊김 · WireGuard 는 연결 상태가 없어 다음 패킷으로 서버가 새 주소를 배운다(로밍)" : "열려 있던 TCP·VPN 은 끊김"})`,
     );
   }
 
@@ -1616,17 +1613,10 @@ export class Host implements SimNode {
         return;
       }
     }
-    // OpenVPN 앱: 내 포트로 온 OpenVPN (UDP) 또는 내 OpenVPN TCP 연결의 세그먼트
-    if (this.ra instanceof OvpnClient && pkt.dst === this.iface.ip) {
-      const p = pkt.payload;
-      if (p.kind === "udp" && p.payload.kind === "ovpn" && this.ra.config.enabled) {
-        const inner = this.ra.handleUdp(pkt, p.srcPort, p.dstPort, p.payload, ctx, frameId);
-        if (inner) this.handleIp(inner, frameId, ctx);
-        return;
-      }
-      if (p.kind === "tcp" && this.ra.ownsTcp(p, pkt.src)) {
-        if (this.ra.handleClosing(pkt, p, ctx)) return;
-        const inner = this.ra.handleTcp(pkt, p, ctx, frameId);
+    // 원격 접속 VPN 앱: 서버의 IKE 응답·터널의 ESP, 내 포트로 온 WireGuard·OpenVPN (UDP), 내 OpenVPN TCP 연결의 세그먼트
+    if (pkt.dst === this.iface.ip) {
+      const inner = this.ra.receive(pkt, frameId, ctx);
+      if (inner !== undefined) {
         if (inner) this.handleIp(inner, frameId, ctx);
         return;
       }
@@ -1634,27 +1624,6 @@ export class Host implements SimNode {
     if (pkt.dst === this.iface.ip && pkt.payload.kind === "tcp" && this.ovpnLate.includes(`${pkt.src}:${pkt.payload.dstPort}`)) {
       ctx.trace("vpn.drop", "L4", `OpenVPN 의 지난 TCP 연결(${pkt.src}, 내 포트 ${pkt.payload.dstPort})로 늦게 온 세그먼트 → 무시 (VPN 종류를 바꿔 그 연결은 이미 닫음)`, { ovpn: true, late: true }, frameId);
       return;
-    }
-    // WireGuard 앱: 내 포트로 온 WireGuard 메시지
-    if (this.ra instanceof WgClient && this.ra.config.enabled && pkt.dst === this.iface.ip) {
-      const p = pkt.payload;
-      if (p.kind === "udp" && p.payload.kind === "wg" && p.dstPort === this.ra.listenPort) {
-        const inner = this.ra.handleWg(pkt, p.srcPort, p.payload, ctx, frameId);
-        if (inner) this.handleIp(inner, frameId, ctx);
-        return;
-      }
-    }
-    // 원격 접속 VPN: 서버의 IKE 응답, 터널로 온 ESP (NAT-T 면 UDP 4500 안)
-    if (this.ra.config.enabled && pkt.dst === this.iface.ip) {
-      const p = pkt.payload;
-      if (p.kind === "udp" && p.payload.kind === "ike" && this.ra.handleIke(pkt, p.srcPort, p.dstPort, p.payload, ctx, frameId)) return;
-      const esp = p.kind === "esp" ? p : p.kind === "udp" && p.payload.kind === "esp" ? p.payload : undefined;
-      if (esp) {
-        const inner = this.ra.unwrap(pkt, esp, ctx, frameId);
-        if (inner) this.handleIp(inner, frameId, ctx);
-        else if (inner === undefined) ctx.trace("vpn.drop", "L3", `ESP 수신 (from ${pkt.src}) → 내 원격 접속 터널 것이 아님 → 드롭`, {}, frameId);
-        return;
-      }
     }
     // VPN 을 끈 직후·종류를 바꾼 직후 늦게 온 IKE·ESP: 지금 VPN 클라이언트가 받지 않은 것은 조용히 버린다 —
     // 호스트로 넘기면 "UDP 포트를 듣는 프로그램 없음" + ICMP Port Unreachable 이 서버로 샌다 (OS 의 IPsec 서비스는 VPN 을 꺼도 500·4500 을 쥐고 있다)
@@ -1807,13 +1776,13 @@ export class Host implements SimNode {
         this.addressUp(ctx, "주소를 쓰기 시작 (링크 복구·NIC 전환)"); // 고정 주소를 쓰기 시작
         return;
       case RA_TIMER_TAG:
-        this.ra.onTimer(data, ctx);
+      case RA_DPD_TAG:
+      case WG_TIMER_TAG:
+      case OVPN_TIMER_TAG:
+        this.ra.timer(tag, data, ctx);
         return;
       case P2P_TIMER_TAG:
         this.p2p.onTimer(data, ctx);
-        return;
-      case RA_DPD_TAG:
-        this.ra.onDpdTick(data, ctx);
         return;
       case TS_TIMER_TAG:
         this.mesh.onTimer(data, ctx);
@@ -1826,12 +1795,6 @@ export class Host implements SimNode {
         this.streamStep(d.group, d.id, d.seq, ctx);
         return;
       }
-      case WG_TIMER_TAG:
-        if (this.ra instanceof WgClient) this.ra.onTimer(data, ctx);
-        return;
-      case OVPN_TIMER_TAG:
-        if (this.ra instanceof OvpnClient) this.ra.onTimer(data, ctx);
-        return;
       case "arp-timeout": {
         const { ip: nextHop } = data as { ip: Ip };
         const dropped = this.iface.onArpTimeout(data, ctx);
@@ -1914,7 +1877,7 @@ export class Host implements SimNode {
             ] as [string, string][])
           : []),
         ["TCP 서비스", this.tcp.listening.size ? [...this.tcp.listening].map((p) => `포트 ${p}`).join(", ") : "없음"],
-        ...(this.ra.config.enabled ? [[this.ra instanceof L2tpClient ? "VPN (L2TP/IPsec)" : this.ra instanceof WgClient ? "WireGuard" : this.ra instanceof OvpnClient ? "OpenVPN" : "원격 접속 VPN", this.ra.summary()!] as [string, string]] : []),
+        ...(this.ra.config.enabled ? [[this.ra.label, this.ra.summary()!] as [string, string]] : []),
         ...(this.p2p.config.enabled ? [["P2P 앱", this.p2p.summary()!] as [string, string]] : []),
         ...(this.mesh.config.enabled ? [[this.mesh.brand, this.mesh.summary()!] as [string, string]] : []),
         ...(this.sip.config.enabled ? [["인터넷 전화", this.sip.summary()!] as [string, string]] : []),

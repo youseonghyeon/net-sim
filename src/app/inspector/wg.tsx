@@ -1,7 +1,7 @@
 // WireGuard 설정 (GL.iNet 식): 공유기 서버·클라이언트, 노트북·폰 앱의 설정 파일 칸, 공개 키 표시·다시 만들기·서버 가져오기.
 import { Host } from "../../core/nodes/host";
 import { Router, WG_POLICY_LABEL } from "../../core/nodes/router";
-import { WgClient, wgPrivateKey, validWgKey } from "../../core/nodes/wg";
+import { wgPrivateKey, validWgKey } from "../../core/nodes/wg";
 import { sim, simVersion } from "../../model/sim";
 import { topology, updateDevice, updateDevices } from "../../model/store";
 import {
@@ -323,7 +323,7 @@ export function HostWgFields({ d }: { d: Device }) {
   const setRa = (patch: Partial<NonNullable<typeof d.host>["ra"] & object>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ra: { ...x.host!.ra!, ...patch } } }));
   const setW = (p: Partial<WgClientSettings>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ra: { ...x.host!.ra!, wg: { ...(x.host!.ra!.wg ?? DEFAULT_WG_CLIENT_FIELDS), ...p } } } }));
   const node = sim.node(d.id);
-  const status = node instanceof Host && node.ra instanceof WgClient ? node.ra.summary() : undefined;
+  const status = node instanceof Host && node.ra.kind === "wireguard" ? node.ra.summary() : undefined;
   return (
     <>
       <MyKey d={d} role="host" onRegenerate={(privateKey) => setW({ privateKey })} />
