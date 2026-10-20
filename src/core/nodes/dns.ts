@@ -226,6 +226,11 @@ export class DnsResolver {
       ctx.trace("dns.response.received", "app", `요청한 적 없는 DNS 응답 (id ${msg.id}) → 무시`, { id: msg.id }, frameId);
       return;
     }
+    if (from !== q.server) {
+      // 리졸버는 물은 서버의 주소에서 온 답만 받는다 (glibc res_send·nslookup "reply from unexpected source") — 기다리다 timeout 으로 다시 묻는다
+      ctx.trace("dns.response.received", "app", `DNS 응답이 물은 서버 ${q.server} 가 아닌 ${from} 에서 옴 → 무시 (reply from unexpected source — 서버가 질의를 받은 주소에서 답해야 한다)`, { id: msg.id, from, server: q.server, unexpected: true }, frameId);
+      return;
+    }
     this.pending.delete(msg.id);
     q.timer.cancel();
     if (msg.answer) {

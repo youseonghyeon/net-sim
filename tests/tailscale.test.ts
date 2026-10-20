@@ -89,6 +89,15 @@ describe("Tailscale", () => {
     expect(L.node<Router>("회사 공유기").mesh.rows().find((r) => r[0] === "home-brume")).toBeDefined();
   });
 
+  it("공유기의 메시 주소로 물은 DNS 는 그 주소에서 답한다 (LAN 주소에서 답하면 리졸버가 엉뚱한 곳에서 온 답으로 버린다)", () => {
+    const L = loadTopology(exampleTailscaleTopology());
+    const at = L.node<Router>(HOME).mesh.self!.ip;
+    const tr = L.act({ kind: "dns-lookup", nodeId: L.id(LAPTOP), name: "example.com", qtype: "A", server: at });
+    const back = tr.filter((e) => e.nodeId === L.id(HOME) && e.kind === "mesh.encap").map((e) => e.summary);
+    expect(back.some((s) => s.includes(`${at} → `))).toBe(true);
+    expect(back.some((s) => s.includes("192.168.8.1 → "))).toBe(false);
+  });
+
   it("DPI 가 VPN 을 막는 망에서는 조정 서버 로그인이 막힌다", () => {
     const base = exampleTailscaleTopology();
     const t: Topology = { ...base, devices: base.devices.map((d) => (d.name === "카페 공유기" ? { ...d, router: { ...d.router!, dpi: { enabled: true, blockApps: [], blockCategories: ["VPN"] } } } : d)) };
