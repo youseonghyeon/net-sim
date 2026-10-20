@@ -65,10 +65,10 @@
 
 ### L3·공용 부품
 - **packet 표를 타입으로** — `describeFrame`·`shortLabel`·`frameCategory` if 사슬을 `{ [K in kind]: { describe; short; category } }` 로, 빠지면 컴파일 오류 (위 색 결함 수정). packet.ts 를 프로토콜별 파일로 + barrel. (S~M)
-- **인터넷 노드 서비스 레지스트리** — "사설 출발지 드롭" 7벌, 손 목록 `simulatedPublicIps`, UDP 서비스가 TTL 을 안 봄, DNS 로직이 onTimer 안 → `InternetService { addrs; udp?; tcp?; timers?; rows? }`, 서버 목록·알려진 서버는 자동. (M)
+- **인터넷 노드 서비스 레지스트리** — "사설 출발지 드롭" 7벌, 손 목록 `simulatedPublicIps`, UDP 서비스가 TTL 을 안 봄, DNS 로직이 onTimer 안 → `InternetService { addrs; udp?; tcp?; timers?; rows? }`, 서버 목록·알려진 서버는 자동. (M) — **보류**: 사설 출발지 드롭은 서비스마다 문구·처리가 달라(DDNS 해제는 조용히 무시, DNS·DDNS 는 자기 문구) 합치면 문구가 바뀐다. UDP 의 TTL 미확인은 사실이지만 이 시뮬레이터의 traceroute 는 ICMP 이고 UDP 는 늘 TTL 64 로 나가 닿는 길이 없다
 - **Router·L3Node 공용 부품만** — 합치지 않고 RouteTable(최장 일치·넥스트 홉 검증), ttlExpire·echoReply, 헤어핀, `NatTable.forwardFor()` 만 공유. 10개 개념이 겹친다. (S~M)
-- **이웃 대기열 공용화** — ARP·NDP 대기열·타이머를 `NeighborQueue<P>` 하나로, 타이머 데이터에 인터페이스 식별자. L2 훅(proxyArp·arpSource·vip)은 `ArpPolicy` 객체 하나로. (M)
-- **협상 공용 부품** — `Retransmitter`(취소 가능)·`ReplyCache`·`LateSink`. 상태머신은 합치지 않는다. (M)
+- **이웃 대기열 공용화** — ARP·NDP 대기열·타이머를 `NeighborQueue<P>` 하나로, 타이머 데이터에 인터페이스 식별자. L2 훅(proxyArp·arpSource·vip)은 `ArpPolicy` 객체 하나로. (M) — **핵심만 함**: 타이머 데이터의 인터페이스 식별자(ARP timeout 이 다른 인터페이스 대기열을 지우던 결함, 2단계 b9fa4ef). 두 대기열을 한 클래스로 합치는 것은 보류 — ARP·NDP 의 재시도·상태(NUD)가 달라 시각이 바뀔 위험에 비해 이득이 작다
+- **협상 공용 부품** — `Retransmitter`(취소 가능)·`ReplyCache`·`LateSink`. 상태머신은 합치지 않는다. (M) — **핵심만 함**: 재전송 timer 를 답을 받으면 취소(2단계 f366199, 10개 모듈, `tests/timers-idle.test.ts`), IKE 재전송은 이미 `IkeRetransmit` 공용. "마지막 응답 다시 보내기·늦은 패킷" 은 `tests/vpn-conformance.test.ts` 표가 종류마다 지킨다 — 부품으로 합치는 것은 보류
 
 ### 모델·동기화·구성 검사
 - **설정 적용기 맵** — 장치마다 effective 객체 하나에서 변경 감지 키와 적용을 함께: `Appliers<C, N> = { [K in keyof Required<C>]: (n, v, ctx) => void }` 로 필드를 빠뜨리면 컴파일 오류. (M) — 불변식 테스트(2-3)와 짝. — **함**: 호스트 서비스 11칸은 `HOST_SERVICES`(칸마다 정리한 값 `of` + 적용 `apply` — 변경 감지 키도 같은 목록에서, 4zl 같은 키 누락이 구조적으로 불가), 게이트웨이는 `Appliers<L3Node, L3Config>`(칸이 빠지면 컴파일 오류). 공유기·호스트·게이트웨이 모두 만든 직후에도 같은 목록 전체를 적용(개별 setter 5줄 제거) — 골든 불변
@@ -84,9 +84,9 @@
 - **`<IntInput>`** — 숫자 칸 16곳 통일 (프리픽스 24.5 결함). (S)
 - **`useSub(d, key)` 설정 훅** — 패치 클로저 55개, 보일 때와 고칠 때 기본값이 다른 곳 4곳(꺼진 상태에서 칸을 고치면 기능이 켜지는 잠재 결함). (S~M) — **결함만 고침**: 다른 곳은 11곳, 그중 메시의 종류 버튼이 실제로 기능을 켬 → 섹션마다 `base` 하나를 보이는 값·고칠 바탕에 같이 씀. 훅으로 55개를 바꾸는 것은 보류 (같은 한 줄 패턴을 다른 한 줄로 옮기는 셈)
 - **simView 선택자** — UI 의 `sim.node()` 16파일·instanceof 약 43회, "이 IP 는 누구" 조회 5벌, 상태 점 색 두 규칙 → 순수 함수 + `useSim(f)`(안에서 simVersion 을 읽어 4zi 를 구조로 막음). (M) — **가드로 함**: `tests/ui-subscribe-guard.test.ts` — `sim.node()`·`sim.net` 을 부르거나 코어 노드를 props 로 받는 컴포넌트는 simVersion·simTime(로그 창은 logTick)을 읽어야 한다 (P2pDiag 의 구독을 빼면 실패함을 확인). 지금 빠진 곳은 없음. 선택자 함수·`useSim` 으로 16파일을 옮기는 것은 보류 — 같은 보호를 소스 검사로 얻었다
-- **`<ListEditor>`** — 목록 편집기 19벌(계정 3벌·대역 경로 5벌), 줄 오류 클래스 5종. ui-check 선택자와 같이. (M)
-- **Canvas 분리** — 팬·드래그마다 모든 장치 다시 그림, 상태 O(n²) → ViewportGroup·memo·공유 computed, 파일을 interaction·DeviceView·packets·geometry 로. 이득은 측정 먼저(perf-check 에 팬·드래그 시나리오). (M~L)
-- ui-check 를 helpers + sections 파일로. (S)
+- **`<ListEditor>`** — 목록 편집기 19벌(계정 3벌·대역 경로 5벌), 줄 오류 클래스 5종. ui-check 선택자와 같이. (M) — **보류**: 목록마다 칸 모양·오류 위치·추가 기본값이 달라 공용 컴포넌트는 render prop 하나로 줄어들 뿐(목록당 6줄 안팎), 줄 클래스를 쓰는 ui-check 선택자를 함께 건드린다
+- **Canvas 분리** — 팬·드래그마다 모든 장치 다시 그림, 상태 O(n²) → ViewportGroup·memo·공유 computed, 파일을 interaction·DeviceView·packets·geometry 로. 이득은 측정 먼저(perf-check 에 팬·드래그 시나리오). (M~L) — **보류(측정 전)**: 팬·드래그 시나리오로 perf-check 를 돌려 기준을 넘을 때. 지금 체감 문제 보고 없음
+- ui-check 를 helpers + sections 파일로. (S) — **보류**: 구간이 한 파일 안에서 `section` 마다 독립이고 워커가 자기 파일을 다시 띄우는 구조라, 나누려면 `page` 를 모듈 사이로 공유하게 하네스를 고쳐야 한다 — 사용자에게 보이는 이득 없음
 
 ## 4. 하지 않는 것이 나은 것
 - Router 와 L3Node 를 한 클래스·공통 베이스로 합치기 (모델이 다르고 트레이스 문구가 전부 바뀜)
