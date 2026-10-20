@@ -598,12 +598,8 @@ export class Host implements SimNode {
         this.dhcpServer.onInterfaceChanged(ctx);
         this.iface.arpCache.clear();
         this.iface.clearPending();
-        this.tcp.abortAll("주소 변경", ctx, (c) => !isIpv6(c.localIp));
-        this.cancelTraceroute("주소 변경", ctx, (rec) => !isIpv6(rec.resolved ?? rec.dst));
-        this.ra.lost(ctx, "주소 변경");
-        this.p2p.lost();
-        this.mesh.lost();
-        if (this.linkUp && this.iface.ip) this.iface.claim(ctx, this.emit(ctx));
+        this.addressLost(ctx, "주소 변경");
+        if (this.linkUp && this.iface.ip) this.iface.claim(ctx, this.emit(ctx)); // Probe 가 끝나면 addressUp
       }
       ctx.trace(
         "ip.config",
@@ -617,8 +613,7 @@ export class Host implements SimNode {
     this.iface.prefix = 24;
     this.iface.arpCache.clear();
     this.iface.clearPending();
-    if (before) this.tcp.abortAll("주소 변경", ctx, (c) => !isIpv6(c.localIp));
-    if (before) this.cancelTraceroute("주소 변경", ctx, (rec) => !isIpv6(rec.resolved ?? rec.dst));
+    if (before) this.addressLost(ctx, "주소 변경");
     ctx.trace("ip.config", "sys", `자동(DHCP) 로 전환 → 기존 주소 지움`, { ...cfg });
     if (this.linkUp) this.dhcp.start(ctx, this.emit(ctx));
     else this.dhcp.stop();
@@ -716,15 +711,38 @@ export class Host implements SimNode {
     this.lb.ensureChecks(ctx); // 액티브 헬스 체크 (켜져 있으면)
   }
 
+  /**
+   * 주소에 묶인 앱: 주소를 얻으면 붙고(원격 접속 VPN 접속·P2P 시그널링 등록·메시 로그인·SIP 등록), 잃으면 정리한다.
+   * 새 앱은 여기 한 줄 — 주소가 바뀌는 길(고정 주소 변경·고정 → DHCP·링크 다운·DHCP 임대·ARP Probe 끝)마다 목록을 따로 두면 빠진다 (SIP 가 빠졌던 결함)
+   */
+  private addressApps(): { up(ctx: NodeContext): void; lost(ctx: NodeContext, why: string): void }[] {
+    return [
+      { up: (ctx) => this.ra.connect(ctx), lost: (ctx, why) => this.ra.lost(ctx, why) },
+      { up: (ctx) => this.p2p.onAddress(ctx), lost: () => this.p2p.lost() },
+      { up: (ctx) => this.mesh.onAddress(ctx), lost: () => this.mesh.lost() },
+      { up: (ctx) => this.sip.onAddress(ctx), lost: (ctx) => this.sip.lost(ctx) },
+    ];
+  }
+
+  /** IPv4 주소를 쓰기 시작함 (DHCP 임대·고정 주소의 ARP Probe 끝): 주소에 묶인 앱 전부와 멀티캐스트 가입 다시 알리기 */
+  private addressUp(ctx: NodeContext, why: string): void {
+    for (const app of this.addressApps()) app.up(ctx);
+    this.reportGroups(ctx, why);
+  }
+
+  /** IPv4 주소를 잃음 (바뀜·DHCP 로 전환): 그 주소의 연결·traceroute 와 주소에 묶인 앱 전부를 정리 (IPv6 연결은 그대로) */
+  private addressLost(ctx: NodeContext, why: string): void {
+    this.tcp.abortAll(why, ctx, (c) => !isIpv6(c.localIp));
+    this.cancelTraceroute(why, ctx, (rec) => !isIpv6(rec.resolved ?? rec.dst));
+    for (const app of this.addressApps()) app.lost(ctx, why);
+  }
+
   /** 링크가 내려감 (또는 다른 NIC 로 바꿔 끼기 전): 연결·대기열을 정리하고 DHCP 주소를 내려놓는다 */
   private stackDown(ctx: NodeContext, why: string, msg: string | null): void {
     this.linkUp = false;
     if (msg) ctx.trace("link.down", "L1", msg);
     this.v6.linkDown();
-    this.ra.lost(ctx, why);
-    this.p2p.lost();
-    this.mesh.lost();
-    this.sip.lost(ctx);
+    for (const app of this.addressApps()) app.lost(ctx, why);
     this.iface.clearPending();
     this.tcp.abortAll(why, ctx);
     this.cancelTraceroute(why, ctx);
@@ -1652,11 +1670,7 @@ export class Host implements SimNode {
       const m = udp.payload;
       if (m.kind === "dhcp" && udp.dstPort === DHCP_CLIENT_PORT) {
         this.dhcp.handle(m, frameId, ctx, this.emit(ctx));
-        this.ra.connect(ctx); // 주소를 받았으면 원격 접속 VPN 접속
-        this.p2p.onAddress(ctx); // P2P 앱은 시그널링 서버에 등록
-        this.mesh.onAddress(ctx); // 메시 VPN 은 조정 서버에 로그인
-        this.sip.onAddress(ctx); // 인터넷 전화는 SIP 서버에 등록
-        this.reportGroups(ctx, "주소를 얻음 (링크 복구·NIC 전환)");
+        this.addressUp(ctx, "주소를 얻음 (링크 복구·NIC 전환)");
         return;
       }
       if (udp.dstPort === P2P_PORT && pkt.dst === this.iface.ip && this.p2p.handle(pkt, udp, ctx, frameId)) return;
@@ -1790,11 +1804,7 @@ export class Host implements SimNode {
       }
       case "arp-probe":
         if ((data as { mac: string }).mac === this.iface.mac) this.iface.finishProbe(ctx, this.emit(ctx));
-        this.ra.connect(ctx); // 고정 주소를 쓰기 시작 → 원격 접속 VPN 접속
-        this.p2p.onAddress(ctx);
-        this.mesh.onAddress(ctx);
-        this.sip.onAddress(ctx);
-        this.reportGroups(ctx, "주소를 쓰기 시작 (링크 복구·NIC 전환)");
+        this.addressUp(ctx, "주소를 쓰기 시작 (링크 복구·NIC 전환)"); // 고정 주소를 쓰기 시작
         return;
       case RA_TIMER_TAG:
         this.ra.onTimer(data, ctx);
