@@ -1153,7 +1153,7 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       } else if (ev.summary.includes("EAP 실패, AUTHENTICATION_FAILED")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] received EAP_FAILURE, EAP authentication failed` });
       else if (ev.summary.includes("계정 인증(EAP)을 요구하는데")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] no EAP key found for hosts '${ip?.src ?? "?"}' - '%any'` });
       else if (detail(ev, "dpd") === "invalid") out.push({ tool: "strongSwan (charon)", line: `12[IKE] received INVALID_SPI notify error` });
-      else if (ev.summary.includes("AUTHENTICATION_FAILED 로 거절 —")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] received AUTHENTICATION_FAILED notify error` });
+      else if (ev.summary.includes("AUTHENTICATION_FAILED 로 거절 —") || ev.summary.includes("서버가 인증을 거절 (AUTHENTICATION_FAILED)")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] received AUTHENTICATION_FAILED notify error` });
       else if (ev.summary.includes("PSK)가 다름 → AUTHENTICATION_FAILED")) out.push({ tool: "strongSwan (charon)", line: `05[IKE] tried 1 shared key for '${ip?.dst ?? "?"}' - '${ip?.src ?? "?"}', but MAC mismatched` });
       else if (ev.summary.includes("재전송") && ev.summary.includes("timeout")) out.push({ tool: "strongSwan (charon)", line: `11[IKE] giving up after 2 retransmits` });
       break;

@@ -56,9 +56,13 @@ describe("원격 접속 VPN", () => {
     const base = exampleRemoteVpnTopology();
     const t: Topology = { ...base, devices: base.devices.map((d) => (d.name === "재택 노트북" ? { ...d, host: { ...d.host!, ra: { ...d.host!.ra!, psk: "wrong" } } } : d)) };
     expect(lintTopology(t).map((i) => i.code)).toContain("ra.psk-mismatch");
-    const { host } = load(t);
+    const { host, s, id } = load(t);
     expect(host("재택 노트북").ra.state).toBe("failed");
     expect(host("재택 노트북").ra.reason).toContain("AUTHENTICATION_FAILED");
+    // 실무 로그: 서버는 MAC 불일치, 노트북은 거절 통지를 받음
+    const drop = (n: string) => practitionerLines(s.net.trace.find((e) => e.kind === "vpn.drop" && e.nodeId === id(n))!, {}).map((l) => l.line);
+    expect(drop("회사 VPN 방화벽")).toEqual([expect.stringContaining("but MAC mismatched")]);
+    expect(drop("재택 노트북")).toEqual(["12[IKE] received AUTHENTICATION_FAILED notify error"]);
   });
 
   it("VPN 을 끄면 서버에 Delete 를 알려 터널이 내려가고, 다시 켜면 같은 가상 주소를 받는다", () => {
