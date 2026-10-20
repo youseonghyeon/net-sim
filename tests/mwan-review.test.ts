@@ -252,3 +252,39 @@ describe("review: 실행 중 켜고 끄기", () => {
     log("pc", L.host("사무실 PC").iface.ip, L.host("사무실 PC").pings.at(-1)!.status);
   });
 });
+
+describe("멀티 WAN: 공유기 자신의 이름 풀기는 지금 쓰는 회선으로", () => {
+  it("WAN2 로 넘어간 뒤 WireGuard 클라이언트(서버 이름)를 다시 켜면 WAN2 로 이름을 물어 터널이 맺어진다", () => {
+    const t = exampleWireguardTopology();
+    const travel = t.devices.find((d) => d.name === "여행용 공유기")!;
+    const isp = t.devices.find((d) => d.name === "통신사 구간")!;
+    const hs = createDevice("router", 0, 0, t.devices);
+    hs.name = "핫스팟";
+    hs.router = { ...hs.router!, lanIp: "192.168.43.1", lanPrefix: 24, dhcp: { enabled: true, start: "192.168.43.100", end: "192.168.43.199" } };
+    const t2: Topology = {
+      ...t,
+      devices: [
+        ...t.devices.map((d) =>
+          d.id === travel.id
+            ? { ...d, router: { ...d.router!, wgClient: { ...d.router!.wgClient!, server: "myhome.glddns.com" }, wan2: { enabled: true, ipMode: "dhcp" as const, ip: "", prefix: 24, gateway: "", track: "8.8.8.8" } } }
+            : d.name === "집 Brume 3"
+              ? { ...d, router: { ...d.router!, ddns: { enabled: true, name: "myhome" } } }
+              : d,
+        ),
+        hs,
+      ],
+      cables: [...t.cables, { id: newId("cable"), a: { device: isp.id, port: 5 }, b: { device: hs.id, port: 0 } }, { id: newId("cable"), a: { device: hs.id, port: 1 }, b: { device: travel.id, port: 4 } }],
+    };
+    const L = loadTopology(t2);
+    let cur: Topology = { ...L.t, cables: L.t.cables.filter((c) => !(c.b.device === travel.id && c.b.port === 0)) };
+    L.apply(cur);
+    expect(L.node<Router>("여행용 공유기").mwan.active).toBe("wan2");
+    const wg = (on: boolean) => L.apply((cur = { ...cur, devices: cur.devices.map((d) => (d.id === travel.id ? { ...d, router: { ...d.router!, wgClient: { ...d.router!.wgClient!, enabled: on } } } : d)) }));
+    wg(false);
+    const tr = wg(true);
+    expect(tr.some((e) => e.nodeId === travel.id && e.summary.includes("myhome.glddns.com 을(를) WAN2 으로 직접 물음"))).toBe(true);
+    expect(tr.some((e) => e.nodeId === travel.id && e.kind === "vpn.up")).toBe(true);
+    L.act({ kind: "ping", nodeId: L.id("여행 노트북"), dst: "8.8.8.8" });
+    expect(L.host("여행 노트북").pings.at(-1)!.status).toBe("ok");
+  });
+});

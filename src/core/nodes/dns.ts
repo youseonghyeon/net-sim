@@ -178,7 +178,7 @@ export class DnsResolver {
       return undefined;
     }
     const id = ++this.idSeq;
-    const timer = ctx.timer(DNS_TIMEOUT, DNS_TIMER_TAG, { id });
+    const timer = ctx.timer(DNS_TIMEOUT, DNS_TIMER_TAG, { id, port: this.port });
     this.pending.set(id, { name, qtype, server: pick.server, attempts: 1, timer, done, ...opts });
     this.send(id, name, 1, ctx, emit);
     return pick.server;
@@ -245,12 +245,14 @@ export class DnsResolver {
   }
 
   onTimeout(data: unknown, ctx: NodeContext, emit: Emit): void {
-    const { id } = data as { id: number };
+    const { id, port } = data as { id: number; port?: number };
+    // 한 장치에 리졸버가 둘이면(공유기의 회선마다) 질의 번호가 겹칠 수 있다 — 내 포트의 timer 만
+    if (port !== undefined && port !== this.port) return;
     const q = this.pending.get(id);
     if (!q) return;
     if (q.attempts < DNS_MAX_ATTEMPTS) {
       q.attempts += 1;
-      q.timer = ctx.timer(DNS_TIMEOUT, DNS_TIMER_TAG, { id });
+      q.timer = ctx.timer(DNS_TIMEOUT, DNS_TIMER_TAG, { id, port: this.port });
       ctx.trace("dns.timeout", "app", `DNS timeout: ${DNS_TIMEOUT}ms 동안 응답 없음 → 재시도`, { id, name: q.name });
       this.send(id, q.name, q.attempts, ctx, emit);
       return;

@@ -285,8 +285,9 @@ export class Router implements SimNode {
   readonly adguard = new Adguard();
   /** DPI: 지나가는 흐름의 앱을 알아보고 세고 막는다 */
   readonly dpi = new Dpi();
-  /** 공유기 자신의 이름 해석 (VPN 서버 이름 등) — WAN 으로 DNS 포워더의 업스트림에 직접 묻는다 */
+  /** 공유기 자신의 이름 해석 (VPN 서버 이름 등) — WAN 으로 DNS 포워더의 업스트림에 직접 묻는다. 회선마다 하나 (멀티 WAN 이 WAN2 로 넘어가면 WAN2 로 묻는다) */
   readonly resolver: DnsResolver;
+  readonly resolver2: DnsResolver;
   /** VPN 클라이언트 쪽 NAT: LAN 기기의 출발지를 내 터널 주소로 (서버는 이 주소 하나만 안다 — AllowedIPs) */
   readonly natVpn = new NatTable();
   private readonly hairpinNat = new PortPublish(
@@ -517,8 +518,9 @@ export class Router implements SimNode {
       hashCode(`${cfg.id}:ddns`),
     );
     this.resolver = new DnsResolver(this.wan, hashCode(`${cfg.id}:resolver`));
+    this.resolver2 = new DnsResolver(this.wan2, hashCode(`${cfg.id}:resolver2`));
     // 업스트림이 LAN 안이면 그 길은 LAN 이라 WAN 으로는 ISP 가 알려 준 DNS 에 묻는다
-    this.resolver.vpnDns = () => (this.upstreamInLan() ? undefined : this.dnsForwarder.config.upstream);
+    this.resolver.vpnDns = this.resolver2.vpnDns = () => (this.upstreamInLan() ? undefined : this.dnsForwarder.config.upstream);
     // 핸드셰이크가 끝내 실패하면 서버 이름을 다시 풀어 본다 (집 공인 주소가 바뀌었을 수 있다 — GL.iNet 의 reresolve)
     this.wgc.onFail = (_p, ctx) => {
       if (this.wgClientCfg?.enabled && this.wgClientCfg.serverName) this.resolveWgServer(ctx, "핸드셰이크 실패 — 서버 주소가 바뀌었을 수 있어 이름을 다시 풂", true);
@@ -532,11 +534,14 @@ export class Router implements SimNode {
   private resolveWgServer(ctx: NodeContext, why: string, reresolve = false): void {
     const n = this.wgClientCfg?.serverName;
     const peer = this.wgcPeer;
-    if (!n || !peer || !this.wan.ip) return;
+    const onWan2 = this.wan2On && this.mwan.active === "wan2";
+    const [resolver, iface, emit] = onWan2 ? [this.resolver2, this.wan2, this.emitWan2(ctx)] : [this.resolver, this.wan, this.emitWan(ctx)];
+    if (!n || !peer || !iface.ip) return;
     this.resolver.forget(n.name);
+    this.resolver2.forget(n.name);
     this.wgc.markResolving(peer);
-    ctx.trace("vpn.config", "sys", `WireGuard 클라이언트: ${why} → ${n.name} 을(를) WAN 으로 직접 물음 (터널 밖)`, { wg: true, name: n.name });
-    this.resolver.resolve(n.name, ctx, this.emitWan(ctx), (ip, reason) => {
+    ctx.trace("vpn.config", "sys", `WireGuard 클라이언트: ${why} → ${n.name} 을(를) ${onWan2 ? "WAN2" : "WAN"} 으로 직접 물음 (터널 밖)`, { wg: true, name: n.name });
+    resolver.resolve(n.name, ctx, emit, (ip, reason) => {
       if (!this.wgClientCfg?.enabled || this.wgClientCfg.serverName?.name !== n.name) return;
       if (!ip) {
         peer.resolving = false;
@@ -702,7 +707,7 @@ export class Router implements SimNode {
         : { ...DEFAULT_WG, peers: [] },
       ctx,
     );
-    if (changed && c?.enabled && c.serverName && this.wan.ip && this.wanLinkUp) this.resolveWgServer(ctx, "설정");
+    if (changed && c?.enabled && c.serverName && ((this.wan.ip && this.wanLinkUp) || (this.wan2On && this.mwan.active === "wan2" && this.wan2.ip))) this.resolveWgServer(ctx, "설정");
     // 킬 스위치·VPN 정책·DNS 는 터널 설정이 아니라 공유기의 길 고르기라 wgc 는 그대로 — 그래도 바뀐 것은 남긴다
     const routing = (x?: RouterWgClientConfig) => JSON.stringify(x ? { k: x.killSwitch, p: x.policy, d: x.dns } : null);
     if ((changed || (prev?.enabled && routing(prev) !== routing(c))) && c?.enabled) {
@@ -2174,6 +2179,10 @@ export class Router implements SimNode {
       this.ddns.handle(u.payload, frame.id, ctx);
       return;
     }
+    if (u.kind === "udp" && u.payload.kind === "dns" && u.payload.op === "response" && u.dstPort === this.resolver2.port) {
+      this.resolver2.handle(u.payload, pkt.src, frame.id, ctx);
+      return;
+    }
     // WireGuard 클라이언트·서버 (멀티 WAN 이 WAN2 로 넘어가 있을 때 오가는 것)
     if (u.kind === "udp" && u.payload.kind === "wg" && this.handleWanWg(pkt, frame.id, ctx)) return;
     if (this.handleWanOvpn(pkt, frame.id, ctx)) return;
@@ -2462,6 +2471,7 @@ export class Router implements SimNode {
     }
     if (tag === DNS_TIMER_TAG) {
       this.resolver.onTimeout(data, ctx, this.emitWan(ctx));
+      this.resolver2.onTimeout(data, ctx, this.emitWan2(ctx));
       return;
     }
     if (tag === DAD_TIMER_TAG) {
