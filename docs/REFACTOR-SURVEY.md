@@ -30,6 +30,7 @@
 | 아님 | (교란 표에서) L2TP 서버를 껐다 켜면 스스로 다시 붙지 않음 — StopCCN 으로 "끊김 · 다시 연결" 을 알리고, 실제 OS 클라이언트도 자동 재시도 없음 | l2tp.ts |
 | 고침 a028f50 | (경로 표에서) 드롭인 기기가 공유기 LAN 주소로 보낸 관리 화면·DNS·ping 을 "호스트끼리 직접 통신" 으로 드롭, DNS 답의 출발지가 물은 주소와 다름 | router.ts handleWanIp |
 | 고침 8462f4c | 공유기 메시 주소로 물은 DNS 에 LAN 주소로 답함 (DNS 포워더 `answersAt` 목록에 메시만 빠짐) — 호스트 리졸버가 답의 출발지를 보지 않아 가려져 있었고, 리졸버도 실제처럼 물은 서버의 답만 받게 고침 | router.ts answersAt, dns.ts DnsResolver.handle |
+| 고침 (설정 적용기) | 게이트웨이 칸 하나(헤어핀 등)를 바꾸면 켠 적 없는 "이중화 꺼짐 · 원격 접속 VPN 서버 꺼짐" 이 찍힘 — 처음 넣은 설정과 정리한 설정의 모양이 달라 꺼짐 → 꺼짐을 변경으로 봄 (`tests/config-noise.test.ts`) | ha.ts·ravpn.ts setConfig |
 | 고침 f366199 | 답을 받아도 취소하지 않는 일반 timer 가 IKE 말고도 남아, 불러온 뒤 마지막 일보다 시계가 더 감 (rip·ha·p2p·ncpwg·iptime·wireguard·ddns·openvpn·tailscale·k3s·tor·sip — 0.01~5초). 동작은 같고 시각만 밀림 — 4단계 "타이머 라우터" 에서 함께 | 각 모듈 |
 
 ## 2. 안전망 (리팩터링 전에)
@@ -69,7 +70,7 @@
 - **협상 공용 부품** — `Retransmitter`(취소 가능)·`ReplyCache`·`LateSink`. 상태머신은 합치지 않는다. (M)
 
 ### 모델·동기화·구성 검사
-- **설정 적용기 맵** — 장치마다 effective 객체 하나에서 변경 감지 키와 적용을 함께: `Appliers<C, N> = { [K in keyof Required<C>]: (n, v, ctx) => void }` 로 필드를 빠뜨리면 컴파일 오류. (M) — 불변식 테스트(2-3)와 짝.
+- **설정 적용기 맵** — 장치마다 effective 객체 하나에서 변경 감지 키와 적용을 함께: `Appliers<C, N> = { [K in keyof Required<C>]: (n, v, ctx) => void }` 로 필드를 빠뜨리면 컴파일 오류. (M) — 불변식 테스트(2-3)와 짝. — **함**: 호스트 서비스 11칸은 `HOST_SERVICES`(칸마다 정리한 값 `of` + 적용 `apply` — 변경 감지 키도 같은 목록에서, 4zl 같은 키 누락이 구조적으로 불가), 게이트웨이는 `Appliers<L3Node, L3Config>`(칸이 빠지면 컴파일 오류). 공유기·호스트·게이트웨이 모두 만든 직후에도 같은 목록 전체를 적용(개별 setter 5줄 제거) — 골든 불변
 - **불러오기 정리 조합기** — `bool/port/text/list/obj` 로 설정 종류마다 완전한 값을 돌려주는 정리, 기본값도 같은 정의에서. 엉뚱한 입력으로 parse → sync → lint 예외 없음 테스트 (위 JSON 결함 수정). (M)
 - **파싱 한 모듈 `model/parse.ts`** — ip4·ip6·cidr4·cidrList·port·intIn·hostname, UI 오류 문구도 같은 파서에서. 포트 범위 검사 약 35곳. (S)
 - **구성 검사 AddrIndex** — `owners(ip)`·`publicTarget(ip, port, proto)`(공유기·게이트웨이 포워딩·포트 공개를 같은 방식으로)·`isLeased(key)`. routerWanIp 두 벌, 포워딩 따라가기 두 벌, 섞인 체인에서 침묵하는 문제 해소. 예제 공인 주소 범용 테스트도 여기서. (M)

@@ -124,6 +124,11 @@ export class RaServer {
 
   setConfig(cfg: RaServerConfig, ctx: NodeContext): void {
     if (JSON.stringify(cfg) === JSON.stringify(this.config)) return;
+    // 꺼진 채 칸만 바뀜 (처음 설정을 넣거나 풀·계정을 미리 적음): 기억만 한다 — 켠 적 없는 서버를 "꺼짐" 으로 남기지 않게
+    if (!cfg.enabled && !this.config.enabled) {
+      this.config = { ...cfg, routes: cfg.routes.map((r) => ({ ...r })), ...(cfg.users ? { users: cfg.users.map((u) => ({ ...u })) } : {}) };
+      return;
+    }
     // 사용자 계정만 바뀜: 붙어 있는 세션은 그대로 둔다 (인증은 접속할 때 한 번 — 지운 사용자도 다시 붙을 때 막힌다)
     const { users: nextUsers, ...nextRest } = cfg;
     const { users: prevUsers, ...prevRest } = this.config;

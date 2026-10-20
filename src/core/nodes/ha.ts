@@ -109,6 +109,11 @@ export class Ha {
   setConfig(cfg: HaConfig, ctx: NodeContext): void {
     const same = JSON.stringify(cfg) === JSON.stringify(this.config);
     if (same) return;
+    // 꺼진 채 칸만 바뀜 (처음 설정을 넣거나 그룹·가상 주소를 미리 적음): 기억만 한다 — 켠 적 없는 이중화를 "꺼짐" 으로 남기지 않게
+    if (!cfg.enabled && !this.config.enabled) {
+      this.config = { ...cfg, vips: [...cfg.vips] };
+      return;
+    }
     // 주기 광고만 바뀜: 선출을 다시 하지 않고(넘어가지 않게) 광고·감시 타이머만 켜고 끈다
     const rest = (c: HaConfig) => JSON.stringify({ ...c, advert: undefined });
     if (this.config.enabled && rest(cfg) === rest(this.config)) {

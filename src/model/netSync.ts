@@ -10,7 +10,7 @@ import { Hub } from "../core/nodes/hub";
 import { Internet } from "../core/nodes/internet";
 import { effectiveIspNet } from "./isp";
 import { L3Node } from "../core/nodes/l3";
-import type { SimNode } from "../core/nodes/node";
+import type { NodeContext, SimNode } from "../core/nodes/node";
 import { Router } from "../core/nodes/router";
 import { APPS, type AppId, type DpiCategory } from "../core/nodes/dpi";
 import type { StpConfig } from "../core/nodes/stp";
@@ -118,7 +118,7 @@ export class NetworkSync {
     for (const d of t.devices) {
       const key: SyncedDevice = {
         net: configKey(d),
-        services: JSON.stringify({ s: d.host?.services ?? [], d: effectiveDhcpServer(d), n: effectiveDnsServer(d), l: effectiveLb(d), r: effectiveRaClient(d), p: effectiveProxy(d), h: effectiveHttpProxy(d), q: effectiveP2p(d), m: d.host ? effectiveMesh(d) : undefined, v: effectiveSip(d), j: d.host?.sshJump === true }),
+        services: d.host ? JSON.stringify(HOST_SERVICES.map((x) => x.of(d))) : "",
         v6: d.host ? JSON.stringify(effectiveHost6(d)) : "",
       };
       const prev = this.syncedConfig.get(d.id);
@@ -126,15 +126,12 @@ export class NetworkSync {
         settle();
         const node = makeNode(d);
         net.addNode(node);
-        // 이중화는 시작할 때 광고·타이머가 필요해 만든 뒤에 켠다
-        if (node instanceof L3Node && d.l3?.ha?.enabled) node.setHa(effectiveL3(d).ha, net.contextFor(d.id));
         if (node instanceof Switch && d.switch?.stp?.enabled) node.setStp(effectiveStp(d), d.mac, net.contextFor(d.id));
         if (node instanceof Switch && d.switch?.igmpSnooping) node.setIgmp(true, net.contextFor(d.id), d.mac);
-        if (node instanceof L3Node && d.l3?.ra?.enabled) node.setRa(effectiveL3(d).ra, net.contextFor(d.id));
-        if (node instanceof Host && d.host?.ra?.enabled) node.setRemoteVpn(effectiveRaClient(d)!, net.contextFor(d.id));
+        // 만든 뒤 설정 한 경로로 (이중화·원격 접속 서버처럼 시작할 때 광고·타이머가 필요한 것도 여기서 켜진다)
+        if (node instanceof L3Node) applyAll(L3_APPLY, node, effectiveL3(d), net.contextFor(d.id));
         if (node instanceof Router && d.router) node.configure(effectiveRouter(d, node), net.contextFor(d.id));
-        if (node instanceof Host && d.host?.mesh?.enabled) node.setMesh(effectiveMesh(d), net.contextFor(d.id));
-        if (node instanceof Host && d.host?.sip?.enabled) node.setSip(effectiveSip(d), net.contextFor(d.id));
+        if (node instanceof Host) for (const x of HOST_SERVICES) x.apply(node, d, net.contextFor(d.id));
       } else {
         if (prev.net !== key.net) {
           settle();
@@ -148,23 +145,7 @@ export class NetworkSync {
         if (prev.services !== key.services) {
           settle();
           const node = net.nodes.get(d.id);
-          if (node instanceof Host) {
-            node.setServices(d.host?.services ?? [], net.contextFor(d.id));
-            const dhcp = effectiveDhcpServer(d, node);
-            if (dhcp) node.setDhcpServer(dhcp, net.contextFor(d.id));
-            const dns = effectiveDnsServer(d);
-            if (dns) node.setDnsServer(dns, net.contextFor(d.id));
-            const lb = effectiveLb(d);
-            if (lb) node.setLb(lb, net.contextFor(d.id));
-            const proxy = effectiveProxy(d);
-            if (proxy) node.setProxy(proxy, net.contextFor(d.id));
-            node.setHttpProxy(effectiveHttpProxy(d), net.contextFor(d.id));
-            node.setSshJump(d.host?.sshJump === true, net.contextFor(d.id));
-            node.setRemoteVpn(effectiveRaClient(d) ?? { enabled: false, psk: "" }, net.contextFor(d.id));
-            node.setP2p(effectiveP2p(d), net.contextFor(d.id));
-            node.setMesh(effectiveMesh(d), net.contextFor(d.id));
-            node.setSip(effectiveSip(d), net.contextFor(d.id));
-          }
+          if (node instanceof Host) for (const x of HOST_SERVICES) x.apply(node, d, net.contextFor(d.id));
         }
       }
       if (prev === undefined || prev.net !== key.net || prev.services !== key.services || prev.v6 !== key.v6) this.syncedConfig.set(d.id, key);
@@ -209,6 +190,36 @@ export class NetworkSync {
 }
 
 const validIp = ip4;
+
+/**
+ * 호스트 서비스 설정: 칸마다 정리한 값(of)과 적용(apply)을 한 줄에 — 변경 감지 키도 이 목록의 of 로 만들어,
+ * 새 칸을 넣으면 키와 적용에 함께 들어간다 (키에 빠뜨려 실행 중에 토글이 반영되지 않던 결함, 4zl). 적용 순서 = 목록 순서
+ */
+interface HostService {
+  of(d: Device, current?: Host): unknown;
+  apply(n: Host, d: Device, ctx: NodeContext): void;
+}
+const hostService = <T>(of: (d: Device, current?: Host) => T, set: (n: Host, v: NonNullable<T>, ctx: NodeContext) => void): HostService => ({
+  of,
+  apply: (n, d, ctx) => {
+    const v = of(d, n);
+    if (v !== undefined) set(n, v as NonNullable<T>, ctx);
+  },
+});
+const HOST_SERVICES: HostService[] = [
+  hostService((d) => d.host?.services ?? [], (n, v, c) => n.setServices(v, c)),
+  hostService((d, n) => effectiveDhcpServer(d, n), (n, v, c) => n.setDhcpServer(v, c)),
+  hostService(effectiveDnsServer, (n, v, c) => n.setDnsServer(v, c)),
+  hostService(effectiveLb, (n, v, c) => n.setLb(v, c)),
+  hostService(effectiveProxy, (n, v, c) => n.setProxy(v, c)),
+  // HTTP 프록시는 없음(undefined)도 적용 (끄기)
+  { of: effectiveHttpProxy, apply: (n, d, c) => n.setHttpProxy(effectiveHttpProxy(d), c) },
+  hostService((d) => d.host?.sshJump === true, (n, v, c) => n.setSshJump(v, c)),
+  hostService((d) => effectiveRaClient(d) ?? { enabled: false, psk: "" }, (n, v, c) => n.setRemoteVpn(v, c)),
+  hostService(effectiveP2p, (n, v, c) => n.setP2p(v, c)),
+  hostService(effectiveMesh, (n, v, c) => n.setMesh(v, c)),
+  hostService(effectiveSip, (n, v, c) => n.setSip(v, c)),
+];
 
 /** IPv6 주소 칸: 표준 표기로, 틀리면 없음 */
 const validPort = (n: number) => Number.isInteger(n) && n >= 1 && n <= 65535;
@@ -726,24 +737,31 @@ export function applyConfig(net: Network, d: Device): void {
     net.contextFor(d.id).trace("ip.config", "sys", `SSID 변경: "${node.ssid}"`, { ssid: node.ssid });
   } else if (node instanceof Router && d.router) node.configure(effectiveRouter(d, node), net.contextFor(d.id));
   else if (node instanceof Internet) node.setNet(effectiveIspNet(d.internet?.net), net.contextFor(d.id));
-  else if (node instanceof L3Node) {
-    const cfg = effectiveL3(d);
-    node.configure(cfg.interfaces, net.contextFor(d.id));
-    node.setRoutes(cfg.routes, net.contextFor(d.id));
-    node.setNatType(cfg.natType, net.contextFor(d.id));
-    node.setHairpin(cfg.hairpin, net.contextFor(d.id));
-    node.setNat(cfg.nat, net.contextFor(d.id)); // 포트 포워딩보다 먼저 (NAT 를 새로 켜면 규칙을 그 테이블에 넣는다)
-    node.setForwards(cfg.forwards, net.contextFor(d.id));
-    node.setPublish(cfg.publish, net.contextFor(d.id));
-    node.setFirewall(cfg.firewall, net.contextFor(d.id));
-    node.setSubinterfaces(cfg.subinterfaces, net.contextFor(d.id));
-    node.setRip(cfg.rip, net.contextFor(d.id));
-    node.setVpn(cfg.vpn, net.contextFor(d.id));
-    node.setHa(cfg.ha, net.contextFor(d.id));
-    node.setRa(cfg.ra, net.contextFor(d.id));
-    node.setIpv6(cfg.ipv6, net.contextFor(d.id));
-  }
+  else if (node instanceof L3Node) applyAll(L3_APPLY, node, effectiveL3(d), net.contextFor(d.id));
 }
+
+type L3Config = ReturnType<typeof effectiveL3>;
+/** 설정 칸마다 적용 함수: 칸이 빠지면 컴파일 오류 (변경 감지 키는 정리한 설정 전체). 적용 순서 = 적은 순서 */
+type Appliers<N, C> = { [K in keyof C]-?: (n: N, v: C[K], ctx: NodeContext) => void };
+function applyAll<N, C>(appliers: Appliers<N, C>, n: N, cfg: C, ctx: NodeContext): void {
+  for (const k in appliers) appliers[k](n, cfg[k], ctx);
+}
+const L3_APPLY: Appliers<L3Node, L3Config> = {
+  interfaces: (n, v, c) => n.configure(v, c),
+  routes: (n, v, c) => n.setRoutes(v, c),
+  natType: (n, v, c) => n.setNatType(v, c),
+  hairpin: (n, v, c) => n.setHairpin(v, c),
+  nat: (n, v, c) => n.setNat(v, c), // 포트 포워딩보다 먼저 (NAT 를 새로 켜면 규칙을 그 테이블에 넣는다)
+  forwards: (n, v, c) => n.setForwards(v, c),
+  publish: (n, v, c) => n.setPublish(v, c),
+  firewall: (n, v, c) => n.setFirewall(v, c),
+  subinterfaces: (n, v, c) => n.setSubinterfaces(v, c),
+  rip: (n, v, c) => n.setRip(v, c),
+  vpn: (n, v, c) => n.setVpn(v, c),
+  ha: (n, v, c) => n.setHa(v, c),
+  ra: (n, v, c) => n.setRa(v, c),
+  ipv6: (n, v, c) => n.setIpv6(v, c),
+};
 
 /**
  * ISP(인터넷 노드)가 DHCP 로 나눠 준 공인 주소: "장치 id:포트" → 주소. 구성 검사가 자동(DHCP) WAN 의 주소를 알게 해
