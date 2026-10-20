@@ -48,7 +48,23 @@ class SimController {
   }
 
   private sync(t: Topology): void {
-    if (this.syncer.sync(t, () => this.settleTime())) this.bump();
+    try {
+      if (this.syncer.sync(t, () => this.settleTime())) this.bump();
+    } catch (e) {
+      // 설정 반영 중 오류(정리하지 못한 값 등): 반쯤 반영된 채 두지 않고 처음부터 다시 만든다
+      console.error("sync error", e);
+      running.value = false;
+      simNotice.value = `설정을 시뮬레이션에 반영하다 오류가 나 처음부터 다시 만들었습니다: ${e instanceof Error ? e.message : String(e)} — 마지막으로 바꾼 칸을 확인하세요`;
+      this.syncer.reset();
+      simTime.value = 0;
+      try {
+        this.syncer.sync(t, () => this.settleTime());
+      } catch {
+        // 다시 만들어도 안 되면 빈 네트워크로 둔다 (화면은 그대로 쓸 수 있게)
+        this.syncer.reset();
+      }
+      this.bump();
+    }
   }
 
   // ---------- 시계 ----------

@@ -1,6 +1,7 @@
 // 편집 가능한 토폴로지 모델. 시뮬레이션 코어(src/core)와 분리되어 있고, 실행 시 코어 Network 로 변환된다.
 import { wgPrivateKey, wgPublicKey } from "../core/nodes/wg";
 import { ovpnCaOf, ovpnTlsCryptOf } from "../core/nodes/openvpn";
+import { normalizeDnsServer, normalizeFirewall, normalizeLbBase, normalizeVlans, normalizeWifiBase, type Obj } from "./normalize";
 
 export type DeviceKind = "pc" | "laptop" | "phone" | "server" | "lb" | "switch" | "hub" | "ap" | "router" | "gateway" | "nat" | "firewall" | "internet";
 export type Role = "host" | "switch" | "hub" | "ap" | "router" | "l3" | "internet" | "firewall";
@@ -424,10 +425,10 @@ function normalizeHostExtras(h: HostSettings): HostSettings {
   if (h.lb) {
     // 예전 저장본: 세션 고정이 켜기/끄기(true)였다 → 출발지 IP. 모르는 값은 버린다
     const st = h.lb.sticky as unknown;
-    const { sticky: _drop, healthCheck: hc, ...rest } = h.lb;
-    void _drop;
-    out.lb = { ...rest, ...(st === true || st === "ip" ? { sticky: "ip" as const } : st === "cookie" ? { sticky: "cookie" as const } : {}), ...(hc === true ? { healthCheck: true } : {}) };
+    const hc = h.lb.healthCheck;
+    out.lb = { ...normalizeLbBase(h.lb as unknown as Obj), ...(st === true || st === "ip" ? { sticky: "ip" as const } : st === "cookie" ? { sticky: "cookie" as const } : {}), ...(hc === true ? { healthCheck: true } : {}) };
   }
+  if (h.dnsServer) out.dnsServer = normalizeDnsServer(h.dnsServer);
   if (h.proxy) {
     const p = h.proxy as Partial<ProxySettings>;
     const deny = typeof p.deny === "string" ? [p.deny] : Array.isArray(p.deny) ? p.deny.filter((x): x is string => typeof x === "string") : [];
@@ -1550,10 +1551,10 @@ export function normalizeTopology(t: Topology): Topology {
       }
     }
     if (fixed.host) fixed.host = normalizeHostExtras(fixed.host);
-    if (spec.role === "ap" && !fixed.ap) fixed.ap = { ...DEFAULT_WIFI_BASE };
+    if (spec.role === "ap") fixed.ap = normalizeWifiBase(fixed.ap, DEFAULT_WIFI_BASE);
     if (spec.role === "internet" && fixed.internet) fixed.internet = { net: typeof (fixed.internet as Partial<InternetSettings>).net === "string" ? fixed.internet.net : "" };
-    if (spec.role === "firewall") fixed.firewall = fixed.firewall ? { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.firewall, rules: fixed.firewall.rules ?? [] } : { ...DEFAULT_FIREWALL_SETTINGS, enabled: true, rules: [] };
-    if (spec.role === "switch" && !fixed.switch) fixed.switch = { vlans: {} };
+    if (spec.role === "firewall") fixed.firewall = normalizeFirewall(fixed.firewall, true);
+    if (spec.role === "switch") fixed.switch = { ...(fixed.switch ?? {}), vlans: normalizeVlans(fixed.switch?.vlans) };
     if (fixed.switch && fixed.switch.igmpSnooping !== undefined) fixed.switch = { ...fixed.switch, igmpSnooping: fixed.switch.igmpSnooping === true };
     if (fixed.switch?.stp) {
       const st = fixed.switch.stp as Partial<{ enabled: boolean; priority: number }>;
@@ -1576,7 +1577,7 @@ export function normalizeTopology(t: Topology): Topology {
           ...fixed.l3,
           interfaces: def.interfaces.map((d, i) => (ifs[i] ? { ...d, ...ifs[i] } : d)),
           routes: fixed.l3.routes ?? [],
-          ...(fixed.l3.firewall ? { firewall: { ...DEFAULT_FIREWALL_SETTINGS, ...fixed.l3.firewall, rules: fixed.l3.firewall.rules ?? [] } } : {}),
+          ...(fixed.l3.firewall ? { firewall: normalizeFirewall(fixed.l3.firewall) } : {}),
           ...(fixed.l3.vpn ? { vpn: normalizeVpn(fixed.l3.vpn) } : {}),
           ...(fixed.l3.ha ? { ha: normalizeHa(fixed.l3.ha) } : {}),
           ...(fixed.l3.ra ? { ra: normalizeRaServer(fixed.l3.ra) } : {}),
@@ -1599,7 +1600,8 @@ export function normalizeTopology(t: Topology): Topology {
           // 예전/손상 저장본에는 dhcp 가 없을 수 있다 (타입상 필수지만 JSON 은 믿을 수 없다)
           dhcp: (r.dhcp as RouterSettings["dhcp"] | undefined) ?? { enabled: true, start: "192.168.0.100", end: "192.168.0.199" },
           wan: r.wan ?? { ...DEFAULT_WAN },
-          ...(r.firewall ? { firewall: { ...DEFAULT_FIREWALL_SETTINGS, ...r.firewall, rules: r.firewall.rules ?? [] } } : {}),
+          ...(r.firewall ? { firewall: normalizeFirewall(r.firewall) } : {}),
+          ...(r.wifi ? { wifi: normalizeWifiBase(r.wifi, DEFAULT_ROUTER_WIFI) } : {}),
           ...(r.ipv6 ? { ipv6: { enabled: (r.ipv6 as Partial<RouterIpv6Settings>).enabled === true, inboundBlock: (r.ipv6 as Partial<RouterIpv6Settings>).inboundBlock !== false } } : {}),
           ...(r.vpnServer ? { vpnServer: normalizeRouterVpn(r.vpnServer) } : {}),
           ...(r.wgServer ? { wgServer: normalizeWgServer(r.wgServer) } : {}),
