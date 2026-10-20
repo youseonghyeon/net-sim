@@ -1379,6 +1379,8 @@ export class Router implements SimNode {
         if (this.dnsForwarder.config.enabled) this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frame.id, ctx, emit);
         return;
       }
+      // 관리 화면은 공유기의 모든 주소에서 듣는다 (터널 쪽에서 온 것과 같게)
+      if (p.kind === "tcp" && this.admin.handle(pkt, p, "lan", this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined, ctx, frame.id)) return;
       ctx.trace("ip.drop", "L4", `공유기 자신(${pkt.dst === this.ovpn.address ? "OpenVPN" : pkt.dst === this.mesh.self?.ip ? this.mesh.brand : "WireGuard"} 터널 주소 ${pkt.dst})에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frame.id);
       return;
     }

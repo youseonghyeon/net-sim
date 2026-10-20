@@ -16,6 +16,16 @@ const router = (t: Topology, name: string, p: Partial<RouterSettings>): Topology
 const admin = (t: Topology, p: Partial<NonNullable<RouterSettings["admin"]>> = {}) => router(t, HOME, { admin: { enabled: true, remote: false, allow: "", ssh: true, ...p } });
 
 describe("관리 화면 접근 제어", () => {
+  it("LAN 기기가 공유기의 WireGuard 터널 주소(10.0.0.1)로 열어도 관리 화면이 답한다 (모든 주소에서 듣는다)", () => {
+    const off = loadTopology(exampleWireguardTopology());
+    let tr = off.act({ kind: "tcp-connect", nodeId: off.id(NAS), dst: "10.0.0.1", port: 443 });
+    expect(tr.some((e) => e.summary.includes("듣는 서비스 없음"))).toBe(true);
+    const L = loadTopology(admin(exampleWireguardTopology()));
+    tr = L.act({ kind: "tcp-connect", nodeId: L.id(NAS), dst: "10.0.0.1", port: 443 });
+    expect(L.lastConn(NAS).state).toBe("CLOSED");
+    expect(tr.some((e) => e.kind === "fw.allow" && e.summary.includes("관리 화면"))).toBe(true);
+  });
+
   it("켜면 LAN 의 NAS 가 관리 화면(HTTP 80)·SSH 에 닿는다, 꺼져 있으면 듣는 서비스 없음", () => {
     const off = loadTopology(exampleWireguardTopology());
     let tr = off.act({ kind: "tcp-connect", nodeId: off.id(NAS), dst: "192.168.8.1", port: 80 });
