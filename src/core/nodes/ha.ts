@@ -18,7 +18,7 @@
 import type { Ip, Mac } from "../addr";
 import { ipToInt } from "../addr";
 import { VRRP_MULTICAST_IP, type Ipv4Packet, type VrrpPacket } from "../packet";
-import type { NodeContext } from "./node";
+import type { NodeContext, TimerHandle } from "./node";
 
 export interface HaConfig {
   enabled: boolean;
@@ -80,6 +80,8 @@ export class Ha {
   private timerToken = 0;
   /** 이번 타이머가 유효한지 확인하는 번호 */
   private armed: number | undefined;
+  /** master 가 되기를 기다리는 timer — 기다림을 멈추면 취소한다 (남겨 두면 할 일 없이 시계만 그 시각까지 간다) */
+  private armedTimer: TimerHandle | undefined;
   /** 주기 광고 (master): 지금 유효한 배경 타이머 번호 */
   private advertising: number | undefined;
   /** Master_Down 감시 (backup): 지금 유효한 배경 타이머 번호 */
@@ -176,7 +178,8 @@ export class Ha {
 
   private arm(ms: number, ctx: NodeContext): void {
     this.armed = ++this.timerToken;
-    ctx.timer(ms, HA_TIMER_TAG, { token: this.armed });
+    this.armedTimer?.cancel();
+    this.armedTimer = ctx.timer(ms, HA_TIMER_TAG, { token: this.armed });
   }
 
   /** master: 다음 주기 광고 (배경 타이머) */
@@ -331,6 +334,7 @@ export class Ha {
         return;
       }
       this.armed = undefined; // master 가 있으므로 기다림을 멈춘다
+      this.armedTimer?.cancel();
       this.masterIp = src;
       ctx.trace(
         "ha.advert",

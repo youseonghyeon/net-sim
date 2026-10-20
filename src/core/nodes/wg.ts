@@ -14,7 +14,7 @@
 // 핸드셰이크 재시도는 5초 간격 3번(실제는 90초 동안 계속) — 그 뒤 보낼 패킷이 또 생기면 다시 시도한다.
 import { sameSubnet, type Ip } from "../addr";
 import { VPN_PORT, type Ipv4Packet, type WgMessage } from "../packet";
-import type { NodeContext } from "./node";
+import type { NodeContext, TimerHandle } from "./node";
 import { DEFAULT_RA_CLIENT, type RaClientConfig, type RaClientState } from "./ravpn";
 
 export const WG_PORT = VPN_PORT;
@@ -130,7 +130,8 @@ export interface WgPeerState {
   /** 직전 세션: 새 세션을 맺은 직후에도 상대가 아직 옛 세션으로 보낸 데이터를 받는다 (실제 WireGuard 의 previous keypair — 양쪽이 동시에 핸드셰이크했을 때 엇갈리지 않게) */
   prevSession?: Session;
   /** 내가 시작해 응답을 기다리는 핸드셰이크 */
-  pending?: { local: number; tries: number };
+  /** 응답을 기다리는 Initiation (timer 는 응답을 받거나 접으면 취소 — 남겨 두면 할 일 없이 시계만 그 시각까지 간다) */
+  pending?: { local: number; tries: number; timer?: TimerHandle };
   queue: { inner: Ipv4Packet; frameId?: number }[];
   rxBytes: number;
   txBytes: number;
@@ -308,6 +309,7 @@ export class WgInterface {
       this.fail(p, `${this.peerName(p)} 의 주소 ${ep ? `${ep.ip}` : "(모름)"} 로 갈 바깥 경로가 없음 (WAN·주소 확인)`, ctx, frameId);
       return;
     }
+    p.pending?.timer?.cancel();
     p.pending = { local, tries };
     if (this.config.obfuscate) {
       // 핸드셰이크 앞의 쓰레기 패킷 두 개 (Jc) — 첫 패킷의 모양으로 VPN 을 알아보는 DPI 를 헷갈리게
@@ -322,12 +324,13 @@ export class WgInterface {
     );
     this.out(src, ep, { kind: "wg", type: "initiation", sender: local, static: this.publicKey, to: p.cfg.publicKey }, ctx, frameId);
     const t: WgTimer = { wg: this.label, peer: p.cfg.publicKey, what: "rekey", local, tries };
-    ctx.timer(WG_REKEY_TIMEOUT, WG_TIMER_TAG, t);
+    p.pending.timer = ctx.timer(WG_REKEY_TIMEOUT, WG_TIMER_TAG, t);
   }
 
   private fail(p: WgPeerState, why: string, ctx: NodeContext, frameId?: number): void {
     const n = p.queue.length;
     p.queue = [];
+    p.pending?.timer?.cancel();
     p.pending = undefined;
     p.session = undefined;
       p.prevSession = undefined;
@@ -350,6 +353,7 @@ export class WgInterface {
       p.local = undefined;
       p.session = undefined;
       p.prevSession = undefined;
+      p.pending?.timer?.cancel();
       p.pending = undefined;
     }
     if (!this.config.enabled || p.pending || p.session) return;
@@ -367,6 +371,7 @@ export class WgInterface {
     p.endpoint = undefined;
     p.session = undefined;
       p.prevSession = undefined;
+    p.pending?.timer?.cancel();
     p.pending = undefined;
   }
 
@@ -497,6 +502,7 @@ export class WgInterface {
       }
       this.roam(p, from, outer.dst, ctx, frameId);
       this.install(p, { local: m.receiver!, remote: m.sender ?? 0, since: ctx.now, counter: 0 });
+      p.pending?.timer?.cancel();
       p.pending = undefined;
       p.lastHandshake = ctx.now;
       p.failed = undefined;
@@ -560,6 +566,7 @@ export class WgInterface {
     for (const p of this.peers.values()) {
       p.session = undefined;
       p.prevSession = undefined;
+      p.pending?.timer?.cancel();
       p.pending = undefined;
       p.queue = [];
       p.unansweredSince = undefined;

@@ -6,7 +6,7 @@
 // 줄인 것: 인증(401)·SIP over TCP/TLS·re-INVITE·코덱 협상·STUN/ICE·서버 쪽 미디어 중계(RTP 프록시), 통화 중 대기음
 import type { Ip } from "../addr";
 import { SIP_PORT, SIP_SERVER, type Endpoint, type Ipv4Packet, type RtpPacket, type SipMessage, type UdpPacket } from "../packet";
-import type { NodeContext } from "./node";
+import type { NodeContext, TimerHandle } from "./node";
 
 export const SIP_TIMER_TAG = "sip";
 const WAIT = 1500;
@@ -60,6 +60,8 @@ export class SipPhone {
   registered = false;
   readonly calls: SipCall[] = [];
   private regTok = 0;
+  /** REGISTER 응답을 기다리는 timer — 등록되거나 그만두면 취소 (남겨 두면 할 일 없이 시계만 그 시각까지 간다) */
+  private regTimer: TimerHandle | undefined;
   private regTries = 0;
   private regFailed = false;
   private cseq = 1;
@@ -82,6 +84,7 @@ export class SipPhone {
     this.config = { ...cfg };
     this.registered = false;
     this.regTok++;
+    this.regTimer?.cancel();
     if (cfg.enabled) this.register(ctx);
   }
 
@@ -100,6 +103,7 @@ export class SipPhone {
   lost(ctx?: NodeContext): void {
     this.registered = false;
     this.regTok++;
+    this.regTimer?.cancel();
     if (ctx) for (const c of this.calls) if (c.state !== "ended" && c.state !== "failed") this.end(c, ctx, undefined, "연결이 끊김");
   }
 
@@ -111,7 +115,8 @@ export class SipPhone {
     const tok = ++this.regTok;
     ctx.trace("sip.register", "app", `인터넷 전화: SIP 서버 ${SIP_SERVER} 에 ${this.config.user} 로 등록 (Contact ${me}:${SIP_PORT} — 나에게 연락할 주소)`, { sip: true });
     this.send({ kind: "sip", method: "REGISTER", callId: `reg-${this.config.user}`, from: this.config.user, to: this.config.user, cseq: this.cseq++, contact: { ip: me, port: SIP_PORT } }, ctx);
-    ctx.timer(WAIT, SIP_TIMER_TAG, { sip: "register", tok });
+    this.regTimer?.cancel();
+    this.regTimer = ctx.timer(WAIT, SIP_TIMER_TAG, { sip: "register", tok });
   }
 
   /** 전화 걸기 */
@@ -140,6 +145,7 @@ export class SipPhone {
     const call = this.calls.find((c) => c.callId === m.callId);
     if (m.status === 200 && m.callId.startsWith("reg-")) {
       if (m.callId !== `reg-${this.config.user}`) return; // 해제한 옛 이름의 답
+      this.regTimer?.cancel();
       if (!this.registered) {
         ctx.trace("sip.register", "app", `인터넷 전화: 등록됨 (${this.config.user}@voip.example) — 서버는 이 등록이 온 주소(NAT 바깥)로 전화를 넘겨 준다. ${REREGISTER / 1000}초마다 갱신`, { sip: true }, frameId);
         ctx.timer(REREGISTER, SIP_TIMER_TAG, { sip: "refresh", tok: this.regTok }, true);
@@ -253,7 +259,7 @@ export class SipPhone {
       const me = this.io.myIp();
       if (!me) return;
       this.send({ kind: "sip", method: "REGISTER", callId: `reg-${this.config.user}`, from: this.config.user, to: this.config.user, cseq: this.cseq++, contact: { ip: me, port: SIP_PORT } }, ctx);
-      ctx.timer(WAIT, SIP_TIMER_TAG, { sip: "register", tok: d.tok });
+      this.regTimer = ctx.timer(WAIT, SIP_TIMER_TAG, { sip: "register", tok: d.tok });
       return;
     }
     const call = this.calls.find((c) => c.callId === d.callId);

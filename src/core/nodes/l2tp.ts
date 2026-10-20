@@ -13,7 +13,7 @@ import { isMcastIp } from "../packet";
 import { intToIp, ipToInt, prefixToMask, type Ip } from "../addr";
 import { IKE_PORT, L2TP_PORT, NAT_T_PORT, l2tpPartLabel, type EspPacket, type IkeMessage, type Ipv4Packet, type L2tpPacket, type PppFrame } from "../packet";
 import { IKE_RETRANSMITS, IKE_TIMEOUT, IkeRetransmit, espPacket, hex, ikePacket, natAtInitiator, natAtResponder, spiOf } from "./ike";
-import type { NodeContext } from "./node";
+import type { NodeContext, TimerHandle } from "./node";
 import { RA_TIMER_TAG, type RaClientConfig, type RaClientState, type RaIo } from "./ravpn";
 
 export interface L2tpServerConfig {
@@ -446,6 +446,8 @@ export class L2tpClient {
   private readonly ike: IkeRetransmit;
   /** L2TP·PPP 요청 재전송 (마지막 요청과 시도 횟수) */
   private last: { l: L2tpPacket; phase: Phase; tries: number; id: number } | undefined;
+  /** 마지막 L2TP·PPP 요청의 재전송 timer — 다음 단계로 가거나 접으면 취소 (남겨 두면 할 일 없이 시계만 그 시각까지 간다) */
+  private lastTimer: TimerHandle | undefined;
   private lastId = 0;
 
   constructor(
@@ -476,6 +478,7 @@ export class L2tpClient {
     this.phase = "mm1";
     this.reason = undefined;
     this.last = undefined;
+    this.lastTimer?.cancel();
     ctx.trace("vpn.ike", "L4", `VPN (L2TP/IPsec): 서버 ${server} 에 IKE Main Mode 요청 (암호 방식·키 교환, NAT 감지용으로 내 주소 ${me} 를 적어 보냄)`, { peer: server, spi: this.sa.spi, l2tp: true });
     this.request({ kind: "ike", exchange: "MAIN_MODE", response: false, spi: this.sa.spi, natSrc: me, natDst: server, l2tp: true, cid: this.cid }, IKE_PORT, ctx);
   }
@@ -492,6 +495,7 @@ export class L2tpClient {
     this.reason = why;
     this.ike.clear();
     this.last = undefined;
+    this.lastTimer?.cancel();
     this.vip = undefined;
     this.dns = undefined;
     ctx.trace("vpn.drop", "L4", `${label} (L2TP/IPsec): ${why}`, { l2tp: true }, frameId);
@@ -575,7 +579,8 @@ export class L2tpClient {
   private transmitL2tp(l: L2tpPacket, phase: Phase, ctx: NodeContext, tries: number, id: number): void {
     this.last = { l, phase, tries, id };
     this.sendRaw(l, ctx);
-    ctx.timer(IKE_TIMEOUT, RA_TIMER_TAG, { l2tp: true, phase, tries, id });
+    this.lastTimer?.cancel();
+    this.lastTimer = ctx.timer(IKE_TIMEOUT, RA_TIMER_TAG, { l2tp: true, phase, tries, id });
   }
 
   /** L2TP 하나를 ESP(전송 모드)에 담아 서버로 */
@@ -642,6 +647,7 @@ export class L2tpClient {
         return null;
       }
       this.last = undefined;
+      this.lastTimer?.cancel();
       this.state = "up";
       this.phase = "up";
       this.vip = p.ip;
@@ -701,6 +707,7 @@ export class L2tpClient {
     this.vip = undefined;
     this.dns = undefined;
     this.last = undefined;
+    this.lastTimer?.cancel();
     this.ike.clear();
   }
 

@@ -6,7 +6,7 @@
 // 실제는 HTTPS(dyndns2) — 여기서는 UDP 8245 한 쌍으로 줄였다. 이름의 TTL 은 30초(캐시가 옛 주소를 오래 들고 있지 않게)
 import type { Ip } from "../addr";
 import { DDNS_PORT, type DdnsMessage, type Ipv4Packet } from "../packet";
-import type { NodeContext } from "./node";
+import type { NodeContext, TimerHandle } from "./node";
 
 /** DDNS 갱신 서버 (인터넷 노드가 흉내) */
 export const DDNS_SERVER: Ip = "198.51.100.60";
@@ -38,7 +38,12 @@ export class DdnsClient {
   reason: string | undefined;
   /** 마지막으로 갱신을 보낼 때의 WAN 주소 (바뀌면 다시 보낸다) */
   private sentFrom: Ip | undefined;
-  private pending: { id: number; tries: number } | undefined;
+  /** 기다리는 갱신 (timer 는 답을 받거나 접으면 취소 — 남겨 두면 할 일 없이 시계만 그 시각까지 간다) */
+  private pending: { id: number; tries: number; timer?: TimerHandle } | undefined;
+  private clearPending(): void {
+    this.pending?.timer?.cancel();
+    this.pending = undefined;
+  }
   private idSeq: number;
   private tick = 0;
 
@@ -55,7 +60,7 @@ export class DdnsClient {
     // 쓰던 이름은 내려놓는다 (끔·이름 변경 — 다른 기기가 그 이름을 쓸 수 있게)
     if (wasOn && this.state === "ok") this.release(ctx, cfg.enabled ? "이름을 바꿈" : "DDNS 끔");
     this.config = { ...cfg };
-    this.pending = undefined;
+    this.clearPending();
     this.sentFrom = undefined;
     this.ip = undefined;
     this.reason = undefined;
@@ -94,18 +99,19 @@ export class DdnsClient {
     if (!this.config.enabled) return;
     if (!src) {
       // WAN 주소를 잃음: 기다리던 갱신은 접는다 (주소가 다시 생기면 onWanAddress 가 다시 보낸다 — 남겨 두면 주기 확인도 막힌다)
-      this.pending = undefined;
+      this.clearPending();
       if (this.state !== "ok") this.state = "updating";
       return;
     }
     const id = tries === 1 ? ++this.idSeq : this.pending!.id;
+    this.pending?.timer?.cancel();
     this.pending = { id, tries };
     this.sentFrom = src;
     if (this.state !== "ok") this.state = "updating";
     ctx.trace("ddns.update", "app", `DDNS: ${why} → ${DDNS_SERVER} 에 "${this.config.hostname} 은 지금 이 요청을 보낸 주소" 갱신 요청${tries > 1 ? ` (재전송 ${tries}/${DDNS_TRIES})` : ""}`, { hostname: this.config.hostname, tries });
     const m: DdnsMessage = { kind: "ddns", op: "update", id, hostname: this.config.hostname, device: this.io.device };
     this.io.send({ kind: "ipv4", src, dst: DDNS_SERVER, ttl: 64, payload: { kind: "udp", srcPort: DDNS_PORT, dstPort: DDNS_PORT, payload: m } }, ctx);
-    ctx.timer(DDNS_TIMEOUT, DDNS_TIMER_TAG, { id, tries });
+    this.pending.timer = ctx.timer(DDNS_TIMEOUT, DDNS_TIMER_TAG, { id, tries });
   }
 
   private arm(ctx: NodeContext): void {
@@ -125,7 +131,7 @@ export class DdnsClient {
       this.update(ctx, `${DDNS_TIMEOUT / 1000}초 동안 응답 없음`, (d.tries ?? 1) + 1);
       return;
     }
-    this.pending = undefined;
+    this.clearPending();
     this.state = "failed";
     this.reason = `DDNS 서버 ${DDNS_SERVER} 가 응답하지 않음 (WAN·인터넷 연결 확인)`;
     ctx.trace("ddns.failed", "app", `DDNS 갱신 실패: ${this.reason} — 다음 주소 변경·주기 확인 때 다시 시도`, { hostname: this.config.hostname });
@@ -137,7 +143,7 @@ export class DdnsClient {
       ctx.trace("ddns.update", "app", `DDNS: 기다리지 않는 응답 (id ${m.id}) → 무시`, { late: true }, frameId);
       return;
     }
-    this.pending = undefined;
+    this.clearPending();
     if (m.result === "good" || m.result === "nochg") {
       this.state = "ok";
       this.ip = m.ip;

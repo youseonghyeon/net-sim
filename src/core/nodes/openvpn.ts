@@ -10,7 +10,7 @@
 // (3-way 핸드셰이크·seq/ack·FIN·RST — 재전송은 OpenVPN 제어 메시지의 재전송으로 대신, 순수 ACK 는 데이터에 얹음)
 import { sameSubnet, type Ip } from "../addr";
 import { OVPN_PORT, ovpnLength, type Ipv4Packet, type OvpnMessage, type TcpSegment, type UdpPacket } from "../packet";
-import type { NodeContext } from "./node";
+import type { NodeContext, TimerHandle } from "./node";
 import { DEFAULT_RA_CLIENT, type RaClientConfig, type RaClientState } from "./ravpn";
 
 export { OVPN_PORT };
@@ -565,6 +565,8 @@ export class OvpnClient {
   config: RaClientConfig = { ...DEFAULT_RA_CLIENT, type: "openvpn" };
   readonly dpdWaiting = false;
   private s: ClientSession | undefined;
+  /** 제어 요청의 재전송 timer — 답을 받거나 세션을 버리면 취소 (남겨 두면 할 일 없이 시계만 그 시각까지 간다) */
+  private retryTimer: TimerHandle | undefined;
   private failed: string | undefined;
   private resolving = false;
   private tok = 0;
@@ -736,7 +738,8 @@ export class OvpnClient {
   private arm(ctx: NodeContext): void {
     const s = this.s!;
     s.tok = ++this.tok;
-    ctx.timer(OVPN_RETRY, OVPN_TIMER_TAG, { ovpn: "retry", tok: s.tok });
+    this.retryTimer?.cancel();
+    this.retryTimer = ctx.timer(OVPN_RETRY, OVPN_TIMER_TAG, { ovpn: "retry", tok: s.tok });
   }
 
   /** 받은 UDP OpenVPN (내 포트) */
@@ -753,6 +756,7 @@ export class OvpnClient {
   private forget(): void {
     const s = this.s;
     this.s = undefined;
+    this.retryTimer?.cancel();
     if (s?.proto === "tcp") this.retire(s);
   }
 
@@ -780,6 +784,7 @@ export class OvpnClient {
     const t = s.tcp;
     if (seg.rst) {
       this.s = undefined;
+      this.retryTimer?.cancel();
       if (s.phase !== "up") {
         this.failed = `연결 중에 TCP 연결이 RST 로 끊김 (${s.phase === "syn" ? "그 포트를 듣는 서버가 없거나 " : ""}방화벽·DPI 가 끊었을 수 있음)`;
         ctx.trace("vpn.drop", "L4", `OpenVPN 연결 실패: ${this.failed}${this.scheduleRetry(ctx)}`, { ovpn: true, failed: true }, frameId);
@@ -806,6 +811,7 @@ export class OvpnClient {
       else if (me) this.sendRaw(tcpFlag(me, s.server, s.lport, s.port, t, { ackFlag: true }), ctx);
       if (!t.finSent) {
         this.s = undefined;
+        this.retryTimer?.cancel();
         this.fail(ctx, "서버가 TCP 연결을 닫음", true);
       }
       return null;
@@ -830,6 +836,7 @@ export class OvpnClient {
     if (m.op === "exit" && m.reason === "kicked") {
       this.closing = s.proto === "tcp" ? s : undefined;
       this.s = undefined;
+      this.retryTimer?.cancel();
       this.failed = "서버가 끊음 — 같은 인증서(CN)로 다른 기기가 붙음 (인증서는 기기마다 따로 발급)";
       ctx.trace("vpn.drop", "L4", `OpenVPN: ${this.failed} → 다시 붙지 않음`, { ovpn: true, failed: true }, frameId);
       return null;
@@ -865,6 +872,7 @@ export class OvpnClient {
     if ((m.crypt ?? "") !== (o.tlsCrypt ?? "")) return null;
     s.pending = undefined;
     s.tok = ++this.tok;
+    this.retryTimer?.cancel();
     if (m.op === "reset-server") {
       s.phase = "tls";
       ctx.trace("vpn.handshake", "L4", `OpenVPN: HARD_RESET_SERVER 수신 → TLS ClientHello`, { ovpn: true }, frameId);
@@ -962,6 +970,7 @@ export class OvpnClient {
     if (s.proto === "tcp" && s.tcp?.finSent) {
       this.closing = s;
       this.s = undefined;
+      this.retryTimer?.cancel();
       return;
     }
     this.forget();
@@ -1064,7 +1073,7 @@ export class OvpnClient {
         if (outer) this.sendRaw(outer, ctx);
       }
       s.tok = ++this.tok;
-      ctx.timer(OVPN_RETRY, OVPN_TIMER_TAG, { ovpn: "retry", tok: s.tok });
+      this.retryTimer = ctx.timer(OVPN_RETRY, OVPN_TIMER_TAG, { ovpn: "retry", tok: s.tok });
       return;
     }
     if (d.sid !== s.sid || s.phase !== "up") return;

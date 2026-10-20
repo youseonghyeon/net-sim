@@ -92,6 +92,7 @@ export class P2pAgent {
     this.config = { ...cfg };
     this.registered = undefined;
     this.regFor = undefined;
+    this.regTimer?.cancel();
     this.pending = undefined;
     this.end();
     ctx.trace("p2p.signal", "app", cfg.enabled ? `P2P 앱 켜짐: 이름 "${cfg.name}" 으로 시그널링 서버에 등록` : "P2P 앱 꺼짐 → 시그널링 서버에서 등록 해제", { enabled: cfg.enabled, name: cfg.name });
@@ -102,6 +103,8 @@ export class P2pAgent {
   private regFor: Ip | undefined;
   private regTries = 0;
   private regToken = 0;
+  /** 등록 응답을 기다리는 timer — 등록되거나 그만두면 취소 (남겨 두면 할 일 없이 시계만 그 시각까지 간다) */
+  private regTimer: TimerHandle | undefined;
 
   /** 주소를 얻었을 때(DHCP·고정 주소 확인 끝): 시그널링 서버에 등록 — 이 등록이 만든 NAT 매핑으로 서버가 나중에 연락한다 */
   onAddress(ctx: NodeContext): void {
@@ -117,13 +120,15 @@ export class P2pAgent {
   private sendRegister(ctx: NodeContext): void {
     this.regTries++;
     this.sendTo({ ip: SIGNAL_SERVER, port: SIGNAL_PORT }, { kind: "p2p", op: "register", from: this.config.name }, ctx);
-    ctx.timer(WAIT, P2P_TIMER_TAG, { reg: ++this.regToken });
+    this.regTimer?.cancel();
+    this.regTimer = ctx.timer(WAIT, P2P_TIMER_TAG, { reg: ++this.regToken });
   }
 
   /** 주소를 잃음: 진행 중인 연결은 끝 (바깥 주소가 바뀐다) */
   lost(): void {
     this.registered = undefined;
     this.regFor = undefined;
+    this.regTimer?.cancel();
     this.pending = undefined;
     this.end();
   }
@@ -281,6 +286,7 @@ export class P2pAgent {
 
   private onSignal(m: P2pMessage, ctx: NodeContext, frameId: number): boolean {
     if (m.op === "registered") {
+      this.regTimer?.cancel();
       this.registered = m.candidates?.[0] ? { ip: m.candidates[0].ip, port: m.candidates[0].port } : undefined;
       ctx.trace("p2p.signal", "app", `시그널링 서버에 "${this.config.name}" 등록됨 (서버가 본 내 바깥 주소 ${this.registered ? ep(this.registered) : "?"}) — 상대의 연결 제안은 이 주소로 온다`, { registered: this.registered ? ep(this.registered) : undefined }, frameId);
       const p = this.pending;

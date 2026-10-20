@@ -6171,847 +6171,847 @@
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:27, ethertype IPv4 (0x0800): IP 203.0.113.2.40000 > 203.0.113.26.51820: UDP, length 32
 ## 30초 뒤
 ## dev-1 → 8.8.8.8
-40040 dev-1 action | [사용자] ping 8.8.8.8
-40040 dev-1 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
-40040 dev-1 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.111.1 로 전달
-40040 dev-1 arp.cache.miss | ARP 캐시에 192.168.111.1 없음 → 패킷 대기열에 보관 (1개)
-40040 dev-1 arp.request.sent | ARP 요청 브로드캐스트: "192.168.111.1 의 MAC은?" (나는 192.168.111.11 / 02:00:00:00:00:23)
+35320 dev-1 action | [사용자] ping 8.8.8.8
+35320 dev-1 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+35320 dev-1 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.111.1 로 전달
+35320 dev-1 arp.cache.miss | ARP 캐시에 192.168.111.1 없음 → 패킷 대기열에 보관 (1개)
+35320 dev-1 arp.request.sent | ARP 요청 브로드캐스트: "192.168.111.1 의 MAC은?" (나는 192.168.111.11 / 02:00:00:00:00:23)
     > tcpdump -n -e: 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
-40040 dev-1 link.transmit | 링크 전송: ARP 요청 (192.168.111.1?) server_0z:0 → switch_0y:1 (10ms)
+35320 dev-1 link.transmit | 링크 전송: ARP 요청 (192.168.111.1?) server_0z:0 → switch_0y:1 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
-40050 Dev 서브넷 스위치 frame.receive | eth2 수신: ARP 요청 (192.168.111.1?) [02:00:00:00:00:23 → ff:ff:ff:ff:ff:ff]
-    > tcpdump -n -e: 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
-40050 Dev 서브넷 스위치 switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth1] (VLAN 111; 다른 VLAN 포트 eth4, eth6 제외)
+35330 Dev 서브넷 스위치 frame.receive | eth2 수신: ARP 요청 (192.168.111.1?) [02:00:00:00:00:23 → ff:ff:ff:ff:ff:ff]
     > tcpdump -n -e: 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
-40050 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 111 를 붙여 송신
+35330 Dev 서브넷 스위치 switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth1] (VLAN 111; 다른 VLAN 포트 eth4, eth6 제외)
     > tcpdump -n -e: 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
-40050 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.111.1?) switch_0y:0 → gateway_0w:1 (10ms)
+35330 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 111 를 붙여 송신
     > tcpdump -n -e: 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
-40060 Dev VPC 라우터 frame.receive | if1.111 수신: ARP 요청 (192.168.111.1?) [02:00:00:00:00:23] (VLAN 111 태그 떼어냄)
+35330 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.111.1?) switch_0y:0 → gateway_0w:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
+35340 Dev VPC 라우터 frame.receive | if1.111 수신: ARP 요청 (192.168.111.1?) [02:00:00:00:00:23] (VLAN 111 태그 떼어냄)
     > tcpdump -n -e: 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
-40060 Dev VPC 라우터 arp.request.received | ARP 요청 수신: "192.168.111.1 의 MAC은?" (보낸이 192.168.111.11 / 02:00:00:00:00:23)
+35340 Dev VPC 라우터 arp.request.received | ARP 요청 수신: "192.168.111.1 의 MAC은?" (보낸이 192.168.111.11 / 02:00:00:00:00:23)
     > tcpdump -n -e: 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
-40060 Dev VPC 라우터 arp.cache.update | ARP 캐시 추가: 192.168.111.11 → 02:00:00:00:00:23 (요청의 보낸이 정보에서 학습)
+35340 Dev VPC 라우터 arp.cache.update | ARP 캐시 추가: 192.168.111.11 → 02:00:00:00:00:23 (요청의 보낸이 정보에서 학습)
     > 리눅스 ip neigh: 192.168.111.11 dev eth0 lladdr 02:00:00:00:00:23 REACHABLE
     > tcpdump -n -e: 02:00:00:00:00:23 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Request who-has 192.168.111.1 tell 192.168.111.11, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
-40060 Dev VPC 라우터 arp.reply.sent | ARP 응답 송신: "192.168.111.1 는 06:00:6f:21:00:20" → 02:00:00:00:00:23 에게 유니캐스트
+35340 Dev VPC 라우터 arp.reply.sent | ARP 응답 송신: "192.168.111.1 는 06:00:6f:21:00:20" → 02:00:00:00:00:23 에게 유니캐스트
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
-40060 Dev VPC 라우터 vlan.tag | [if1.111] 802.1Q 태그 VLAN 111 를 붙여 if1 로 송신
+35340 Dev VPC 라우터 vlan.tag | [if1.111] 802.1Q 태그 VLAN 111 를 붙여 if1 로 송신
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
-40060 Dev VPC 라우터 link.transmit | 링크 전송: ARP 응답 (192.168.111.1=06:00:6f:21:00:20) gateway_0w:1 → switch_0y:0 (10ms)
+35340 Dev VPC 라우터 link.transmit | 링크 전송: ARP 응답 (192.168.111.1=06:00:6f:21:00:20) gateway_0w:1 → switch_0y:0 (10ms)
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
-40070 Dev 서브넷 스위치 frame.receive | eth1 수신: ARP 응답 (192.168.111.1=06:00:6f:21:00:20) [06:00:6f:21:00:20 → 02:00:00:00:00:23] (VLAN 111 태그)
-    > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
-40070 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:23 → eth2 로 전달 (VLAN 111)
+35350 Dev 서브넷 스위치 frame.receive | eth1 수신: ARP 응답 (192.168.111.1=06:00:6f:21:00:20) [06:00:6f:21:00:20 → 02:00:00:00:00:23] (VLAN 111 태그)
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
-40070 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 응답 (192.168.111.1=06:00:6f:21:00:20) switch_0y:1 → server_0z:0 (10ms)
+35350 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:23 → eth2 로 전달 (VLAN 111)
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
-40080 dev-1 frame.receive | 프레임 수신: ARP 응답 (192.168.111.1=06:00:6f:21:00:20) [06:00:6f:21:00:20 → 내 MAC]
+35350 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 응답 (192.168.111.1=06:00:6f:21:00:20) switch_0y:1 → server_0z:0 (10ms)
+    > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
+35360 dev-1 frame.receive | 프레임 수신: ARP 응답 (192.168.111.1=06:00:6f:21:00:20) [06:00:6f:21:00:20 → 내 MAC]
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
     > tcpdump (dev-1 이 내보낸 쪽): 02:00:00:00:00:23 > 06:00:6f:21:00:20, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40080 dev-1 arp.reply.received | ARP 응답 수신: 192.168.111.1 는 06:00:6f:21:00:20
+35360 dev-1 arp.reply.received | ARP 응답 수신: 192.168.111.1 는 06:00:6f:21:00:20
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
     > tcpdump (dev-1 이 내보낸 쪽): 02:00:00:00:00:23 > 06:00:6f:21:00:20, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40080 dev-1 arp.cache.update | ARP 캐시 추가: 192.168.111.1 → 06:00:6f:21:00:20 (응답에서 학습)
+35360 dev-1 arp.cache.update | ARP 캐시 추가: 192.168.111.1 → 06:00:6f:21:00:20 (응답에서 학습)
     > 리눅스 ip neigh: 192.168.111.1 dev eth0 lladdr 06:00:6f:21:00:20 REACHABLE
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype ARP (0x0806): ARP, Reply 192.168.111.1 is-at 06:00:6f:21:00:20, length 28
     > tcpdump (dev-1 이 내보낸 쪽): 02:00:00:00:00:23 > 06:00:6f:21:00:20, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40080 dev-1 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
-40080 dev-1 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:23 → 06:00:6f:21:00:20]
+35360 dev-1 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
+35360 dev-1 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:23 → 06:00:6f:21:00:20]
     > tcpdump -n -e: 02:00:00:00:00:23 > 06:00:6f:21:00:20, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40080 dev-1 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 server_0z:0 → switch_0y:1 (10ms)
+35360 dev-1 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 server_0z:0 → switch_0y:1 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:23 > 06:00:6f:21:00:20, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40090 Dev 서브넷 스위치 frame.receive | eth2 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:23 → 06:00:6f:21:00:20]
-    > tcpdump -n -e: 02:00:00:00:00:23 > 06:00:6f:21:00:20, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:23 > 06:00:6f:21:00:20, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40090 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 06:00:6f:21:00:20 → eth1 로 전달 (VLAN 111)
+35370 Dev 서브넷 스위치 frame.receive | eth2 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:23 → 06:00:6f:21:00:20]
     > tcpdump -n -e: 02:00:00:00:00:23 > 06:00:6f:21:00:20, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:23 > 06:00:6f:21:00:20, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40090 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 111 를 붙여 송신
+35370 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 06:00:6f:21:00:20 → eth1 로 전달 (VLAN 111)
     > tcpdump -n -e: 02:00:00:00:00:23 > 06:00:6f:21:00:20, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:23 > 06:00:6f:21:00:20, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40090 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0y:0 → gateway_0w:1 (10ms)
+35370 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 111 를 붙여 송신
     > tcpdump -n -e: 02:00:00:00:00:23 > 06:00:6f:21:00:20, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:23 > 06:00:6f:21:00:20, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40100 Dev VPC 라우터 frame.receive | if1.111 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:23] (VLAN 111 태그 떼어냄)
+35370 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0y:0 → gateway_0w:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:23 > 06:00:6f:21:00:20, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:23 > 06:00:6f:21:00:20, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
+35380 Dev VPC 라우터 frame.receive | if1.111 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:23] (VLAN 111 태그 떼어냄)
     > tcpdump -n -e: 02:00:00:00:00:23 > 06:00:6f:21:00:20, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-40100 Dev VPC 라우터 ip.forward | 라우팅: 8.8.8.8 → if0 (디폴트 라우트, 넥스트 홉 10.250.0.1), TTL 64 → 63
+35380 Dev VPC 라우터 ip.forward | 라우팅: 8.8.8.8 → if0 (디폴트 라우트, 넥스트 홉 10.250.0.1), TTL 64 → 63
     > 시스코 debug ip packet: IP: s=192.168.111.11, d=8.8.8.8 (if0), len 84, forward
     > tcpdump -n -e: 02:00:00:00:00:23 > 06:00:6f:21:00:20, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-40100 Dev VPC 라우터 arp.cache.miss | ARP 캐시에 10.250.0.1 없음 → 패킷 대기열에 보관 (1개)
-40100 Dev VPC 라우터 arp.request.sent | ARP 요청 브로드캐스트: "10.250.0.1 의 MAC은?" (나는 10.250.0.2 / 02:00:00:10:00:20)
+35380 Dev VPC 라우터 arp.cache.miss | ARP 캐시에 10.250.0.1 없음 → 패킷 대기열에 보관 (1개)
+35380 Dev VPC 라우터 arp.request.sent | ARP 요청 브로드캐스트: "10.250.0.1 의 MAC은?" (나는 10.250.0.2 / 02:00:00:10:00:20)
     > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-40100 Dev VPC 라우터 link.transmit | 링크 전송: ARP 요청 (10.250.0.1?) gateway_0w:0 → switch_0v:1 (10ms)
+35380 Dev VPC 라우터 link.transmit | 링크 전송: ARP 요청 (10.250.0.1?) gateway_0w:0 → switch_0v:1 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-40110 NCP VPC 연결 frame.receive | eth2 수신: ARP 요청 (10.250.0.1?) [02:00:00:10:00:20 → ff:ff:ff:ff:ff:ff]
-    > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-40110 NCP VPC 연결 switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth4, eth7]
+35390 NCP VPC 연결 frame.receive | eth2 수신: ARP 요청 (10.250.0.1?) [02:00:00:10:00:20 → ff:ff:ff:ff:ff:ff]
     > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-40110 NCP VPC 연결 link.transmit | 링크 전송: ARP 요청 (10.250.0.1?) switch_0v:3 → nat_0u:1 (10ms)
+35390 NCP VPC 연결 switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth4, eth7]
     > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-40110 NCP VPC 연결 link.transmit | 링크 전송: ARP 요청 (10.250.0.1?) switch_0v:6 → gateway_0x:0 (10ms)
+35390 NCP VPC 연결 link.transmit | 링크 전송: ARP 요청 (10.250.0.1?) switch_0v:3 → nat_0u:1 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-40120 NCP VPN Gateway frame.receive | inside 수신: ARP 요청 (10.250.0.1?) [02:00:00:10:00:20]
+35390 NCP VPC 연결 link.transmit | 링크 전송: ARP 요청 (10.250.0.1?) switch_0v:6 → gateway_0x:0 (10ms)
+    > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
+    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
+35400 NCP VPN Gateway frame.receive | inside 수신: ARP 요청 (10.250.0.1?) [02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
-40120 NCP VPN Gateway arp.request.received | ARP 요청 수신: "10.250.0.1 의 MAC은?" (보낸이 10.250.0.2 / 02:00:00:10:00:20)
+35400 NCP VPN Gateway arp.request.received | ARP 요청 수신: "10.250.0.1 의 MAC은?" (보낸이 10.250.0.2 / 02:00:00:10:00:20)
     > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
-40120 NCP VPN Gateway arp.cache.update | ARP 캐시 추가: 10.250.0.2 → 02:00:00:10:00:20 (요청의 보낸이 정보에서 학습)
+35400 NCP VPN Gateway arp.cache.update | ARP 캐시 추가: 10.250.0.2 → 02:00:00:10:00:20 (요청의 보낸이 정보에서 학습)
     > 리눅스 ip neigh: 10.250.0.2 dev eth0 lladdr 02:00:00:10:00:20 REACHABLE
     > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
-40120 NCP VPN Gateway arp.reply.sent | ARP 응답 송신: "10.250.0.1 는 02:00:00:11:00:1e" → 02:00:00:10:00:20 에게 유니캐스트
+35400 NCP VPN Gateway arp.reply.sent | ARP 응답 송신: "10.250.0.1 는 02:00:00:11:00:1e" → 02:00:00:10:00:20 에게 유니캐스트
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
-40120 NCP VPN Gateway link.transmit | 링크 전송: ARP 응답 (10.250.0.1=02:00:00:11:00:1e) nat_0u:1 → switch_0v:3 (10ms)
+35400 NCP VPN Gateway link.transmit | 링크 전송: ARP 응답 (10.250.0.1=02:00:00:11:00:1e) nat_0u:1 → switch_0v:3 (10ms)
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
-40120 Prod VPC 라우터 frame.receive | if0 수신: ARP 요청 (10.250.0.1?) [02:00:00:10:00:20]
+35400 Prod VPC 라우터 frame.receive | if0 수신: ARP 요청 (10.250.0.1?) [02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-40120 Prod VPC 라우터 arp.request.received | ARP 요청 수신: "10.250.0.1 의 MAC은?" (보낸이 10.250.0.2 / 02:00:00:10:00:20)
+35400 Prod VPC 라우터 arp.request.received | ARP 요청 수신: "10.250.0.1 의 MAC은?" (보낸이 10.250.0.2 / 02:00:00:10:00:20)
     > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-40120 Prod VPC 라우터 frame.drop | 10.250.0.1 는 내 IP(10.250.0.3) 아님 → 응답 안 함
+35400 Prod VPC 라우터 frame.drop | 10.250.0.1 는 내 IP(10.250.0.3) 아님 → 응답 안 함
     > tcpdump -n -e: 02:00:00:10:00:20 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 10.250.0.1 tell 10.250.0.2, length 28
-40130 NCP VPC 연결 frame.receive | eth4 수신: ARP 응답 (10.250.0.1=02:00:00:11:00:1e) [02:00:00:11:00:1e → 02:00:00:10:00:20]
+35410 NCP VPC 연결 frame.receive | eth4 수신: ARP 응답 (10.250.0.1=02:00:00:11:00:1e) [02:00:00:11:00:1e → 02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
-40130 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:10:00:20 → eth2 로 전달
+35410 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:10:00:20 → eth2 로 전달
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
-40130 NCP VPC 연결 link.transmit | 링크 전송: ARP 응답 (10.250.0.1=02:00:00:11:00:1e) switch_0v:1 → gateway_0w:0 (10ms)
+35410 NCP VPC 연결 link.transmit | 링크 전송: ARP 응답 (10.250.0.1=02:00:00:11:00:1e) switch_0v:1 → gateway_0w:0 (10ms)
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
-40140 Dev VPC 라우터 frame.receive | if0 수신: ARP 응답 (10.250.0.1=02:00:00:11:00:1e) [02:00:00:11:00:1e]
+35420 Dev VPC 라우터 frame.receive | if0 수신: ARP 응답 (10.250.0.1=02:00:00:11:00:1e) [02:00:00:11:00:1e]
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40140 Dev VPC 라우터 arp.reply.received | ARP 응답 수신: 10.250.0.1 는 02:00:00:11:00:1e
+35420 Dev VPC 라우터 arp.reply.received | ARP 응답 수신: 10.250.0.1 는 02:00:00:11:00:1e
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40140 Dev VPC 라우터 arp.cache.update | ARP 캐시 추가: 10.250.0.1 → 02:00:00:11:00:1e (응답에서 학습)
+35420 Dev VPC 라우터 arp.cache.update | ARP 캐시 추가: 10.250.0.1 → 02:00:00:11:00:1e (응답에서 학습)
     > 리눅스 ip neigh: 10.250.0.1 dev eth0 lladdr 02:00:00:11:00:1e REACHABLE
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype ARP (0x0806): ARP, Reply 10.250.0.1 is-at 02:00:00:11:00:1e, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40140 Dev VPC 라우터 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
-40140 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
+35420 Dev VPC 라우터 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
+35420 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40140 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 gateway_0w:0 → switch_0v:1 (10ms)
+35420 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 gateway_0w:0 → switch_0v:1 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40150 NCP VPC 연결 frame.receive | eth2 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
-    > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40150 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:11:00:1e → eth4 로 전달
+35430 NCP VPC 연결 frame.receive | eth2 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40150 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0v:3 → nat_0u:1 (10ms)
+35430 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:11:00:1e → eth4 로 전달
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
-40160 NCP VPN Gateway frame.receive | inside 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20]
+35430 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0v:3 → nat_0u:1 (10ms)
+    > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
+    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
+35440 NCP VPN Gateway frame.receive | inside 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40160 NCP VPN Gateway fw.allow | 방화벽 허용: 아웃바운드 ICMP ping 요청 192.168.111.11 → 8.8.8.8 — 규칙 3 (허용 · 아웃바운드 · 모든 프로토콜)
+35440 NCP VPN Gateway fw.allow | 방화벽 허용: 아웃바운드 ICMP ping 요청 192.168.111.11 → 8.8.8.8 — 규칙 3 (허용 · 아웃바운드 · 모든 프로토콜)
     > 리눅스 iptables LOG: [ACCEPT] SRC=192.168.111.11 DST=8.8.8.8 LEN=84 TTL=63 PROTO=ICMP
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40160 NCP VPN Gateway nat.translate | NAT 변환: 192.168.111.11 (ICMP id 7994) → 203.0.113.18 (ICMP id 40000) — 사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록
+35440 NCP VPN Gateway nat.translate | NAT 변환: 192.168.111.11 (ICMP id 7994) → 203.0.113.18 (ICMP id 40000) — 사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40160 NCP VPN Gateway ip.forward | 라우팅: 8.8.8.8 → outside (디폴트 라우트, 넥스트 홉 203.0.113.17), TTL 63 → 62
+35440 NCP VPN Gateway ip.forward | 라우팅: 8.8.8.8 → outside (디폴트 라우트, 넥스트 홉 203.0.113.17), TTL 63 → 62
     > 시스코 debug ip packet: IP: s=192.168.111.11, d=8.8.8.8 (outside), len 84, forward
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.111.11 > 8.8.8.8: ICMP echo request, id 7994, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40160 NCP VPN Gateway arp.cache.miss | ARP 캐시에 203.0.113.17 없음 → 패킷 대기열에 보관 (1개)
-40160 NCP VPN Gateway arp.request.sent | ARP 요청 브로드캐스트: "203.0.113.17 의 MAC은?" (나는 203.0.113.18 / 02:00:00:10:00:1e)
+35440 NCP VPN Gateway arp.cache.miss | ARP 캐시에 203.0.113.17 없음 → 패킷 대기열에 보관 (1개)
+35440 NCP VPN Gateway arp.request.sent | ARP 요청 브로드캐스트: "203.0.113.17 의 MAC은?" (나는 203.0.113.18 / 02:00:00:10:00:1e)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40160 NCP VPN Gateway link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) nat_0u:0 → switch_0t:4 (10ms)
+35440 NCP VPN Gateway link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) nat_0u:0 → switch_0t:4 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40170 인터넷 (NCP 쪽) frame.receive | eth5 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → ff:ff:ff:ff:ff:ff]
-    > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-    > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40170 인터넷 (NCP 쪽) switch.flood | 브로드캐스트 → eth5 제외 플러딩 [eth1]
+35450 인터넷 (NCP 쪽) frame.receive | eth5 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → ff:ff:ff:ff:ff:ff]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40170 인터넷 (NCP 쪽) link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_0t:0 → switch_02:6 (10ms)
+35450 인터넷 (NCP 쪽) switch.flood | 브로드캐스트 → eth5 제외 플러딩 [eth1]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40180 통신사 구간 frame.receive | eth7 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → ff:ff:ff:ff:ff:ff]
+35450 인터넷 (NCP 쪽) link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_0t:0 → switch_02:6 (10ms)
+    > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
+    > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
+35460 통신사 구간 frame.receive | eth7 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → ff:ff:ff:ff:ff:ff]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40180 통신사 구간 switch.flood | 브로드캐스트 → eth7 제외 플러딩 [eth1, eth3, eth5, eth8]
+35460 통신사 구간 switch.flood | 브로드캐스트 → eth7 제외 플러딩 [eth1, eth3, eth5, eth8]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40180 통신사 구간 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_02:0 → switch_03:1 (10ms)
+35460 통신사 구간 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_02:0 → switch_03:1 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40180 통신사 구간 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_02:2 → router_02a:0 (10ms)
+35460 통신사 구간 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_02:2 → router_02a:0 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40180 통신사 구간 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_02:4 → internet_01:0 (10ms)
+35460 통신사 구간 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_02:4 → internet_01:0 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40180 통신사 구간 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_02:7 → switch_04:1 (10ms)
+35460 통신사 구간 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_02:7 → switch_04:1 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40190 KT 모뎀 (내부망 회선) frame.receive | eth2 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → ff:ff:ff:ff:ff:ff]
+35470 KT 모뎀 (내부망 회선) frame.receive | eth2 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → ff:ff:ff:ff:ff:ff]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (KT 모뎀 (내부망 회선) 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40190 KT 모뎀 (내부망 회선) switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth4]
+35470 KT 모뎀 (내부망 회선) switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth4]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (KT 모뎀 (내부망 회선) 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40190 KT 모뎀 (내부망 회선) link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_03:3 → nat_07:0 (10ms)
+35470 KT 모뎀 (내부망 회선) link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_03:3 → nat_07:0 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (KT 모뎀 (내부망 회선) 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40190 집 공유기 frame.receive | wan 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → 브로드캐스트]
+35470 집 공유기 frame.receive | wan 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → 브로드캐스트]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40190 집 공유기 arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
+35470 집 공유기 arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40190 집 공유기 frame.drop | 203.0.113.17 는 내 IP(203.0.113.2) 아님 → 응답 안 함
+35470 집 공유기 frame.drop | 203.0.113.17 는 내 IP(203.0.113.2) 아님 → 응답 안 함
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40190 internet-1 frame.receive | 프레임 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e]
+35470 internet-1 frame.receive | 프레임 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (internet-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
-40190 internet-1 arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
+35470 internet-1 arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (internet-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
-40190 internet-1 arp.cache.update | ARP 캐시 추가: 203.0.113.18 → 02:00:00:10:00:1e (요청의 보낸이 정보에서 학습)
+35470 internet-1 arp.cache.update | ARP 캐시 추가: 203.0.113.18 → 02:00:00:10:00:1e (요청의 보낸이 정보에서 학습)
     > 리눅스 ip neigh: 203.0.113.18 dev eth0 lladdr 02:00:00:10:00:1e REACHABLE
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (internet-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
-40190 internet-1 arp.reply.sent | ARP 응답 송신: "203.0.113.17 는 02:00:00:00:00:01" (ISP 게이트웨이 — 가입자 대역 203.0.113.16/29 마다 ISP 라우터가 이 주소를 하나씩 갖는다) → 02:00:00:10:00:1e 에게 유니캐스트
+35470 internet-1 arp.reply.sent | ARP 응답 송신: "203.0.113.17 는 02:00:00:00:00:01" (ISP 게이트웨이 — 가입자 대역 203.0.113.16/29 마다 ISP 라우터가 이 주소를 하나씩 갖는다) → 02:00:00:10:00:1e 에게 유니캐스트
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
-40190 internet-1 link.transmit | 링크 전송: ARP 응답 (203.0.113.17=02:00:00:00:00:01) internet_01:0 → switch_02:4 (10ms)
+35470 internet-1 link.transmit | 링크 전송: ARP 응답 (203.0.113.17=02:00:00:00:00:01) internet_01:0 → switch_02:4 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
-40190 KT 모뎀 (외부망 회선) frame.receive | eth2 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → ff:ff:ff:ff:ff:ff]
+35470 KT 모뎀 (외부망 회선) frame.receive | eth2 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → ff:ff:ff:ff:ff:ff]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (KT 모뎀 (외부망 회선) 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40190 KT 모뎀 (외부망 회선) switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth1, eth4]
+35470 KT 모뎀 (외부망 회선) switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth1, eth4]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (KT 모뎀 (외부망 회선) 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40190 KT 모뎀 (외부망 회선) link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_04:0 → switch_05:0 (10ms)
+35470 KT 모뎀 (외부망 회선) link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_04:0 → switch_05:0 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (KT 모뎀 (외부망 회선) 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40190 KT 모뎀 (외부망 회선) link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_04:3 → router_029:0 (10ms)
+35470 KT 모뎀 (외부망 회선) link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_04:3 → router_029:0 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (KT 모뎀 (외부망 회선) 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40200 내부망 방화벽 NAT frame.receive | outside 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e]
+35480 내부망 방화벽 NAT frame.receive | outside 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40200 내부망 방화벽 NAT arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
+35480 내부망 방화벽 NAT arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40200 내부망 방화벽 NAT frame.drop | 203.0.113.17 는 내 IP(203.0.113.10) 아님 → 응답 안 함
+35480 내부망 방화벽 NAT frame.drop | 203.0.113.17 는 내 IP(203.0.113.10) 아님 → 응답 안 함
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40200 통신사 구간 frame.receive | eth5 수신: ARP 응답 (203.0.113.17=02:00:00:00:00:01) [02:00:00:00:00:01 → 02:00:00:10:00:1e]
+35480 통신사 구간 frame.receive | eth5 수신: ARP 응답 (203.0.113.17=02:00:00:00:00:01) [02:00:00:00:00:01 → 02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
-40200 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth7 로 전달
+35480 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth7 로 전달
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
-40200 통신사 구간 link.transmit | 링크 전송: ARP 응답 (203.0.113.17=02:00:00:00:00:01) switch_02:6 → switch_0t:0 (10ms)
+35480 통신사 구간 link.transmit | 링크 전송: ARP 응답 (203.0.113.17=02:00:00:00:00:01) switch_02:6 → switch_0t:0 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
-40200 회의실 스위치 frame.receive | eth1 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → ff:ff:ff:ff:ff:ff]
+35480 회의실 스위치 frame.receive | eth1 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → ff:ff:ff:ff:ff:ff]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (회의실 스위치 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40200 회의실 스위치 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth2, eth8]
+35480 회의실 스위치 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth2, eth8]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (회의실 스위치 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40200 회의실 스위치 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_05:1 → nat_0h:0 (10ms)
+35480 회의실 스위치 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_05:1 → nat_0h:0 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (회의실 스위치 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40200 회의실 스위치 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_05:7 → pc_06:0 (10ms)
+35480 회의실 스위치 link.transmit | 링크 전송: ARP 요청 (203.0.113.17?) switch_05:7 → pc_06:0 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
     > tcpdump (회의실 스위치 이 내보낸 쪽): 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40200 사무실 공유기 frame.receive | wan 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → 브로드캐스트]
+35480 사무실 공유기 frame.receive | wan 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → 브로드캐스트]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40200 사무실 공유기 arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
+35480 사무실 공유기 arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40200 사무실 공유기 frame.drop | 203.0.113.17 는 내 IP(203.0.113.26) 아님 → 응답 안 함
+35480 사무실 공유기 frame.drop | 203.0.113.17 는 내 IP(203.0.113.26) 아님 → 응답 안 함
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40210 인터넷 (NCP 쪽) frame.receive | eth1 수신: ARP 응답 (203.0.113.17=02:00:00:00:00:01) [02:00:00:00:00:01 → 02:00:00:10:00:1e]
+35490 인터넷 (NCP 쪽) frame.receive | eth1 수신: ARP 응답 (203.0.113.17=02:00:00:00:00:01) [02:00:00:00:00:01 → 02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
-40210 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth5 로 전달
+35490 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth5 로 전달
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
-40210 인터넷 (NCP 쪽) link.transmit | 링크 전송: ARP 응답 (203.0.113.17=02:00:00:00:00:01) switch_0t:4 → nat_0u:0 (10ms)
+35490 인터넷 (NCP 쪽) link.transmit | 링크 전송: ARP 응답 (203.0.113.17=02:00:00:00:00:01) switch_0t:4 → nat_0u:0 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
-40210 외부망 방화벽 NAT frame.receive | outside 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e]
+35490 외부망 방화벽 NAT frame.receive | outside 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40210 외부망 방화벽 NAT arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
+35490 외부망 방화벽 NAT arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40210 외부망 방화벽 NAT frame.drop | 203.0.113.17 는 내 IP(203.0.113.42) 아님 → 응답 안 함
+35490 외부망 방화벽 NAT frame.drop | 203.0.113.17 는 내 IP(203.0.113.42) 아님 → 응답 안 함
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40210 프린터 frame.receive | 프레임 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → 브로드캐스트]
+35490 프린터 frame.receive | 프레임 수신: ARP 요청 (203.0.113.17?) [02:00:00:10:00:1e → 브로드캐스트]
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40210 프린터 arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
+35490 프린터 arp.request.received | ARP 요청 수신: "203.0.113.17 의 MAC은?" (보낸이 203.0.113.18 / 02:00:00:10:00:1e)
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40210 프린터 frame.drop | 203.0.113.17 는 내 IP(203.0.113.34) 아님 → 응답 안 함
+35490 프린터 frame.drop | 203.0.113.17 는 내 IP(203.0.113.34) 아님 → 응답 안 함
     > tcpdump -n -e: 02:00:00:10:00:1e > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.17 tell 203.0.113.18, length 28
-40220 NCP VPN Gateway frame.receive | outside 수신: ARP 응답 (203.0.113.17=02:00:00:00:00:01) [02:00:00:00:00:01]
+35500 NCP VPN Gateway frame.receive | outside 수신: ARP 응답 (203.0.113.17=02:00:00:00:00:01) [02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40220 NCP VPN Gateway arp.reply.received | ARP 응답 수신: 203.0.113.17 는 02:00:00:00:00:01
+35500 NCP VPN Gateway arp.reply.received | ARP 응답 수신: 203.0.113.17 는 02:00:00:00:00:01
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40220 NCP VPN Gateway arp.cache.update | ARP 캐시 추가: 203.0.113.17 → 02:00:00:00:00:01 (응답에서 학습)
+35500 NCP VPN Gateway arp.cache.update | ARP 캐시 추가: 203.0.113.17 → 02:00:00:00:00:01 (응답에서 학습)
     > 리눅스 ip neigh: 203.0.113.17 dev eth0 lladdr 02:00:00:00:00:01 REACHABLE
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype ARP (0x0806): ARP, Reply 203.0.113.17 is-at 02:00:00:00:00:01, length 28
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40220 NCP VPN Gateway ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (60ms 대기)
-40220 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
+35500 NCP VPN Gateway ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (60ms 대기)
+35500 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40220 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 요청 seq=1 nat_0u:0 → switch_0t:4 (10ms)
+35500 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 요청 seq=1 nat_0u:0 → switch_0t:4 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40230 인터넷 (NCP 쪽) frame.receive | eth5 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
-    > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-    > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40230 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth1 로 전달
+35510 인터넷 (NCP 쪽) frame.receive | eth5 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40230 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0t:0 → switch_02:6 (10ms)
+35510 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth1 로 전달
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40240 통신사 구간 frame.receive | eth7 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
+35510 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0t:0 → switch_02:6 (10ms)
+    > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
+    > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
+35520 통신사 구간 frame.receive | eth7 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40240 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth5 로 전달
+35520 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth5 로 전달
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40240 통신사 구간 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_02:4 → internet_01:0 (10ms)
+35520 통신사 구간 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_02:4 → internet_01:0 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40250 internet-1 frame.receive | 프레임 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e]
+35530 internet-1 frame.receive | 프레임 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40250 internet-1 inet.forward | 인터넷 경로로 8.8.8.8 (Google DNS) 에 전달 — 중간 라우터들은 생략, 왕복 60ms
+35530 internet-1 inet.forward | 인터넷 경로로 8.8.8.8 (Google DNS) 에 전달 — 중간 라우터들은 생략, 왕복 60ms
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
-40310 internet-1 inet.reply | 8.8.8.8 (Google DNS) 가 응답 → 203.0.113.18 로 회신 (TTL 54: 중간 라우터 10개를 지났다고 가정)
-40310 internet-1 ip.route | 203.0.113.18 는 같은 서브넷 203.0.113.0/24 → 직접 전달 (next hop = 203.0.113.18)
-40310 internet-1 arp.cache.hit | ARP 캐시 적중: 203.0.113.18 → 02:00:00:10:00:1e
-40310 internet-1 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
+35590 internet-1 inet.reply | 8.8.8.8 (Google DNS) 가 응답 → 203.0.113.18 로 회신 (TTL 54: 중간 라우터 10개를 지났다고 가정)
+35590 internet-1 ip.route | 203.0.113.18 는 같은 서브넷 203.0.113.0/24 → 직접 전달 (next hop = 203.0.113.18)
+35590 internet-1 arp.cache.hit | ARP 캐시 적중: 203.0.113.18 → 02:00:00:10:00:1e
+35590 internet-1 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
-40310 internet-1 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 internet_01:0 → switch_02:4 (10ms)
+35590 internet-1 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 internet_01:0 → switch_02:4 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
-40320 통신사 구간 frame.receive | eth5 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
-    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
-    > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
-40320 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth7 로 전달
+35600 통신사 구간 frame.receive | eth5 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
-40320 통신사 구간 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_02:6 → switch_0t:0 (10ms)
+35600 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth7 로 전달
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
-40330 인터넷 (NCP 쪽) frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
+35600 통신사 구간 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_02:6 → switch_0t:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
+    > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
+35610 인터넷 (NCP 쪽) frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
-40330 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth5 로 전달
+35610 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth5 로 전달
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
-40330 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0t:4 → nat_0u:0 (10ms)
+35610 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0t:4 → nat_0u:0 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
-40340 NCP VPN Gateway frame.receive | outside 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01]
+35620 NCP VPN Gateway frame.receive | outside 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40340 NCP VPN Gateway nat.restore | NAT 역변환: 203.0.113.18 (ICMP id 40000) → 192.168.111.11 (id 7994) — 테이블에 기록된 내부 호스트로 되돌림
+35620 NCP VPN Gateway nat.restore | NAT 역변환: 203.0.113.18 (ICMP id 40000) → 192.168.111.11 (id 7994) — 테이블에 기록된 내부 호스트로 되돌림
     > 시스코 debug ip nat: NAT*: s=8.8.8.8, d=203.0.113.18->192.168.111.11 [40000]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40340 NCP VPN Gateway fw.established | 방화벽: 인바운드 ICMP ping 응답 8.8.8.8 → 192.168.111.11 은(는) 기본 정책 상 차단이지만, 안에서 시작한 통신의 응답이라 Stateful 검사로 허용
+35620 NCP VPN Gateway fw.established | 방화벽: 인바운드 ICMP ping 응답 8.8.8.8 → 192.168.111.11 은(는) 기본 정책 상 차단이지만, 안에서 시작한 통신의 응답이라 Stateful 검사로 허용
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40340 NCP VPN Gateway ip.forward | 라우팅: 192.168.111.11 → inside (스태틱 라우팅, 넥스트 홉 10.250.0.2), TTL 54 → 53
+35620 NCP VPN Gateway ip.forward | 라우팅: 192.168.111.11 → inside (스태틱 라우팅, 넥스트 홉 10.250.0.2), TTL 54 → 53
     > 시스코 debug ip packet: IP: s=8.8.8.8, d=203.0.113.18 (inside), len 84, forward
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40000, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40340 NCP VPN Gateway arp.cache.hit | ARP 캐시 적중: 10.250.0.2 → 02:00:00:10:00:20
-40340 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
+35620 NCP VPN Gateway arp.cache.hit | ARP 캐시 적중: 10.250.0.2 → 02:00:00:10:00:20
+35620 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40340 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 응답 seq=1 nat_0u:1 → switch_0v:3 (10ms)
+35620 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 응답 seq=1 nat_0u:1 → switch_0v:3 (10ms)
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40350 NCP VPC 연결 frame.receive | eth4 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
-    > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40350 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:10:00:20 → eth2 로 전달
+35630 NCP VPC 연결 frame.receive | eth4 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40350 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0v:1 → gateway_0w:0 (10ms)
+35630 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:10:00:20 → eth2 로 전달
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40360 Dev VPC 라우터 frame.receive | if0 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e]
+35630 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0v:1 → gateway_0w:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
+    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
+35640 Dev VPC 라우터 frame.receive | if0 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e]
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40360 Dev VPC 라우터 ip.forward | 라우팅: 192.168.111.11 → if1.111 (192.168.111.0/24 에 직접 연결), TTL 53 → 52
+35640 Dev VPC 라우터 ip.forward | 라우팅: 192.168.111.11 → if1.111 (192.168.111.0/24 에 직접 연결), TTL 53 → 52
     > 시스코 debug ip packet: IP: s=8.8.8.8, d=192.168.111.11 (if1.111), len 84, forward
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40360 Dev VPC 라우터 arp.cache.hit | ARP 캐시 적중: 192.168.111.11 → 02:00:00:00:00:23
-40360 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [06:00:6f:21:00:20 → 02:00:00:00:00:23]
+35640 Dev VPC 라우터 arp.cache.hit | ARP 캐시 적중: 192.168.111.11 → 02:00:00:00:00:23
+35640 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [06:00:6f:21:00:20 → 02:00:00:00:00:23]
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40360 Dev VPC 라우터 vlan.tag | [if1.111] 802.1Q 태그 VLAN 111 를 붙여 if1 로 송신
+35640 Dev VPC 라우터 vlan.tag | [if1.111] 802.1Q 태그 VLAN 111 를 붙여 if1 로 송신
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40360 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 gateway_0w:1 → switch_0y:0 (10ms)
+35640 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 gateway_0w:1 → switch_0y:0 (10ms)
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40370 Dev 서브넷 스위치 frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [06:00:6f:21:00:20 → 02:00:00:00:00:23] (VLAN 111 태그)
-    > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40370 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:23 → eth2 로 전달 (VLAN 111)
+35650 Dev 서브넷 스위치 frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [06:00:6f:21:00:20 → 02:00:00:00:00:23] (VLAN 111 태그)
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40370 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0y:1 → server_0z:0 (10ms)
+35650 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:23 → eth2 로 전달 (VLAN 111)
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40380 dev-1 frame.receive | 프레임 수신: ICMP Echo 응답 seq=1 [06:00:6f:21:00:20 → 내 MAC]
+35650 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0y:1 → server_0z:0 (10ms)
+    > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, 802.1Q vlan 111, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
+35660 dev-1 frame.receive | 프레임 수신: ICMP Echo 응답 seq=1 [06:00:6f:21:00:20 → 내 MAC]
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
-40380 dev-1 icmp.reply.received | ping 성공: 8.8.8.8 seq=1 RTT=340ms
+35660 dev-1 icmp.reply.received | ping 성공: 8.8.8.8 seq=1 RTT=340ms
     > ping: 64 bytes from 8.8.8.8: icmp_seq=1 ttl=52 time=340 ms
     > tcpdump -n -e: 06:00:6f:21:00:20 > 02:00:00:00:00:23, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.111.11: ICMP echo reply, id 7994, seq 1, length 64
 ## dev-2 → 8.8.8.8
-40380 dev-2 action | [사용자] ping 8.8.8.8
-40380 dev-2 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
-40380 dev-2 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.112.1 로 전달
-40380 dev-2 arp.cache.miss | ARP 캐시에 192.168.112.1 없음 → 패킷 대기열에 보관 (1개)
-40380 dev-2 arp.request.sent | ARP 요청 브로드캐스트: "192.168.112.1 의 MAC은?" (나는 192.168.112.11 / 02:00:00:00:00:24)
+35660 dev-2 action | [사용자] ping 8.8.8.8
+35660 dev-2 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+35660 dev-2 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.112.1 로 전달
+35660 dev-2 arp.cache.miss | ARP 캐시에 192.168.112.1 없음 → 패킷 대기열에 보관 (1개)
+35660 dev-2 arp.request.sent | ARP 요청 브로드캐스트: "192.168.112.1 의 MAC은?" (나는 192.168.112.11 / 02:00:00:00:00:24)
     > tcpdump -n -e: 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
-40380 dev-2 link.transmit | 링크 전송: ARP 요청 (192.168.112.1?) server_010:0 → switch_0y:3 (10ms)
+35660 dev-2 link.transmit | 링크 전송: ARP 요청 (192.168.112.1?) server_010:0 → switch_0y:3 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
-40390 Dev 서브넷 스위치 frame.receive | eth4 수신: ARP 요청 (192.168.112.1?) [02:00:00:00:00:24 → ff:ff:ff:ff:ff:ff]
-    > tcpdump -n -e: 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
-40390 Dev 서브넷 스위치 switch.flood | 브로드캐스트 → eth4 제외 플러딩 [eth1] (VLAN 112; 다른 VLAN 포트 eth2, eth6 제외)
+35670 Dev 서브넷 스위치 frame.receive | eth4 수신: ARP 요청 (192.168.112.1?) [02:00:00:00:00:24 → ff:ff:ff:ff:ff:ff]
     > tcpdump -n -e: 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
-40390 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 112 를 붙여 송신
+35670 Dev 서브넷 스위치 switch.flood | 브로드캐스트 → eth4 제외 플러딩 [eth1] (VLAN 112; 다른 VLAN 포트 eth2, eth6 제외)
     > tcpdump -n -e: 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
-40390 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.112.1?) switch_0y:0 → gateway_0w:1 (10ms)
+35670 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 112 를 붙여 송신
     > tcpdump -n -e: 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
-40400 Dev VPC 라우터 frame.receive | if1.112 수신: ARP 요청 (192.168.112.1?) [02:00:00:00:00:24] (VLAN 112 태그 떼어냄)
+35670 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.112.1?) switch_0y:0 → gateway_0w:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
+35680 Dev VPC 라우터 frame.receive | if1.112 수신: ARP 요청 (192.168.112.1?) [02:00:00:00:00:24] (VLAN 112 태그 떼어냄)
     > tcpdump -n -e: 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
-40400 Dev VPC 라우터 arp.request.received | ARP 요청 수신: "192.168.112.1 의 MAC은?" (보낸이 192.168.112.11 / 02:00:00:00:00:24)
+35680 Dev VPC 라우터 arp.request.received | ARP 요청 수신: "192.168.112.1 의 MAC은?" (보낸이 192.168.112.11 / 02:00:00:00:00:24)
     > tcpdump -n -e: 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
-40400 Dev VPC 라우터 arp.cache.update | ARP 캐시 추가: 192.168.112.11 → 02:00:00:00:00:24 (요청의 보낸이 정보에서 학습)
+35680 Dev VPC 라우터 arp.cache.update | ARP 캐시 추가: 192.168.112.11 → 02:00:00:00:00:24 (요청의 보낸이 정보에서 학습)
     > 리눅스 ip neigh: 192.168.112.11 dev eth0 lladdr 02:00:00:00:00:24 REACHABLE
     > tcpdump -n -e: 02:00:00:00:00:24 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Request who-has 192.168.112.1 tell 192.168.112.11, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
-40400 Dev VPC 라우터 arp.reply.sent | ARP 응답 송신: "192.168.112.1 는 06:00:70:21:00:20" → 02:00:00:00:00:24 에게 유니캐스트
+35680 Dev VPC 라우터 arp.reply.sent | ARP 응답 송신: "192.168.112.1 는 06:00:70:21:00:20" → 02:00:00:00:00:24 에게 유니캐스트
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
-40400 Dev VPC 라우터 vlan.tag | [if1.112] 802.1Q 태그 VLAN 112 를 붙여 if1 로 송신
+35680 Dev VPC 라우터 vlan.tag | [if1.112] 802.1Q 태그 VLAN 112 를 붙여 if1 로 송신
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
-40400 Dev VPC 라우터 link.transmit | 링크 전송: ARP 응답 (192.168.112.1=06:00:70:21:00:20) gateway_0w:1 → switch_0y:0 (10ms)
+35680 Dev VPC 라우터 link.transmit | 링크 전송: ARP 응답 (192.168.112.1=06:00:70:21:00:20) gateway_0w:1 → switch_0y:0 (10ms)
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
-40410 Dev 서브넷 스위치 frame.receive | eth1 수신: ARP 응답 (192.168.112.1=06:00:70:21:00:20) [06:00:70:21:00:20 → 02:00:00:00:00:24] (VLAN 112 태그)
-    > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
-40410 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:24 → eth4 로 전달 (VLAN 112)
+35690 Dev 서브넷 스위치 frame.receive | eth1 수신: ARP 응답 (192.168.112.1=06:00:70:21:00:20) [06:00:70:21:00:20 → 02:00:00:00:00:24] (VLAN 112 태그)
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
-40410 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 응답 (192.168.112.1=06:00:70:21:00:20) switch_0y:3 → server_010:0 (10ms)
+35690 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:24 → eth4 로 전달 (VLAN 112)
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
-40420 dev-2 frame.receive | 프레임 수신: ARP 응답 (192.168.112.1=06:00:70:21:00:20) [06:00:70:21:00:20 → 내 MAC]
+35690 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 응답 (192.168.112.1=06:00:70:21:00:20) switch_0y:3 → server_010:0 (10ms)
+    > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
+35700 dev-2 frame.receive | 프레임 수신: ARP 응답 (192.168.112.1=06:00:70:21:00:20) [06:00:70:21:00:20 → 내 MAC]
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
     > tcpdump (dev-2 이 내보낸 쪽): 02:00:00:00:00:24 > 06:00:70:21:00:20, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40420 dev-2 arp.reply.received | ARP 응답 수신: 192.168.112.1 는 06:00:70:21:00:20
+35700 dev-2 arp.reply.received | ARP 응답 수신: 192.168.112.1 는 06:00:70:21:00:20
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
     > tcpdump (dev-2 이 내보낸 쪽): 02:00:00:00:00:24 > 06:00:70:21:00:20, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40420 dev-2 arp.cache.update | ARP 캐시 추가: 192.168.112.1 → 06:00:70:21:00:20 (응답에서 학습)
+35700 dev-2 arp.cache.update | ARP 캐시 추가: 192.168.112.1 → 06:00:70:21:00:20 (응답에서 학습)
     > 리눅스 ip neigh: 192.168.112.1 dev eth0 lladdr 06:00:70:21:00:20 REACHABLE
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype ARP (0x0806): ARP, Reply 192.168.112.1 is-at 06:00:70:21:00:20, length 28
     > tcpdump (dev-2 이 내보낸 쪽): 02:00:00:00:00:24 > 06:00:70:21:00:20, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40420 dev-2 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
-40420 dev-2 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:24 → 06:00:70:21:00:20]
+35700 dev-2 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
+35700 dev-2 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:24 → 06:00:70:21:00:20]
     > tcpdump -n -e: 02:00:00:00:00:24 > 06:00:70:21:00:20, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40420 dev-2 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 server_010:0 → switch_0y:3 (10ms)
+35700 dev-2 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 server_010:0 → switch_0y:3 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:24 > 06:00:70:21:00:20, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40430 Dev 서브넷 스위치 frame.receive | eth4 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:24 → 06:00:70:21:00:20]
-    > tcpdump -n -e: 02:00:00:00:00:24 > 06:00:70:21:00:20, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:24 > 06:00:70:21:00:20, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40430 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 06:00:70:21:00:20 → eth1 로 전달 (VLAN 112)
+35710 Dev 서브넷 스위치 frame.receive | eth4 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:24 → 06:00:70:21:00:20]
     > tcpdump -n -e: 02:00:00:00:00:24 > 06:00:70:21:00:20, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:24 > 06:00:70:21:00:20, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40430 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 112 를 붙여 송신
+35710 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 06:00:70:21:00:20 → eth1 로 전달 (VLAN 112)
     > tcpdump -n -e: 02:00:00:00:00:24 > 06:00:70:21:00:20, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:24 > 06:00:70:21:00:20, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40430 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0y:0 → gateway_0w:1 (10ms)
+35710 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 112 를 붙여 송신
     > tcpdump -n -e: 02:00:00:00:00:24 > 06:00:70:21:00:20, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:24 > 06:00:70:21:00:20, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40440 Dev VPC 라우터 frame.receive | if1.112 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:24] (VLAN 112 태그 떼어냄)
+35710 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0y:0 → gateway_0w:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:24 > 06:00:70:21:00:20, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:24 > 06:00:70:21:00:20, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
+35720 Dev VPC 라우터 frame.receive | if1.112 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:24] (VLAN 112 태그 떼어냄)
     > tcpdump -n -e: 02:00:00:00:00:24 > 06:00:70:21:00:20, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40440 Dev VPC 라우터 ip.forward | 라우팅: 8.8.8.8 → if0 (디폴트 라우트, 넥스트 홉 10.250.0.1), TTL 64 → 63
+35720 Dev VPC 라우터 ip.forward | 라우팅: 8.8.8.8 → if0 (디폴트 라우트, 넥스트 홉 10.250.0.1), TTL 64 → 63
     > 시스코 debug ip packet: IP: s=192.168.112.11, d=8.8.8.8 (if0), len 84, forward
     > tcpdump -n -e: 02:00:00:00:00:24 > 06:00:70:21:00:20, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40440 Dev VPC 라우터 arp.cache.hit | ARP 캐시 적중: 10.250.0.1 → 02:00:00:11:00:1e
-40440 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
+35720 Dev VPC 라우터 arp.cache.hit | ARP 캐시 적중: 10.250.0.1 → 02:00:00:11:00:1e
+35720 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40440 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 gateway_0w:0 → switch_0v:1 (10ms)
+35720 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 gateway_0w:0 → switch_0v:1 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40450 NCP VPC 연결 frame.receive | eth2 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
-    > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40450 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:11:00:1e → eth4 로 전달
+35730 NCP VPC 연결 frame.receive | eth2 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40450 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0v:3 → nat_0u:1 (10ms)
+35730 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:11:00:1e → eth4 로 전달
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
-40460 NCP VPN Gateway frame.receive | inside 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20]
+35730 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0v:3 → nat_0u:1 (10ms)
+    > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
+    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
+35740 NCP VPN Gateway frame.receive | inside 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40460 NCP VPN Gateway fw.allow | 방화벽 허용: 아웃바운드 ICMP ping 요청 192.168.112.11 → 8.8.8.8 — 규칙 3 (허용 · 아웃바운드 · 모든 프로토콜)
+35740 NCP VPN Gateway fw.allow | 방화벽 허용: 아웃바운드 ICMP ping 요청 192.168.112.11 → 8.8.8.8 — 규칙 3 (허용 · 아웃바운드 · 모든 프로토콜)
     > 리눅스 iptables LOG: [ACCEPT] SRC=192.168.112.11 DST=8.8.8.8 LEN=84 TTL=63 PROTO=ICMP
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40460 NCP VPN Gateway nat.translate | NAT 변환: 192.168.112.11 (ICMP id 4269) → 203.0.113.18 (ICMP id 40001) — 사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록
+35740 NCP VPN Gateway nat.translate | NAT 변환: 192.168.112.11 (ICMP id 4269) → 203.0.113.18 (ICMP id 40001) — 사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록
     > 시스코 debug ip nat: NAT: s=192.168.112.11->203.0.113.18, d=8.8.8.8 [40001]
     > 리눅스 conntrack -E: [NEW] icmp     1 30 src=192.168.112.11 dst=8.8.8.8 type=8 code=0 id=4269 [UNREPLIED] src=8.8.8.8 dst=203.0.113.18 type=0 code=0 id=40001
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40460 NCP VPN Gateway ip.forward | 라우팅: 8.8.8.8 → outside (디폴트 라우트, 넥스트 홉 203.0.113.17), TTL 63 → 62
+35740 NCP VPN Gateway ip.forward | 라우팅: 8.8.8.8 → outside (디폴트 라우트, 넥스트 홉 203.0.113.17), TTL 63 → 62
     > 시스코 debug ip packet: IP: s=192.168.112.11, d=8.8.8.8 (outside), len 84, forward
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.112.11 > 8.8.8.8: ICMP echo request, id 4269, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40460 NCP VPN Gateway arp.cache.hit | ARP 캐시 적중: 203.0.113.17 → 02:00:00:00:00:01
-40460 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
+35740 NCP VPN Gateway arp.cache.hit | ARP 캐시 적중: 203.0.113.17 → 02:00:00:00:00:01
+35740 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40460 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 요청 seq=1 nat_0u:0 → switch_0t:4 (10ms)
+35740 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 요청 seq=1 nat_0u:0 → switch_0t:4 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40470 인터넷 (NCP 쪽) frame.receive | eth5 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
-    > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-    > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40470 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth1 로 전달
+35750 인터넷 (NCP 쪽) frame.receive | eth5 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40470 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0t:0 → switch_02:6 (10ms)
+35750 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth1 로 전달
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40480 통신사 구간 frame.receive | eth7 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
+35750 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0t:0 → switch_02:6 (10ms)
+    > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
+    > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
+35760 통신사 구간 frame.receive | eth7 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40480 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth5 로 전달
+35760 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth5 로 전달
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40480 통신사 구간 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_02:4 → internet_01:0 (10ms)
+35760 통신사 구간 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_02:4 → internet_01:0 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40490 internet-1 frame.receive | 프레임 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e]
+35770 internet-1 frame.receive | 프레임 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40490 internet-1 inet.forward | 인터넷 경로로 8.8.8.8 (Google DNS) 에 전달 — 중간 라우터들은 생략, 왕복 60ms
+35770 internet-1 inet.forward | 인터넷 경로로 8.8.8.8 (Google DNS) 에 전달 — 중간 라우터들은 생략, 왕복 60ms
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
-40550 internet-1 inet.reply | 8.8.8.8 (Google DNS) 가 응답 → 203.0.113.18 로 회신 (TTL 54: 중간 라우터 10개를 지났다고 가정)
-40550 internet-1 ip.route | 203.0.113.18 는 같은 서브넷 203.0.113.0/24 → 직접 전달 (next hop = 203.0.113.18)
-40550 internet-1 arp.cache.hit | ARP 캐시 적중: 203.0.113.18 → 02:00:00:10:00:1e
-40550 internet-1 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
+35830 internet-1 inet.reply | 8.8.8.8 (Google DNS) 가 응답 → 203.0.113.18 로 회신 (TTL 54: 중간 라우터 10개를 지났다고 가정)
+35830 internet-1 ip.route | 203.0.113.18 는 같은 서브넷 203.0.113.0/24 → 직접 전달 (next hop = 203.0.113.18)
+35830 internet-1 arp.cache.hit | ARP 캐시 적중: 203.0.113.18 → 02:00:00:10:00:1e
+35830 internet-1 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
-40550 internet-1 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 internet_01:0 → switch_02:4 (10ms)
+35830 internet-1 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 internet_01:0 → switch_02:4 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
-40560 통신사 구간 frame.receive | eth5 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
-    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
-    > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
-40560 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth7 로 전달
+35840 통신사 구간 frame.receive | eth5 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
-40560 통신사 구간 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_02:6 → switch_0t:0 (10ms)
+35840 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth7 로 전달
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
-40570 인터넷 (NCP 쪽) frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
+35840 통신사 구간 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_02:6 → switch_0t:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
+    > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
+35850 인터넷 (NCP 쪽) frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
-40570 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth5 로 전달
+35850 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth5 로 전달
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
-40570 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0t:4 → nat_0u:0 (10ms)
+35850 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0t:4 → nat_0u:0 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
-40580 NCP VPN Gateway frame.receive | outside 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01]
+35860 NCP VPN Gateway frame.receive | outside 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40580 NCP VPN Gateway nat.restore | NAT 역변환: 203.0.113.18 (ICMP id 40001) → 192.168.112.11 (id 4269) — 테이블에 기록된 내부 호스트로 되돌림
+35860 NCP VPN Gateway nat.restore | NAT 역변환: 203.0.113.18 (ICMP id 40001) → 192.168.112.11 (id 4269) — 테이블에 기록된 내부 호스트로 되돌림
     > 시스코 debug ip nat: NAT*: s=8.8.8.8, d=203.0.113.18->192.168.112.11 [40001]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40580 NCP VPN Gateway fw.established | 방화벽: 인바운드 ICMP ping 응답 8.8.8.8 → 192.168.112.11 은(는) 기본 정책 상 차단이지만, 안에서 시작한 통신의 응답이라 Stateful 검사로 허용
+35860 NCP VPN Gateway fw.established | 방화벽: 인바운드 ICMP ping 응답 8.8.8.8 → 192.168.112.11 은(는) 기본 정책 상 차단이지만, 안에서 시작한 통신의 응답이라 Stateful 검사로 허용
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40580 NCP VPN Gateway ip.forward | 라우팅: 192.168.112.11 → inside (스태틱 라우팅, 넥스트 홉 10.250.0.2), TTL 54 → 53
+35860 NCP VPN Gateway ip.forward | 라우팅: 192.168.112.11 → inside (스태틱 라우팅, 넥스트 홉 10.250.0.2), TTL 54 → 53
     > 시스코 debug ip packet: IP: s=8.8.8.8, d=203.0.113.18 (inside), len 84, forward
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40001, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40580 NCP VPN Gateway arp.cache.hit | ARP 캐시 적중: 10.250.0.2 → 02:00:00:10:00:20
-40580 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
+35860 NCP VPN Gateway arp.cache.hit | ARP 캐시 적중: 10.250.0.2 → 02:00:00:10:00:20
+35860 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40580 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 응답 seq=1 nat_0u:1 → switch_0v:3 (10ms)
+35860 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 응답 seq=1 nat_0u:1 → switch_0v:3 (10ms)
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40590 NCP VPC 연결 frame.receive | eth4 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
-    > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40590 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:10:00:20 → eth2 로 전달
+35870 NCP VPC 연결 frame.receive | eth4 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40590 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0v:1 → gateway_0w:0 (10ms)
+35870 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:10:00:20 → eth2 로 전달
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40600 Dev VPC 라우터 frame.receive | if0 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e]
+35870 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0v:1 → gateway_0w:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
+    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
+35880 Dev VPC 라우터 frame.receive | if0 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e]
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40600 Dev VPC 라우터 ip.forward | 라우팅: 192.168.112.11 → if1.112 (192.168.112.0/24 에 직접 연결), TTL 53 → 52
+35880 Dev VPC 라우터 ip.forward | 라우팅: 192.168.112.11 → if1.112 (192.168.112.0/24 에 직접 연결), TTL 53 → 52
     > 시스코 debug ip packet: IP: s=8.8.8.8, d=192.168.112.11 (if1.112), len 84, forward
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40600 Dev VPC 라우터 arp.cache.hit | ARP 캐시 적중: 192.168.112.11 → 02:00:00:00:00:24
-40600 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [06:00:70:21:00:20 → 02:00:00:00:00:24]
+35880 Dev VPC 라우터 arp.cache.hit | ARP 캐시 적중: 192.168.112.11 → 02:00:00:00:00:24
+35880 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [06:00:70:21:00:20 → 02:00:00:00:00:24]
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40600 Dev VPC 라우터 vlan.tag | [if1.112] 802.1Q 태그 VLAN 112 를 붙여 if1 로 송신
+35880 Dev VPC 라우터 vlan.tag | [if1.112] 802.1Q 태그 VLAN 112 를 붙여 if1 로 송신
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40600 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 gateway_0w:1 → switch_0y:0 (10ms)
+35880 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 gateway_0w:1 → switch_0y:0 (10ms)
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40610 Dev 서브넷 스위치 frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [06:00:70:21:00:20 → 02:00:00:00:00:24] (VLAN 112 태그)
-    > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40610 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:24 → eth4 로 전달 (VLAN 112)
+35890 Dev 서브넷 스위치 frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [06:00:70:21:00:20 → 02:00:00:00:00:24] (VLAN 112 태그)
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40610 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0y:3 → server_010:0 (10ms)
+35890 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:24 → eth4 로 전달 (VLAN 112)
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40620 dev-2 frame.receive | 프레임 수신: ICMP Echo 응답 seq=1 [06:00:70:21:00:20 → 내 MAC]
+35890 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0y:3 → server_010:0 (10ms)
+    > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, 802.1Q vlan 112, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
+35900 dev-2 frame.receive | 프레임 수신: ICMP Echo 응답 seq=1 [06:00:70:21:00:20 → 내 MAC]
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
-40620 dev-2 icmp.reply.received | ping 성공: 8.8.8.8 seq=1 RTT=240ms
+35900 dev-2 icmp.reply.received | ping 성공: 8.8.8.8 seq=1 RTT=240ms
     > ping: 64 bytes from 8.8.8.8: icmp_seq=1 ttl=52 time=240 ms
     > tcpdump -n -e: 06:00:70:21:00:20 > 02:00:00:00:00:24, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.112.11: ICMP echo reply, id 4269, seq 1, length 64
 ## dev-3 → 8.8.8.8
-40620 dev-3 action | [사용자] ping 8.8.8.8
-40620 dev-3 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
-40620 dev-3 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.113.1 로 전달
-40620 dev-3 arp.cache.miss | ARP 캐시에 192.168.113.1 없음 → 패킷 대기열에 보관 (1개)
-40620 dev-3 arp.request.sent | ARP 요청 브로드캐스트: "192.168.113.1 의 MAC은?" (나는 192.168.113.11 / 02:00:00:00:00:25)
+35900 dev-3 action | [사용자] ping 8.8.8.8
+35900 dev-3 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+35900 dev-3 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.113.1 로 전달
+35900 dev-3 arp.cache.miss | ARP 캐시에 192.168.113.1 없음 → 패킷 대기열에 보관 (1개)
+35900 dev-3 arp.request.sent | ARP 요청 브로드캐스트: "192.168.113.1 의 MAC은?" (나는 192.168.113.11 / 02:00:00:00:00:25)
     > tcpdump -n -e: 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
-40620 dev-3 link.transmit | 링크 전송: ARP 요청 (192.168.113.1?) server_011:0 → switch_0y:5 (10ms)
+35900 dev-3 link.transmit | 링크 전송: ARP 요청 (192.168.113.1?) server_011:0 → switch_0y:5 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
-40630 Dev 서브넷 스위치 frame.receive | eth6 수신: ARP 요청 (192.168.113.1?) [02:00:00:00:00:25 → ff:ff:ff:ff:ff:ff]
-    > tcpdump -n -e: 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
-40630 Dev 서브넷 스위치 switch.flood | 브로드캐스트 → eth6 제외 플러딩 [eth1] (VLAN 113; 다른 VLAN 포트 eth2, eth4 제외)
+35910 Dev 서브넷 스위치 frame.receive | eth6 수신: ARP 요청 (192.168.113.1?) [02:00:00:00:00:25 → ff:ff:ff:ff:ff:ff]
     > tcpdump -n -e: 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
-40630 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 113 를 붙여 송신
+35910 Dev 서브넷 스위치 switch.flood | 브로드캐스트 → eth6 제외 플러딩 [eth1] (VLAN 113; 다른 VLAN 포트 eth2, eth4 제외)
     > tcpdump -n -e: 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
-40630 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.113.1?) switch_0y:0 → gateway_0w:1 (10ms)
+35910 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 113 를 붙여 송신
     > tcpdump -n -e: 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
-40640 Dev VPC 라우터 frame.receive | if1.113 수신: ARP 요청 (192.168.113.1?) [02:00:00:00:00:25] (VLAN 113 태그 떼어냄)
+35910 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.113.1?) switch_0y:0 → gateway_0w:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
+35920 Dev VPC 라우터 frame.receive | if1.113 수신: ARP 요청 (192.168.113.1?) [02:00:00:00:00:25] (VLAN 113 태그 떼어냄)
     > tcpdump -n -e: 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
-40640 Dev VPC 라우터 arp.request.received | ARP 요청 수신: "192.168.113.1 의 MAC은?" (보낸이 192.168.113.11 / 02:00:00:00:00:25)
+35920 Dev VPC 라우터 arp.request.received | ARP 요청 수신: "192.168.113.1 의 MAC은?" (보낸이 192.168.113.11 / 02:00:00:00:00:25)
     > tcpdump -n -e: 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
-40640 Dev VPC 라우터 arp.cache.update | ARP 캐시 추가: 192.168.113.11 → 02:00:00:00:00:25 (요청의 보낸이 정보에서 학습)
+35920 Dev VPC 라우터 arp.cache.update | ARP 캐시 추가: 192.168.113.11 → 02:00:00:00:00:25 (요청의 보낸이 정보에서 학습)
     > 리눅스 ip neigh: 192.168.113.11 dev eth0 lladdr 02:00:00:00:00:25 REACHABLE
     > tcpdump -n -e: 02:00:00:00:00:25 > ff:ff:ff:ff:ff:ff, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Request who-has 192.168.113.1 tell 192.168.113.11, length 28
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
-40640 Dev VPC 라우터 arp.reply.sent | ARP 응답 송신: "192.168.113.1 는 06:00:71:21:00:20" → 02:00:00:00:00:25 에게 유니캐스트
+35920 Dev VPC 라우터 arp.reply.sent | ARP 응답 송신: "192.168.113.1 는 06:00:71:21:00:20" → 02:00:00:00:00:25 에게 유니캐스트
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
-40640 Dev VPC 라우터 vlan.tag | [if1.113] 802.1Q 태그 VLAN 113 를 붙여 if1 로 송신
+35920 Dev VPC 라우터 vlan.tag | [if1.113] 802.1Q 태그 VLAN 113 를 붙여 if1 로 송신
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
-40640 Dev VPC 라우터 link.transmit | 링크 전송: ARP 응답 (192.168.113.1=06:00:71:21:00:20) gateway_0w:1 → switch_0y:0 (10ms)
+35920 Dev VPC 라우터 link.transmit | 링크 전송: ARP 응답 (192.168.113.1=06:00:71:21:00:20) gateway_0w:1 → switch_0y:0 (10ms)
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
-40650 Dev 서브넷 스위치 frame.receive | eth1 수신: ARP 응답 (192.168.113.1=06:00:71:21:00:20) [06:00:71:21:00:20 → 02:00:00:00:00:25] (VLAN 113 태그)
-    > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
-40650 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:25 → eth6 로 전달 (VLAN 113)
+35930 Dev 서브넷 스위치 frame.receive | eth1 수신: ARP 응답 (192.168.113.1=06:00:71:21:00:20) [06:00:71:21:00:20 → 02:00:00:00:00:25] (VLAN 113 태그)
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
-40650 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 응답 (192.168.113.1=06:00:71:21:00:20) switch_0y:5 → server_011:0 (10ms)
+35930 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:25 → eth6 로 전달 (VLAN 113)
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
-40660 dev-3 frame.receive | 프레임 수신: ARP 응답 (192.168.113.1=06:00:71:21:00:20) [06:00:71:21:00:20 → 내 MAC]
+35930 Dev 서브넷 스위치 link.transmit | 링크 전송: ARP 응답 (192.168.113.1=06:00:71:21:00:20) switch_0y:5 → server_011:0 (10ms)
+    > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
+35940 dev-3 frame.receive | 프레임 수신: ARP 응답 (192.168.113.1=06:00:71:21:00:20) [06:00:71:21:00:20 → 내 MAC]
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
     > tcpdump (dev-3 이 내보낸 쪽): 02:00:00:00:00:25 > 06:00:71:21:00:20, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40660 dev-3 arp.reply.received | ARP 응답 수신: 192.168.113.1 는 06:00:71:21:00:20
+35940 dev-3 arp.reply.received | ARP 응답 수신: 192.168.113.1 는 06:00:71:21:00:20
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
     > tcpdump (dev-3 이 내보낸 쪽): 02:00:00:00:00:25 > 06:00:71:21:00:20, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40660 dev-3 arp.cache.update | ARP 캐시 추가: 192.168.113.1 → 06:00:71:21:00:20 (응답에서 학습)
+35940 dev-3 arp.cache.update | ARP 캐시 추가: 192.168.113.1 → 06:00:71:21:00:20 (응답에서 학습)
     > 리눅스 ip neigh: 192.168.113.1 dev eth0 lladdr 06:00:71:21:00:20 REACHABLE
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype ARP (0x0806): ARP, Reply 192.168.113.1 is-at 06:00:71:21:00:20, length 28
     > tcpdump (dev-3 이 내보낸 쪽): 02:00:00:00:00:25 > 06:00:71:21:00:20, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40660 dev-3 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
-40660 dev-3 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:25 → 06:00:71:21:00:20]
+35940 dev-3 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
+35940 dev-3 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:25 → 06:00:71:21:00:20]
     > tcpdump -n -e: 02:00:00:00:00:25 > 06:00:71:21:00:20, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40660 dev-3 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 server_011:0 → switch_0y:5 (10ms)
+35940 dev-3 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 server_011:0 → switch_0y:5 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:25 > 06:00:71:21:00:20, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40670 Dev 서브넷 스위치 frame.receive | eth6 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:25 → 06:00:71:21:00:20]
-    > tcpdump -n -e: 02:00:00:00:00:25 > 06:00:71:21:00:20, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:25 > 06:00:71:21:00:20, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40670 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 06:00:71:21:00:20 → eth1 로 전달 (VLAN 113)
+35950 Dev 서브넷 스위치 frame.receive | eth6 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:25 → 06:00:71:21:00:20]
     > tcpdump -n -e: 02:00:00:00:00:25 > 06:00:71:21:00:20, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:25 > 06:00:71:21:00:20, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40670 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 113 를 붙여 송신
+35950 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 06:00:71:21:00:20 → eth1 로 전달 (VLAN 113)
     > tcpdump -n -e: 02:00:00:00:00:25 > 06:00:71:21:00:20, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:25 > 06:00:71:21:00:20, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40670 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0y:0 → gateway_0w:1 (10ms)
+35950 Dev 서브넷 스위치 vlan.tag | eth1 는 트렁크 → 802.1Q 태그 VLAN 113 를 붙여 송신
     > tcpdump -n -e: 02:00:00:00:00:25 > 06:00:71:21:00:20, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:25 > 06:00:71:21:00:20, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40680 Dev VPC 라우터 frame.receive | if1.113 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:25] (VLAN 113 태그 떼어냄)
+35950 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0y:0 → gateway_0w:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:25 > 06:00:71:21:00:20, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 02:00:00:00:00:25 > 06:00:71:21:00:20, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
+35960 Dev VPC 라우터 frame.receive | if1.113 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:25] (VLAN 113 태그 떼어냄)
     > tcpdump -n -e: 02:00:00:00:00:25 > 06:00:71:21:00:20, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40680 Dev VPC 라우터 ip.forward | 라우팅: 8.8.8.8 → if0 (디폴트 라우트, 넥스트 홉 10.250.0.1), TTL 64 → 63
+35960 Dev VPC 라우터 ip.forward | 라우팅: 8.8.8.8 → if0 (디폴트 라우트, 넥스트 홉 10.250.0.1), TTL 64 → 63
     > 시스코 debug ip packet: IP: s=192.168.113.11, d=8.8.8.8 (if0), len 84, forward
     > tcpdump -n -e: 02:00:00:00:00:25 > 06:00:71:21:00:20, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40680 Dev VPC 라우터 arp.cache.hit | ARP 캐시 적중: 10.250.0.1 → 02:00:00:11:00:1e
-40680 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
+35960 Dev VPC 라우터 arp.cache.hit | ARP 캐시 적중: 10.250.0.1 → 02:00:00:11:00:1e
+35960 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40680 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 gateway_0w:0 → switch_0v:1 (10ms)
+35960 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 gateway_0w:0 → switch_0v:1 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40690 NCP VPC 연결 frame.receive | eth2 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
-    > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40690 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:11:00:1e → eth4 로 전달
+35970 NCP VPC 연결 frame.receive | eth2 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20 → 02:00:00:11:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40690 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0v:3 → nat_0u:1 (10ms)
+35970 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:11:00:1e → eth4 로 전달
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
-40700 NCP VPN Gateway frame.receive | inside 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20]
+35970 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0v:3 → nat_0u:1 (10ms)
+    > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
+    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
+35980 NCP VPN Gateway frame.receive | inside 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40700 NCP VPN Gateway fw.allow | 방화벽 허용: 아웃바운드 ICMP ping 요청 192.168.113.11 → 8.8.8.8 — 규칙 3 (허용 · 아웃바운드 · 모든 프로토콜)
+35980 NCP VPN Gateway fw.allow | 방화벽 허용: 아웃바운드 ICMP ping 요청 192.168.113.11 → 8.8.8.8 — 규칙 3 (허용 · 아웃바운드 · 모든 프로토콜)
     > 리눅스 iptables LOG: [ACCEPT] SRC=192.168.113.11 DST=8.8.8.8 LEN=84 TTL=63 PROTO=ICMP
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40700 NCP VPN Gateway nat.translate | NAT 변환: 192.168.113.11 (ICMP id 4268) → 203.0.113.18 (ICMP id 40002) — 사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록
+35980 NCP VPN Gateway nat.translate | NAT 변환: 192.168.113.11 (ICMP id 4268) → 203.0.113.18 (ICMP id 40002) — 사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록
     > 시스코 debug ip nat: NAT: s=192.168.113.11->203.0.113.18, d=8.8.8.8 [40002]
     > 리눅스 conntrack -E: [NEW] icmp     1 30 src=192.168.113.11 dst=8.8.8.8 type=8 code=0 id=4268 [UNREPLIED] src=8.8.8.8 dst=203.0.113.18 type=0 code=0 id=40002
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40700 NCP VPN Gateway ip.forward | 라우팅: 8.8.8.8 → outside (디폴트 라우트, 넥스트 홉 203.0.113.17), TTL 63 → 62
+35980 NCP VPN Gateway ip.forward | 라우팅: 8.8.8.8 → outside (디폴트 라우트, 넥스트 홉 203.0.113.17), TTL 63 → 62
     > 시스코 debug ip packet: IP: s=192.168.113.11, d=8.8.8.8 (outside), len 84, forward
     > tcpdump -n -e: 02:00:00:10:00:20 > 02:00:00:11:00:1e, ethertype IPv4 (0x0800): IP 192.168.113.11 > 8.8.8.8: ICMP echo request, id 4268, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40700 NCP VPN Gateway arp.cache.hit | ARP 캐시 적중: 203.0.113.17 → 02:00:00:00:00:01
-40700 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
+35980 NCP VPN Gateway arp.cache.hit | ARP 캐시 적중: 203.0.113.17 → 02:00:00:00:00:01
+35980 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40700 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 요청 seq=1 nat_0u:0 → switch_0t:4 (10ms)
+35980 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 요청 seq=1 nat_0u:0 → switch_0t:4 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40710 인터넷 (NCP 쪽) frame.receive | eth5 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
-    > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-    > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40710 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth1 로 전달
+35990 인터넷 (NCP 쪽) frame.receive | eth5 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40710 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0t:0 → switch_02:6 (10ms)
+35990 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth1 로 전달
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40720 통신사 구간 frame.receive | eth7 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
+35990 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_0t:0 → switch_02:6 (10ms)
+    > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
+    > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
+36000 통신사 구간 frame.receive | eth7 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e → 02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40720 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth5 로 전달
+36000 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth5 로 전달
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40720 통신사 구간 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_02:4 → internet_01:0 (10ms)
+36000 통신사 구간 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_02:4 → internet_01:0 (10ms)
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40730 internet-1 frame.receive | 프레임 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e]
+36010 internet-1 frame.receive | 프레임 수신: ICMP Echo 요청 seq=1 [02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40730 internet-1 inet.forward | 인터넷 경로로 8.8.8.8 (Google DNS) 에 전달 — 중간 라우터들은 생략, 왕복 60ms
+36010 internet-1 inet.forward | 인터넷 경로로 8.8.8.8 (Google DNS) 에 전달 — 중간 라우터들은 생략, 왕복 60ms
     > tcpdump -n -e: 02:00:00:10:00:1e > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.18 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
-40790 internet-1 inet.reply | 8.8.8.8 (Google DNS) 가 응답 → 203.0.113.18 로 회신 (TTL 54: 중간 라우터 10개를 지났다고 가정)
-40790 internet-1 ip.route | 203.0.113.18 는 같은 서브넷 203.0.113.0/24 → 직접 전달 (next hop = 203.0.113.18)
-40790 internet-1 arp.cache.hit | ARP 캐시 적중: 203.0.113.18 → 02:00:00:10:00:1e
-40790 internet-1 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
+36070 internet-1 inet.reply | 8.8.8.8 (Google DNS) 가 응답 → 203.0.113.18 로 회신 (TTL 54: 중간 라우터 10개를 지났다고 가정)
+36070 internet-1 ip.route | 203.0.113.18 는 같은 서브넷 203.0.113.0/24 → 직접 전달 (next hop = 203.0.113.18)
+36070 internet-1 arp.cache.hit | ARP 캐시 적중: 203.0.113.18 → 02:00:00:10:00:1e
+36070 internet-1 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
-40790 internet-1 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 internet_01:0 → switch_02:4 (10ms)
+36070 internet-1 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 internet_01:0 → switch_02:4 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
-40800 통신사 구간 frame.receive | eth5 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
-    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
-    > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
-40800 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth7 로 전달
+36080 통신사 구간 frame.receive | eth5 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
-40800 통신사 구간 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_02:6 → switch_0t:0 (10ms)
+36080 통신사 구간 switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth7 로 전달
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
     > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
-40810 인터넷 (NCP 쪽) frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
+36080 통신사 구간 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_02:6 → switch_0t:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
+    > tcpdump (통신사 구간 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
+36090 인터넷 (NCP 쪽) frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:10:00:1e]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
-40810 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth5 로 전달
+36090 인터넷 (NCP 쪽) switch.forward | MAC 테이블 조회: 02:00:00:10:00:1e → eth5 로 전달
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
-40810 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0t:4 → nat_0u:0 (10ms)
+36090 인터넷 (NCP 쪽) link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0t:4 → nat_0u:0 (10ms)
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
     > tcpdump (인터넷 (NCP 쪽) 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
-40820 NCP VPN Gateway frame.receive | outside 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01]
+36100 NCP VPN Gateway frame.receive | outside 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40820 NCP VPN Gateway nat.restore | NAT 역변환: 203.0.113.18 (ICMP id 40002) → 192.168.113.11 (id 4268) — 테이블에 기록된 내부 호스트로 되돌림
+36100 NCP VPN Gateway nat.restore | NAT 역변환: 203.0.113.18 (ICMP id 40002) → 192.168.113.11 (id 4268) — 테이블에 기록된 내부 호스트로 되돌림
     > 시스코 debug ip nat: NAT*: s=8.8.8.8, d=203.0.113.18->192.168.113.11 [40002]
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40820 NCP VPN Gateway fw.established | 방화벽: 인바운드 ICMP ping 응답 8.8.8.8 → 192.168.113.11 은(는) 기본 정책 상 차단이지만, 안에서 시작한 통신의 응답이라 Stateful 검사로 허용
+36100 NCP VPN Gateway fw.established | 방화벽: 인바운드 ICMP ping 응답 8.8.8.8 → 192.168.113.11 은(는) 기본 정책 상 차단이지만, 안에서 시작한 통신의 응답이라 Stateful 검사로 허용
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40820 NCP VPN Gateway ip.forward | 라우팅: 192.168.113.11 → inside (스태틱 라우팅, 넥스트 홉 10.250.0.2), TTL 54 → 53
+36100 NCP VPN Gateway ip.forward | 라우팅: 192.168.113.11 → inside (스태틱 라우팅, 넥스트 홉 10.250.0.2), TTL 54 → 53
     > 시스코 debug ip packet: IP: s=8.8.8.8, d=203.0.113.18 (inside), len 84, forward
     > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:10:00:1e, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.18: ICMP echo reply, id 40002, seq 1, length 64
     > tcpdump (NCP VPN Gateway 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40820 NCP VPN Gateway arp.cache.hit | ARP 캐시 적중: 10.250.0.2 → 02:00:00:10:00:20
-40820 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
+36100 NCP VPN Gateway arp.cache.hit | ARP 캐시 적중: 10.250.0.2 → 02:00:00:10:00:20
+36100 NCP VPN Gateway frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40820 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 응답 seq=1 nat_0u:1 → switch_0v:3 (10ms)
+36100 NCP VPN Gateway link.transmit | 링크 전송: ICMP Echo 응답 seq=1 nat_0u:1 → switch_0v:3 (10ms)
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40830 NCP VPC 연결 frame.receive | eth4 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
-    > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40830 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:10:00:20 → eth2 로 전달
+36110 NCP VPC 연결 frame.receive | eth4 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e → 02:00:00:10:00:20]
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40830 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0v:1 → gateway_0w:0 (10ms)
+36110 NCP VPC 연결 switch.forward | MAC 테이블 조회: 02:00:00:10:00:20 → eth2 로 전달
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
     > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40840 Dev VPC 라우터 frame.receive | if0 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e]
+36110 NCP VPC 연결 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0v:1 → gateway_0w:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
+    > tcpdump (NCP VPC 연결 이 내보낸 쪽): 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
+36120 Dev VPC 라우터 frame.receive | if0 수신: ICMP Echo 응답 seq=1 [02:00:00:11:00:1e]
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40840 Dev VPC 라우터 ip.forward | 라우팅: 192.168.113.11 → if1.113 (192.168.113.0/24 에 직접 연결), TTL 53 → 52
+36120 Dev VPC 라우터 ip.forward | 라우팅: 192.168.113.11 → if1.113 (192.168.113.0/24 에 직접 연결), TTL 53 → 52
     > 시스코 debug ip packet: IP: s=8.8.8.8, d=192.168.113.11 (if1.113), len 84, forward
     > tcpdump -n -e: 02:00:00:11:00:1e > 02:00:00:10:00:20, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
     > tcpdump (Dev VPC 라우터 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40840 Dev VPC 라우터 arp.cache.hit | ARP 캐시 적중: 192.168.113.11 → 02:00:00:00:00:25
-40840 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [06:00:71:21:00:20 → 02:00:00:00:00:25]
+36120 Dev VPC 라우터 arp.cache.hit | ARP 캐시 적중: 192.168.113.11 → 02:00:00:00:00:25
+36120 Dev VPC 라우터 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [06:00:71:21:00:20 → 02:00:00:00:00:25]
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40840 Dev VPC 라우터 vlan.tag | [if1.113] 802.1Q 태그 VLAN 113 를 붙여 if1 로 송신
+36120 Dev VPC 라우터 vlan.tag | [if1.113] 802.1Q 태그 VLAN 113 를 붙여 if1 로 송신
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40840 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 gateway_0w:1 → switch_0y:0 (10ms)
+36120 Dev VPC 라우터 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 gateway_0w:1 → switch_0y:0 (10ms)
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40850 Dev 서브넷 스위치 frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [06:00:71:21:00:20 → 02:00:00:00:00:25] (VLAN 113 태그)
-    > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40850 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:25 → eth6 로 전달 (VLAN 113)
+36130 Dev 서브넷 스위치 frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [06:00:71:21:00:20 → 02:00:00:00:00:25] (VLAN 113 태그)
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40850 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0y:5 → server_011:0 (10ms)
+36130 Dev 서브넷 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:25 → eth6 로 전달 (VLAN 113)
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
     > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40860 dev-3 frame.receive | 프레임 수신: ICMP Echo 응답 seq=1 [06:00:71:21:00:20 → 내 MAC]
+36130 Dev 서브넷 스위치 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_0y:5 → server_011:0 (10ms)
+    > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, 802.1Q vlan 113, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
+    > tcpdump (Dev 서브넷 스위치 이 내보낸 쪽): 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
+36140 dev-3 frame.receive | 프레임 수신: ICMP Echo 응답 seq=1 [06:00:71:21:00:20 → 내 MAC]
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64
-40860 dev-3 icmp.reply.received | ping 성공: 8.8.8.8 seq=1 RTT=240ms
+36140 dev-3 icmp.reply.received | ping 성공: 8.8.8.8 seq=1 RTT=240ms
     > ping: 64 bytes from 8.8.8.8: icmp_seq=1 ttl=52 time=240 ms
     > tcpdump -n -e: 06:00:71:21:00:20 > 02:00:00:00:00:25, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.113.11: ICMP echo reply, id 4268, seq 1, length 64

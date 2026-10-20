@@ -10,7 +10,7 @@
 // 키 만료·ACL·기기 승인, DERP 지역 선택, ZeroTier 의 L2(이더넷) 성격 — 여기서는 둘 다 IP 만 나른다, 경로 keepalive·재확인
 import { sameSubnet, type Ip } from "../addr";
 import { STUN_PORT, TS_PORT, ZT_PORT, type Endpoint, type Ipv4Packet, type StunMessage, type TsMessage, type TsPeerInfo, type UdpPacket } from "../packet";
-import type { NodeContext } from "./node";
+import type { NodeContext, TimerHandle } from "./node";
 import { STUN_SERVERS } from "./p2p";
 
 export type MeshNet = "tailscale" | "zerotier";
@@ -110,6 +110,12 @@ export class MeshAgent {
   endpoints: Endpoint[] = [];
   private loginTries = 0;
   private loginTok = 0;
+  /** 로그인 응답을 기다리는 timer — netmap 을 받거나 그만두면 취소 (남겨 두면 할 일 없이 시계만 그 시각까지 간다) */
+  private loginWait: TimerHandle | undefined;
+  private stopLoginWait(): void {
+    this.loginTok++;
+    this.loginWait?.cancel();
+  }
   /** 주기 확인(refresh) 타이머 — 로그인할 때마다 새로 (옛 타이머는 무시) */
   private refreshTok = 0;
   private stunTx = 0;
@@ -182,7 +188,7 @@ export class MeshAgent {
     this.peers.clear();
     this.endpoints = [];
     this.loginTries = 0;
-    this.loginTok++;
+    this.stopLoginWait();
     this.stunTx = 0;
   }
 
@@ -196,7 +202,7 @@ export class MeshAgent {
   lost(): void {
     if (!this.config.enabled) return;
     this.phase = "off";
-    this.loginTok++;
+    this.stopLoginWait();
     for (const p of this.peers.values()) {
       p.path = undefined;
       p.disco = undefined;
@@ -232,7 +238,8 @@ export class MeshAgent {
     this.endpoints = [{ ip: me, port: this.port }];
     ctx.trace("mesh.login", "app", `${this.brand}: ${this.srv.controlName} ${this.srv.control} 에 로그인 (노드 키 ${c.key.slice(0, 8)}…, 후보 ${me}:${this.port})`, { mesh: c.net });
     this.toControl({ kind: "ts", net: c.net, op: "login", network: c.network, name: c.name, key: c.key, endpoints: this.endpoints, routes: c.routes, exitNode: c.exitNode }, ctx);
-    ctx.timer(WAIT, TS_TIMER_TAG, { mesh: "login", tok });
+    this.loginWait?.cancel();
+    this.loginWait = ctx.timer(WAIT, TS_TIMER_TAG, { mesh: "login", tok });
     this.stunTx = 0;
     this.hello(ctx);
   }
@@ -277,7 +284,7 @@ export class MeshAgent {
     if (fromControl && m.op === "denied") {
       this.phase = "denied";
       this.denied = m.reason ?? "거절됨";
-      this.loginTok++;
+      this.stopLoginWait();
       ctx.trace("mesh.drop", "app", `${this.brand}: ${this.srv.controlName}가 거절 — ${this.denied}`, { mesh: c.net, failed: true }, frameId);
       return null;
     }
@@ -291,7 +298,7 @@ export class MeshAgent {
     const c = this.config;
     const first = this.phase !== "up";
     this.phase = "up";
-    this.loginTok++;
+    this.stopLoginWait();
     if (first) ctx.timer(REFRESH, TS_TIMER_TAG, { mesh: "refresh", tok: ++this.refreshTok }, true);
     if (m.self) this.self = { ...m.self };
     const seen = new Set<string>();
@@ -505,7 +512,7 @@ export class MeshAgent {
         ctx.trace("mesh.login", "app", `${this.brand}: ${this.srv.controlName} 응답 없음 → 다시 로그인 (${this.loginTries}/${RETRIES + 1})`, { mesh: c.net });
         this.toControl({ kind: "ts", net: c.net, op: "login", network: c.network, name: c.name, key: c.key, endpoints: this.endpoints, routes: c.routes, exitNode: c.exitNode }, ctx);
         this.hello(ctx);
-        ctx.timer(WAIT, TS_TIMER_TAG, { mesh: "login", tok: d.tok });
+        this.loginWait = ctx.timer(WAIT, TS_TIMER_TAG, { mesh: "login", tok: d.tok });
         return;
       }
       if (d.mesh === "login") ctx.trace("mesh.drop", "app", `${this.brand}: ${this.srv.controlName} ${this.srv.control} 에 닿지 않음 (응답 없음) — 인터넷 연결을 확인. ${LOGIN_RETRY / 1000}초마다 다시 시도 (시간이 흐를 때만)`, { mesh: c.net, failed: true });

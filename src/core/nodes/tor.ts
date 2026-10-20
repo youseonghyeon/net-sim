@@ -5,7 +5,7 @@
 // 줄인 것: TLS·셀 분할·회로 다시 만들기·디렉터리·가드 고르기·.onion 서비스, 여기서는 회로 하나를 계속 쓰고 IP 패킷째 나른다
 import type { Ip } from "../addr";
 import { TOR_EXIT, TOR_GUARD, TOR_MIDDLE, TOR_PORT, type Endpoint, type Ipv4Packet, type TorCell } from "../packet";
-import type { NodeContext } from "./node";
+import type { NodeContext, TimerHandle } from "./node";
 
 export const TOR_TIMER_TAG = "tor";
 const WAIT = 1500;
@@ -23,6 +23,8 @@ export class TorClient {
   private building = false;
   private tries = 0;
   private tok = 0;
+  /** CREATE 응답을 기다리는 timer — 회로가 서거나 그만두면 취소 (남겨 두면 할 일 없이 시계만 그 시각까지 간다) */
+  private wait: TimerHandle | undefined;
   private queue: Ipv4Packet[] = [];
   private nextCirc: number;
   sent = 0;
@@ -47,6 +49,7 @@ export class TorClient {
     if (on === this.enabled) return;
     this.enabled = on;
     this.tok++;
+    this.wait?.cancel();
     this.queue = [];
     if (!on) {
       if (this.circ !== undefined) this.toGuard({ kind: "tor", op: "destroy", circ: this.circ, layers: 0 }, ctx);
@@ -82,7 +85,8 @@ export class TorClient {
     const tok = ++this.tok;
     ctx.trace("tor.circuit", "app", `Tor: 회로 만들기 — 가드 ${TOR_GUARD} 에 CREATE (가드를 거쳐 중간 ${TOR_MIDDLE}, 출구 ${TOR_EXIT} 까지 늘린다 — 릴레이마다 따로 키를 나눈다)`, { tor: true, circ });
     this.toGuard({ kind: "tor", op: "create", circ, layers: 0 }, ctx);
-    ctx.timer(WAIT, TOR_TIMER_TAG, { tor: "create", tok, circ });
+    this.wait?.cancel();
+    this.wait = ctx.timer(WAIT, TOR_TIMER_TAG, { tor: "create", tok, circ });
   }
 
   /**
@@ -115,6 +119,7 @@ export class TorClient {
       if (this.circ !== undefined && this.circ === m.circ) return null;
       this.circ = m.circ;
       this.building = false;
+      this.wait?.cancel();
       ctx.trace("tor.circuit", "app", `Tor: 회로 ${m.circ} 이 섬 (가드 → 중간 → 출구 ${TOR_EXIT}) — 이제 목적지는 출구 주소에서 온 연결로 본다${this.queue.length ? `, 기다리던 ${this.queue.length}개를 보냄` : ""}`, { tor: true, circ: m.circ }, frameId);
       const q = this.queue;
       this.queue = [];
@@ -150,7 +155,7 @@ export class TorClient {
     }
     this.tries++;
     this.toGuard({ kind: "tor", op: "create", circ: d.circ!, layers: 0 }, ctx);
-    ctx.timer(WAIT, TOR_TIMER_TAG, { tor: "create", tok: d.tok, circ: d.circ });
+    this.wait = ctx.timer(WAIT, TOR_TIMER_TAG, { tor: "create", tok: d.tok, circ: d.circ });
   }
 
   summary(): string | undefined {
