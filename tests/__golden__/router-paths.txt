@@ -11,8 +11,8 @@ DNS (공유기 LAN 주소에 묻기): ok 93.184.216.34 · 공유기: dns.query.r
 DPI 가 HTTP 차단: FAILED (연결 거부 (RST)) · 공유기: dpi.block
 방화벽 아웃바운드 TCP 80 거부: FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
 기기 차단 (보낸 기기 MAC): FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
-관리 화면 (LAN 주소 :443): FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: ip.drop
-DNS (공유기 LAN 주소에 묻기): failed · 공유기: ip.drop
+관리 화면 (LAN 주소 :443): CLOSED (정상 종료) · 공유기: fw.allow
+DNS (공유기 LAN 주소에 묻기): ok 93.184.216.34 · 공유기: dns.query.received
 없는 WireGuard 터널 주소 ping: failed (timeout · 응답 없음) · 공유기: ip.no-route
 ## WireGuard 피어 (전체 터널) (mwanvpn — 카페 폰 → 집 Brume 3)
 기본: CLOSED (정상 종료) · 공유기: nat.translate

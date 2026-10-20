@@ -480,7 +480,8 @@ export class Router implements SimNode {
     // VPN 클라이언트가 켜져 있으면 DNS 포워더는 VPN 이 알려 준 DNS 에 터널로 묻는다 (DNS 유출 방지)
     this.dnsForwarder.upstreamFor = (client) => (this.dnsViaVpn(client) ? (this.wgClientCfg?.dns ?? undefined) : undefined);
     // 서버의 터널 주소(10.0.0.1)로 온 질의에는 그 주소로 답한다. DNS 가로채기로 받은 질의는 원래 물으려던 서버 주소로 (기기는 그 서버가 답한 줄 안다)
-    this.dnsForwarder.answersAt = (dst) => (!!this.wgServerCfg?.enabled && dst === this.wgServerCfg.address?.ip) || dst === this.ovpn.address || this.hijacks(dst);
+    // 답은 물어본 주소에서 (WAN 주소로 물은 드롭인 기기·터널 주소로 물은 VPN 기기 — 아니면 리졸버가 "엉뚱한 곳에서 온 답" 으로 본다)
+    this.dnsForwarder.answersAt = (dst) => (!!this.wgServerCfg?.enabled && dst === this.wgServerCfg.address?.ip) || dst === this.ovpn.address || dst === this.wan.ip || this.hijacks(dst);
     // AdGuard Home·자녀 보호: 이름을 업스트림에 묻기 전에 거른다
     this.dnsForwarder.filter = (name, qtype, client, ctx) => {
       if (!this.adguard.config.enabled) return undefined;
@@ -491,10 +492,10 @@ export class Router implements SimNode {
       return { ...(zero ? { answer: qtype === "AAAA" ? "::" : "0.0.0.0" } : { rcode: "NXDOMAIN" as const }), why: `${v.list} 규칙 ${v.rule} 에 걸림 (AdGuard Home)` };
     };
     this.dnsForwarder.onAnswer = (name, ip) => this.dpi.learnDns(name, ip);
-    // 드롭인 기기(WAN 쪽 LAN)가 내 WAN 주소를 DNS 로 쓰면 답은 WAN 으로
+    // 드롭인 기기(WAN 쪽 LAN)가 내 WAN·LAN 주소를 DNS 로 쓰면 답은 WAN 으로
     this.dnsForwarder.replyVia = (pkt, ctx) => {
       if (!this.fromDropIn(pkt.dst)) return false;
-      this.wan.sendIp({ ...pkt, src: pkt.src === this.lan.ip ? this.wan.ip! : pkt.src }, ctx, this.emitWan(ctx));
+      this.wan.sendIp(pkt, ctx, this.emitWan(ctx));
       return true;
     };
     if (cfg.dpi) this.dpi.config = { ...cfg.dpi, blockApps: [...cfg.dpi.blockApps], blockCategories: [...cfg.dpi.blockCategories] };
@@ -1606,12 +1607,14 @@ export class Router implements SimNode {
       else ctx.trace("ip.drop", "L4", `[wan] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
       return;
     }
-    if (pkt.dst !== this.wan.ip && this.dropIn && this.wan.ip && sameSubnet(pkt.src, this.wan.ip, this.wan.prefix) && pkt.dst !== "255.255.255.255") {
+    // 드롭인 기기가 공유기의 LAN 주소로 보낸 것: 리눅스는 받은 인터페이스와 상관없이 내 주소면 내가 받는다 (관리 화면·DNS·ping — WAN 주소로 보낸 것과 같게)
+    const toMyLan = !!this.lan.ip && pkt.dst === this.lan.ip && this.fromDropIn(pkt.src);
+    if (pkt.dst !== this.wan.ip && !toMyLan && this.dropIn && this.wan.ip && sameSubnet(pkt.src, this.wan.ip, this.wan.prefix) && pkt.dst !== "255.255.255.255") {
       if (frame && this.blockedFrame(pkt.src, pkt.dst, frame, ctx)) return;
       this.dropInForward(pkt, frameId, ctx);
       return;
     }
-    if (pkt.dst !== this.wan.ip) {
+    if (pkt.dst !== this.wan.ip && !toMyLan) {
       ctx.trace("ip.drop", "L3", `[wan] 목적지 ${pkt.dst} 는 내 공인 주소(${this.wan.ip ?? "없음"}) 아님 → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
@@ -1671,13 +1674,17 @@ export class Router implements SimNode {
     }
     const p = pkt.payload;
     if (p.kind === "icmp" && p.type === "echo-request") {
-      this.handleIcmp(pkt, p, frameId, ctx, this.wan, emit);
+      this.handleIcmp(pkt, p, frameId, ctx, this.wan, emit, pkt.dst);
       return;
     }
     // 바깥에서 들어온 패킷: NAT 테이블로 내부 호스트를 찾는다
     if (pkt.ttl <= 1) {
       const notice = this.wan.timeExceeded(pkt, ctx, frameId);
       if (notice) this.wan.sendIp(notice, ctx, emit);
+      return;
+    }
+    if (toMyLan || !this.wan.ip) {
+      ctx.trace("ip.drop", "L4", `공유기 자신(LAN 주소 ${pkt.dst})에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frameId);
       return;
     }
     const restored = this.nat.restore(pkt, this.wan.ip, ctx, frameId);
