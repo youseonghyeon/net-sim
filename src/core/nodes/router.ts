@@ -1329,18 +1329,7 @@ export class Router implements SimNode {
     if (pkt.dst === this.wan.ip && this.handleWanOvpn(pkt, frame.id, ctx)) return;
     // 서버의 터널 주소(10.0.0.1)는 공유기 자신
     if ((this.wgServerCfg?.enabled && pkt.dst === this.wgServerCfg.address?.ip) || (this.ovpn.address && pkt.dst === this.ovpn.address) || (this.mesh.up && pkt.dst === this.mesh.self!.ip)) {
-      const p = pkt.payload;
-      if (p.kind === "icmp") {
-        this.handleIcmp(pkt, p, frame.id, ctx, this.lan, emit, pkt.dst);
-        return;
-      }
-      if (p.kind === "udp" && p.payload.kind === "dns" && p.dstPort === DNS_PORT) {
-        if (this.dnsForwarder.config.enabled) this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frame.id, ctx, emit);
-        return;
-      }
-      // 관리 화면은 공유기의 모든 주소에서 듣는다 (터널 쪽에서 온 것과 같게)
-      if (p.kind === "tcp" && this.admin.handle(pkt, p, "lan", this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined, ctx, frame.id)) return;
-      ctx.trace("ip.drop", "L4", `공유기 자신(${pkt.dst === this.ovpn.address ? "OpenVPN" : pkt.dst === this.mesh.self?.ip ? this.mesh.brand : "WireGuard"} 터널 주소 ${pkt.dst})에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frame.id);
+      this.deliverLocal(pkt, frame.id, ctx, { dns: true, at: `${pkt.dst === this.ovpn.address ? "OpenVPN" : pkt.dst === this.mesh.self?.ip ? this.mesh.brand : "WireGuard"} 터널 주소 ${pkt.dst}` });
       return;
     }
     if (pkt.payload.kind === "udp") {
@@ -1832,18 +1821,7 @@ export class Router implements SimNode {
   private routeFromVpn(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
     const emit = this.emitLan(ctx);
     if (pkt.dst === this.lan.ip || this.isWanAddr(pkt.dst)) {
-      const p = pkt.payload;
-      if (p.kind === "udp" && p.payload.kind === "dns" && p.dstPort === DNS_PORT && pkt.dst === this.lan.ip) {
-        if (this.dnsForwarder.config.enabled) this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frameId, ctx, emit);
-        else ctx.trace("dns.nxdomain", "app", `DNS 포워더가 꺼져 있음 → VPN 클라이언트의 질의에 응답하지 않음`, {}, frameId);
-        return;
-      }
-      if (p.kind === "icmp") {
-        this.handleIcmp(pkt, p, frameId, ctx, this.lan, emit, pkt.dst);
-        return;
-      }
-      if (p.kind === "tcp" && this.admin.handle(pkt, p, "lan", this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined, ctx, frameId)) return;
-      ctx.trace("ip.drop", "L4", `공유기 자신에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frameId);
+      this.deliverLocal(pkt, frameId, ctx, { dns: pkt.dst === this.lan.ip, who: "VPN 클라이언트" });
       return;
     }
     if (pkt.dst === "255.255.255.255" || isMcastIp(pkt.dst)) {
@@ -2185,17 +2163,7 @@ export class Router implements SimNode {
     const emit = this.emitLan(ctx);
     const p = pkt.payload;
     if (pkt.dst === this.lan.ip || this.isWanAddr(pkt.dst) || pkt.dst === vpn.address) {
-      if (p.kind === "udp" && p.payload.kind === "dns" && p.dstPort === DNS_PORT && !this.isWanAddr(pkt.dst)) {
-        if (this.dnsForwarder.config.enabled) this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frameId, ctx, emit);
-        else ctx.trace("dns.nxdomain", "app", `DNS 포워더가 꺼져 있음 → ${vpn.label} 클라이언트의 질의에 응답하지 않음`, {}, frameId);
-        return;
-      }
-      if (p.kind === "icmp") {
-        this.handleIcmp(pkt, p, frameId, ctx, this.lan, emit, pkt.dst);
-        return;
-      }
-      if (p.kind === "tcp" && this.admin.handle(pkt, p, "lan", this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined, ctx, frameId)) return;
-      ctx.trace("ip.drop", "L4", `공유기 자신에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frameId);
+      this.deliverLocal(pkt, frameId, ctx, { dns: !this.isWanAddr(pkt.dst), who: `${vpn.label} 클라이언트` });
       return;
     }
     if (pkt.dst === "255.255.255.255" || isMcastIp(pkt.dst)) {
@@ -2313,6 +2281,27 @@ export class Router implements SimNode {
     const state = !p ? "설정 확인 필요" : p.session ? `연결됨 · 터널 주소 ${c.address?.ip ?? "?"}` : p.pending ? "연결 중 (핸드셰이크)" : p.resolving ? "서버 이름을 푸는 중" : p.failed ? `끊김 (${p.failed.split(" — ")[0]}) · ${c.killSwitch ? "킬 스위치로 인터넷 차단 중" : "WAN 으로 바로 나가는 중 (킬 스위치 꺼짐)"}` : "대기 (보낼 패킷이 생기면 연결)";
     const server = c.serverName ? `${c.serverName.name}${p?.endpoint ? ` = ${p.endpoint.ip}` : ""}:${c.serverName.port}` : c.server ? `${c.server.ip}:${c.server.port}` : "없음";
     return `${state} · 서버 ${server}`;
+  }
+
+  /**
+   * 공유기 자신의 주소로 온 것 (LAN 에서 터널 주소로·VPN 으로 붙은 기기에게서): ping → DNS 포워더(dns 일 때) → 관리 화면 → 듣는 서비스 없음.
+   * 답은 받은 주소에서 LAN 쪽 길로 (VPN 기기에게 가는 것은 lan.outbound 가 터널로). who = DNS 포워더가 꺼졌을 때 로그의 상대, at = 드롭 로그의 주소 설명
+   */
+  private deliverLocal(pkt: Ipv4Packet, frameId: number, ctx: NodeContext, o: { dns: boolean; who?: string; at?: string }): void {
+    const emit = this.emitLan(ctx);
+    const p = pkt.payload;
+    if (p.kind === "icmp") {
+      this.handleIcmp(pkt, p, frameId, ctx, this.lan, emit, pkt.dst);
+      return;
+    }
+    if (o.dns && p.kind === "udp" && p.payload.kind === "dns" && p.dstPort === DNS_PORT) {
+      if (this.dnsForwarder.config.enabled) this.dnsForwarder.handle(pkt, p.srcPort, p.payload, frameId, ctx, emit);
+      else ctx.trace("dns.nxdomain", "app", `DNS 포워더가 꺼져 있음 → ${o.who ? `${o.who}의 ` : ""}질의에 응답하지 않음`, {}, frameId);
+      return;
+    }
+    // 관리 화면은 공유기의 모든 주소에서 듣는다
+    if (p.kind === "tcp" && this.admin.handle(pkt, p, "lan", this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined, ctx, frameId)) return;
+    ctx.trace("ip.drop", "L4", `공유기 자신${o.at ? `(${o.at})` : ""}에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frameId);
   }
 
   private handleIcmp(pkt: Ipv4Packet, icmp: IcmpPacket, frameId: number, ctx: NodeContext, iface: NetInterface, emit: Emit, replySrc?: Ip): void {
