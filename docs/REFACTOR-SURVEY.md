@@ -12,20 +12,24 @@
 
 | 상태 | 내용 | 위치 |
 |---|---|---|
-| 확인 | 고정 IP 를 바꾸거나 고정 → DHCP 로 바꾸면 SIP 가 다시 등록하지 않아 받는 전화가 실패 (주소를 잃을 때 알리는 곳마다 목록이 다름) | host.ts:603-620 |
-| 확인 | 잘못된 JSON(`dnsServer` 에 `records` 없음, `lb` 에 `backends` 없음, 방화벽 규칙에 `src` 없음)을 불러오면 parse 는 통과하고 동기화에서 TypeError — sim effect 에 예외 처리가 없어 반쯤 적용된 채 남음 | topology.ts:1527-1640, netSync.ts:409/442/459, sim.ts:33 |
-| 확인 | 패킷 색: Tor·SIP·STUN·P2P·RTP·멀티캐스트·GoodCloud·L2TP·DHCPv6 가 모두 "DHCP" 색 (분류가 기본값으로 떨어짐) | packet.ts:1054-1222, Canvas.tsx:510 |
-| 확인 | WireGuard 화면의 대역 검사가 `10.0.0.2/24/5` 를 통과시키지만 시뮬레이션은 그 값을 버림 | wg.tsx:26 vs netSync.ts:367 |
-| 확인 | 호스트 DHCP 서비스 칸은 "시작 > 끝" 을 보지 않음 (구성 검사만 dhcp.range-invalid) | host.tsx:266 |
-| 확인 | IPv4 프리픽스 칸 6곳이 24.5 같은 값을 그대로 저장 | ui.tsx:159 외 5곳 |
-| 추측 | LAN 기기가 WireGuard 서버 터널 주소(10.0.0.1)로 연 TCP 만 관리 화면 처리를 거치지 않음 | router.ts:1371 |
-| 추측 | 멀티 WAN 전환 때 Tor 회로·메시 재로그인을 하지 않음, OpenVPN 은 WAN1 주소 변경만 앎 | router.ts:323-328, 558-573 |
-| 추측 | WAN2 를 쓰는 동안 공유기 자신의 이름 해석(WireGuard 서버 이름 다시 풀기)이 안 됨 (resolver 가 WAN1 에 묶임, WAN2 수신에 응답 분기 없음) | router.ts:518, 1629 |
-| 추측 | IKE 재전송 타이머 핸들을 버려 협상이 끝난 뒤 조용해지면 시계가 +1000ms 점프 | ike.ts:72 |
-| 추측 | ARP timeout 이 다른 인터페이스의 대기열을 지울 수 있음 (타이머 데이터에 인터페이스가 없음) | router.ts:2488-2513, l3.ts:1146 |
-| 추측 | 원격 접속 클라이언트가 PSK 로 거절될 때 strongSwan 실무 줄이 안 나옴 (요약문 문자열 매칭에 안 걸림) | ravpn.ts:580, packetView.ts |
-| 추측 | 진단 탭 P2P 칸이 `simVersion` 을 읽지 않아 갱신되지 않을 수 있음 (4zi 와 같은 모양) | diag.tsx:369 |
+| 고침 b4c33b8 | 고정 IP 를 바꾸거나 고정 → DHCP 로 바꾸면 SIP 가 다시 등록하지 않아 받는 전화가 실패 (주소를 잃을 때 알리는 곳마다 목록이 다름) | host.ts:603-620 |
+| 고침 fc1827d | 잘못된 JSON(`dnsServer` 에 `records` 없음, `lb` 에 `backends` 없음, 방화벽 규칙에 `src` 없음)을 불러오면 parse 는 통과하고 동기화에서 TypeError — sim effect 에 예외 처리가 없어 반쯤 적용된 채 남음 | topology.ts:1527-1640, netSync.ts:409/442/459, sim.ts:33 |
+| 고침 09a91d0 | 패킷 색: Tor·SIP·STUN·P2P·RTP·멀티캐스트·GoodCloud·L2TP·DHCPv6 가 모두 "DHCP" 색 (분류가 기본값으로 떨어짐) | packet.ts:1054-1222, Canvas.tsx:510 |
+| 고침 1048671 | WireGuard 화면의 대역 검사가 `10.0.0.2/24/5` 를 통과시키지만 시뮬레이션은 그 값을 버림 | wg.tsx:26 vs netSync.ts:367 |
+| 고침 1048671 | 호스트 DHCP 서비스 칸은 "시작 > 끝" 을 보지 않음 (구성 검사만 dhcp.range-invalid) | host.tsx:266 |
+| 고침 1048671 | IPv4 프리픽스 칸 6곳이 24.5 같은 값을 그대로 저장 | ui.tsx:159 외 5곳 |
+| 확인·고침 18859be | LAN 기기가 WireGuard 서버 터널 주소(10.0.0.1)로 연 TCP 만 관리 화면 처리를 거치지 않음 | router.ts:1371 |
+| 아님 | 멀티 WAN 전환 때 Tor 회로·메시 재로그인을 하지 않음, OpenVPN 은 WAN1 주소 변경만 앎 — 확인 결과 Tor 는 가드의 DESTROY 로 회로를 새로 만들고, 메시는 주기 refresh(STUN)로 새 주소를 알려 이어짐 | router.ts:323-328, 558-573 |
+| 확인·고침 cf8f67e | WAN2 를 쓰는 동안 공유기 자신의 이름 해석(WireGuard 서버 이름 다시 풀기)이 안 됨 (resolver 가 WAN1 에 묶임, WAN2 수신에 응답 분기 없음) | router.ts:518, 1629 |
+| 확인·고침 77ba743 | IKE 재전송 타이머 핸들을 버려 협상이 끝난 뒤 조용해지면 시계가 +1000ms 점프 | ike.ts:72 |
+| 확인·고침 b9fa4ef | ARP timeout 이 다른 인터페이스의 대기열을 지울 수 있음 (타이머 데이터에 인터페이스가 없음) | router.ts:2488-2513, l3.ts:1146 |
+| 확인·고침 49564d2 | 원격 접속 클라이언트가 PSK 로 거절될 때 strongSwan 실무 줄이 안 나옴 (요약문 문자열 매칭에 안 걸림) | ravpn.ts:580, packetView.ts |
+| 규칙대로 고침 c1b0c42 (실패 재현은 못 함) | 진단 탭 P2P 칸이 `simVersion` 을 읽지 않아 갱신되지 않을 수 있음 (4zi 와 같은 모양) | diag.tsx:369 |
 | 추측 | WAN1·WAN2 수신 순서가 다름(mesh/ovpn), WAN2 에 L2TP·드롭인·서버 꺼짐 안내가 말없이 없음 | router.ts:1636 vs 2170 |
+| 고침 057192c | (교란 표에서) OpenVPN 서버를 껐다 켜면 노트북이 한 번 다시 붙으려다 포기 — 실제는 connect-retry 로 계속 | openvpn.ts |
+| 아님 | (교란 표에서) L2TP 서버를 껐다 켜면 스스로 다시 붙지 않음 — StopCCN 으로 "끊김 · 다시 연결" 을 알리고, 실제 OS 클라이언트도 자동 재시도 없음 | l2tp.ts |
+| 고침 a028f50 | (경로 표에서) 드롭인 기기가 공유기 LAN 주소로 보낸 관리 화면·DNS·ping 을 "호스트끼리 직접 통신" 으로 드롭, DNS 답의 출발지가 물은 주소와 다름 | router.ts handleWanIp |
+| 확인 | 답을 받아도 취소하지 않는 일반 timer 가 IKE 말고도 남아, 불러온 뒤 마지막 일보다 시계가 더 감 (rip·ha·p2p·ncpwg·iptime·wireguard·ddns·openvpn·tailscale·k3s·tor·sip — 0.01~5초). 동작은 같고 시각만 밀림 — 4단계 "타이머 라우터" 에서 함께 | 각 모듈 |
 
 ## 2. 안전망 (리팩터링 전에)
 
