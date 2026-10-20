@@ -75,7 +75,7 @@
 - **파싱 한 모듈 `model/parse.ts`** — ip4·ip6·cidr4·cidrList·port·intIn·hostname, UI 오류 문구도 같은 파서에서. 포트 범위 검사 약 35곳. (S)
 - **구성 검사 AddrIndex** — `owners(ip)`·`publicTarget(ip, port, proto)`(공유기·게이트웨이 포워딩·포트 공개를 같은 방식으로)·`isLeased(key)`. routerWanIp 두 벌, 포워딩 따라가기 두 벌, 섞인 체인에서 침묵하는 문제 해소. 예제 공인 주소 범용 테스트도 여기서. (M)
 - **packetView 의 타입 있는 details** — 요약문 문자열 매칭 약 20곳, `detail()` 131곳 → 화면이 읽는 약 30개 종류만 `DetailsOf<K>` + reason 코드, 포맷터를 프로토콜별 레지스트리로. (M)
-- **topology.ts 분할** — specs·기능별 settings(타입·기본값·정리 한곳)·file·geometry·cables·wireless, topology.ts 는 다시 내보내기만. (S~M)
+- **topology.ts 분할** — specs·기능별 settings(타입·기본값·정리 한곳)·file·geometry·cables·wireless, topology.ts 는 다시 내보내기만. (S~M) — **함** (`model/topo/` 7개, settings 의 정리 함수는 `normalizeTopology` 가 쓰므로 export, 기존 import 그대로)
 - **store·sim** — 동기화 예외 처리(알림 + 다시 만들기), 임대 재계산은 DHCP 트레이스가 있을 때만. (S)
 
 ### UI
