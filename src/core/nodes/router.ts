@@ -1229,7 +1229,7 @@ export class Router implements SimNode {
       }
       ctx.trace("frame.receive", "L2", `wan 수신: ${describeFrame(frame)} [${frame.src} → ${frame.dst === BROADCAST_MAC ? "브로드캐스트" : "내 WAN MAC"}]`, { src: frame.src, dst: frame.dst }, frame.id);
       if (frame.payload.kind === "arp") this.wan.handleArp(frame.payload, frame.id, ctx, this.w1.emit(ctx));
-      else if (frame.payload.kind === "ipv4") this.handleWanIp(frame.payload, frame.id, ctx, frame);
+      else if (frame.payload.kind === "ipv4") this.handleWanIp(this.w1, frame.payload, frame.id, ctx, frame);
       else if (frame.payload.kind === "ipv6") this.handleWan6(frame.payload, frame, ctx);
       return;
     }
@@ -1554,44 +1554,54 @@ export class Router implements SimNode {
     this.lan6.send(out, ctx, this.emitLan(ctx));
   }
 
-  private handleWanIp(pkt: Ipv4Packet, frameId: number, ctx: NodeContext, frame?: EthernetFrame): void {
-    const emit = this.w1.emit(ctx);
+  /**
+   * WAN 회선(WAN1·WAN2)으로 들어온 IPv4 (한 곳): 회선 DHCP → 드롭인 → 내 주소인가 → 공유기 자신이 보낸 것의 답 → 터널(WireGuard·메시·OpenVPN·L2TP)
+   * → Tor·GoodCloud → 관리 화면 → DNS 포워더 → ping → NAT 역변환. 드롭인·L2TP 서버·"VPN 서버 꺼짐" 안내는 WAN1 만 (한계)
+   */
+  private handleWanIp(l: WanLine, pkt: Ipv4Packet, frameId: number, ctx: NodeContext, frame?: EthernetFrame): void {
+    const wan1 = l === this.w1;
+    const me = l.iface;
+    const emit = l.emit(ctx);
     if (pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dhcp") {
       const udp = pkt.payload;
       const m = udp.payload as DhcpMessage;
       if (udp.dstPort === DHCP_CLIENT_PORT) {
-        this.w1.client.handle(m, frameId, ctx, emit);
+        l.client.handle(m, frameId, ctx, emit);
         // WAN 주소를 받았으면 DDNS 갱신·VPN 클라이언트 연결 (GL.iNet 은 인터넷이 연결되면 VPN 을 자동으로 잇는다)
-        this.onWanAddress(ctx);
-      }
-      else if (udp.dstPort === DHCP_SERVER_PORT) ctx.trace("dhcp.ignore", "app", `[wan] 다른 장치의 DHCP ${m.op} → 무시`, {}, frameId);
-      else ctx.trace("ip.drop", "L4", `[wan] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
+        if (wan1) this.onWanAddress(ctx);
+        else {
+          this.mwan.onLine("wan2", ctx);
+          if (this.mwan.active === "wan2") this.ddns.onWanAddress(ctx);
+        }
+      } else if (udp.dstPort === DHCP_SERVER_PORT) ctx.trace("dhcp.ignore", "app", `[${l.label}] 다른 장치의 DHCP ${m.op} → 무시`, {}, frameId);
+      else ctx.trace("ip.drop", "L4", `[${l.label}] UDP 포트 ${udp.dstPort} 를 듣는 서비스 없음 → 드롭`, { port: udp.dstPort }, frameId);
       return;
     }
     // 드롭인 기기가 공유기의 LAN 주소로 보낸 것: 리눅스는 받은 인터페이스와 상관없이 내 주소면 내가 받는다 (관리 화면·DNS·ping — WAN 주소로 보낸 것과 같게)
-    const toMyLan = !!this.lan.ip && pkt.dst === this.lan.ip && this.fromDropIn(pkt.src);
-    if (pkt.dst !== this.wan.ip && !toMyLan && this.dropIn && this.wan.ip && sameSubnet(pkt.src, this.wan.ip, this.wan.prefix) && pkt.dst !== "255.255.255.255") {
+    const toMyLan = wan1 && !!this.lan.ip && pkt.dst === this.lan.ip && this.fromDropIn(pkt.src);
+    if (wan1 && pkt.dst !== me.ip && !toMyLan && this.dropIn && me.ip && sameSubnet(pkt.src, me.ip, me.prefix) && pkt.dst !== "255.255.255.255") {
       if (frame && this.blockedFrame(pkt.src, pkt.dst, frame, ctx)) return;
       this.dropInForward(pkt, frameId, ctx);
       return;
     }
-    if (pkt.dst !== this.wan.ip && !toMyLan) {
-      ctx.trace("ip.drop", "L3", `[wan] 목적지 ${pkt.dst} 는 내 공인 주소(${this.wan.ip ?? "없음"}) 아님 → 드롭`, { dst: pkt.dst }, frameId);
+    if (pkt.dst !== me.ip && !toMyLan) {
+      ctx.trace("ip.drop", "L3", `[${l.label}] 목적지 ${pkt.dst} 는 내 ${wan1 ? "공인 주소" : "WAN2 주소"}(${me.ip ?? "없음"}) 아님 → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
     // 공유기 자신이 보낸 것의 답: 멀티 WAN 추적 ping, DDNS 갱신 응답, 공유기 자신의 이름 해석 (DNS 포워더의 업스트림 답보다 먼저 — 포트가 다르다)
     {
       const u = pkt.payload;
-      if (u.kind === "icmp" && u.type === "echo-reply" && u.id === MWAN_ICMP_ID && this.mwan.onReply("wan", u.seq)) {
-        ctx.trace("mwan.check", "L3", `멀티 WAN: WAN1 추적 ping 응답 (${pkt.src}) → 이 회선은 인터넷이 됨`, { wan: "wan" }, frameId);
+      if (u.kind === "icmp" && u.type === "echo-reply" && u.id === MWAN_ICMP_ID + (wan1 ? 0 : 1)) {
+        if (this.mwan.onReply(l.name, u.seq)) ctx.trace("mwan.check", "L3", `멀티 WAN: ${WAN_LABEL[l.name]} 추적 ping 응답 (${pkt.src}) → 이 회선은 인터넷이 됨`, { wan: l.name }, frameId);
         return;
       }
       if (u.kind === "udp" && u.payload.kind === "ddns" && u.dstPort === DDNS_PORT && u.payload.op === "response") {
         this.ddns.handle(u.payload, frameId, ctx);
         return;
       }
-      if (u.kind === "udp" && u.payload.kind === "dns" && u.payload.op === "response" && u.dstPort === this.resolver.port) {
-        this.resolver.handle(u.payload, pkt.src, frameId, ctx);
+      const resolver = wan1 ? this.resolver : this.resolver2;
+      if (u.kind === "udp" && u.payload.kind === "dns" && u.payload.op === "response" && u.dstPort === resolver.port) {
+        resolver.handle(u.payload, pkt.src, frameId, ctx);
         return;
       }
     }
@@ -1601,7 +1611,7 @@ export class Router implements SimNode {
     // OpenVPN 서버: 내 전송·포트로 온 것 (포트 포워딩보다 먼저 — TCP 443 으로 열면 그 포트는 OpenVPN 이 쓴다)
     if (this.handleWanOvpn(pkt, frameId, ctx)) return;
     // VPN 서버 (L2TP/IPsec): IKE (UDP 500·4500) 와 내 SA 의 ESP 는 공유기 자신이 받는다 (포트 포워딩보다 먼저 — ipTIME 도 VPN 서버를 켜면 그 포트를 쓴다)
-    if (this.vpnServer.config.enabled) {
+    if (wan1 && this.vpnServer.config.enabled) {
       const p0 = pkt.payload;
       if (p0.kind === "udp" && p0.payload.kind === "ike" && this.vpnServer.handleIke(pkt, p0.srcPort, p0.dstPort, p0.payload, ctx, frameId)) return;
       const esp: EspPacket | undefined = p0.kind === "esp" ? p0 : p0.kind === "udp" && p0.payload.kind === "esp" ? p0.payload : undefined;
@@ -1610,7 +1620,7 @@ export class Router implements SimNode {
         if (inner) this.routeFromVpn(inner, frameId, ctx);
         if (inner !== undefined) return;
       }
-    } else if (this.vpnServerHint(pkt, frameId, ctx)) return;
+    } else if (wan1 && this.vpnServerHint(pkt, frameId, ctx)) return;
     // Tor: 가드에게서 온 셀 (내 포트)
     if (pkt.payload.kind === "udp" && pkt.payload.payload.kind === "tor" && pkt.payload.dstPort === this.tor.port) {
       this.fromTor(pkt, pkt.payload.payload, frameId, ctx);
@@ -1621,13 +1631,13 @@ export class Router implements SimNode {
     // 관리 화면: 그 포트에 포트 포워딩 규칙이 없으면 공유기 자신이 받는다 (접근 제어가 WAN 을 막으면 드롭)
     if (
       pkt.payload.kind === "tcp" &&
-      !this.w1.nat.forwards.some((r) => (r.proto ?? "tcp") === "tcp" && r.publicPort === (pkt.payload as { dstPort: number }).dstPort) &&
+      !l.nat.forwards.some((r) => (r.proto ?? "tcp") === "tcp" && r.publicPort === (pkt.payload as { dstPort: number }).dstPort) &&
       // 드롭인 게이트웨이면 WAN 쪽 LAN 기기는 안쪽 기기 (관리 화면은 WAN 주소로 연다)
-      this.admin.handle(pkt, pkt.payload, this.fromDropIn(pkt.src) ? "lan" : "wan", this.fromDropIn(pkt.src) ? { ip: this.wan.ip!, prefix: this.wan.prefix } : undefined, ctx, frameId)
+      this.admin.handle(pkt, pkt.payload, wan1 && this.fromDropIn(pkt.src) ? "lan" : "wan", wan1 && this.fromDropIn(pkt.src) ? { ip: me.ip!, prefix: me.prefix } : undefined, ctx, frameId)
     )
       return;
     // UDP 포트 포워딩 규칙이 있는 포트(예: 53 → 안쪽 DNS 서버)는 내가 받지 않고 아래 NAT 역변환으로 안에 넘긴다
-    const udpForwarded = pkt.payload.kind === "udp" && this.w1.nat.forwards.some((r) => r.proto === "udp" && r.publicPort === (pkt.payload as { dstPort: number }).dstPort);
+    const udpForwarded = pkt.payload.kind === "udp" && l.nat.forwards.some((r) => r.proto === "udp" && r.publicPort === (pkt.payload as { dstPort: number }).dstPort);
     if (!udpForwarded && pkt.payload.kind === "udp" && pkt.payload.payload.kind === "dns" && pkt.payload.dstPort === DNS_PORT) {
       // 내가 업스트림 DNS 에 물어본 답 → 포워더가 LAN 클라이언트에게 전달
       this.dnsForwarder.handle(pkt, pkt.payload.srcPort, pkt.payload.payload, frameId, ctx, this.emitLan(ctx));
@@ -1635,22 +1645,22 @@ export class Router implements SimNode {
     }
     const p = pkt.payload;
     if (p.kind === "icmp" && p.type === "echo-request") {
-      this.handleIcmp(pkt, p, frameId, ctx, this.wan, emit, pkt.dst);
+      this.handleIcmp(pkt, p, frameId, ctx, me, emit, pkt.dst);
       return;
     }
     // 바깥에서 들어온 패킷: NAT 테이블로 내부 호스트를 찾는다
     if (pkt.ttl <= 1) {
-      const notice = this.wan.timeExceeded(pkt, ctx, frameId);
-      if (notice) this.wan.sendIp(notice, ctx, emit);
+      const notice = me.timeExceeded(pkt, ctx, frameId);
+      if (notice) me.sendIp(notice, ctx, emit);
       return;
     }
-    if (toMyLan || !this.wan.ip) {
+    if (toMyLan || !me.ip) {
       ctx.trace("ip.drop", "L4", `공유기 자신(LAN 주소 ${pkt.dst})에게 온 ${p.kind === "tcp" ? `TCP ${p.dstPort}` : p.kind === "udp" ? `UDP ${p.dstPort}` : p.kind} → 듣는 서비스 없음, 드롭`, {}, frameId);
       return;
     }
-    const restored = this.w1.nat.restore(pkt, this.wan.ip, ctx, frameId);
+    const restored = l.nat.restore(pkt, me.ip, ctx, frameId);
     if (!restored) return;
-    this.fromWanRestored(restored, pkt.ttl, "", frameId, ctx);
+    this.fromWanRestored(restored, pkt.ttl, wan1 ? "" : "WAN2 로 들어옴, ", frameId, ctx);
   }
 
   /** NAT 역변환한 들어오는 패킷: DPI·방화벽 뒤 VPN 으로 붙은 기기·드롭인 기기·LAN 으로 (via = 트레이스에 붙일 들어온 회선) */
@@ -2087,60 +2097,7 @@ export class Router implements SimNode {
       this.wan2.handleArp(p, frame.id, ctx, emit);
       return;
     }
-    if (p.kind !== "ipv4") return;
-    const pkt = p;
-    const u = pkt.payload;
-    if (u.kind === "udp" && u.payload.kind === "dhcp") {
-      if (u.dstPort === DHCP_CLIENT_PORT) {
-        this.w2.client.handle(u.payload, frame.id, ctx, emit);
-        this.mwan.onLine("wan2", ctx);
-        if (this.mwan.active === "wan2") this.ddns.onWanAddress(ctx);
-      }
-      return;
-    }
-    if (pkt.dst !== this.wan2.ip) {
-      ctx.trace("ip.drop", "L3", `[wan2] 목적지 ${pkt.dst} 는 내 WAN2 주소(${this.wan2.ip ?? "없음"}) 아님 → 드롭`, { dst: pkt.dst }, frame.id);
-      return;
-    }
-    if (u.kind === "icmp" && u.type === "echo-reply" && u.id === MWAN_ICMP_ID + 1) {
-      if (this.mwan.onReply("wan2", u.seq)) ctx.trace("mwan.check", "L3", `멀티 WAN: WAN2 추적 ping 응답 (${pkt.src}) → 이 회선은 인터넷이 됨`, { wan: "wan2" }, frame.id);
-      return;
-    }
-    if (u.kind === "udp" && u.payload.kind === "ddns" && u.dstPort === DDNS_PORT && u.payload.op === "response") {
-      this.ddns.handle(u.payload, frame.id, ctx);
-      return;
-    }
-    if (u.kind === "udp" && u.payload.kind === "dns" && u.payload.op === "response" && u.dstPort === this.resolver2.port) {
-      this.resolver2.handle(u.payload, pkt.src, frame.id, ctx);
-      return;
-    }
-    // WireGuard 클라이언트·서버 (멀티 WAN 이 WAN2 로 넘어가 있을 때 오가는 것)
-    if (u.kind === "udp" && u.payload.kind === "wg" && this.handleWanWg(pkt, frame.id, ctx)) return;
-    if (this.handleWanOvpn(pkt, frame.id, ctx)) return;
-    if (this.handleWanMesh(pkt, frame.id, ctx)) return;
-    if (u.kind === "udp" && u.payload.kind === "cloud" && u.dstPort === this.cloud.port && this.cloud.handle(pkt, u.payload, ctx, frame.id)) return;
-    if (u.kind === "udp" && u.payload.kind === "tor" && u.dstPort === this.tor.port) {
-      this.fromTor(pkt, u.payload, frame.id, ctx);
-      return;
-    }
-    if (u.kind === "tcp" && !this.w2.nat.forwards.some((r) => (r.proto ?? "tcp") === "tcp" && r.publicPort === u.dstPort) && this.admin.handle(pkt, u, "wan", undefined, ctx, frame.id)) return;
-    const forwarded = u.kind === "udp" && this.w2.nat.forwards.some((r) => r.proto === "udp" && r.publicPort === u.dstPort);
-    if (!forwarded && u.kind === "udp" && u.payload.kind === "dns" && u.dstPort === DNS_PORT) {
-      this.dnsForwarder.handle(pkt, u.srcPort, u.payload, frame.id, ctx, this.emitLan(ctx));
-      return;
-    }
-    if (u.kind === "icmp" && u.type === "echo-request") {
-      this.handleIcmp(pkt, u, frame.id, ctx, this.wan2, emit);
-      return;
-    }
-    if (pkt.ttl <= 1) {
-      const notice = this.wan2.timeExceeded(pkt, ctx, frame.id);
-      if (notice) this.wan2.sendIp(notice, ctx, emit);
-      return;
-    }
-    const restored = this.w2.nat.restore(pkt, this.wan2.ip, ctx, frame.id);
-    if (!restored) return;
-    this.fromWanRestored(restored, pkt.ttl, "WAN2 로 들어옴, ", frame.id, ctx);
+    if (p.kind === "ipv4") this.handleWanIp(this.w2, p, frame.id, ctx, frame);
   }
 
   // ---------- WireGuard ----------
