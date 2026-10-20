@@ -23,6 +23,10 @@ export const OVPN_PING = 10_000;
 export const OVPN_PING_RESTART = 60_000;
 /** 서버가 다시 시작했다고 알려 오면 이만큼 뒤 다시 연결 (connect-retry) */
 const OVPN_RECONNECT = 2000;
+/** 연결이 일시적으로 실패하면(응답 없음·RST·서버가 닫음) 다시 시도: connect-retry 5 300 — 5초씩 5번, 그 뒤 두 배씩 최대 300초.
+ * 배경 타이머라 시뮬레이션이 조용하면 기다리기만 한다 */
+const OVPN_CONNECT_RETRY = 5000;
+const OVPN_CONNECT_RETRY_MAX = 300_000;
 
 function fnv(s: string): number {
   let h = 0x811c9dc5;
@@ -570,6 +574,10 @@ export class OvpnClient {
   private retired: string[] = [];
   /** 다시 연결을 기다리는 중 (connect-retry) */
   private reconnectPending = false;
+  /** 일시적 실패 뒤 다시 시도한 횟수와 다음 시도까지의 간격 (connect-retry) */
+  private retries = 0;
+  private retryDelay: number | undefined;
+  private retryTok = 0;
   /** 서버 이름 풀기 실패 횟수 (resolv-retry) */
   private resolveTries = 0;
   /** 실패 이유가 이름 풀기 (주소를 다시 얻으면 다시 시도) */
@@ -630,6 +638,7 @@ export class OvpnClient {
     this.nameFailed = false;
     this.resolveTries = 0;
     this.reconnectPending = false;
+    this.stopRetry();
     if (!cfg.enabled) return;
     const o = cfg.ovpn;
     if (!o || !cfg.server || !o.ca || !o.cert.cn) {
@@ -773,7 +782,7 @@ export class OvpnClient {
       this.s = undefined;
       if (s.phase !== "up") {
         this.failed = `연결 중에 TCP 연결이 RST 로 끊김 (${s.phase === "syn" ? "그 포트를 듣는 서버가 없거나 " : ""}방화벽·DPI 가 끊었을 수 있음)`;
-        ctx.trace("vpn.drop", "L4", `OpenVPN 연결 실패: ${this.failed}`, { ovpn: true, failed: true }, frameId);
+        ctx.trace("vpn.drop", "L4", `OpenVPN 연결 실패: ${this.failed}${this.scheduleRetry(ctx)}`, { ovpn: true, failed: true }, frameId);
         return null;
       }
       // 서버가 다시 시작할 때는 RESTART 를 먼저 알린다 — 알림 없는 RST 는 중간 장비(방화벽·DPI)일 수 있다
@@ -797,7 +806,7 @@ export class OvpnClient {
       else if (me) this.sendRaw(tcpFlag(me, s.server, s.lport, s.port, t, { ackFlag: true }), ctx);
       if (!t.finSent) {
         this.s = undefined;
-        this.fail(ctx, "서버가 TCP 연결을 닫음");
+        this.fail(ctx, "서버가 TCP 연결을 닫음", true);
       }
       return null;
     }
@@ -885,6 +894,7 @@ export class OvpnClient {
     if (m.op === "push-reply" && m.push) {
       s.push = m.push;
       s.phase = "up";
+      this.stopRetry();
       const p = m.push;
       ctx.trace(
         "vpn.up",
@@ -912,10 +922,27 @@ export class OvpnClient {
     this.failed = why;
   }
 
-  private fail(ctx: NodeContext, why: string): void {
+  /** transient: 응답 없음·RST·서버가 닫음처럼 서버가 돌아오면 붙을 실패 — connect-retry 로 다시 시도한다 (인증서·계정 거절은 멈춤) */
+  private fail(ctx: NodeContext, why: string, transient = false): void {
     this.forget();
     this.failed = why;
-    ctx.trace("vpn.drop", "L4", `OpenVPN 연결 실패: ${why}`, { ovpn: true, failed: true });
+    ctx.trace("vpn.drop", "L4", `OpenVPN 연결 실패: ${why}${transient ? this.scheduleRetry(ctx) : ""}`, { ovpn: true, failed: true });
+  }
+
+  /** 다음 connect-retry 를 배경 타이머로 예약하고 로그에 붙일 문구를 돌려준다 */
+  private scheduleRetry(ctx: NodeContext): string {
+    this.retries++;
+    const delay = this.retries <= 5 ? OVPN_CONNECT_RETRY : Math.min(OVPN_CONNECT_RETRY_MAX, OVPN_CONNECT_RETRY * 2 ** (this.retries - 5));
+    this.retryDelay = delay;
+    this.retryTok = ++this.tok;
+    ctx.timer(delay, OVPN_TIMER_TAG, { ovpn: "connect-retry", tok: this.retryTok }, true);
+    return ` → ${delay / 1000}초 뒤 다시 시도 (connect-retry, Restart pause)`;
+  }
+
+  private stopRetry(): void {
+    this.retries = 0;
+    this.retryDelay = undefined;
+    this.retryTok = 0;
   }
 
   /** 지금 세션을 닫는다 (TCP 면 FIN, UDP 로 붙어 있었으면 EXIT 알림) */
@@ -997,6 +1024,14 @@ export class OvpnClient {
 
   onTimer(data: unknown, ctx: NodeContext): void {
     const d = data as { ovpn?: string; tok?: number; sid?: number; at?: number };
+    if (d.ovpn === "connect-retry") {
+      if (d.tok !== this.retryTok || this.s || this.resolving || !this.config.enabled || !this.failed) return;
+      this.failed = undefined;
+      this.retryDelay = undefined;
+      ctx.trace("vpn.config", "sys", `OpenVPN: 다시 연결 (connect-retry, ${this.retries}번째)`, { ovpn: true });
+      this.connect(ctx);
+      return;
+    }
     if (d.ovpn === "reconnect") {
       if (d.tok !== this.reconnectTok || this.s || !this.config.enabled) return;
       this.reconnectPending = false;
@@ -1013,7 +1048,7 @@ export class OvpnClient {
         const o = this.config.ovpn;
         const what = s.phase === "syn" ? `TCP ${s.server}:${s.port} 연결 응답 없음 (SYN timeout) — 서버가 꺼져 있거나 그 포트가 막힘` : `${s.server}:${s.port}/${s.proto} 응답 없음 (TLS 협상이 ${(OVPN_RETRY * OVPN_TRIES) / 1000}초 안에 끝나지 않음) — ${o?.tlsCrypt ? "tls-crypt 키가 다르거나, " : ""}서버가 꺼져 있거나, 전송(${s.proto.toUpperCase()})·포트가 다르거나, 방화벽이 막음`;
         this.close(ctx, undefined);
-        this.fail(ctx, what);
+        this.fail(ctx, what, true);
         return;
       }
       s.tries++;
@@ -1069,6 +1104,7 @@ export class OvpnClient {
     this.close(ctx, why);
     this.failed = undefined;
     this.reconnectPending = false;
+    this.stopRetry();
   }
 
   reconnect(ctx: NodeContext): void {
@@ -1076,6 +1112,7 @@ export class OvpnClient {
     this.failed = undefined;
     this.nameFailed = false;
     this.resolveTries = 0;
+    this.stopRetry();
     this.connect(ctx);
   }
 
@@ -1091,7 +1128,7 @@ export class OvpnClient {
     if (s?.phase === "up" && s.push) return `연결됨 · 가상 주소 ${s.push.ip} · ${s.push.redirectGateway ? "모든 트래픽" : s.push.routes.map((r) => `${r.dest}/${r.prefix}`).join(", ") || "터널 대역만"} 는 터널로 · ${s.proto.toUpperCase()} ${s.port}`;
     if (!s && this.reconnectPending) return `다시 연결 대기 (${OVPN_RECONNECT / 1000}초 뒤 — connect-retry)`;
     if (s || this.resolving) return `연결 중 (${s?.phase === "syn" ? "TCP 연결" : s?.phase === "reset" ? "세션 시작" : s?.phase === "tls" || s?.phase === "auth" ? "TLS·인증서 확인" : "이름 풀기"})`;
-    if (this.failed) return `실패 · ${this.failed}`;
+    if (this.failed) return `실패 · ${this.failed}${this.retryDelay ? ` · ${this.retryDelay / 1000}초 간격으로 다시 시도 (connect-retry)` : ""}`;
     return "대기 (주소를 받으면 연결)";
   }
 }

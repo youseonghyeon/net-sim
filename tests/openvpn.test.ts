@@ -75,6 +75,35 @@ describe("OpenVPN", () => {
     expect(L.host(LAPTOP).ra.summary()).toContain("폐기");
   });
 
+  it("서버가 꺼져 응답이 없으면 connect-retry 로 계속 다시 시도하고(5초씩 5번, 그 뒤 두 배씩), 서버가 돌아오면 붙는다", () => {
+    const L = loadTopology(exampleOpenVpnTopology());
+    L.apply(server(L.t, { enabled: false }));
+    // 서버가 RESTART 를 알림 → 2초 뒤 다시 연결 → SYN timeout → 실패지만 다시 시도를 예약 (배경 타이머라 조용하면 멈춘다)
+    const lap = L.host(LAPTOP);
+    expect(lap.ra.state).toBe("failed");
+    expect(lap.ra.summary()).toContain("5초 간격으로 다시 시도 (connect-retry)");
+    const from = L.s.net.trace.length;
+    L.s.net.runUntil(L.s.net.now + 90_000, 200_000);
+    const tries = L.s.net.trace.slice(from).filter((e) => e.nodeId === L.id(LAPTOP) && e.summary.startsWith("OpenVPN: 다시 연결 (connect-retry,"));
+    // 한 번 시도에 SYN 3번(3초) + 대기: 5·5·5·5·5·10·20초 → 90초 안에 7번
+    expect(tries.map((e) => e.summary.match(/(\d+)번째/)![1])).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
+    expect(L.host(LAPTOP).ra.summary()).toContain("40초 간격으로 다시 시도");
+    // 서버를 다시 켜면 다음 시도에서 붙고, 간격은 처음으로
+    L.apply(server(L.t, { enabled: true }));
+    L.s.net.runUntil(L.s.net.now + 45_000, 200_000);
+    expect(lap.ra.state).toBe("up");
+    L.act({ kind: "ping", nodeId: L.id(LAPTOP), dst: "192.168.8.20" });
+    expect(lap.pings.at(-1)!.status).toBe("ok");
+  });
+
+  it("인증서·계정 거절은 다시 시도하지 않는다 (서버가 돌아와도 같은 답)", () => {
+    const L = loadTopology(client(exampleOpenVpnTopology(), { ca: "AA:BB:CC:DD:EE:FF:00:11" }));
+    const from = L.s.net.trace.length;
+    L.s.net.runUntil(L.s.net.now + 60_000, 200_000);
+    expect(L.s.net.trace.slice(from).some((e) => e.summary.includes("connect-retry"))).toBe(false);
+    expect(L.host(LAPTOP).ra.summary()).not.toContain("다시 시도");
+  });
+
   it("tls-crypt 키가 다르면 서버는 아무 답도 하지 않는다", () => {
     const L = loadTopology(client(exampleOpenVpnTopology(), { tlsCrypt: "00:00:00:00:00:00" }));
     const srv = L.s.net.trace.filter((e) => e.nodeId === L.id(HOME) && e.kind === "vpn.drop");

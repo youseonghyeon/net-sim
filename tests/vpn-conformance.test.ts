@@ -1,7 +1,8 @@
 // VPN 협상 교란 표 (AGENTS 점검 "새 VPN 협상" ①~③, LESSONS 4u·4z·4zb·4zg): 프로토콜마다 같은 교란을 걸고 결과를 파일로 고정한다.
 // 새 VPN 종류를 넣으면 CASES 에 한 줄 더한다 — 교란 전부가 자동으로 돈다. 바뀐 칸은 보고 의도한 것만 `-u`.
 //   ① 응답 손실: 다시 접속하는 동안 서버 쪽 회선이 1.5초 끊김 → 결국 붙는가
-//   ② 서버가 상태를 잊음: 서버를 껐다 켬 → 클라이언트가 알고 다시 붙는가 (ping 두 번)
+//   ② 서버가 상태를 잊음: 서버를 껐다 켬 → 클라이언트가 알고 다시 붙는가 (ping 두 번). 스스로 다시 붙지 않는 종류(L2TP — 실제 OS 클라이언트도
+//      자동 재시도 없음)는 클라이언트 상태를 같이 적는다 — 그 상태가 "끊김" 이면 사용자가 알고 "다시 연결" 할 수 있다
 //   ③ 끈 뒤 늦은 패킷: 서버 쪽에서 보낸 ping 이 날아가는 동안 클라이언트를 끔 → Port Unreachable 이 새지 않는가
 //   ④ 클라이언트 공인 주소가 바뀜(ISP FORCERENEW) → 이어지는가 (ping 두 번)
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -179,7 +180,9 @@ function row(c: Case): string[] {
     ping(L, c.pinger, c.target);
     L.apply(patch(c.server, (d) => c.serverOn(d, false)));
     L.apply(patch(c.server, (d) => c.serverOn(d, true)));
-    out.push(`② 서버 껐다 켬: ${recover(L, c.pinger, c.target)}`);
+    const r = recover(L, c.pinger, c.target);
+    const ra = L.host(c.client).ra;
+    out.push(`② 서버 껐다 켬: ${r}${r.includes("회복 안 됨") && ra ? ` · 클라이언트 VPN: ${ra.state}${ra.reason ? ` (${ra.reason})` : ""}` : ""}`);
   }
   {
     const L = fresh(c);

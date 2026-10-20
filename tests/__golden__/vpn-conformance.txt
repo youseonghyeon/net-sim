@@ -7,7 +7,7 @@
 ## L2TP/IPsec (공유기 VPN 서버) (iptime — 출장 노트북 → 집 ipTIME)
 연결: ping ok
 ① 다시 켜는 동안 서버 회선 1.5초 끊김: 바로 됨
-② 서버 껐다 켬: 180초 안에 회복 안 됨 — failed(timeout · 응답 없음)
+② 서버 껐다 켬: 180초 안에 회복 안 됨 — failed(timeout · 응답 없음) · 클라이언트 VPN: failed (공유기가 연결을 끊음 (터널 끊기 (StopCCN)) — 공유기 VPN 서버의 설정이 바뀌었거나 꺼짐. 확인한 뒤 "다시 연결")
 ③ 끈 뒤 늦은 패킷 (집 NAS → 192.168.0.50): Port Unreachable 없음
 ④ 클라이언트 공인 주소 203.0.113.2 → 203.0.113.18: 바로 됨
 ## WireGuard (폰 → 공유기 서버) (wireguard — 출장 폰 → 집 Brume 3)
@@ -19,7 +19,7 @@
 ## OpenVPN (TCP 443) (openvpn — 카페 노트북 → 집 Brume 3)
 연결: ping ok
 ① 다시 켜는 동안 서버 회선 1.5초 끊김: 바로 됨
-② 서버 껐다 켬: 180초 안에 회복 안 됨 — failed(timeout · 응답 없음)
+② 서버 껐다 켬: 20초 뒤 됨
 ③ 끈 뒤 늦은 패킷 (집 NAS → 10.8.0.2): Port Unreachable 없음
 ④ 클라이언트 공인 주소 203.0.113.2 → 203.0.113.18: 120초 뒤 됨
 ## 사이트 간 IPsec (사무실 ↔ NCP) (ncp — 내부망 방화벽 NAT → NCP VPN Gateway)
