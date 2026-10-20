@@ -1021,7 +1021,7 @@ export const LIMITED_BROADCAST_IP: Ip = "255.255.255.255";
 
 export type Layer = "L1" | "L2" | "L3" | "L4" | "app" | "sys";
 
-export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns" | "rip" | "vpn" | "vrrp" | "stp";
+export type FrameCategory = "arp" | "icmp" | "dhcp" | "tcp" | "dns" | "rip" | "vpn" | "vrrp" | "stp" | "app";
 
 /** 브리지 ID 표기: 우선순위.MAC (예: 32768.02:00:00:00:00:05) */
 export function bridgeIdLabel(b: BridgeId): string {
@@ -1202,6 +1202,42 @@ export function shortLabel(frame: EthernetFrame): string {
 }
 
 /** 패킷 종류 태그 (UI 색상 구분용) */
+/**
+ * UDP 안의 앱 종류마다 화면 색 (패킷 점·케이블·범례·로그). 새 종류를 넣고 여기를 빠뜨리면 컴파일 오류 —
+ * 전에는 if 사슬 끝의 기본값 "dhcp" 로 조용히 떨어져 Tor·SIP·STUN·L2TP 가 모두 DHCP 색이었다
+ */
+const UDP_CATEGORY: Record<UdpPacket["payload"]["kind"], FrameCategory> = {
+  dhcp: "dhcp",
+  dhcp6: "dhcp",
+  dns: "dns",
+  ddns: "dns",
+  rip: "rip",
+  vpn: "vpn",
+  esp: "vpn",
+  ike: "vpn",
+  wg: "vpn",
+  ovpn: "vpn",
+  ts: "vpn",
+  l2tp: "vpn",
+  tor: "vpn",
+  stun: "app",
+  p2p: "app",
+  sip: "app",
+  rtp: "app",
+  cloud: "app",
+  mcast: "app",
+};
+
+/** IPv4 안의 UDP 가 아닌 종류마다 화면 색 (빠지면 컴파일 오류) */
+const IP_CATEGORY: Record<Exclude<IpPayload["kind"], "udp">, FrameCategory> = {
+  icmp: "icmp",
+  tcp: "tcp",
+  esp: "vpn",
+  vrrp: "vrrp",
+  pfsync: "vrrp",
+  igmp: "app",
+};
+
 export function frameCategory(frame: EthernetFrame): FrameCategory {
   const p = frame.payload;
   if (p.kind === "arp") return "arp";
@@ -1212,12 +1248,8 @@ export function frameCategory(frame: EthernetFrame): FrameCategory {
     // RS·RA 는 주소를 알려 주는 역할이라 DHCP 와 같은 색
     if (i6.kind === "icmp6") return i6.type === "ns" || i6.type === "na" ? "arp" : i6.type === "rs" || i6.type === "ra" ? "dhcp" : "icmp";
     if (i6.kind === "tcp") return "tcp";
-    return i6.payload.kind === "dns" ? "dns" : "dhcp";
+    return UDP_CATEGORY[i6.payload.kind];
   }
-  if (p.payload.kind === "icmp") return "icmp";
-  if (p.payload.kind === "tcp") return "tcp";
-  if (p.payload.kind === "esp") return "vpn";
-  if (isControl(p.payload)) return "vrrp";
-  const k = p.payload.payload.kind;
-  return k === "dns" || k === "ddns" ? "dns" : k === "rip" ? "rip" : k === "vpn" || k === "esp" || k === "ike" || k === "wg" || k === "ovpn" || k === "ts" ? "vpn" : "dhcp";
+  const inner = p.payload;
+  return inner.kind === "udp" ? UDP_CATEGORY[inner.payload.kind] : IP_CATEGORY[inner.kind];
 }

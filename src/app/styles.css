@@ -27,6 +27,7 @@
   --pkt-vpn: #64748b;
   --pkt-vrrp: #d9713c;
   --pkt-stp: #7c8a2e;
+  --pkt-app: #a0522d;
   /* 영역(주석 네모) 채움·테두리: 크롬 톤에 살짝 물든 정도 */
   --zone-gray: rgba(100, 107, 120, 0.07);
   --zone-gray-line: rgba(100, 107, 120, 0.45);
@@ -484,6 +485,9 @@ select.btn.example {
 .legend .stp {
   background: var(--pkt-stp);
 }
+.legend .app {
+  background: var(--pkt-app);
+}
 .zoom {
   position: absolute;
   right: 12px;
@@ -827,6 +831,9 @@ select.btn.example {
 }
 .packet.stp circle:not(.packet-hit) {
   fill: var(--pkt-stp);
+}
+.packet.app circle:not(.packet-hit) {
+  fill: var(--pkt-app);
 }
 /* STP 차단 포트: 케이블 위에 점선, 막힌 쪽 포트에 ⊘ */
 .stp-blocked .stp-dash {
@@ -2035,6 +2042,9 @@ select.btn.example {
 .row .cat.dns {
   background: var(--pkt-dns);
 }
+.row .cat.app {
+  background: var(--pkt-app);
+}
 /* 패킷 상세 보기 (펼친 로그 줄) */
 .pkt-detail {
   grid-column: 4 / -1;
@@ -2526,6 +2536,7 @@ select.btn.example {
 .cable-active.vpn { stroke: var(--pkt-vpn); }
 .cable-active.vrrp { stroke: var(--pkt-vrrp); }
 .cable-active.stp { stroke: var(--pkt-stp); }
+.cable-active.app { stroke: var(--pkt-app); }
 .tile-dot {
   stroke: var(--tile);
   stroke-width: 1.5;

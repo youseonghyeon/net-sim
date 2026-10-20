@@ -528,10 +528,19 @@ export function Canvas({ onNotice }: { onNotice: (msg: string) => void }) {
             RIP
           </span>
         )}
-        {t.devices.some((d) => d.l3?.vpn?.enabled) && (
+        {t.devices.some(
+          (d) =>
+            d.l3?.vpn?.enabled || d.l3?.ra?.enabled || d.host?.ra?.enabled || d.host?.mesh?.enabled || d.router?.wgServer?.enabled || d.router?.wgClient?.enabled || d.router?.ovpnServer?.enabled || d.router?.vpnServer?.enabled || d.router?.mesh?.enabled || d.router?.tor,
+        ) && (
           <span>
             <i class="vpn" />
-            VPN
+            VPN·Tor
+          </span>
+        )}
+        {t.devices.some((d) => d.host?.sip?.enabled || d.host?.p2p?.enabled || d.router?.cloud || d.router?.igmpSnooping || d.switch?.igmpSnooping) && (
+          <span>
+            <i class="app" />
+            앱(SIP·P2P·멀티캐스트)
           </span>
         )}
         {t.devices.some((d) => d.switch?.stp?.enabled) && (
