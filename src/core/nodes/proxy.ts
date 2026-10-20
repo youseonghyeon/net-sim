@@ -155,8 +155,13 @@ export class ForwardProxy {
           : `프록시: ${down.remoteIp} 의 부탁으로 ${target}${host !== ip ? ` (${ip})` : ""} 에 내 주소 ${me} 로 대신 연결 — 대상 서버에게는 프록시가 클라이언트로 보인다`,
         { client: down.remoteIp, target, ip, ...method },
       );
-      if (connect) this.tcp.connect(me, ip, port, ctx, { relay: true, onCreated: (up) => this.pending.set(up.id, { down, target, connect }) });
-      else this.tcp.connect(me, ip, port, ctx, { via: (down.via ?? 0) + 1, ...(down.cookie ? { cookie: down.cookie } : {}), onCreated: (up) => this.pending.set(up.id, { down, target }) });
+      if (connect) {
+        const up = this.tcp.connect(me, ip, port, ctx, { relay: true });
+        this.pending.set(up.id, { down, target, connect });
+      } else {
+        const up = this.tcp.connect(me, ip, port, ctx, { via: (down.via ?? 0) + 1, ...(down.cookie ? { cookie: down.cookie } : {}) });
+        this.pending.set(up.id, { down, target });
+      }
     };
     if (isValidIp(host)) {
       go(host);

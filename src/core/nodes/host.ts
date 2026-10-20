@@ -44,6 +44,9 @@ import { MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
 import { CALL_STATE_LABEL, SIP_TIMER_TAG, SipPhone, type SipPhoneConfig } from "./sip";
 import { DAD_TIMER_TAG, Ipv6Interface, NDP_TIMEOUT_TAG, NUD_TIMER_TAG, ROUTER_EXPIRY_TAG, RS_TIMER_TAG, type Ipv6Settings } from "./ipv6";
 
+
+/** 루프백으로 보낸 패킷을 받는 timer (같은 시각, 지금 일 다음) */
+const LOOPBACK_TAG = "loopback";
 export type IpMode = "dhcp" | "static";
 
 const NIC_SWITCH_TAG = "nic-switch";
@@ -481,15 +484,18 @@ export class Host implements SimNode {
     else this.iface.sendIp(pkt, ctx, this.emit(ctx));
   }
 
-  /** 내 주소로 보내는 패킷은 네트워크로 나가지 않고 바로 받는다 (루프백) */
+  /**
+   * 내 주소로 보내는 패킷은 네트워크로 나가지 않고 받는다 (루프백). 보내는 자리에서 바로 받지 않고 같은 시각, 지금 일이 끝난 뒤에 받는다
+   * (리눅스 loopback 의 netif_rx 백로그) — 보내는 쪽이 상태를 다 적기 전에 답이 돌아오는 재진입이 없다 (LESSONS 4h·4k)
+   */
   private loopback(pkt: Ipv4Packet, ctx: NodeContext): void {
     ctx.trace("ip.route", "L3", `${pkt.dst} 는 내 주소 → 루프백으로 바로 처리`, { dst: pkt.dst });
-    this.handleIp(pkt, -1, ctx);
+    ctx.timer(0, LOOPBACK_TAG, pkt);
   }
 
   private loopback6(pkt: Ipv6Packet, ctx: NodeContext): void {
     ctx.trace("ip.route", "L3", `${pkt.dst} 는 내 IPv6 주소 → 루프백으로 바로 처리`, { dst: pkt.dst });
-    this.handleIp6(pkt, -1, ctx);
+    ctx.timer(0, LOOPBACK_TAG, pkt);
   }
 
   /** DNS 서버 서비스 설정 교체 */
@@ -1769,6 +1775,12 @@ export class Host implements SimNode {
           this.finishPing(rec, "failed", { reason: "NDP timeout · 응답 없음" }, ctx);
           ctx.trace("icmp.failed", "app", `ping ${rec.dst} 실패: 그 주소를 가진 장치가 NS 에 응답하지 않음 (Address unreachable)`, { dst: rec.dst, seq: rec.seq });
         }
+        return;
+      }
+      case LOOPBACK_TAG: {
+        const pkt = data as IpPacket;
+        if (pkt.kind === "ipv6") this.handleIp6(pkt, -1, ctx);
+        else this.handleIp(pkt, -1, ctx);
         return;
       }
       case "arp-probe":

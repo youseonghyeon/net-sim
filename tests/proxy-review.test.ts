@@ -107,12 +107,16 @@ describe("리뷰 회귀: 포워드 프록시", () => {
     expect(line).toContain("TAG_NONE/400 200 GET / - HIER_NONE/-");
   });
 
-  it("루프백: 프록시가 자기 웹 서버를 대상으로 하면 응답 뒤에 '받아 오는 대로 보냄' ACK 를 또 보내지 않는다", () => {
+  it("루프백: 프록시가 자기 웹 서버를 대상으로 해도 '받아 오는 대로 보냄' ACK 는 응답보다 먼저 한 번만 (응답 뒤에 또 보내지 않는다)", () => {
     const t = edit(exampleProxyTopology(), "proxy-1", (d) => host(d, { services: [80] }));
     const { id, act, lastConn } = loadTopology(t);
     const tr = act({ kind: "tcp-connect", nodeId: id("pc-1"), dst: "192.168.0.10", port: 80 });
     expect(lastConn("pc-1")).toMatchObject({ state: "CLOSED", bytesReceived: 3000 });
-    expect(tr.filter((e) => e.summary.includes("응답은 뒤 서버에서 받아 오는 대로 보냄"))).toHaveLength(0);
+    // 루프백은 같은 시각, 지금 일 다음에 받으므로 뒤 서버(나 자신)가 답하기 전에 요청을 받았다는 ACK 가 나간다 — 원격 뒤 서버일 때와 같은 순서
+    const ack = tr.findIndex((e) => e.summary.includes("응답은 뒤 서버에서 받아 오는 대로 보냄"));
+    const reply = tr.findIndex((e) => e.nodeId === id("proxy-1") && e.kind === "tcp.data.sent" && e.summary.includes("만든 서버"));
+    expect(tr.filter((e) => e.summary.includes("응답은 뒤 서버에서 받아 오는 대로 보냄"))).toHaveLength(1);
+    expect(ack).toBeLessThan(reply);
   });
 
   it("구성 검사 proxy.port-clash: 같은 장비의 로드밸런서가 프록시 포트를 먼저 받음", () => {

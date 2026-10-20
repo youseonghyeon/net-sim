@@ -212,7 +212,8 @@ export class LoadBalancer {
     if (me) {
       for (const b of this.config.backends) {
         const key = keyOf(b);
-        this.tcp.connect(me, b.ip, b.port, ctx, { probe: true, onCreated: (conn) => this.checking.set(conn.id, { key, conn }) });
+        const conn = this.tcp.connect(me, b.ip, b.port, ctx, { probe: true });
+        this.checking.set(conn.id, { key, conn });
       }
     }
     this.scheduleRound(ctx);
@@ -338,7 +339,8 @@ export class LoadBalancer {
         (stale ? ` — 쿠키가 가리키는 ${stale} 는 빠져 있거나 없어 다시 고름` : "");
     ctx.trace("lb.pick", "app", `로드밸런서: 클라이언트 ${down.remoteIp} 의 요청 → 백엔드 ${keyOf(b)} 선택 — ${why}. LB 가 대신 연결해 요청`, { backend: keyOf(b), client: down.remoteIp });
     // 요청 줄은 그대로 넘긴다: 절대 URI(프록시에게 온 요청)면 뒤의 프록시 팜이 대상을 알아야 한다
-    this.tcp.connect(me, b.ip, b.port, ctx, { via: hops + 1, ...(down.target ? { target: down.target } : {}), onCreated: (up) => this.pending.set(up.id, { down, backend: b, tried }) });
+    const up = this.tcp.connect(me, b.ip, b.port, ctx, { via: hops + 1, ...(down.target ? { target: down.target } : {}) });
+    this.pending.set(up.id, { down, backend: b, tried });
   }
 
   /** 백엔드 연결이 끝남: 응답을 받았으면 클라이언트에게 전달, 실패면 빼 두고 다음 백엔드로. LB 가 처리한 연결이면 true */

@@ -77,7 +77,8 @@ export class SshJump {
       // 이름을 푸는 동안 내 주소를 잃음: 채널을 열 수 없다고 바로 알린다 (클라이언트가 10초 기다리지 않게)
       if (!me) return fail("connect failed: Network is unreachable", "점프 서버에 IPv4 주소가 없음");
       ctx.trace("ssh.jump", "app", `점프 서버: ${down.remoteIp} 의 채널 요청 → ${target}${host !== ip ? ` (${ip})` : ""} 에 내 주소 ${me} 로 TCP 연결 (연결되면 채널을 열고 그 뒤로는 바이트만 전달 — 대상에게는 점프 서버가 클라이언트로 보인다)`, { client: down.remoteIp, target, ip, role: "jump" });
-      this.tcp.connect(me, ip, port, ctx, { relay: true, onCreated: (up) => this.pending.set(up.id, { down, target }) });
+      const up = this.tcp.connect(me, ip, port, ctx, { relay: true });
+      this.pending.set(up.id, { down, target });
     };
     if (isValidIp(host)) {
       go(host);

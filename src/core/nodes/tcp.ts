@@ -170,8 +170,6 @@ export interface ConnectOptions {
   cookie?: string;
   /** 쿠키의 사이트 (사용자가 적은 이름). 없으면 프록시 대상의 호스트, 그것도 없으면 접속한 주소 */
   site?: string;
-  /** SYN 을 보내기 전에 부른다. 내 주소로 가는 루프백은 connect 안에서 연결이 끝까지 진행되므로, 추적할 쪽은 여기서 등록한다 */
-  onCreated?: (conn: TcpConn) => void;
   /** CONNECT: 프록시에게 target 까지 터널을 열어 달라고 한다 (HTTPS) */
   method?: "CONNECT";
   /** SSH 점프 (ssh -J): 이 연결(점프 서버의 22)로 세션을 연 뒤 이 "호스트:포트" 로 채널을 열어 그 위에서 SSH */
@@ -258,7 +256,7 @@ export class TcpStack {
   // ---------- 클라이언트 ----------
 
   connect(localIp: Ip, remoteIp: Ip, remotePort: number, ctx: NodeContext, opts: ConnectOptions = {}): TcpConn {
-    const { via, target, onCreated, method, relay, probe } = opts;
+    const { via, target, method, relay, probe } = opts;
     const localPort = this.allocPort();
     // 쿠키는 끝 클라이언트(브라우저)만: 중계 연결(via 가 있는 로드밸런서·프록시)은 저장소를 쓰지 않는다
     const site = via === undefined ? siteOf(remoteIp, target, opts.site) : undefined;
@@ -293,7 +291,6 @@ export class TcpStack {
     };
     this.conns.set(conn.id, conn);
     this.prune();
-    onCreated?.(conn);
     ctx.trace("tcp.connect", "L4", `TCP 연결 시작: ${endpoint(localIp, localPort)} → ${endpoint(remoteIp, remotePort)} (초기 seq ${conn.iss})${probe ? " — 헬스 체크 (연결되는지만 보고 닫음)" : ""}`, { conn: conn.id });
     this.transmit(conn, { syn: true, ...(probe ? { probe: true } : {}) }, ctx, `SYN 전송: "연결하자" seq=${conn.iss}`, "tcp.syn.sent");
     return conn;
@@ -594,7 +591,7 @@ export class TcpStack {
     // 응답을 아직 안 보낸 서버 연결 (TLS 면 핸드셰이크로 보낸 것은 빼고 센다)
     if (conn.role === "server" && conn.state === "ESTABLISHED" && conn.bytesSent === (conn.tls?.sent ?? 0) && !conn.deferred) {
       // 앱이 요청을 맡으면(로드밸런서·프록시) 받았다는 ACK 만 보내고 응답은 나중에.
-      // 상태를 먼저 세운다: 뒤 서버가 내 주소(루프백)면 onRequest 안에서 응답까지 끝날 수 있고, 그때는 응답이 곧 ACK 다
+      // 상태를 먼저 세운다 (onRequest 가 이 연결로 응답까지 보낼 수 있다 — 그때는 응답이 곧 ACK 다)
       conn.deferred = true;
       if (this.host.onRequest?.(conn, ctx)) {
         if (conn.state === "ESTABLISHED" && conn.bytesSent === (conn.tls?.sent ?? 0)) this.transmit(conn, { ackFlag: true }, ctx, `ACK 전송 (ack=${conn.rcvNxt}) — 요청을 받았고, 응답은 뒤 서버에서 받아 오는 대로 보냄`, "tcp.ack.sent");
@@ -932,7 +929,7 @@ export class TcpStack {
     };
     const consumes = seg.len + (seg.syn ? 1 : 0) + (seg.fin ? 1 : 0);
     ctx.trace(kind, "L4", summary, { conn: conn.id, seq: seg.seq, ack: seg.ack, len: seg.len });
-    // 상태를 먼저 갱신하고 보낸다: 내 주소로 보내는 루프백은 그 자리에서 처리돼 곧바로 다음 세그먼트를 부르므로
+    // 상태를 먼저 갱신하고 보낸다 (보내는 쪽 상태가 다 적힌 뒤에 상대가 받는다 — 루프백도 같은 시각, 지금 일 다음에 받는다)
     if (consumes > 0) {
       conn.sndNxt += consumes;
       conn.bytesSent += seg.len;
