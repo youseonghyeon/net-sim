@@ -10,7 +10,7 @@ describe("WAN + NAT", () => {
     const rt = net.nodes.get("rt") as Router;
     expect(rt.wan.ip).toBe("203.0.113.2");
     expect(rt.wan.gateway).toBe("203.0.113.1");
-    expect(rt.wanClient.state).toBe("bound");
+    expect(rt.w1.client.state).toBe("bound");
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "dhcp.bound" && e.summary.startsWith("[wan]"))).toBe(true);
   });
 
@@ -24,8 +24,8 @@ describe("WAN + NAT", () => {
     const pc1 = net.getHost("pc1");
     expect(pc1.pings.at(-1)).toMatchObject({ status: "ok" });
     const rt = net.nodes.get("rt") as Router;
-    expect(rt.nat.size).toBe(1);
-    const entry = [...rt.nat.values()][0]!;
+    expect(rt.w1.nat.size).toBe(1);
+    const entry = [...rt.w1.nat.values()][0]!;
     expect(entry.lanIp).toBe("192.168.0.100");
     expect(entry.publicId).toBe(Router.NAT_ID_START);
 
@@ -55,7 +55,7 @@ describe("WAN + NAT", () => {
     expect(net.getHost("pc1").pings.at(-1)?.status).toBe("ok");
     expect(net.getHost("pc2").pings.at(-1)?.status).toBe("ok");
     const rt = net.nodes.get("rt") as Router;
-    expect(rt.nat.size).toBe(2);
+    expect(rt.w1.nat.size).toBe(2);
   });
 
   it("WAN 에 주소가 없으면 외부 ping 은 라우터에서 막히고, 라우터가 Net Unreachable 로 바로 알린다", () => {
@@ -92,7 +92,7 @@ describe("WAN + NAT", () => {
     inet.iface.sendIp({ kind: "ipv4", src: "203.0.113.1", dst: "203.0.113.2", ttl: 64, payload: { kind: "icmp", type: "echo-reply", id: 12345, seq: 1 } }, net.contextFor("inet"), (f) => net.contextFor("inet").send(0, f));
     net.runToIdle();
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "nat.miss")).toBe(true);
-    expect(rt.nat.size).toBe(0);
+    expect(rt.w1.nat.size).toBe(0);
   });
 
   it("WAN 케이블을 뽑으면 공인 주소를 잃고 외부 통신이 막힌다", () => {

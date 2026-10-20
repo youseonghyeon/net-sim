@@ -57,7 +57,7 @@ describe("리뷰: 액티브 헬스 체크", () => {
     // 백엔드 하나를 공인 웹 서버(example.com)로 — CDN 원본·외부 API 를 뒤에 둔 구성
     const t = lb(withCheck(), { backends: [{ ip: "93.184.216.34", port: 80 }] });
     const { s, node } = loadTopology(t);
-    const nat = () => (node("공유기") as unknown as { nat: { size: number } }).nat.size;
+    const nat = () => (node("공유기") as unknown as { w1: { nat: { size: number } } }).w1.nat.size;
     const before = nat();
     s.net.runUntil(s.net.now + 120_000); // 2분
     s.net.runToIdle();

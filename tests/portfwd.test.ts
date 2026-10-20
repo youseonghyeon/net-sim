@@ -84,7 +84,7 @@ describe("포트 포워딩 — 가정용 라우터", () => {
 
     orderOf(net, ["inet:inet.forward", "inet:tcp.connect", "rt:nat.forward.rule", "rt:ip.forward", "srv:tcp.syn.received", "rt:nat.forward.reply", "rt:ip.forward", "inet:tcp.synack.received", "srv:tcp.closed", "inet:tcp.closed"]);
     // 규칙이 곧 매핑: 동적 NAT 항목은 만들지 않는다
-    expect(rt.nat.size).toBe(0);
+    expect(rt.w1.nat.size).toBe(0);
     expect(net.trace.some((e) => e.nodeId === "rt" && e.kind === "nat.miss")).toBe(false);
     // 인터넷으로 나간 응답의 출발지는 공인 주소:80
     const out = net.transmissions.find((t) => t.from.node === "rt" && t.to.node === "inet" && t.frame.payload.kind === "ipv4" && t.frame.payload.payload.kind === "tcp");
@@ -136,7 +136,7 @@ describe("포트 포워딩 — 가정용 라우터", () => {
     const conn = [...net.getHost("pc1").tcp.conns.values()][0]!;
     expect(conn.state).toBe("CLOSED");
     expect(conn.bytesReceived).toBe(3000);
-    expect(rt.nat.values().map((e) => e.publicId)).toEqual([Router.NAT_ID_START + 1]);
+    expect(rt.w1.nat.values().map((e) => e.publicId)).toEqual([Router.NAT_ID_START + 1]);
   });
 
   it("사설 주소로 inet-connect 하면 인터넷 노드에서 바로 실패로 기록된다", () => {

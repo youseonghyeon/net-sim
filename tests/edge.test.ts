@@ -103,7 +103,7 @@ describe("리뷰에서 나온 엣지케이스", () => {
     net.scheduleAction(net.now, { kind: "ping", nodeId: "pc1", dst: rt.wan.ip! });
     net.runToIdle();
     expect(net.getHost("pc1").pings.at(-1)?.status).toBe("ok");
-    expect(rt.nat.size).toBe(0);
+    expect(rt.w1.nat.size).toBe(0);
   });
 
   it("자기 IP 로 ping 하면 즉시 성공하고, 브로드캐스트 주소는 인터넷으로 나가지 않는다", () => {

@@ -67,13 +67,13 @@ describe("멀티 WAN 정책 규칙", () => {
     const L = load();
     L.act({ kind: "tcp-connect", nodeId: L.id("카페 폰"), dst: "8.8.8.8", port: 53 });
     const r = L.node<Router>("집 Brume 3");
-    expect(r.nat2.size).toBeGreaterThan(0);
-    expect(r.nat2.values().some((e) => e.lanIp === "10.0.0.2" && e.proto === "tcp")).toBe(true);
+    expect(r.w2.nat.size).toBeGreaterThan(0);
+    expect(r.w2.nat.values().some((e) => e.lanIp === "10.0.0.2" && e.proto === "tcp")).toBe(true);
     const syn = { kind: "ipv4" as const, src: "10.0.0.2", dst: "8.8.8.8", ttl: 64, payload: { kind: "tcp" as const, srcPort: L.lastConn("카페 폰").localPort, dstPort: 53, seq: 0, ack: 0, len: 0 } };
     L.apply(withRules(L.t, []));
     expect(r.mwan.rules).toEqual([]);
-    expect(r.nat2.carries(syn as never)).toBe(true);
-    expect(r.nat.carries(syn as never)).toBe(false);
+    expect(r.w2.nat.carries(syn as never)).toBe(true);
+    expect(r.w1.nat.carries(syn as never)).toBe(false);
   });
 
   it("멀티 WAN 이 꺼져 있으면 규칙은 쓰지 않는다", () => {

@@ -32,7 +32,7 @@ describe("review: WAN1 DHCP 실패", () => {
       const L = loadTopology(t);
       const r = L.node<Router>(BRUME);
       L.s.net.runUntil(L.s.net.now + 30_000);
-      log("wan1", r.wanClient.state, r.wan.ip, "wan2", r.wan2.ip, "active", r.mwan.active, JSON.stringify(r.mwan.lines));
+      log("wan1", r.w1.client.state, r.wan.ip, "wan2", r.wan2.ip, "active", r.mwan.active, JSON.stringify(r.mwan.lines));
       L.act({ kind: "ping", nodeId: L.id("사무실 PC"), dst: "8.8.8.8" });
       log("ping", L.host("사무실 PC").pings.at(-1)!.status);
       expect(r.mwan.active).toBe("wan2");
@@ -240,10 +240,10 @@ describe("review: 실행 중 켜고 끄기", () => {
     const r = L.node<Router>(BRUME);
     const pcIp0 = L.host("사무실 PC").iface.ip;
     L.apply(on);
-    log("pc ip before enable", pcIp0, "wan2", r.wan2.ip, r.wan2Client.state);
+    log("pc ip before enable", pcIp0, "wan2", r.wan2.ip, r.w2.client.state);
     L.apply(off);
     L.apply(on);
-    log("after toggles wan2", r.wan2.ip, r.wan2Client.state, r.mwan.active);
+    log("after toggles wan2", r.wan2.ip, r.w2.client.state, r.mwan.active);
     expect(r.wan2.ip).toMatch(/^192\.168\.43\./);
     L.apply({ ...on, cables: on.cables.filter((c) => c.id !== wan1CableOf(on).id) });
     expect(r.mwan.active).toBe("wan2");

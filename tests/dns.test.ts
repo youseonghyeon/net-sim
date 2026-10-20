@@ -179,7 +179,7 @@ describe("DNS: 라우터 포워더와 공인 DNS", () => {
     net.runToIdle();
     expect(pc1.pings.at(-1)).toMatchObject({ status: "ok", resolved: "93.184.216.34" });
     const rt = net.nodes.get("rt") as import("../src/core/nodes/router").Router;
-    expect(rt.nat.values().some((e) => e.proto === "udp")).toBe(true);
+    expect(rt.w1.nat.values().some((e) => e.proto === "udp")).toBe(true);
   });
 });
 

@@ -112,7 +112,7 @@ describe("TCP", () => {
     expect(client.state).toBe("CLOSED");
     expect(client.bytesReceived).toBe(3000);
     const rt = net.nodes.get("rt") as Router;
-    const entries = [...rt.nat.values()];
+    const entries = [...rt.w1.nat.values()];
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ proto: "tcp", lanIp: "192.168.0.100", innerId: 49152 });
     const inet = net.nodes.get("inet") as Internet;

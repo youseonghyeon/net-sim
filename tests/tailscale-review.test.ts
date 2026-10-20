@@ -113,7 +113,7 @@ describe("메시 VPN 리뷰", () => {
     const home = L.node<Router>(HOME);
     const homeIp = home.mesh.self!.ip;
     // NAT 할당 순번을 41641 앞에 두고 NAS 가 Tailscale 에 로그인 (실제로는 흐름 1641 개 뒤)
-    (home.nat as unknown as { seq: number }).seq = 41641;
+    (home.w1.nat as unknown as { seq: number }).seq = 41641;
     L.apply(mesh(L.t, NAS, { enabled: true, net: "tailscale", network: "family", name: "nas" }));
     expect(home.mesh.self!.ip).toBe(homeIp);
     expect(L.host(NAS).mesh.up).toBe(true);

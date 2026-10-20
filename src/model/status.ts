@@ -133,7 +133,7 @@ export function serviceBadgesOf(node: SimNode | undefined): string[] {
   } else if (node instanceof Router) {
     if (node.dhcp.enabled) out.push("DHCP");
     if (node.dnsForwarder.config.enabled) out.push("DNS");
-    out.push(node.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
+    out.push(node.w1.nat.forwards.length > 0 ? "NAT+포워딩" : "NAT");
     if (node.firewall.config.enabled) out.push("방화벽");
     if (node.wifi.enabled) out.push(`Wi-Fi ${node.wifi.ssid}`);
     if (node.ipv6Enabled) out.push("IPv6");
@@ -190,7 +190,7 @@ export function wanStatusOf(node: SimNode | undefined): StatusLine | null {
   // 주소는 받았지만 디폴트 라우트를 못 쓴다 (WAN 과 LAN 이 같은 대역)
   if (node.wan.ip && node.defaultRouteProblem(node.wan)) return { text: `WAN ${node.wan.ip} · No route`, tone: "warn", mono: true };
   if (node.wan.ip) return { text: `WAN ${node.wan.ip}`, tone: "ok", mono: true };
-  if (!node.wanLinkUp) return { text: "WAN 연결 없음", tone: "muted", mono: false };
-  if (node.wanMode === "static") return { text: "WAN 주소 수동 입력 필요", tone: "warn", mono: false };
-  return { text: `WAN ${DHCP_STATE_LABEL[node.wanClient.state]}`, tone: node.wanClient.state === "failed" ? "warn" : "muted", mono: false };
+  if (!node.w1.linkUp) return { text: "WAN 연결 없음", tone: "muted", mono: false };
+  if (node.w1.mode === "static") return { text: "WAN 주소 수동 입력 필요", tone: "warn", mono: false };
+  return { text: `WAN ${DHCP_STATE_LABEL[node.w1.client.state]}`, tone: node.w1.client.state === "failed" ? "warn" : "muted", mono: false };
 }

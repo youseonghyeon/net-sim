@@ -115,7 +115,7 @@ describe("SIP 리뷰", () => {
     call(x);
     expect(last(x, "민지 전화기").state).toBe("ended");
     const rtpPort = x.host("민지 전화기").sip.rtpPort;
-    const entry = x.node<Router>("민지네 공유기").nat.values().find((e) => e.proto === "udp" && e.innerId === rtpPort && e.pinhole);
+    const entry = x.node<Router>("민지네 공유기").w1.nat.values().find((e) => e.proto === "udp" && e.innerId === rtpPort && e.pinhole);
     // 고친 방식: 통화가 끝나면 ALG 가 그 구멍을 닫는다 (매핑이 없거나, 남아도 ALG 구멍이 아님)
     expect(entry === undefined || entry.pinhole !== true).toBe(true);
   });
