@@ -1,4 +1,4 @@
-import { LIMITED_BROADCAST_IP, type TorCell, isMcastIp } from "../packet";
+import { type TorCell, isMcastIp } from "../packet";
 import { OVPN_PORT, OvpnServer, shortFp, type OvpnServerConfig } from "./openvpn";
 import { MESH_SERVERS, MeshAgent, TS_TIMER_TAG, type MeshConfig } from "./tailscale";
 import { CLOUD_TIMER_TAG, CloudAgent, RouterAdmin, type AdminConfig, type SambaConfig } from "./glinet";
@@ -28,7 +28,7 @@ import { Ipv6Interface } from "./ipv6";
 import { DHCP_STATE_LABEL, DHCP_TIMER_TAG, DhcpClient, DhcpServer, type DhcpServerConfig } from "./dhcp";
 import { DNS_TIMER_TAG, DNS_UPSTREAM_TIMER_TAG, DnsResolver, DnsServer, type DnsServerConfig } from "./dns";
 import { DDNS_TIMER_TAG, DdnsClient, type DdnsConfig } from "./ddns";
-import { MWAN_ICMP_ID, MWAN_TIMER_TAG, MultiWan, WAN_LABEL, type WanName, mwanRuleLabel } from "./mwan";
+import { MWAN_ICMP_ID, MWAN_TIMER_TAG, MultiWan, WAN_LABEL, mwanRuleLabel } from "./mwan";
 import { Adguard, PARENTAL_CATEGORIES, type AdguardConfig } from "./adguard";
 import { APPS, Dpi, type DpiConfig } from "./dpi";
 import { Firewall, type FirewallConfig } from "./firewall";
@@ -37,11 +37,12 @@ import { PortPublish } from "./publish";
 import { hashCode } from "./host";
 import { NetInterface, type Emit } from "./iface";
 import { WanLine } from "./wanline";
+import { RouterRoutes } from "./routerroute";
 import { RouterWgClient } from "./routerwgc";
 import { Router6 } from "./router6";
-import { staticRouteLabel, type RouterConfig, type RouterIpv6Config, type RouterStaticRoute, type RouterWgClientConfig, type RouterWgServerConfig, type Wan2Config, type WanConfig } from "./routercfg";
+import { type RouterConfig, type RouterIpv6Config, type RouterStaticRoute, type RouterWgClientConfig, type RouterWgServerConfig, type Wan2Config, type WanConfig } from "./routercfg";
 import type { TunnelService } from "./tunnelsvc";
-import { NAT_ID_START, NAT_TYPE_LABEL, NatTable, type NatType, type PortForward } from "./nat";
+import { NAT_ID_START, NAT_TYPE_LABEL, type NatType, type PortForward } from "./nat";
 import type { NodeContext, NodeSnapshot, SimNode } from "./node";
 import { guardLoop } from "./switch";
 import { DEFAULT_WG, WG_PORT, WG_TIMER_TAG, WgInterface, shortKey } from "./wg";
@@ -50,27 +51,6 @@ export type { DhcpServerConfig } from "./dhcp";
 export type { NatEntry, PortForward } from "./nat";
 export type { RouterConfig, RouterIpv6Config, RouterStaticRoute, RouterWgClientConfig, RouterWgServerConfig, Wan2Config, WanConfig } from "./routercfg";
 export { staticRouteLabel, WG_POLICY_LABEL } from "./routercfg";
-
-/** main 테이블에서 디폴트 라우트가 아닌 경로: 그 회선에 직접 연결된 대역(via 없음) 또는 스태틱 라우트(route = 번호) */
-interface MainRoute {
-  line: WanName;
-  via?: Ip;
-  route?: number;
-}
-
-/**
- * 인터넷으로 내보내는 회선. rule = 이 회선을 고른 정책 규칙 번호, fallback = 규칙의 회선을 쓸 수 없어 지금 회선으로,
- * main = mwan3 정책이 아니라 main 테이블의 경로(직접 연결된 대역·스태틱 라우트)로 고름
- */
-interface OutLine {
-  name: WanName;
-  iface: NetInterface;
-  nat: NatTable;
-  emit: Emit;
-  rule?: number;
-  fallback?: boolean;
-  main?: MainRoute;
-}
 
 interface MacEntry {
   port: number;
@@ -154,8 +134,12 @@ export class Router implements SimNode {
   readonly igmp = new IgmpSnoop();
   /** DDNS 클라이언트 */
   readonly ddns: DdnsClient;
+  /** 경로 판단: main 테이블·출구 회선·공유기 자신의 출발지 (routerroute.ts) */
+  readonly rt: RouterRoutes;
   /** 스태틱 라우트 (main 테이블) */
-  routes: RouterStaticRoute[] = [];
+  get routes(): RouterStaticRoute[] {
+    return this.rt.routes;
+  }
   /** 멀티 WAN: lan4 를 WAN2 로 쓰는지 */
   wan2On = false;
   /** WAN2 회선과 그 인터페이스 (wan2 는 w2.iface) */
@@ -189,6 +173,7 @@ export class Router implements SimNode {
     this.w1 = new WanLine("wan", Router.WAN_PORT, "wan", "wan", this.wan, new DhcpClient(this.wan, hashCode(cfg.id) + 7, "wan"), wan.mode);
     this.wan2 = new NetInterface(cfg.wan2Mac ?? cfg.wanMac.replace(/^02:00:00:01/, "02:00:00:03"), {});
     this.w2 = new WanLine("wan2", Router.WAN2_PORT, "wan2", "wan2(lan4)", this.wan2, new DhcpClient(this.wan2, hashCode(cfg.id) + 13, "wan2"));
+    this.rt = new RouterRoutes({ lan: this.lan, w1: this.w1, w2: this.w2, wan2On: () => this.wan2On, mwan: () => this.mwan, emitLan: (ctx) => this.emitLan(ctx) });
     this.mwan = new MultiWan({
       ready: (w) => (w === "wan" ? this.w1.linkUp && !!this.wan.ip : this.wan2On && this.w2.linkUp && !!this.wan2.ip),
       waiting: (w) => {
@@ -236,13 +221,13 @@ export class Router implements SimNode {
       "DNS 포워더",
       {
         // VPN 클라이언트가 켜져 있으면 터널로(출발지 = 내 터널 주소), 업스트림 DNS 가 LAN 안에 있으면 LAN 으로, 아니면 WAN 으로
-        srcIp: (client) => (this.wgClient.dnsVia(client) ? this.wgClientCfg!.address!.ip : this.upstreamInLan() ? this.lan.ip : this.ownSource(this.dnsForwarder.config.upstream)),
+        srcIp: (client) => (this.wgClient.dnsVia(client) ? this.wgClientCfg!.address!.ip : this.upstreamInLan() ? this.lan.ip : this.rt.ownSource(this.dnsForwarder.config.upstream)),
         send: (pkt, ctx, client) => {
           if (this.tor.enabled && !this.wgClient.dnsVia(client) && !this.upstreamInLan()) {
             ctx.trace("ip.forward", "L3", `DNS 포워더: 업스트림 ${pkt.dst} 질의를 Tor 회로로 (출구가 대신 풀어 준다 — 통신사·DNS 서버가 내 질의를 보지 못한다)`, { dst: pkt.dst, tor: true });
             this.tor.sendInner(pkt, ctx);
           } else if (this.wgClient.dnsVia(client)) this.wgClient.dnsTo(pkt, ctx);
-          else this.sendOwn(pkt, ctx);
+          else this.rt.sendOwn(pkt, ctx);
         },
       },
       this.lan6, // LAN 호스트가 IPv6(RA 의 RDNSS = 공유기 LAN 주소)로 물어도 답한다
@@ -269,22 +254,22 @@ export class Router implements SimNode {
     // LAN 으로 내보내려는 패킷의 목적지가 VPN 클라이언트면 LAN 대신 터널로 (DNS 포워더·ping 응답·NAT 역변환한 인터넷 응답)
     this.lan.outbound = (pkt, ctx) => (!!this.wan.ip && this.vpnServer.owns(pkt.dst) && this.vpnServer.sendTo(pkt, this.wan.ip, ctx)) || this.toTunnelPeer(pkt, ctx);
     // WAN 회선으로 나가는 모든 패킷(LAN 에서 넘긴 것·공유기 자신이 만든 것)은 경로 판단을 거친다 — WAN 과 LAN 이 같은 대역이면 디폴트 라우트를 못 쓴다
-    this.wan.outbound = (pkt, ctx) => this.noRouteOut(this.wan, pkt, ctx);
-    this.wan2.outbound = (pkt, ctx) => this.wan2NoDefault(pkt, ctx) || this.noRouteOut(this.wan2, pkt, ctx);
+    this.wan.outbound = (pkt, ctx) => this.rt.noRouteOut(this.wan, pkt, ctx);
+    this.wan2.outbound = (pkt, ctx) => this.rt.wan2NoDefault(pkt, ctx) || this.rt.noRouteOut(this.wan2, pkt, ctx);
     // 공유기 자신이 회선으로 내보내는 것(받은 주소에서 하는 답 등)도 스태틱 라우트의 넥스트 홉으로
-    this.wan.nextHop = (dst) => this.staticVia(dst, "wan");
-    this.wan2.nextHop = (dst) => this.staticVia(dst, "wan2");
+    this.wan.nextHop = (dst) => this.rt.staticVia(dst, "wan");
+    this.wan2.nextHop = (dst) => this.rt.staticVia(dst, "wan2");
     // DHCP 는 공유기 자신의 다른 인터페이스 주소(WAN·WAN2)를 LAN 기기에 빌려주지 않는다
     this.dhcpServer.ownAddresses = () => [this.wan.ip, this.wan2.ip];
     // 공유기 자신이 만든 바깥 패킷(WireGuard·OpenVPN·메시·Tor·GoodCloud·관리 화면 답)은 NAT·방화벽을 거치지 않는다 — 출발지는 ownSource, 길은 sendOwn
-    const wgIo = { source: (dst?: Ip, local?: Ip) => this.ownSource(dst, local), send: (outer: Ipv4Packet, ctx: NodeContext) => this.sendOwn(outer, ctx) };
+    const wgIo = { source: (dst?: Ip, local?: Ip) => this.rt.ownSource(dst, local), send: (outer: Ipv4Packet, ctx: NodeContext) => this.rt.sendOwn(outer, ctx) };
     // 서버는 상대가 보내던 내 주소로 답하고(로밍), 클라이언트는 늘 지금 회선에서 보낸다 (WAN1 이 살아나면 예비 회선에서 돌아온다 — 받은 회선을 기억하는 것은 서버만)
     this.wgs = new WgInterface(wgIo, "WireGuard 서버", `${cfg.id}:server`);
     this.wgClient = new RouterWgClient(
       {
         firewall: this.firewall,
-        source: (dst) => this.ownSource(dst),
-        send: (outer, ctx) => this.sendOwn(outer, ctx),
+        source: (dst) => this.rt.ownSource(dst),
+        send: (outer, ctx) => this.rt.sendOwn(outer, ctx),
         resolverNow: (ctx) => {
           const onWan2 = this.wan2On && this.mwan.active === "wan2";
           return onWan2 ? { resolver: this.resolver2, ip: this.wan2.ip, label: "WAN2", emit: this.w2.emit(ctx) } : { resolver: this.resolver, ip: this.wan.ip, label: "WAN", emit: this.w1.emit(ctx) };
@@ -309,9 +294,9 @@ export class Router implements SimNode {
     );
     this.mesh = new MeshAgent(
       {
-        myIp: () => this.ownSource(),
+        myIp: () => this.rt.ownSource(),
         local: (dst) => (!!this.lan.ip && sameSubnet(dst, this.lan.ip, this.lan.prefix)) || (!!this.wan.ip && sameSubnet(dst, this.wan.ip, this.wan.prefix)),
-        send: (outer, ctx) => this.sendOwn(outer, ctx),
+        send: (outer, ctx) => this.rt.sendOwn(outer, ctx),
       },
       cfg.id,
     );
@@ -330,14 +315,14 @@ export class Router implements SimNode {
         this.vpnServer.sendTo(pkt, this.wan.ip, ctx);
         return;
       }
-      this.sendOwn(pkt, ctx);
+      this.rt.sendOwn(pkt, ctx);
     });
     this.cloud = new CloudAgent(
       {
-        wanIp: () => this.ownSource(),
-        send: (pkt, ctx) => this.sendOwn(pkt, ctx),
+        wanIp: () => this.rt.ownSource(),
+        send: (pkt, ctx) => this.rt.sendOwn(pkt, ctx),
         status: () => ({
-          wan: this.ownSource() ?? "없음",
+          wan: this.rt.ownSource() ?? "없음",
           clients: this.dhcpServer.rows().length,
           vpn:
             [
@@ -355,9 +340,9 @@ export class Router implements SimNode {
       `GL-${cfg.wanMac.slice(-5).replace(":", "").toUpperCase()}`,
       49152 + (Math.abs(hashCode(`${cfg.id}:cloud`)) % 16000),
     );
-    this.tor = new TorClient({ wanIp: () => this.ownSource(), send: (pkt, ctx) => this.sendOwn(pkt, ctx) }, hashCode(`${cfg.id}:tor`), 49152 + (Math.abs(hashCode(`${cfg.id}:tor`)) % 16000));
+    this.tor = new TorClient({ wanIp: () => this.rt.ownSource(), send: (pkt, ctx) => this.rt.sendOwn(pkt, ctx) }, hashCode(`${cfg.id}:tor`), 49152 + (Math.abs(hashCode(`${cfg.id}:tor`)) % 16000));
     // OpenVPN 서버의 답은 클라이언트가 보낸 주소에서 — 멀티 WAN 이면 그 회선으로 (TCP 연결의 로컬 주소는 바뀌면 안 된다)
-    this.ovpn = new OvpnServer({ source: wgIo.source, send: (outer, ctx) => this.sendOwn(outer, ctx), lan: () => (this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined) }, cfg.id);
+    this.ovpn = new OvpnServer({ source: wgIo.source, send: (outer, ctx) => this.rt.sendOwn(outer, ctx), lan: () => (this.lan.ip ? { ip: this.lan.ip, prefix: this.lan.prefix } : undefined) }, cfg.id);
     this.wgTun = {
       label: "WireGuard",
       via: "WireGuard 로",
@@ -443,13 +428,13 @@ export class Router implements SimNode {
     if (cfg.dpi) this.dpi.config = { ...cfg.dpi, blockApps: [...cfg.dpi.blockApps], blockCategories: [...cfg.dpi.blockCategories] };
     if (cfg.adguard) this.adguard.config = { ...cfg.adguard, custom: [...cfg.adguard.custom], allow: [...cfg.adguard.allow], parental: cfg.adguard.parental.map((p) => ({ ...p, categories: [...p.categories] })) };
     if (cfg.wgServer) this.wgServerCfg = cfg.wgServer;
-    if (cfg.routes) this.routes = cfg.routes.map((r) => ({ ...r, dest: { ...r.dest } }));
+    if (cfg.routes) this.rt.routes = cfg.routes.map((r) => ({ ...r, dest: { ...r.dest } }));
     // DDNS 는 지금 인터넷으로 내보내는 회선의 주소로 (멀티 WAN 이 넘어가면 따라간다)
     this.ddns = new DdnsClient(
       {
-        wanIp: () => this.ownSource(),
+        wanIp: () => this.rt.ownSource(),
         device: cfg.wanMac,
-        send: (pkt, ctx) => this.sendOwn(pkt, ctx),
+        send: (pkt, ctx) => this.rt.sendOwn(pkt, ctx),
       },
       hashCode(`${cfg.id}:ddns`),
     );
@@ -532,7 +517,7 @@ export class Router implements SimNode {
         // 서버 쪽: 연결이 이미 열렸으면(SYN 이 아니면) 그 흐름의 NAT 로 바꿔 보낸다
         if (!p.syn) {
           const out: Ipv4Packet = { kind: "ipv4", src: c, dst: r, ttl: 64, payload: rstToRemote };
-          const o = this.outFor(out, ctx);
+          const o = this.rt.outFor(out, ctx);
           const t = o.iface.ip && o.nat.carries(out) ? o.nat.translate(out, o.iface.ip, ctx) : undefined;
           if (t) o.iface.sendIp(t, ctx, o.emit);
         }
@@ -662,169 +647,6 @@ export class Router implements SimNode {
     return this.wan2On ? Router.BRIDGE_PORTS.filter((p) => p !== Router.WAN2_PORT) : Router.BRIDGE_PORTS;
   }
 
-  /** 지금 인터넷으로 내보내는 회선: 인터페이스·NAT·송신 */
-  private out(ctx: NodeContext): OutLine {
-    return this.line(this.wan2On && this.mwan.active === "wan2" ? "wan2" : "wan", ctx);
-  }
-
-  private line(w: WanName, ctx: NodeContext): OutLine {
-    const l = w === "wan2" ? this.w2 : this.w1;
-    return { name: l.name, iface: l.iface, nat: l.nat, emit: l.emit(ctx) };
-  }
-
-  /**
-   * LAN 에서 나가는 이 패킷의 회선: 이미 다른 회선의 흐름(그 회선으로 들어온 포트 포워딩의 응답, 그 회선으로 시작한 연결)이고
-   * 그 회선이 살아 있으면 그쪽으로 (mwan3 의 conntrack mark — 되돌아갈 때 쓰던 연결이 끊기지 않게).
-   * 목적지가 main 테이블의 경로(회선에 직접 연결된 대역·스태틱 라우트)면 그 경로 (mwan3_connected — 정책을 거치지 않는다).
-   * 그 밖의 새 흐름은 출발지가 맞는 정책 규칙의 회선(쓸 수 있으면), 아니면 지금 회선
-   */
-  private outFor(pkt: Ipv4Packet, ctx: NodeContext): OutLine {
-    const o = this.out(ctx);
-    const main = this.mainRoute(pkt.dst);
-    if (this.wan2On) {
-      if (o.nat.carries(pkt) && this.mwan.usable(o.name) && (!main || main.line !== o.name)) return o;
-      const other: WanName = o.name === "wan" ? "wan2" : "wan";
-      if (this.mwan.usable(other) && this.line(other, ctx).nat.carries(pkt) && (!main || main.line !== other)) return this.line(other, ctx);
-    }
-    if (main) return { ...this.line(main.line, ctx), main };
-    if (!this.wan2On || o.nat.carries(pkt)) return o;
-    const hit = this.mwan.ruleFor(pkt.src);
-    if (!hit) return o;
-    const want = hit.rule.line;
-    if (want === o.name) return { ...o, rule: hit.index };
-    return this.mwan.usable(want) ? { ...this.line(want, ctx), rule: hit.index } : { ...o, rule: hit.index, fallback: true };
-  }
-
-  /**
-   * main 테이블에서 이 목적지의 가장 긴 일치 경로 (디폴트 라우트 제외): LAN·회선마다 직접 연결된 대역과 스태틱 라우트.
-   * 길이가 같으면 먼저 생긴 경로 — LAN, WAN1, WAN2, 스태틱 라우트 순 (스태틱 라우트는 인터페이스가 올라온 뒤에 들어간다).
-   * 가장 긴 것이 LAN 이거나 맞는 경로가 없으면 undefined. 스태틱 라우트는 넥스트 홉이 그 인터페이스 대역 안일 때만 들어간다
-   * (리눅스는 넥스트 홉에 닿을 수 없는 경로를 넣지 않는다 — "Nexthop has invalid gateway"), 넥스트 홉이 없으면 그 인터페이스로 바로(on-link).
-   * 0.0.0.0/0 은 디폴트 라우트라 mwan3_connected 가 아니다 (회선 설정·mwan3 정책이 정함).
-   * 경로는 주소가 있는 동안 남는다 — 수동 주소 회선은 케이블이 빠져도(netifd force_link 1), DHCP 회선은 주소를 잃으면 빠진다
-   */
-  private mainRoute(dst: Ip): MainRoute | undefined {
-    let best: { prefix: number; route?: MainRoute } | undefined;
-    const offer = (ip: Ip, prefix: number, route?: MainRoute) => {
-      if (sameSubnet(dst, ip, prefix) && (!best || prefix > best.prefix)) best = { prefix, ...(route ? { route } : {}) };
-    };
-    if (this.lan.ip) offer(this.lan.ip, this.lan.prefix);
-    if (this.wan.ip) offer(this.wan.ip, this.wan.prefix, { line: "wan" });
-    if (this.wan2On && this.wan2.ip) offer(this.wan2.ip, this.wan2.prefix, { line: "wan2" });
-    this.routes.forEach((r, i) => {
-      if (r.dest.prefix === 0) return;
-      const i4 = r.iface === "wan2" ? (this.wan2On ? this.wan2 : undefined) : this.wan;
-      if (!i4?.ip) return;
-      if (!r.via) offer(r.dest.ip, r.dest.prefix, { line: r.iface, via: dst, route: i });
-      else if (sameSubnet(r.via, i4.ip, i4.prefix) && r.via !== i4.ip) offer(r.dest.ip, r.dest.prefix, { line: r.iface, via: r.via, route: i });
-    });
-    return best?.route;
-  }
-
-  /** 이 목적지의 main 테이블 경로가 그 회선의 스태틱 라우트면 넥스트 홉 (on-link 면 대상 자신) */
-  private staticVia(dst: Ip, line: WanName): Ip | undefined {
-    const r = this.mainRoute(dst);
-    return r?.route !== undefined && r.line === line ? r.via : undefined;
-  }
-
-  /** LAN 으로 가는 목적지인가 (LAN 대역 안이고, 더 긴 스태틱 라우트가 없음) */
-  private toLan(dst: Ip): boolean {
-    return !!this.lan.ip && sameSubnet(dst, this.lan.ip, this.lan.prefix) && !this.mainRoute(dst);
-  }
-
-  /** 공유기 자신이 만든 패킷: 목적지가 main 테이블의 경로(직접 연결된 대역·스태틱 라우트)이고 출발지가 그 회선의 주소면 그 경로로 보낸다. 보냈으면 true */
-  private sendMain(pkt: Ipv4Packet, ctx: NodeContext): boolean {
-    const r = this.mainRoute(pkt.dst);
-    if (!r) return false;
-    const o = this.line(r.line, ctx);
-    if (pkt.src !== o.iface.ip) return false;
-    o.iface.sendIp(pkt, ctx, o.emit, r.via);
-    return true;
-  }
-
-  /** 공유기 자신이 이 목적지로 보낼 때의 출발지: main 테이블의 경로면 그 회선 주소 */
-  private mainSource(dst: Ip | undefined): Ip | undefined {
-    const r = dst ? this.mainRoute(dst) : undefined;
-    return r ? (r.line === "wan2" ? this.wan2.ip : this.wan.ip) : undefined;
-  }
-
-  /**
-   * 공유기 자신이 만든 바깥 패킷의 출발지 (한 곳): 상대가 보내던 내 주소가 아직 살아 있는 회선의 것이면 그 주소(멀티 WAN — mwan3 의
-   * "from <회선 주소>" 규칙), 목적지가 main 테이블 경로(직접 연결된 대역·스태틱 라우트)면 그 회선 주소, 아니면 지금 회선의 주소.
-   * 회선 주소는 링크가 살아 있을 때만 (수동 WAN 은 케이블 없이도 주소가 있다)
-   */
-  private ownSource(dst?: Ip, local?: Ip): Ip | undefined {
-    const sticky = this.stickySource(local) ?? this.mainSource(dst);
-    if (sticky) return sticky;
-    const l = this.wan2On && this.mwan.active === "wan2" ? this.w2 : this.w1;
-    return l.linkUp ? l.iface.ip : undefined;
-  }
-
-  /** 공유기 자신이 만든 바깥 패킷 보내기 (한 곳): LAN 대역이면 LAN, main 테이블 경로면 그 경로, 아니면 출발지 주소의 회선 (두 회선 주소가 같거나 모르는 출발지면 지금 회선) */
-  private sendOwn(pkt: Ipv4Packet, ctx: NodeContext): void {
-    if (this.toLan(pkt.dst)) {
-      this.lan.sendIp(pkt, ctx, this.emitLan(ctx));
-      return;
-    }
-    if (this.sendMain(pkt, ctx)) return;
-    const o = !this.wan2On || this.wan.ip === this.wan2.ip ? this.out(ctx) : pkt.src === this.wan2.ip ? this.line("wan2", ctx) : pkt.src === this.wan.ip ? this.line("wan", ctx) : this.out(ctx);
-    o.iface.sendIp(pkt, ctx, o.emit);
-  }
-
-  /** 표시용: LuCI 상태 → 라우트 처럼 main 테이블 (디폴트 라우트는 그 회선을 디폴트 라우트로 쓸 때만) */
-  private routeRows(): string[][] {
-    const rows: string[][] = [];
-    const conn = (name: string, i: NetInterface) => {
-      if (i.ip) rows.push([name, `${networkOf(i.ip, i.prefix)}/${i.prefix}`, "", "직접 연결"]);
-    };
-    conn("lan", this.lan);
-    conn("wan", this.wan);
-    if (this.wan.ip && this.wan.gateway) rows.push(["wan", "0.0.0.0/0", this.wan.gateway, "디폴트 라우트"]);
-    if (this.wan2On) {
-      conn("wan2", this.wan2);
-      if (this.wan2.ip && this.wan2.gateway && this.mwan.wan2Member) rows.push(["wan2", "0.0.0.0/0", this.wan2.gateway, "디폴트 라우트 (예비)"]);
-    }
-    for (const r of this.routes) {
-      const i = r.iface === "wan2" ? (this.wan2On ? this.wan2 : undefined) : this.wan;
-      const why =
-        r.dest.prefix === 0
-          ? "디폴트 라우트는 회선 설정·멀티 WAN 이 정함"
-          : !i
-            ? "멀티 WAN 이 꺼져 WAN2 가 없음"
-            : !i.ip
-              ? `${r.iface} 에 주소 없음`
-              : !r.via
-                ? ""
-                : r.via === i.ip
-                  ? "넥스트 홉이 내 주소"
-                  : !sameSubnet(r.via, i.ip, i.prefix)
-                    ? `넥스트 홉이 ${r.iface} 대역(${networkOf(i.ip, i.prefix)}/${i.prefix}) 밖`
-                    : "";
-      rows.push([r.iface, `${r.dest.ip}/${r.dest.prefix}`, r.via ?? "", why ? `스태틱 — 쓰이지 않음 (${why})` : r.via ? "스태틱" : "스태틱 (on-link)"]);
-    }
-    return rows;
-  }
-
-  /** 스태틱 라우트 설정 (바뀌었을 때만 기록) */
-  setRoutes(routes: RouterStaticRoute[], ctx: NodeContext): void {
-    if (routes.map(staticRouteLabel).join() === this.routes.map(staticRouteLabel).join()) return;
-    this.routes = routes.map((r) => ({ ...r, dest: { ...r.dest } }));
-    ctx.trace("ip.config", "sys", routes.length ? `스태틱 라우트: ${routes.map(staticRouteLabel).join(", ")} — 이 대역은 mwan3 정책을 거치지 않고 main 테이블의 이 경로로 (그 회선의 NAT 로 나간다)` : "스태틱 라우트 없음", { routes: routes.length });
-  }
-
-  /** 내 WAN 주소 (멀티 WAN 이면 WAN2 주소도) */
-  private isWanAddr(ip: Ip): boolean {
-    return (!!this.wan.ip && ip === this.wan.ip) || (this.wan2On && !!this.wan2.ip && ip === this.wan2.ip);
-  }
-
-  /** 상대가 보내던 내 주소가 아직 살아 있는 회선의 주소면 그 주소 (멀티 WAN 일 때만) */
-  private stickySource(local: Ip | undefined): Ip | undefined {
-    if (!this.wan2On || !local) return undefined;
-    if (local === this.wan.ip && this.w1.linkUp && this.mwan.lines.wan.online) return local;
-    if (local === this.wan2.ip && this.w2.linkUp && this.mwan.usable("wan2")) return local;
-    return undefined;
-  }
-
   // ---------- 설정 변경 ----------
 
   configure(
@@ -897,7 +719,7 @@ export class Router implements SimNode {
     if (cfg.ipv6) this.v6.setConfig(cfg.ipv6, ctx);
 
     // 2. 테이블
-    if (cfg.routes) this.setRoutes(cfg.routes, ctx);
+    if (cfg.routes) this.rt.setRoutes(cfg.routes, ctx);
     if (cfg.natType && cfg.natType !== this.w1.nat.type) {
       const from = this.w1.nat.type;
       const n = this.w1.nat.setType(cfg.natType);
@@ -1436,7 +1258,7 @@ export class Router implements SimNode {
   /** VPN 클라이언트(노트북)가 터널로 보낸 패킷: 공유기 자신·집 LAN·다른 VPN 클라이언트·인터넷 (LAN 호스트가 보낸 것처럼) */
   private routeFromVpn(pkt: Ipv4Packet, frameId: number, ctx: NodeContext): void {
     const emit = this.emitLan(ctx);
-    if (pkt.dst === this.lan.ip || this.isWanAddr(pkt.dst)) {
+    if (pkt.dst === this.lan.ip || this.rt.isWanAddr(pkt.dst)) {
       this.deliverLocal(pkt, frameId, ctx, { dns: pkt.dst === this.lan.ip, who: "VPN 클라이언트" });
       return;
     }
@@ -1448,7 +1270,7 @@ export class Router implements SimNode {
       this.toVpnClient(pkt, frameId, ctx);
       return;
     }
-    if (this.toLan(pkt.dst)) {
+    if (this.rt.toLan(pkt.dst)) {
       if (pkt.ttl <= 1) {
         const notice = this.lan.timeExceeded(pkt, ctx, frameId);
         if (notice) this.lan.sendIp(notice, ctx, emit);
@@ -1498,7 +1320,7 @@ export class Router implements SimNode {
       ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 는 VPN 할당 IP 인데 지금 그 주소로 붙어 있는 VPN 기기가 없음 (끊긴 기기에 대신 답했던 프록시 ARP 가 보낸 쪽 캐시에 남음) → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
-    if (this.toLan(pkt.dst)) {
+    if (this.rt.toLan(pkt.dst)) {
       ctx.trace("ip.drop", "L3", `목적지 ${pkt.dst} 는 LAN 안의 주소 → 라우터를 거칠 필요가 없음 (호스트끼리 직접 통신) → 드롭`, { dst: pkt.dst }, frameId);
       return;
     }
@@ -1517,14 +1339,14 @@ export class Router implements SimNode {
       this.tor.sendInner({ ...pkt, ttl: pkt.ttl - 1 }, ctx, frameId);
       return;
     }
-    const o = this.outFor(pkt, ctx);
+    const o = this.rt.outFor(pkt, ctx);
     if (!o.iface.ip) {
       ctx.trace("ip.no-route", "L3", `${pkt.dst} 는 외부 주소인데 ${this.wan2On ? `${WAN_LABEL[o.name]}(지금 쓰는 회선)` : "WAN"} 에 공인 주소가 없음 → 인터넷으로 보낼 수 없음 (WAN 케이블과 DHCP 확인)`, { dst: pkt.dst }, frameId);
       const notice = this.lan.unreachable(pkt, "net", ctx, frameId);
       if (notice) this.lan.sendIp(notice, ctx, this.emitLan(ctx));
       return;
     }
-    const why = this.wanRouteProblem(o.iface, pkt.dst);
+    const why = this.rt.wanRouteProblem(o.iface, pkt.dst);
     if (why) {
       ctx.trace("ip.no-route", "L3", `No route: ${why} → 드롭하고 Destination Unreachable (net)`, { dst: pkt.dst }, frameId);
       const notice = this.lan.unreachable(pkt, "net", ctx, frameId);
@@ -1546,7 +1368,7 @@ export class Router implements SimNode {
     const via = rule ? ` — 출발지 ${pkt.src} 는 mwan3 규칙 ${o.rule! + 1}(${mwanRuleLabel(rule)})${o.fallback ? ` 이지만 ${WAN_LABEL[rule.line]}${unusable} 지금 회선으로` : ""}` : "";
     const port = this.wan2On ? `${WAN_LABEL[o.name]}(${o.name === "wan" ? "wan" : "lan4"})` : "WAN";
     const main = o.main;
-    const sr = main?.route !== undefined ? this.routes[main.route] : undefined;
+    const sr = main?.route !== undefined ? this.rt.routes[main.route] : undefined;
     const nat = natNew ? `${o.iface.ip} 로 MASQUERADE` : "이미 있는 흐름이라 NAT 테이블대로";
     const what = sr
       ? `${pkt.dst} 는 스태틱 라우트 ${sr.dest.ip}/${sr.dest.prefix} → ${sr.via ? `넥스트 홉 ${sr.via}` : "넥스트 홉 없음(on-link)"}, ${port} 인터페이스로 전달 (${this.wan2On ? "mwan3 정책을 거치지 않음, " : ""}${nat})`
@@ -1568,65 +1390,9 @@ export class Router implements SimNode {
     o.iface.sendIp(translated, ctx, o.emit, main?.via);
   }
 
-  // ---------- 경로 판단 ----------
-
-  /** 이 WAN 회선의 대역이 LAN 대역과 겹치나 (공유기 뒤 공유기를 둘 다 192.168.0.x 로 둔 경우) */
-  private overlapsLan(iface: NetInterface): boolean {
-    return !!iface.ip && !!this.lan.ip && sameSubnet(iface.ip, this.lan.ip, Math.min(iface.prefix, this.lan.prefix));
-  }
-
-  /**
-   * 이 회선의 디폴트 라우트를 쓸 수 없는 사유. 넥스트 홉이 내 주소이거나 LAN 대역 안이면 그 경로로는 인터넷에 못 나간다
-   * (리눅스는 넥스트 홉을 연결된 대역으로 찾는데, 그게 LAN 쪽이거나 나 자신이다). 게이트웨이가 아예 없으면 인터페이스가 기존대로 알린다
-   */
+  /** 이 회선의 디폴트 라우트를 쓸 수 없는 사유 (routerroute.ts) */
   defaultRouteProblem(iface: NetInterface = this.wan): string | undefined {
-    const gw = iface.gateway;
-    const lan = this.lan.ip;
-    if (!iface.ip || !gw || !lan) return undefined;
-    const label = iface === this.wan2 ? "WAN2" : "WAN";
-    const both = `${label} ${iface.ip}/${iface.prefix} 와 LAN ${lan}/${this.lan.prefix}`;
-    if (gw === lan) return `디폴트 라우트의 넥스트 홉 ${gw} 가 내 LAN 주소 (${both} 가 같은 대역) → 쓸 수 없는 경로라 인터넷으로 못 나감`;
-    if (gw === this.wan.ip || gw === this.wan2.ip) return `디폴트 라우트의 넥스트 홉 ${gw} 가 내 주소 → 쓸 수 없는 경로라 인터넷으로 못 나감`;
-    if (sameSubnet(gw, lan, this.lan.prefix)) return `디폴트 라우트의 넥스트 홉 ${gw} 가 LAN 대역 안 (${both}) → 넥스트 홉을 LAN 쪽에서 찾게 돼 인터넷으로 못 나감`;
-    return undefined;
-  }
-
-  /**
-   * WAN 회선으로 보내려는 목적지의 경로를 리눅스처럼 판단한다: 연결된 대역(LAN 이 먼저 — 부팅 때 LAN 브리지가 먼저 올라온다) → 그 회선의 대역 → 디폴트 라우트.
-   * 못 보내면 사유, 보내도 되면 undefined
-   */
-  private wanRouteProblem(iface: NetInterface, dst: Ip): string | undefined {
-    if (!iface.ip || !this.lan.ip) return undefined;
-    if (this.overlapsLan(iface) && sameSubnet(dst, this.lan.ip, this.lan.prefix)) {
-      const label = iface === this.wan2 ? "WAN2" : "WAN";
-      return `${dst} 는 ${label} 대역(${iface.ip}/${iface.prefix})이면서 LAN 대역(${this.lan.ip}/${this.lan.prefix})이기도 함 → 연결된 LAN 경로가 먼저라 ${label} 로 보낼 수 없음`;
-    }
-    if (sameSubnet(dst, iface.ip, iface.prefix)) return undefined;
-    const main = this.mainRoute(dst);
-    if (main?.via && (main.line === "wan2" ? this.wan2 : this.wan) === iface) return undefined; // 스태틱 라우트 — 디폴트 라우트를 쓰지 않는다
-    const why = this.defaultRouteProblem(iface);
-    return why && `${dst} 는 외부 → ${why}`;
-  }
-
-  /**
-   * WAN2 를 디폴트 라우트로 쓰지 않는데 WAN2 로 내보내려는 패킷(공유기 자신의 답 — 받은 주소에서)의 목적지가 WAN2 의 대역·스태틱 라우트가 아니면:
-   * WAN2 에는 디폴트 라우트가 없으니(받은 게이트웨이도 쓰지 않음) main 테이블의 디폴트 라우트인 WAN1 으로 나간다 (출발지 주소는 그대로). 처리했으면 true
-   */
-  private wan2NoDefault(pkt: Ipv4Packet, ctx: NodeContext): boolean {
-    if (!this.wan2On || this.mwan.wan2Member || !this.wan2.ip || pkt.dst === LIMITED_BROADCAST_IP || sameSubnet(pkt.dst, this.wan2.ip, this.wan2.prefix)) return false;
-    if (this.mainRoute(pkt.dst)?.line === "wan2") return false;
-    ctx.trace("ip.forward", "L3", `${pkt.src} → ${pkt.dst}: WAN2 는 디폴트 라우트로 쓰지 않아 WAN2 의 게이트웨이로 보내지 않음 → main 테이블의 디폴트 라우트(WAN1)로 (출발지 주소는 그대로)`, { dst: pkt.dst, out: "wan" });
-    this.wan.sendIp(pkt, ctx, this.w1.emit(ctx));
-    return true;
-  }
-
-  /** WAN 인터페이스로 나가기 직전의 경로 판단 (공유기 자신이 만든 패킷도). 못 보내면 기록하고 true */
-  private noRouteOut(iface: NetInterface, pkt: Ipv4Packet, ctx: NodeContext): boolean {
-    if (pkt.dst === LIMITED_BROADCAST_IP) return false; // DHCP 등 브로드캐스트는 경로와 무관
-    const why = this.wanRouteProblem(iface, pkt.dst);
-    if (!why) return false;
-    ctx.trace("ip.no-route", "L3", `No route: ${pkt.src} → ${pkt.dst} 를 보내려 했지만 ${why} → 드롭`, { dst: pkt.dst });
-    return true;
+    return this.rt.defaultRouteProblem(iface);
   }
 
   // ---------- 멀티 WAN ----------
@@ -1764,8 +1530,8 @@ export class Router implements SimNode {
   private routeFromWg(pkt: Ipv4Packet, frameId: number, ctx: NodeContext, t: TunnelService): void {
     const vpn = { label: t.label, address: t.address(), ...t.access() };
     const emit = this.emitLan(ctx);
-    if (pkt.dst === this.lan.ip || this.isWanAddr(pkt.dst) || pkt.dst === vpn.address) {
-      this.deliverLocal(pkt, frameId, ctx, { dns: !this.isWanAddr(pkt.dst), who: `${vpn.label} 클라이언트` });
+    if (pkt.dst === this.lan.ip || this.rt.isWanAddr(pkt.dst) || pkt.dst === vpn.address) {
+      this.deliverLocal(pkt, frameId, ctx, { dns: !this.rt.isWanAddr(pkt.dst), who: `${vpn.label} 클라이언트` });
       return;
     }
     if (pkt.dst === "255.255.255.255" || isMcastIp(pkt.dst)) {
@@ -1776,7 +1542,7 @@ export class Router implements SimNode {
       this.toWgPeerFwd(pkt, frameId, ctx);
       return;
     }
-    if (this.toLan(pkt.dst)) {
+    if (this.rt.toLan(pkt.dst)) {
       if (!vpn.lanAccess) {
         ctx.trace("fw.deny", "L3", `${vpn.label} 클라이언트 ${pkt.src} → 집 LAN ${pkt.dst}: "LAN 접근 허용" 이 꺼져 있음 → 드롭 (인터넷만 이 공유기로 나갈 수 있다)`, { src: pkt.src, dst: pkt.dst }, frameId);
         return;
@@ -1891,7 +1657,7 @@ export class Router implements SimNode {
         // 들어온 회선으로 되돌린다 (멀티 WAN: 그 흐름의 응답이 어느 회선 NAT 에 있나)
         const p0 = pkt.payload;
         const reply: Ipv4Packet = { ...pkt, src: pkt.dst, dst: pkt.src, payload: p0.kind === "tcp" || p0.kind === "udp" ? { ...p0, srcPort: p0.dstPort, dstPort: p0.srcPort } : p0 } as Ipv4Packet;
-        const l = this.wan2On && this.w2.nat.carries(reply) ? this.line("wan2", ctx) : this.line("wan", ctx);
+        const l = this.wan2On && this.w2.nat.carries(reply) ? this.rt.line("wan2", ctx) : this.rt.line("wan", ctx);
         if (!l.iface.ip) continue;
         const notice = this.lan.unreachable(pkt, "host", ctx);
         const out = notice ? l.nat.translate(notice, l.iface.ip, ctx) : undefined;
@@ -1994,7 +1760,7 @@ export class Router implements SimNode {
               ...(this.mwan.rules.length ? [{ title: "멀티 WAN 정책 규칙 (mwan3 rules)", columns: ["#", "출발지", "회선", "지금", "새 연결"], rows: this.mwan.ruleRows() }] : []),
             ]
           : []),
-        ...(this.routes.length || this.wan2On ? [{ title: "라우팅 테이블 (main)", columns: ["네트워크", "대상", "IPv4 게이트웨이", "종류"], rows: this.routeRows() }] : []),
+        ...(this.rt.routes.length || this.wan2On ? [{ title: "라우팅 테이블 (main)", columns: ["네트워크", "대상", "IPv4 게이트웨이", "종류"], rows: this.rt.routeRows() }] : []),
         ...(this.vpnServer.config.enabled ? [{ title: "VPN 접속", columns: ["사용자", "할당 IP", "접속 주소", "방식"], rows: this.vpnServer.rows() }] : []),
         ...(this.wgServerCfg?.enabled ? [{ title: "WireGuard 서버 피어 (wg show)", columns: ["피어", "공개 키", "엔드포인트", "AllowedIPs", "최근 핸드셰이크", "전송"], rows: this.wgs.rows() }] : []),
         ...(this.igmp.enabled ? [{ title: "IGMP 스누핑 (그룹 → 포트)", columns: ["그룹", "VLAN", "포트"], rows: this.igmp.rows((p) => Router.portName(p)) }] : []),
