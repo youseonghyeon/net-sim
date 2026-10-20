@@ -1119,25 +1119,7 @@ export class Router implements SimNode {
     }
     if (cfg.dhcp.start !== d.start || cfg.dhcp.end !== d.end || cfg.dhcp.enabled !== d.enabled || (cfg.dhcp.dns || undefined) !== (d.dns || undefined)) this.dhcpServer.setConfig(cfg.dhcp, ctx);
 
-    const w = cfg.wan;
-    const wanChanged =
-      w.mode !== this.w1.mode || (w.mode === "static" && (w.ip !== this.wan.ip || (w.prefix ?? 24) !== this.wan.prefix || w.gateway !== this.wan.gateway));
-    if (wanChanged) {
-      this.w1.mode = w.mode;
-      if (w.mode === "static") {
-        this.w1.client.stop();
-        this.wan.configure(w.ip || undefined, w.prefix ?? 24, w.gateway || undefined);
-        this.wan.arpCache.clear();
-        this.wan.clearPending();
-        ctx.trace("ip.config", "sys", w.ip ? `[wan] 수동 설정 적용: ${w.ip}/${w.prefix ?? 24}, 게이트웨이 ${w.gateway ?? "없음"}` : `[wan] 수동 설정으로 전환 (주소 미입력)`, { ...w });
-        if (w.ip && this.w1.linkUp) this.wan.claim(ctx, this.w1.emit(ctx));
-      } else {
-        this.wan.clearAddress();
-        ctx.trace("ip.config", "sys", `[wan] 자동(DHCP) 로 전환 → ISP 에서 공인 주소를 받는다`, { ...w });
-        if (this.w1.linkUp) this.w1.client.start(ctx, this.w1.emit(ctx));
-        else this.w1.client.stop();
-      }
-    }
+    if (this.w1.differs(cfg.wan)) this.w1.setAddressing(cfg.wan, ctx);
 
     if (cfg.forwards && forwardsKey(cfg.forwards) !== forwardsKey(this.w1.nat.forwards)) {
       this.w1.nat.setForwards(cfg.forwards);
@@ -1209,15 +1191,12 @@ export class Router implements SimNode {
     }
     if (up && port !== Router.WAN_PORT) this.startLan6(ctx);
     if (port === Router.WAN_PORT) {
-      this.w1.linkUp = up;
       if (up) {
-        ctx.trace("link.up", "L1", `wan 포트 링크 연결됨`, { port });
-        if (this.w1.mode === "dhcp") this.w1.client.start(ctx, this.w1.emit(ctx));
-        else if (this.wan.ip) this.onWanAddress(ctx); // 수동 WAN: 주소는 이미 있다 — VPN 클라이언트를 잇고 DDNS 를 갱신
+        if (this.w1.linkOn(ctx)) this.onWanAddress(ctx); // 수동 WAN: 주소는 이미 있다 — VPN 클라이언트를 잇고 DDNS 를 갱신
         this.wan6.linkUp(ctx, this.w1.emit(ctx));
         return;
       }
-      ctx.trace("link.down", "L1", `wan 포트 링크 다운`, { port });
+      this.w1.linkOff(ctx);
       this.wan6.linkDown();
       this.mwan.onLine("wan", ctx);
       // 자동(DHCP) WAN 은 공인 주소를 잃으니 VPN 연결도 끝 — 노트북이 다음에 보내면 INVALID-SPI 로 알려 다시 접속시킨다.
@@ -1225,13 +1204,7 @@ export class Router implements SimNode {
       if (this.w1.mode === "dhcp") this.vpnServer.clear();
       // ISP 와 끊기면 위임도 끝: LAN 에서 그 프리픽스를 거둔다 (다시 이어지면 새로 요청)
       this.pd.stop(ctx, this.w1.emit(ctx));
-      this.wan.clearPending();
-      if (this.w1.mode === "dhcp") {
-        const had = this.wan.ip;
-        this.wan.clearAddress();
-        this.w1.client.stop();
-        if (had) ctx.trace("dhcp.release", "app", `[wan] 링크 다운으로 공인 주소 ${had} 해제`, { ip: had });
-      }
+      this.w1.release(ctx);
       return;
     }
     if (Router.RADIO_PORTS.includes(port)) {
@@ -2076,7 +2049,7 @@ export class Router implements SimNode {
   /** 멀티 WAN 설정: 켜면 lan4 가 WAN2 (주소는 DHCP·수동), 끄면 다시 LAN 포트 */
   setWan2(cfg: Wan2Config, ctx: NodeContext): void {
     const on = cfg.enabled;
-    const addrChanged = cfg.mode !== this.w2.mode || (cfg.mode === "static" && (cfg.ip !== this.wan2.ip || (cfg.prefix ?? 24) !== this.wan2.prefix || cfg.gateway !== this.wan2.gateway));
+    const addrChanged = this.w2.differs(cfg);
     if (on !== this.wan2On) {
       this.wan2On = on;
       // 그 포트로 배운 MAC 은 버린다 (LAN 포트 ↔ WAN2 가 바뀜)
@@ -2085,26 +2058,12 @@ export class Router implements SimNode {
         ctx.trace("ip.config", "sys", `멀티 WAN: lan4 포트를 WAN2(예비 회선)로 — 내부 스위치에서 빠진다`, { wan2: true });
         this.w2.linkUp = ctx.isPortConnected(Router.WAN2_PORT);
       } else {
-        this.w2.client.stop();
-        this.wan2.clearAddress();
-        this.w2.linkUp = false;
+        this.w2.off();
         ctx.trace("ip.config", "sys", `멀티 WAN 꺼짐: lan4 는 다시 LAN 포트`, { wan2: false });
       }
     }
-    if (on && (addrChanged || this.w2.mode !== cfg.mode || (this.w2.linkUp && cfg.mode === "dhcp" && !this.wan2.ip && this.w2.client.state === "idle"))) {
-      this.w2.mode = cfg.mode;
-      if (cfg.mode === "static") {
-        this.w2.client.stop();
-        this.wan2.configure(cfg.ip || undefined, cfg.prefix ?? 24, cfg.gateway || undefined);
-        this.wan2.arpCache.clear();
-        this.wan2.clearPending();
-        if (cfg.ip) ctx.trace("ip.config", "sys", `[wan2] 수동 설정: ${cfg.ip}/${cfg.prefix ?? 24}, 게이트웨이 ${cfg.gateway ?? "없음"}`, { ...cfg });
-        if (cfg.ip && this.w2.linkUp) this.wan2.claim(ctx, this.w2.emit(ctx)); // 같은 주소를 쓰는 장비가 있나 (ARP Probe)
-      } else {
-        this.wan2.clearAddress();
-        if (this.w2.linkUp) this.w2.client.start(ctx, this.w2.emit(ctx));
-      }
-    }
+    // 켤 때 자동 회선이 멈춰 있으면(처음·다시 켬) DHCP 를 시작
+    if (on && (addrChanged || (this.w2.linkUp && cfg.mode === "dhcp" && !this.wan2.ip && this.w2.client.state === "idle"))) this.w2.setAddressing(cfg, ctx);
     this.mwan.setConfig(on, cfg.track, ctx, cfg.defaultRoute !== false);
     this.mwan.setRules(on ? (cfg.rules ?? []) : [], ctx);
     this.mwan.onLine("wan2", ctx);
@@ -2112,20 +2071,11 @@ export class Router implements SimNode {
 
   /** WAN2 링크 */
   private onWan2Link(up: boolean, ctx: NodeContext): void {
-    this.w2.linkUp = up;
     if (up) {
-      ctx.trace("link.up", "L1", `wan2(lan4) 포트 링크 연결됨`, { port: Router.WAN2_PORT });
-      if (this.w2.mode === "dhcp") this.w2.client.start(ctx, this.w2.emit(ctx));
-      else if (this.wan2.ip) this.wan2.claim(ctx, this.w2.emit(ctx));
+      if (this.w2.linkOn(ctx)) this.wan2.claim(ctx, this.w2.emit(ctx)); // 수동 주소: 같은 주소를 쓰는 장비가 있나 (ARP Probe)
     } else {
-      ctx.trace("link.down", "L1", `wan2(lan4) 포트 링크 다운`, { port: Router.WAN2_PORT });
-      this.wan2.clearPending();
-      if (this.w2.mode === "dhcp") {
-        const had = this.wan2.ip;
-        this.wan2.clearAddress();
-        this.w2.client.stop();
-        if (had) ctx.trace("dhcp.release", "app", `[wan2] 링크 다운으로 주소 ${had} 해제`, { ip: had });
-      }
+      this.w2.linkOff(ctx);
+      this.w2.release(ctx);
     }
     this.mwan.onLine("wan2", ctx);
   }
