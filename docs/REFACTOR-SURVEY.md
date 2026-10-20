@@ -83,7 +83,7 @@
 - **validate 공용 모듈** — UI `Field error=`·구성 검사·effective* 가 같은 함수 (`staticRouteProblem` 이 선례). 파싱 모듈과 같이. (M)
 - **`<IntInput>`** — 숫자 칸 16곳 통일 (프리픽스 24.5 결함). (S)
 - **`useSub(d, key)` 설정 훅** — 패치 클로저 55개, 보일 때와 고칠 때 기본값이 다른 곳 4곳(꺼진 상태에서 칸을 고치면 기능이 켜지는 잠재 결함). (S~M) — **결함만 고침**: 다른 곳은 11곳, 그중 메시의 종류 버튼이 실제로 기능을 켬 → 섹션마다 `base` 하나를 보이는 값·고칠 바탕에 같이 씀. 훅으로 55개를 바꾸는 것은 보류 (같은 한 줄 패턴을 다른 한 줄로 옮기는 셈)
-- **simView 선택자** — UI 의 `sim.node()` 16파일·instanceof 약 43회, "이 IP 는 누구" 조회 5벌, 상태 점 색 두 규칙 → 순수 함수 + `useSim(f)`(안에서 simVersion 을 읽어 4zi 를 구조로 막음). (M)
+- **simView 선택자** — UI 의 `sim.node()` 16파일·instanceof 약 43회, "이 IP 는 누구" 조회 5벌, 상태 점 색 두 규칙 → 순수 함수 + `useSim(f)`(안에서 simVersion 을 읽어 4zi 를 구조로 막음). (M) — **가드로 함**: `tests/ui-subscribe-guard.test.ts` — `sim.node()`·`sim.net` 을 부르거나 코어 노드를 props 로 받는 컴포넌트는 simVersion·simTime(로그 창은 logTick)을 읽어야 한다 (P2pDiag 의 구독을 빼면 실패함을 확인). 지금 빠진 곳은 없음. 선택자 함수·`useSim` 으로 16파일을 옮기는 것은 보류 — 같은 보호를 소스 검사로 얻었다
 - **`<ListEditor>`** — 목록 편집기 19벌(계정 3벌·대역 경로 5벌), 줄 오류 클래스 5종. ui-check 선택자와 같이. (M)
 - **Canvas 분리** — 팬·드래그마다 모든 장치 다시 그림, 상태 O(n²) → ViewportGroup·memo·공유 computed, 파일을 interaction·DeviceView·packets·geometry 로. 이득은 측정 먼저(perf-check 에 팬·드래그 시나리오). (M~L)
 - ui-check 를 helpers + sections 파일로. (S)
