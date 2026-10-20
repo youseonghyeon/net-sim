@@ -49,6 +49,8 @@ export class NetInterface {
   private lastDefendAt = -Infinity;
   /** nextHop IP → ARP 해석을 기다리는 패킷들 */
   readonly pending = new Map<Ip, PendingPacket[]>();
+  /** "arp-timeout" 타이머의 주인 표시: 장치의 인터페이스마다 onArpTimeout 을 부르므로, 다른 인터페이스가 같은 주소를 기다리던 대기열을 버리지 않게 */
+  private readonly arpOwner = {};
   /** 내보낼 IP 패킷을 먼저 가로챌 기회 (원격 접속 VPN 클라이언트가 사내 대역 패킷을 터널로). true 면 처리됨 */
   outbound: ((pkt: Ipv4Packet, ctx: NodeContext) => boolean) | undefined;
   /** ARP 요청의 보낸이 주소 (보조 주소가 여럿인 인터페이스 — ISP 는 상대 대역의 게이트웨이 주소로 묻는다). 없으면 내 주소 */
@@ -162,7 +164,7 @@ export class NetInterface {
 
     if (queue.length === 1) {
       this.sendArpRequest(nextHop, ctx, emit);
-      this.arpTimers.set(nextHop, ctx.timer(NetInterface.ARP_TIMEOUT, "arp-timeout", { ip: nextHop }));
+      this.arpTimers.set(nextHop, ctx.timer(NetInterface.ARP_TIMEOUT, "arp-timeout", { ip: nextHop, owner: this.arpOwner }));
     }
   }
 
@@ -418,7 +420,8 @@ export class NetInterface {
 
   /** "arp-timeout" 타이머. 드롭한 패킷을 돌려준다 (호스트가 ping 실패 등을 기록할 수 있도록) */
   onArpTimeout(data: unknown, ctx: NodeContext): Ipv4Packet[] {
-    const { ip } = data as { ip: Ip };
+    const { ip, owner } = data as { ip: Ip; owner?: object };
+    if (owner !== undefined && owner !== this.arpOwner) return [];
     this.arpTimers.delete(ip);
     const queue = this.pending.get(ip);
     if (!queue) return [];
