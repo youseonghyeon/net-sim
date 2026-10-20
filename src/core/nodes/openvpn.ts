@@ -802,7 +802,7 @@ export class OvpnClient implements VpnClient {
       t.rcv = seg.seq + 1;
       t.established = true;
       s.lastRx = ctx.now;
-      ctx.trace("vpn.handshake", "L4", `OpenVPN: TCP 연결됨 (SYN·ACK) → OpenVPN 세션 시작`, { ovpn: true }, frameId);
+      ctx.trace("vpn.handshake", "L4", `OpenVPN: TCP 연결됨 (SYN·ACK) → OpenVPN 세션 시작`, { ovpn: true, step: "tcp-up" }, frameId);
       s.phase = "reset";
       this.request({ kind: "ovpn", op: "reset-client", sid: s.sid }, ctx);
       return null;
@@ -898,7 +898,7 @@ export class OvpnClient implements VpnClient {
       return null;
     }
     if (m.op === "tls-ok") {
-      ctx.trace("vpn.handshake", "L4", `OpenVPN: TLS 완료 (Control Channel: TLSv1.3) → PUSH_REQUEST`, { ovpn: true }, frameId);
+      ctx.trace("vpn.handshake", "L4", `OpenVPN: TLS 완료 (Control Channel: TLSv1.3) → PUSH_REQUEST`, { ovpn: true, step: "tls-ok" }, frameId);
       this.request({ kind: "ovpn", op: "push-request", sid: s.sid }, ctx);
       return null;
     }
@@ -934,10 +934,11 @@ export class OvpnClient implements VpnClient {
   }
 
   /** transient: 응답 없음·RST·서버가 닫음처럼 서버가 돌아오면 붙을 실패 — connect-retry 로 다시 시도한다 (인증서·계정 거절은 멈춤) */
-  private fail(ctx: NodeContext, why: string, transient = false): void {
+  /** cause = 실무 출력이 고르는 사유 코드 ("tls-timeout": TLS 협상에 응답 없음) */
+  private fail(ctx: NodeContext, why: string, transient = false, cause?: string): void {
     this.forget();
     this.failed = why;
-    ctx.trace("vpn.drop", "L4", `OpenVPN 연결 실패: ${why}${transient ? this.scheduleRetry(ctx) : ""}`, { ovpn: true, failed: true });
+    ctx.trace("vpn.drop", "L4", `OpenVPN 연결 실패: ${why}${transient ? this.scheduleRetry(ctx) : ""}`, { ovpn: true, failed: true, ...(cause ? { cause } : {}) });
   }
 
   /** 다음 connect-retry 를 배경 타이머로 예약하고 로그에 붙일 문구를 돌려준다 */
@@ -1052,7 +1053,7 @@ export class OvpnClient implements VpnClient {
         const o = this.config.ovpn;
         const what = s.phase === "syn" ? `TCP ${s.server}:${s.port} 연결 응답 없음 (SYN timeout) — 서버가 꺼져 있거나 그 포트가 막힘` : `${s.server}:${s.port}/${s.proto} 응답 없음 (TLS 협상이 ${(OVPN_RETRY * OVPN_TRIES) / 1000}초 안에 끝나지 않음) — ${o?.tlsCrypt ? "tls-crypt 키가 다르거나, " : ""}서버가 꺼져 있거나, 전송(${s.proto.toUpperCase()})·포트가 다르거나, 방화벽이 막음`;
         this.close(ctx, undefined);
-        this.fail(ctx, what, true);
+        this.fail(ctx, what, true, s.phase === "syn" ? "syn-timeout" : "tls-timeout");
         return;
       }
       s.tries++;

@@ -303,7 +303,8 @@ export class WgInterface {
   }
 
   /** 핸드셰이크 시작 (Initiation) */
-  private initiate(p: WgPeerState, ctx: NodeContext, frameId: number | undefined, why: string, tries = 1, local = this.nextIdx++): void {
+  /** cause = 실무 출력이 고르는 사유 코드 ("dead": 보낸 뒤 상대에게서 아무것도 받지 못해 다시) */
+  private initiate(p: WgPeerState, ctx: NodeContext, frameId: number | undefined, why: string, tries = 1, local = this.nextIdx++, cause?: string): void {
     const ep = p.endpoint;
     const src = ep ? this.io.source(ep.ip, p.local) : undefined;
     if (!ep || !src) {
@@ -320,7 +321,7 @@ export class WgInterface {
       "vpn.handshake",
       "L4",
       `${this.label}: ${why} → ${this.peerName(p)}(${ep.ip}:${ep.port}) 에 핸드셰이크 시작 (Initiation, 세션 ${local}${tries > 1 ? `, 재시도 ${tries}/${WG_HANDSHAKE_TRIES}` : ""}) — 내 공개 키는 상대 공개 키 ${shortKey(p.cfg.publicKey)} 로 암호화해 상대만 읽는다`,
-      { wg: true, peer: ep.ip, local, tries },
+      { wg: true, peer: ep.ip, local, tries, ...(cause ? { cause } : {}) },
       frameId,
     );
     this.out(src, ep, { kind: "wg", type: "initiation", sender: local, static: this.publicKey, to: p.cfg.publicKey }, ctx, frameId);
@@ -456,7 +457,7 @@ export class WgInterface {
     }
     p.unansweredSince = undefined;
     if (p.pending || !p.endpoint) return true;
-    this.initiate(p, ctx, undefined, `보낸 뒤 ${WG_DEAD / 1000}초 동안 ${this.peerName(p)} 에게서 아무것도 받지 못함 (상대가 재시작해 세션을 잊었을 수 있음)`);
+    this.initiate(p, ctx, undefined, `보낸 뒤 ${WG_DEAD / 1000}초 동안 ${this.peerName(p)} 에게서 아무것도 받지 못함 (상대가 재시작해 세션을 잊었을 수 있음)`, undefined, undefined, "dead");
     return true;
   }
 

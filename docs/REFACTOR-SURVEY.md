@@ -74,7 +74,7 @@
 - **불러오기 정리 조합기** — `bool/port/text/list/obj` 로 설정 종류마다 완전한 값을 돌려주는 정리, 기본값도 같은 정의에서. 엉뚱한 입력으로 parse → sync → lint 예외 없음 테스트 (위 JSON 결함 수정). (M)
 - **파싱 한 모듈 `model/parse.ts`** — ip4·ip6·cidr4·cidrList·port·intIn·hostname, UI 오류 문구도 같은 파서에서. 포트 범위 검사 약 35곳. (S)
 - **구성 검사 AddrIndex** — `owners(ip)`·`publicTarget(ip, port, proto)`(공유기·게이트웨이 포워딩·포트 공개를 같은 방식으로)·`isLeased(key)`. routerWanIp 두 벌, 포워딩 따라가기 두 벌, 섞인 체인에서 침묵하는 문제 해소. 예제 공인 주소 범용 테스트도 여기서. (M) — **중복만 정리**: `lint/reach.ts`(공유기 수동 WAN 주소·포트 포워딩 따라가기·DDNS 주인·앞 공유기)로 모으고 L2TP 규칙의 따로 쓴 따라가기 루프·`routerWanIp` 두 번째 벌을 없앰(검사 결과 불변). **보류**: 게이트웨이(L3)의 포트 포워딩·포트 공개까지 같은 따라가기로 넓히는 것 — 지금 침묵하는 섞인 체인에서 새 경고가 생기는 동작 변화라 오탐 여부를 예제별로 따로 봐야 한다
-- **packetView 의 타입 있는 details** — 요약문 문자열 매칭 약 20곳, `detail()` 131곳 → 화면이 읽는 약 30개 종류만 `DetailsOf<K>` + reason 코드, 포맷터를 프로토콜별 레지스트리로. (M)
+- **packetView 의 타입 있는 details** — 요약문 문자열 매칭 약 20곳, `detail()` 131곳 → 화면이 읽는 약 30개 종류만 `DetailsOf<K>` + reason 코드, 포맷터를 프로토콜별 레지스트리로. (M) — **사유 코드만 함**: 한국어 문구 매칭 22곳(원격 접속·사이트 간 IPsec·L2TP·WireGuard·OpenVPN·메시·SSH·TLS·AdGuard)을 내보내는 쪽 details 의 `cause`·`side`·`step`·`ike`·`direct`·`op` 와 값(`why`·`self`·`path`·`endpoint`)으로, `tests/packetview-guard.test.ts` 가 다시 생기지 않게 막음(허용: "OpenVPN 서버"·"VPN 서버" 이름표 접두어 두 곳, 영어 프로토콜 토큰 매칭은 남김). 골든 불변. 덤으로 OpenVPN 서버 이름 풀기 실패의 사유에 "응답 없음" 이 들어 있으면 "TLS key negotiation failed" 를 잘못 붙이던 가능성이 없어짐. `DetailsOf<K>` 타입·포맷터 레지스트리는 보류 (300개 종류의 타입화는 조사 문서 4절의 "하지 않는 것")
 - **topology.ts 분할** — specs·기능별 settings(타입·기본값·정리 한곳)·file·geometry·cables·wireless, topology.ts 는 다시 내보내기만. (S~M) — **함** (`model/topo/` 7개, settings 의 정리 함수는 `normalizeTopology` 가 쓰므로 export, 기존 import 그대로)
 - **store·sim** — 동기화 예외 처리(알림 + 다시 만들기), 임대 재계산은 DHCP 트레이스가 있을 때만. (S)
 

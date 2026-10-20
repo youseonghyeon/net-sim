@@ -273,7 +273,7 @@ export class RaServer {
       const u = this.users.find((x) => x.name === m.user);
       if (!u || u.password !== (m.eapSecret ?? "")) {
         const why = !m.user ? "사용자 이름이 비어 있음" : !u ? `사용자 ${m.user} 가 계정 목록에 없음` : `${m.user} 의 비밀번호가 다름`;
-        ctx.trace("vpn.drop", "L4", `원격 접속: ${outer.src} 의 계정 인증 실패 (EAP-MSCHAPv2) — ${why} → EAP 실패 + AUTHENTICATION_FAILED 로 거절`, { from: outer.src, user: m.user, eap: "failure" }, frameId);
+        ctx.trace("vpn.drop", "L4", `원격 접속: ${outer.src} 의 계정 인증 실패 (EAP-MSCHAPv2) — ${why} → EAP 실패 + AUTHENTICATION_FAILED 로 거절`, { from: outer.src, user: m.user, eap: "failure", cause: !m.user ? "no-user" : !u ? "unknown-user" : "password" }, frameId);
         this.finalAuth(outer, srcPort, dstPort, true, { kind: "ike", exchange: "IKE_AUTH", response: true, spi: m.spi, error: "AUTHENTICATION_FAILED", eap: "failure", ra: true }, "EAP 실패 · AUTHENTICATION_FAILED", ctx, frameId);
         return true;
       }
@@ -296,7 +296,7 @@ export class RaServer {
     }
     this.pending.delete(key);
     if ((m.auth ?? "") !== this.config.psk) {
-      ctx.trace("vpn.drop", "L4", `원격 접속: ${outer.src} 의 인증 실패 — 사전 공유 키(PSK)가 다름 → AUTHENTICATION_FAILED`, { from: outer.src }, frameId);
+      ctx.trace("vpn.drop", "L4", `원격 접속: ${outer.src} 의 인증 실패 — 사전 공유 키(PSK)가 다름 → AUTHENTICATION_FAILED`, { from: outer.src, cause: "psk" }, frameId);
       this.finalAuth(outer, srcPort, dstPort, false, { kind: "ike", exchange: "IKE_AUTH", response: true, spi: m.spi, error: "AUTHENTICATION_FAILED", ra: true }, "AUTHENTICATION_FAILED · PSK 다름", ctx, frameId);
       return true;
     }
@@ -508,17 +508,18 @@ export class RaClient implements VpnClient {
       this.reason = `DPD 에 서버 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 서버가 꺼졌거나 경로가 끊김. 경로를 확인한 뒤 "다시 연결"`;
       this.vip = undefined;
       this.routes = [];
-      ctx.trace("vpn.drop", "L4", `원격 접속 끊김: DPD 에 서버 ${server} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) → 서버가 죽었거나 경로가 끊긴 것으로 보고 SA 삭제. 경로를 확인한 뒤 "다시 연결"`, { dpd: "dead", peer: server });
+      ctx.trace("vpn.drop", "L4", `원격 접속 끊김: DPD 에 서버 ${server} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) → 서버가 죽었거나 경로가 끊긴 것으로 보고 SA 삭제. 경로를 확인한 뒤 "다시 연결"`, { cause: "ike-timeout", dpd: "dead", peer: server });
       return;
     }
-    this.fail(`${step} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 서버 주소, 서버의 원격 접속 VPN, UDP 500·4500 이 막히지 않았는지 확인`, ctx);
+    this.fail(`${step} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 서버 주소, 서버의 원격 접속 VPN, UDP 500·4500 이 막히지 않았는지 확인`, "ike-timeout", ctx);
   }
 
-  private fail(why: string, ctx: NodeContext, frameId?: number): void {
+  /** cause = 실무 출력이 고르는 사유 코드 (요약문 문구에 기대지 않게) */
+  private fail(why: string, cause: string, ctx: NodeContext, frameId?: number): void {
     this.state = "failed";
     this.reason = why;
     this.ike.clear();
-    ctx.trace("vpn.drop", "L4", `원격 접속 실패: ${why}`, {}, frameId);
+    ctx.trace("vpn.drop", "L4", `원격 접속 실패: ${why}`, { cause }, frameId);
   }
 
   /** 서버에서 온 IKE 응답. 처리했으면 true */
@@ -570,7 +571,7 @@ export class RaClient implements VpnClient {
     if (m.exchange === "IKE_AUTH" && this.state === "auth" && m.eap === "request") {
       // 서버가 계정 인증(EAP)을 요구: 계정이 있으면 비밀번호로 만든 응답을 한 번 더 IKE_AUTH 로
       if (!user) {
-        this.fail("서버가 사용자 계정 인증(EAP)을 요구하는데 이 노트북에 계정이 없음 — 원격 접속 VPN 설정에 사용자 이름·비밀번호를 넣으세요", ctx, frameId);
+        this.fail("서버가 사용자 계정 인증(EAP)을 요구하는데 이 노트북에 계정이 없음 — 원격 접속 VPN 설정에 사용자 이름·비밀번호를 넣으세요", "eap-required", ctx, frameId);
         return true;
       }
       ctx.trace("vpn.eap", "L4", `원격 접속: 서버가 계정 인증(EAP-MSCHAPv2)을 요청 → 사용자 ${user} 의 비밀번호로 만든 응답을 IKE_AUTH 로 보냄`, { from: outer.src, user, eap: "response" }, frameId);
@@ -587,6 +588,7 @@ export class RaClient implements VpnClient {
             : m.error === "AUTHENTICATION_FAILED"
               ? "서버가 인증을 거절 (AUTHENTICATION_FAILED) — 사전 공유 키(PSK)가 다름"
               : "서버에 줄 가상 주소가 없음 (INTERNAL_ADDRESS_FAILURE) — 서버의 가상 주소 풀을 확인",
+          m.eap === "failure" ? "eap-failed" : m.error === "AUTHENTICATION_FAILED" ? "auth-failed" : "no-address",
           ctx,
           frameId,
         );

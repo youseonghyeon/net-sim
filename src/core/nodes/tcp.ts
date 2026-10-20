@@ -641,7 +641,7 @@ export class TcpStack {
               ? `SSH 세션 열림: ${conn.jump.target} 와 (점프 서버 ${conn.remoteIp} 의 채널 위에서) 키 교환·인증 끝 → 연결을 열어 둔 채 유지. 대상에게는 점프 서버가 접속한 것으로 보인다`
               : `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 와 키 교환·인증 끝 → 연결을 열어 둔 채 유지 (명령은 주고받지 않음. "연결 해제" 로 닫음)`
             : `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 가 인증함 → 연결을 열어 둔 채 유지`,
-          { conn: conn.id, ...(conn.jump ? { jump: true, target: conn.jump.target } : {}) },
+          { conn: conn.id, ...(conn.role === "client" ? {} : { side: "server" }), ...(conn.jump ? { jump: true, target: conn.jump.target } : {}) },
         );
         return;
       }
@@ -665,7 +665,7 @@ export class TcpStack {
     const inner = conn.jump?.state === "up";
     const data = inner ? `${SSH_CHANNEL_DATA}${step.data})` : step.data;
     this.transmit(conn, { ackFlag: true, len: inner ? step.len + 32 : step.len, data }, ctx, `SSH ${n + 1}/${SSH_STEPS.length}: ${step.data} ${step.len}B 전송${inner ? ` — ${conn.jump!.target} 에게, 점프 서버 채널 안으로` : ""} (seq=${conn.sndNxt})`, "tcp.data.sent");
-    if (opens) ctx.trace("ssh.open", "app", `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 가 인증함 → 연결을 열어 둔 채 유지`, { conn: conn.id });
+    if (opens) ctx.trace("ssh.open", "app", `SSH 세션 열림: ${endpoint(conn.remoteIp, conn.remotePort)} 가 인증함 → 연결을 열어 둔 채 유지`, { conn: conn.id, side: "server" });
   }
 
   /** SSH 점프 클라이언트: 점프 서버에게 대상까지 채널을 부탁 (direct-tcpip). 응답이 없으면 timeout */
@@ -781,7 +781,7 @@ export class TcpStack {
         conn.reason = "TLS 핸드셰이크 실패 · 상대가 TLS 로 답하지 않음";
         conn.closedAt = ctx.now;
         this.cancelAll(conn);
-        ctx.trace("tls.fail", "app", `TLS 핸드셰이크 실패: ServerHello 대신 TLS 가 아닌 데이터(${seg.data ?? "?"})가 옴 → RST 로 끊음. ${endpoint(conn.remoteIp, conn.remotePort)} 가 HTTPS 서버가 맞는지 확인`, { conn: conn.id });
+        ctx.trace("tls.fail", "app", `TLS 핸드셰이크 실패: ServerHello 대신 TLS 가 아닌 데이터(${seg.data ?? "?"})가 옴 → RST 로 끊음. ${endpoint(conn.remoteIp, conn.remotePort)} 가 HTTPS 서버가 맞는지 확인`, { conn: conn.id, side: "client" });
         this.host.send(this.packet(conn.localIp, conn.remoteIp, { srcPort: conn.localPort, dstPort: conn.remotePort, seq: conn.sndNxt, ack: conn.rcvNxt, rst: true, ackFlag: true, len: 0 }), ctx);
         this.host.onFinish?.(conn, ctx);
         return;

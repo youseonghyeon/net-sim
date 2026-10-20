@@ -210,13 +210,13 @@ export class L2tpServer {
       }
       if ((m.auth ?? "") !== this.config.psk) {
         // 협상 기록은 남겨 둔다: 이 거절이 사라져 같은 인증이 다시 오면 같은 거절을 다시 보내야 노트북이 이유("사전 공유 키가 다름")를 안다
-        ctx.trace("vpn.drop", "L4", `VPN 서버: ${outer.src} 의 IPsec 인증 실패 — 사전 공유 키가 다름 → AUTHENTICATION-FAILED`, { from: outer.src, l2tp: true }, frameId);
+        ctx.trace("vpn.drop", "L4", `VPN 서버: ${outer.src} 의 IPsec 인증 실패 — 사전 공유 키가 다름 → AUTHENTICATION-FAILED`, { from: outer.src, l2tp: true, cause: "psk" }, frameId);
         this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "MAIN_MODE", response: true, spi: m.spi, error: "AUTHENTICATION_FAILED", l2tp: true }, ctx, frameId);
         return true;
       }
       this.mm.delete(key);
       this.authed.set(key, nat);
-      ctx.trace("vpn.ike", "L4", `VPN 서버: ${outer.src} 의 사전 공유 키 확인 (Main Mode 끝 — IPsec 1단계 SA) → Quick Mode 를 기다림`, { from: outer.src, l2tp: true }, frameId);
+      ctx.trace("vpn.ike", "L4", `VPN 서버: ${outer.src} 의 사전 공유 키 확인 (Main Mode 끝 — IPsec 1단계 SA) → Quick Mode 를 기다림`, { from: outer.src, l2tp: true, ike: "main-done" }, frameId);
       this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "MAIN_MODE", response: true, spi: m.spi, l2tp: true }, ctx, frameId);
       return true;
     }
@@ -493,7 +493,8 @@ export class L2tpClient implements VpnClient {
     this.ike.request(me, server, port, msg, ctx);
   }
 
-  private fail(why: string, ctx: NodeContext, frameId?: number, label = "VPN 접속 실패"): void {
+  /** cause = 실무 출력이 고르는 사유 코드 (요약문 문구에 기대지 않게) */
+  private fail(why: string, ctx: NodeContext, frameId?: number, label = "VPN 접속 실패", cause?: string): void {
     this.state = "failed";
     this.reason = why;
     this.ike.clear();
@@ -501,7 +502,7 @@ export class L2tpClient implements VpnClient {
     this.lastTimer?.cancel();
     this.vip = undefined;
     this.dns = undefined;
-    ctx.trace("vpn.drop", "L4", `${label} (L2TP/IPsec): ${why}`, { l2tp: true }, frameId);
+    ctx.trace("vpn.drop", "L4", `${label} (L2TP/IPsec): ${why}`, { l2tp: true, ...(cause ? { cause } : {}) }, frameId);
   }
 
   onTimer(data: unknown, ctx: NodeContext): void {
@@ -514,7 +515,7 @@ export class L2tpClient implements VpnClient {
         this.transmitL2tp(l.l, l.phase, ctx, l.tries + 1, l.id);
         return;
       }
-      this.fail(`${PHASE_LABEL[l.phase]} 에 서버 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 서버의 VPN 서버 설정을 확인`, ctx);
+      this.fail(`${PHASE_LABEL[l.phase]} 에 서버 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 서버의 VPN 서버 설정을 확인`, ctx, undefined, undefined, "l2tp-timeout");
       return;
     }
     const cur = this.phase === "mm1" || this.phase === "mm2" ? "MAIN_MODE" : this.phase === "qm" ? "QUICK_MODE" : undefined;
@@ -525,7 +526,7 @@ export class L2tpClient implements VpnClient {
       this.ike.resend(ctx);
       return;
     }
-    this.fail(`IKE ${step === "MAIN_MODE" ? "Main Mode" : "Quick Mode"} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 서버 주소, 공유기의 VPN 서버, UDP 500·4500 이 막히지 않았는지 확인`, ctx);
+    this.fail(`IKE ${step === "MAIN_MODE" ? "Main Mode" : "Quick Mode"} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 서버 주소, 공유기의 VPN 서버, UDP 500·4500 이 막히지 않았는지 확인`, ctx, undefined, undefined, "ike-timeout");
   }
 
   /** 서버에서 온 IKE 응답. 처리했으면 true */
@@ -559,14 +560,14 @@ export class L2tpClient implements VpnClient {
         return true;
       }
       this.phase = "qm";
-      ctx.trace("vpn.ike", "L4", `VPN (L2TP/IPsec): 사전 공유 키 확인됨 (IPsec 1단계 끝) → Quick Mode: UDP 1701 (L2TP) 을 보호할 ESP SA 요청`, { from: outer.src, l2tp: true }, frameId);
+      ctx.trace("vpn.ike", "L4", `VPN (L2TP/IPsec): 사전 공유 키 확인됨 (IPsec 1단계 끝) → Quick Mode: UDP 1701 (L2TP) 을 보호할 ESP SA 요청`, { from: outer.src, l2tp: true, ike: "main-done" }, frameId);
       this.request({ kind: "ike", exchange: "QUICK_MODE", response: false, spi: this.sa.spi, l2tp: true, cid: this.cid }, this.sa.natT ? NAT_T_PORT : IKE_PORT, ctx);
       return true;
     }
     if (m.exchange === "QUICK_MODE" && this.phase === "qm") {
       this.ike.clear();
       this.sa = { ...this.sa, peer: { ip: outer.src, port: srcPort } };
-      ctx.trace("vpn.ike", "L4", `VPN (L2TP/IPsec): IPsec SA 수립 (ESP 전송 모드${this.sa.natT ? ", NAT-T" : ""}) → 이 통로 안에서 L2TP 터널 열기 요청 (SCCRQ)`, { from: outer.src, l2tp: true }, frameId);
+      ctx.trace("vpn.ike", "L4", `VPN (L2TP/IPsec): IPsec SA 수립 (ESP 전송 모드${this.sa.natT ? ", NAT-T" : ""}) → 이 통로 안에서 L2TP 터널 열기 요청 (SCCRQ)`, { from: outer.src, l2tp: true, ike: "quick-done" }, frameId);
       this.sendL2tp({ kind: "l2tp", tunnelId: 0, sessionId: 0, control: "SCCRQ" }, "sccrq", ctx);
       return true;
     }

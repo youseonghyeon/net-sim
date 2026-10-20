@@ -387,7 +387,7 @@ export class DnsServer {
     const answer = (m: Omit<DnsMessage, "kind" | "id" | "op" | "name">): DnsMessage => ({ kind: "dns", id: msg.id, op: "response", name: msg.name, ...(qtype === "AAAA" ? { qtype } : {}), ...m });
     const blocked = this.filter?.(name, qtype, pkt.src, ctx);
     if (blocked) {
-      ctx.trace("dns.blocked", "app", `${this.label}: ${name}${tq} 은(는) ${blocked.why} → 업스트림에 묻지 않고 ${blocked.answer ?? blocked.rcode} 로 답함 → ${pkt.src}`, { name, to: pkt.src, qtype, blocked: true }, frameId);
+      ctx.trace("dns.blocked", "app", `${this.label}: ${name}${tq} 은(는) ${blocked.why} → 업스트림에 묻지 않고 ${blocked.answer ?? blocked.rcode} 로 답함 → ${pkt.src}`, { name, to: pkt.src, qtype, blocked: true, why: blocked.why }, frameId);
       this.respond(pkt.src, srcPort, answer(blocked.answer ? { answer: blocked.answer } : { rcode: blocked.rcode ?? "NXDOMAIN" }), ctx, emit, replyFrom);
       return;
     }

@@ -236,7 +236,7 @@ export class MeshAgent {
     this.loginTries = 1;
     const tok = ++this.loginTok;
     this.endpoints = [{ ip: me, port: this.port }];
-    ctx.trace("mesh.login", "app", `${this.brand}: ${this.srv.controlName} ${this.srv.control} 에 로그인 (노드 키 ${c.key.slice(0, 8)}…, 후보 ${me}:${this.port})`, { mesh: c.net });
+    ctx.trace("mesh.login", "app", `${this.brand}: ${this.srv.controlName} ${this.srv.control} 에 로그인 (노드 키 ${c.key.slice(0, 8)}…, 후보 ${me}:${this.port})`, { mesh: c.net, op: "login" });
     this.toControl({ kind: "ts", net: c.net, op: "login", network: c.network, name: c.name, key: c.key, endpoints: this.endpoints, routes: c.routes, exitNode: c.exitNode }, ctx);
     this.loginWait?.cancel();
     this.loginWait = ctx.timer(WAIT, TS_TIMER_TAG, { mesh: "login", tok });
@@ -261,11 +261,11 @@ export class MeshAgent {
     if (!m.mapped) return;
     const mapped = m.mapped;
     if (this.endpoints.some((e) => sameEp(e, mapped))) {
-      if (mapped.ip === this.io.myIp()) ctx.trace("mesh.endpoint", "app", `${this.brand}: STUN 이 본 내 주소 ${ep(mapped)} = 내 주소 (NAT 없음)`, { mesh: this.config.net }, frameId);
+      if (mapped.ip === this.io.myIp()) ctx.trace("mesh.endpoint", "app", `${this.brand}: STUN 이 본 내 주소 ${ep(mapped)} = 내 주소 (NAT 없음)`, { mesh: this.config.net, endpoint: ep(mapped) }, frameId);
       return;
     }
     this.endpoints = [...this.endpoints.filter((e) => this.io.local(e.ip) || e.ip === this.io.myIp()), mapped];
-    ctx.trace("mesh.endpoint", "app", `${this.brand}: STUN 이 본 내 바깥 주소 ${ep(mapped)} → 후보 주소로 ${this.srv.controlName}에 알림 (다른 기기가 여기로 직접 보낼 수 있게)`, { mesh: this.config.net }, frameId);
+    ctx.trace("mesh.endpoint", "app", `${this.brand}: STUN 이 본 내 바깥 주소 ${ep(mapped)} → 후보 주소로 ${this.srv.controlName}에 알림 (다른 기기가 여기로 직접 보낼 수 있게)`, { mesh: this.config.net, endpoint: ep(mapped) }, frameId);
     const c = this.config;
     this.toControl({ kind: "ts", net: c.net, op: "endpoints", network: c.network, key: c.key, endpoints: this.endpoints, routes: c.routes, exitNode: c.exitNode }, ctx);
   }
@@ -285,7 +285,7 @@ export class MeshAgent {
       this.phase = "denied";
       this.denied = m.reason ?? "거절됨";
       this.stopLoginWait();
-      ctx.trace("mesh.drop", "app", `${this.brand}: ${this.srv.controlName}가 거절 — ${this.denied}`, { mesh: c.net, failed: true }, frameId);
+      ctx.trace("mesh.drop", "app", `${this.brand}: ${this.srv.controlName}가 거절 — ${this.denied}`, { mesh: c.net, failed: true, cause: "denied" }, frameId);
       return null;
     }
     if (fromRelay && m.op === "derp-recv" && m.msg && m.key) return this.fromPeer(m.key, m.msg, undefined, ctx, frameId);
@@ -322,7 +322,7 @@ export class MeshAgent {
       "mesh.netmap",
       "app",
       `${this.brand}: netmap ${first ? "받음" : "갱신"} — 내 주소 ${this.self?.ip ?? "?"}, 피어 ${online.length ? online.map((p) => `${p.info.name} ${p.info.ip}${p.info.routes.length ? ` [${routesLabel(p.info.routes)}]` : ""}${p.info.exitNode ? " (exit node)" : ""}`).join(", ") : "없음"}${this.peers.size > online.length ? ` · 오프라인 ${this.peers.size - online.length}` : ""}`,
-      { mesh: c.net, peers: online.length },
+      { mesh: c.net, peers: online.length, ...(this.self ? { self: this.self.ip } : {}) },
       frameId,
     );
     if (c.useExitNode && !online.some((p) => meshHostname(p.info.name) === meshHostname(c.useExitNode!) && p.info.exitNode))
@@ -386,7 +386,7 @@ export class MeshAgent {
     p.relayOnly = undefined;
     if (p.disco) p.disco = undefined;
     if (!sameEp(had, at))
-      ctx.trace("mesh.direct", "app", `${this.brand}: ${p.info.name} 과(와) 직접 경로 ${ep(at)} 확인 → 이제 ${this.srv.relayName}를 거치지 않고 바로 보냄 (홀 펀칭 성공)`, { mesh: this.config.net, peer: p.info.name }, frameId);
+      ctx.trace("mesh.direct", "app", `${this.brand}: ${p.info.name} 과(와) 직접 경로 ${ep(at)} 확인 → 이제 ${this.srv.relayName}를 거치지 않고 바로 보냄 (홀 펀칭 성공)`, { mesh: this.config.net, peer: p.info.name, path: ep(at) }, frameId);
   }
 
   /** 홀 펀칭: 상대 후보로 disco ping 을 여러 번 (callMe 면 릴레이로 call-me-maybe 도) */
@@ -544,7 +544,7 @@ export class MeshAgent {
         p.disco = undefined;
         p.relayOnly = true;
         p.relayOnlyAt = ctx.now;
-        ctx.trace("mesh.relay", "app", `${this.brand}: ${p.info.name} 과(와) 직접 경로를 찾지 못함 (disco ping ${DISCO_TRIES}번에 pong 없음 — 양쪽 NAT 가 직접 받지 않거나(대개 한쪽이 symmetric) 방화벽이 UDP 를 막음) → ${this.srv.relayName}로 계속 (느리지만 늘 된다, ${RELAY_RETRY / 1000}초 뒤 보낼 때 다시 시도)`, { mesh: c.net, peer: p.info.name });
+        ctx.trace("mesh.relay", "app", `${this.brand}: ${p.info.name} 과(와) 직접 경로를 찾지 못함 (disco ping ${DISCO_TRIES}번에 pong 없음 — 양쪽 NAT 가 직접 받지 않거나(대개 한쪽이 symmetric) 방화벽이 UDP 를 막음) → ${this.srv.relayName}로 계속 (느리지만 늘 된다, ${RELAY_RETRY / 1000}초 뒤 보낼 때 다시 시도)`, { mesh: c.net, peer: p.info.name, direct: "failed" });
         return;
       }
       this.discoRound(p, ctx);

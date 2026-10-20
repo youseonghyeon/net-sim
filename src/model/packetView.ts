@@ -968,7 +968,7 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
     }
     case "dns.blocked": {
       // AdGuard Home 쿼리 로그 (웹 화면의 한 줄을 텍스트로)
-      const why = /은\(는\) (.+) → 업스트림/.exec(ev.summary)?.[1] ?? "";
+      const why = detail(ev, "why") ?? "";
       out.push({ tool: "AdGuard Home 쿼리 로그", line: `${detail(ev, "to") ?? "?"}  ${detail(ev, "qtype") ?? "A"} ${detail(ev, "name") ?? "?"}  Blocked — ${why}` });
       break;
     }
@@ -1082,7 +1082,7 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       // conn id = "내주소:포트-상대주소:포트"
       const [local, remote] = (detail(ev, "conn") ?? "").split("-");
       const [rip, rport] = (remote ?? "?:?").split(":");
-      if (ev.summary.includes("가 인증함")) out.push({ tool: "sshd (auth.log)", line: `Accepted publickey for user from ${rip} port ${rport} ssh2` });
+      if (detail(ev, "side") === "server") out.push({ tool: "sshd (auth.log)", line: `Accepted publickey for user from ${rip} port ${rport} ssh2` });
       // 점프 채널 위에서 대상과 인증: OpenSSH 는 "(via proxy)" 로 적는다
       else if (detail(ev, "target")) out.push({ tool: "ssh -v", line: `debug1: Authenticated to ${hostOf(detail(ev, "target")!)} (via proxy) using "publickey".` });
       else out.push({ tool: "ssh -v", line: `debug1: Authenticated to ${rip} ([${rip}]:${rport}) using "publickey".` });
@@ -1147,15 +1147,15 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
         // 서버의 계정 확인 실패: 비밀번호가 다르면 MSCHAPv2 검증 실패(축소판은 재시도 없이 첫 실패에서 끝), 목록에 없으면 그 사용자의 키가 없음.
         // "failed for peer" 뒤는 상대의 IKE ID (IDi = 사용자 이름), "no EAP key found" 의 앞은 서버 자신의 ID (받은 IKE_AUTH 의 목적지 주소)
         const user = detail(ev, "user") ?? "%any";
-        if (ev.summary.includes("의 비밀번호가 다름")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] EAP-MS-CHAPv2 verification failed, retry (1)` });
+        if (detail(ev, "cause") === "password") out.push({ tool: "strongSwan (charon)", line: `12[IKE] EAP-MS-CHAPv2 verification failed, retry (1)` });
         else out.push({ tool: "strongSwan (charon)", line: `12[IKE] no EAP key found for hosts '${ip?.dst ?? "?"}' - '${user}'` });
         out.push({ tool: "strongSwan (charon)", line: `12[IKE] EAP method EAP_MSCHAPV2 failed for peer ${user}` });
-      } else if (ev.summary.includes("EAP 실패, AUTHENTICATION_FAILED")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] received EAP_FAILURE, EAP authentication failed` });
-      else if (ev.summary.includes("계정 인증(EAP)을 요구하는데")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] no EAP key found for hosts '${ip?.src ?? "?"}' - '%any'` });
+      } else if (detail(ev, "cause") === "eap-failed") out.push({ tool: "strongSwan (charon)", line: `12[IKE] received EAP_FAILURE, EAP authentication failed` });
+      else if (detail(ev, "cause") === "eap-required") out.push({ tool: "strongSwan (charon)", line: `12[IKE] no EAP key found for hosts '${ip?.src ?? "?"}' - '%any'` });
       else if (detail(ev, "dpd") === "invalid") out.push({ tool: "strongSwan (charon)", line: `12[IKE] received INVALID_SPI notify error` });
-      else if (ev.summary.includes("AUTHENTICATION_FAILED 로 거절 —") || ev.summary.includes("서버가 인증을 거절 (AUTHENTICATION_FAILED)")) out.push({ tool: "strongSwan (charon)", line: `12[IKE] received AUTHENTICATION_FAILED notify error` });
-      else if (ev.summary.includes("PSK)가 다름 → AUTHENTICATION_FAILED")) out.push({ tool: "strongSwan (charon)", line: `05[IKE] tried 1 shared key for '${ip?.dst ?? "?"}' - '${ip?.src ?? "?"}', but MAC mismatched` });
-      else if (ev.summary.includes("재전송") && ev.summary.includes("timeout")) out.push({ tool: "strongSwan (charon)", line: `11[IKE] giving up after 2 retransmits` });
+      else if (detail(ev, "cause") === "auth-failed") out.push({ tool: "strongSwan (charon)", line: `12[IKE] received AUTHENTICATION_FAILED notify error` });
+      else if (detail(ev, "cause") === "psk") out.push({ tool: "strongSwan (charon)", line: `05[IKE] tried 1 shared key for '${ip?.dst ?? "?"}' - '${ip?.src ?? "?"}', but MAC mismatched` });
+      else if (detail(ev, "cause") === "ike-timeout") out.push({ tool: "strongSwan (charon)", line: `11[IKE] giving up after 2 retransmits` });
       break;
     case "lb.forward":
       if (detail(ev, "vip")) out.push({ tool: "리눅스 ipvsadm -Lnc", line: `TCP 01:00  ${(detail(ev, "state") ?? "ESTABLISHED").padEnd(11)} ${detail(ev, "client")}  ${detail(ev, "vip")}  ${detail(ev, "backend")}` });
@@ -1196,7 +1196,7 @@ export function practitionerLines(ev: TraceEvent, frames: { received?: EthernetF
       }
       break;
     case "tls.fail":
-      if (ev.summary.startsWith("TLS 핸드셰이크 실패")) out.push({ tool: "curl", line: `curl: (35) OpenSSL/3.0.13: error:0A00010B:SSL routines::wrong version number` });
+      if (detail(ev, "side") === "client") out.push({ tool: "curl", line: `curl: (35) OpenSSL/3.0.13: error:0A00010B:SSL routines::wrong version number` });
       else out.push({ tool: "nginx (응답 본문)", line: `400 Bad Request — The plain HTTP request was sent to HTTPS port` });
       break;
     case "tcp.cookie":
@@ -1260,7 +1260,7 @@ function wgLines(ev: TraceEvent, frames: { received?: EthernetFrame; sent?: Ethe
         line(`Keypair ${detail(ev, "local") ?? 1} created for peer 1`);
       } else {
         const tries = Number(detail(ev, "tries") ?? 1);
-        if (ev.summary.includes("받지 못함")) line(`Retrying handshake with peer 1 (${to}) because we stopped hearing back after 15 seconds`);
+        if (detail(ev, "cause") === "dead") line(`Retrying handshake with peer 1 (${to}) because we stopped hearing back after 15 seconds`);
         else if (tries > 1) line(`Handshake for peer 1 (${to}) did not complete after 5 seconds, retrying (try ${tries})`);
         line(`Sending handshake initiation to peer 1 (${to})`);
       }
@@ -1285,22 +1285,21 @@ function wgLines(ev: TraceEvent, frames: { received?: EthernetFrame; sent?: Ethe
 /** 메시 VPN: tailscale ping / tailscaled 로그의 해당 줄 */
 function meshLines(ev: TraceEvent, out: PractitionerLine[]): void {
   const zt = detail(ev, "mesh") === "zerotier";
-  const sm = ev.summary;
   if (zt) {
-    if (ev.kind === "mesh.netmap") out.push({ tool: "zerotier-cli listnetworks", line: `200 listnetworks <nwid> <name> <mac> OK PRIVATE zt0 ${sm.match(/내 주소 ([0-9.]+)/)?.[1] ?? "?"}/24` });
+    if (ev.kind === "mesh.netmap") out.push({ tool: "zerotier-cli listnetworks", line: `200 listnetworks <nwid> <name> <mac> OK PRIVATE zt0 ${detail(ev, "self") ?? "?"}/24` });
     return;
   }
   const peer = String(detail(ev, "peer") ?? "");
   if (ev.kind === "mesh.direct") {
-    const at = sm.match(/직접 경로 ([0-9.]+:\d+)/)?.[1] ?? "?";
+    const at = detail(ev, "path") ?? "?";
     out.push({ tool: "tailscale ping", line: `pong from ${peer || "peer"} via ${at} in 20ms` });
-  } else if (ev.kind === "mesh.relay" && sm.includes("직접 경로를 찾지 못함")) {
+  } else if (ev.kind === "mesh.relay" && detail(ev, "direct") === "failed") {
     out.push({ tool: "tailscale ping", line: `pong from ${peer || "peer"} via DERP(tok) in 60ms` });
     out.push({ tool: "tailscale ping", line: "direct connection not established" });
-  } else if (ev.kind === "mesh.login" && sm.includes("로그인 (노드 키")) out.push({ tool: "tailscaled 로그", line: "control: client.Login(false, 0)" });
-  else if (ev.kind === "mesh.netmap") out.push({ tool: "tailscaled 로그", line: `netmap: self: ${sm.match(/내 주소 ([0-9.]+)/)?.[1] ?? "?"} peers: ${detail(ev, "peers") ?? 0}` });
-  else if (ev.kind === "mesh.endpoint") out.push({ tool: "tailscaled 로그", line: `magicsock: endpoints changed: ${sm.match(/([0-9.]+:\d+)/)?.[1] ?? "?"} (stun)` });
-  else if (ev.kind === "mesh.drop" && sm.includes("거절")) out.push({ tool: "tailscaled 로그", line: "control: login: 403 Forbidden" });
+  } else if (ev.kind === "mesh.login" && detail(ev, "op") === "login") out.push({ tool: "tailscaled 로그", line: "control: client.Login(false, 0)" });
+  else if (ev.kind === "mesh.netmap") out.push({ tool: "tailscaled 로그", line: `netmap: self: ${detail(ev, "self") ?? "?"} peers: ${detail(ev, "peers") ?? 0}` });
+  else if (ev.kind === "mesh.endpoint") out.push({ tool: "tailscaled 로그", line: `magicsock: endpoints changed: ${detail(ev, "endpoint") ?? "?"} (stun)` });
+  else if (ev.kind === "mesh.drop" && detail(ev, "cause") === "denied") out.push({ tool: "tailscaled 로그", line: "control: login: 403 Forbidden" });
 }
 
 /** OpenVPN 로그 (verb 3) 의 해당 줄 — 서버·클라이언트 양쪽 (요약문으로 어느 단계인지 가린다) */
@@ -1324,8 +1323,8 @@ function ovpnLines(ev: TraceEvent, frames: { received?: EthernetFrame; sent?: Et
     } else if (!server && sm.includes("VERIFY OK")) {
       line("VERIFY OK: depth=1, CN=GL.iNet CA");
       line("VERIFY OK: depth=0, CN=server");
-    } else if (!server && sm.includes("TLS 완료")) line("Control Channel: TLSv1.3, cipher TLSv1.3 TLS_AES_256_GCM_SHA384, peer certificate: 2048 bits RSA");
-    else if (!server && sm.includes("TCP 연결됨")) line("TCP connection established");
+    } else if (!server && detail(ev, "step") === "tls-ok") line("Control Channel: TLSv1.3, cipher TLSv1.3 TLS_AES_256_GCM_SHA384, peer certificate: 2048 bits RSA");
+    else if (!server && detail(ev, "step") === "tcp-up") line("TCP connection established");
     else if (!server && sm.includes("(SYN)")) line(`Attempting to establish TCP connection with [AF_INET]${sm.match(/TCP ([0-9.]+:\d+)/)?.[1] ?? "?"}`);
   } else if (ev.kind === "vpn.up") {
     const push = String(detail(ev, "push") ?? "");
@@ -1344,8 +1343,8 @@ function ovpnLines(ev: TraceEvent, frames: { received?: EthernetFrame; sent?: Et
     else if (server && sm.includes("AUTH_FAILED")) line(`${from} TLS Auth Error: Auth Username/Password verification failed for peer`);
     else if (!server && sm.includes("AUTH_FAILED")) line("AUTH: Received control message: AUTH_FAILED");
     else if (!server && sm.includes("VERIFY ERROR")) line("VERIFY ERROR: depth=1, error=unable to get local issuer certificate: CN=GL.iNet CA");
-    else if (!server && sm.includes("SYN timeout")) line(`TCP: connect to [AF_INET]${sm.match(/TCP ([0-9.]+:\d+)/)?.[1] ?? "?"} failed: Connection timed out`);
-    else if (!server && sm.includes("응답 없음")) line("TLS Error: TLS key negotiation failed to occur within 3 seconds (check your network connectivity)");
+    else if (!server && detail(ev, "cause") === "syn-timeout") line(`TCP: connect to [AF_INET]${sm.match(/TCP ([0-9.]+:\d+)/)?.[1] ?? "?"} failed: Connection timed out`);
+    else if (!server && detail(ev, "cause") === "tls-timeout") line("TLS Error: TLS key negotiation failed to occur within 3 seconds (check your network connectivity)");
     else if (!server && sm.includes("Inactivity timeout")) line("[server] Inactivity timeout (--ping-restart), restarting");
     else if (sm.includes("RESTART")) line("SIGUSR1[soft,server-pushed-connection-reset] received, process restarting");
     else if (sm.includes("duplicate-cn")) line(`MULTI: new connection by client '${cn ?? "?"}' will cause previous active sessions by this client to be dropped.  Remember to use the --duplicate-cn option if you want multiple clients using the same certificate or username to concurrently connect.`);
@@ -1375,8 +1374,8 @@ function l2tpLines(ev: TraceEvent, ip: Ipv4Packet | undefined, out: Practitioner
         if (detail(ev, "localNat") === "true") charon(`05[IKE] local host is behind NAT, sending keep alives`);
         if (detail(ev, "remoteNat") === "true") charon(`05[IKE] remote host is behind NAT`);
       } else if (server && detail(ev, "spi") !== undefined) charon(`07[IKE] CHILD_SA L2TP-PSK{1} established with SPIs ${Number(detail(ev, "spi")).toString(16).padStart(8, "0")}_i … and TS ${ip?.dst ?? "?"}/32[udp/l2f] === ${from}/32[udp/l2f]`);
-      else if (ev.summary.includes("사전 공유 키 확인")) charon(`06[IKE] IKE_SA L2TP-PSK[1] established between ${ip?.dst ?? "?"}[${ip?.dst ?? "?"}]...${from}[${from}]`);
-      else if (ev.summary.includes("IPsec SA 수립")) charon(`07[IKE] CHILD_SA L2TP-PSK{1} established … and TS ${ip?.dst ?? "?"}/32[udp/l2f] === ${from}/32[udp/l2f]`);
+      else if (detail(ev, "ike") === "main-done") charon(`06[IKE] IKE_SA L2TP-PSK[1] established between ${ip?.dst ?? "?"}[${ip?.dst ?? "?"}]...${from}[${from}]`);
+      else if (detail(ev, "ike") === "quick-done") charon(`07[IKE] CHILD_SA L2TP-PSK{1} established … and TS ${ip?.dst ?? "?"}/32[udp/l2f] === ${from}/32[udp/l2f]`);
       else if (detail(ev, "natT") === "true") {
         if (detail(ev, "localNat") === "true") charon(`08[IKE] local host is behind NAT, sending keep alives`);
         if (detail(ev, "remoteNat") === "true") charon(`08[IKE] remote host is behind NAT`);
@@ -1397,11 +1396,10 @@ function l2tpLines(ev: TraceEvent, ip: Ipv4Packet | undefined, out: Practitioner
     case "vpn.drop":
       if (ppp === "failure") pppd(`Peer ${detail(ev, "user") ?? "?"} failed MSCHAP-v2 authentication`);
       else if (ev.summary.includes("CHAP Failure")) pppd(`MS-CHAP authentication failed: E=691 Authentication failure`);
-      else if (ev.summary.includes("사전 공유 키가 다름 → AUTHENTICATION-FAILED")) charon(`06[IKE] invalid HASH_V1 payload length, decryption failed?`);
-      else if (ev.summary.includes("재전송") && ev.summary.includes("timeout")) {
-        if (ev.summary.includes("IKE")) charon(`11[IKE] giving up after 2 retransmits`);
-        else xl2tpd(`Maximum retries exceeded for tunnel 1.  Closing.`);
-      } else if (ctl === "StopCCN" || ctl === "CDN") xl2tpd(`control_finish: Connection closed to ${from}, port 1701 (Goodbye!), Local: 1, Remote: 1`);
+      else if (detail(ev, "cause") === "psk") charon(`06[IKE] invalid HASH_V1 payload length, decryption failed?`);
+      else if (detail(ev, "cause") === "ike-timeout") charon(`11[IKE] giving up after 2 retransmits`);
+      else if (detail(ev, "cause") === "l2tp-timeout") xl2tpd(`Maximum retries exceeded for tunnel 1.  Closing.`);
+      else if (ctl === "StopCCN" || ctl === "CDN") xl2tpd(`control_finish: Connection closed to ${from}, port 1701 (Goodbye!), Local: 1, Remote: 1`);
       break;
   }
 }

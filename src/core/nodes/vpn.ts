@@ -256,18 +256,18 @@ export class Vpn {
       this.sa = { state: "idle", spi: 0, natT: false, seq: 0 };
       this.ike.clear();
       this.dpdPending = false;
-      ctx.trace("vpn.drop", "L4", `IPsec DPD: 상대 ${peer} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) → 상대가 죽었거나 경로가 끊긴 것으로 보고 SA 삭제. 터널로 갈 다음 패킷이 오면 다시 협상`, { dpd: "dead", peer });
+      ctx.trace("vpn.drop", "L4", `IPsec DPD: 상대 ${peer} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) → 상대가 죽었거나 경로가 끊긴 것으로 보고 SA 삭제. 터널로 갈 다음 패킷이 오면 다시 협상`, { cause: "ike-timeout", dpd: "dead", peer });
       return;
     }
     this.sa = { state: "idle", spi: 0, natT: false, seq: 0 };
     this.ike.clear();
-    this.failQueue(ctx, `${step} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 상대가 IPsec VPN 을 켰는지, UDP ${IKE_PORT}/${NAT_T_PORT} 가 막히지 않았는지 확인. 다음 패킷이 오면 다시 협상`);
+    this.failQueue(ctx, `${step} 응답 없음 (재전송 ${IKE_RETRANSMITS}번 뒤 timeout) — 상대가 IPsec VPN 을 켰는지, UDP ${IKE_PORT}/${NAT_T_PORT} 가 막히지 않았는지 확인. 다음 패킷이 오면 다시 협상`, undefined, "ike-timeout");
   }
 
-  private failQueue(ctx: NodeContext, why: string, frameId?: number): void {
+  private failQueue(ctx: NodeContext, why: string, frameId?: number, cause?: string): void {
     const n = this.queue.length;
     this.queue = [];
-    ctx.trace("vpn.drop", "L3", `IPsec 터널을 맺지 못함: ${why}${n ? ` → 기다리던 패킷 ${n}개 드롭` : ""}`, { dropped: n }, frameId);
+    ctx.trace("vpn.drop", "L3", `IPsec 터널을 맺지 못함: ${why}${n ? ` → 기다리던 패킷 ${n}개 드롭` : ""}`, { dropped: n, ...(cause ? { cause } : {}) }, frameId);
   }
 
   private sendIke(src: Ip, dst: Ip, srcPort: number, dstPort: number, m: IkeMessage, ctx: NodeContext, frameId?: number): void {
@@ -367,7 +367,7 @@ export class Vpn {
       }
       this.pending = undefined;
       if ((m.auth ?? "") !== (this.config.psk ?? "")) {
-        ctx.trace("vpn.drop", "L4", `IPsec: ${outer.src} 의 IKE_AUTH 인증 실패 — 사전 공유 키(PSK)가 다름 → AUTHENTICATION_FAILED 로 거절. 양쪽 PSK 를 똑같이 맞추세요`, { from: outer.src }, frameId);
+        ctx.trace("vpn.drop", "L4", `IPsec: ${outer.src} 의 IKE_AUTH 인증 실패 — 사전 공유 키(PSK)가 다름 → AUTHENTICATION_FAILED 로 거절. 양쪽 PSK 를 똑같이 맞추세요`, { from: outer.src, cause: "psk" }, frameId);
         this.sendIke(me, outer.src, dstPort, srcPort, { kind: "ike", exchange: "IKE_AUTH", response: true, spi: m.spi, error: "AUTHENTICATION_FAILED" }, ctx, frameId);
         return true;
       }
