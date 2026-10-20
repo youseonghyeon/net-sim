@@ -3,18 +3,7 @@ import { Router } from "../../core/nodes/router";
 import { sim, simVersion } from "../../model/sim";
 import { topology, updateDevice } from "../../model/store";
 import { DEFAULT_ADMIN_SETTINGS, type Device, type RouterAdminSettings, type RouterSettings } from "../../model/topology";
-import { Field, Section, Toggle, validIp } from "./ui";
-
-function cidrListError(s: string): string | undefined {
-  const bad = s
-    .split(/[,\s]+/)
-    .filter(Boolean)
-    .find((x) => {
-      const [ip, p] = x.split("/");
-      return !validIp(ip ?? "") || (p !== undefined && !(/^\d{1,2}$/.test(p) && Number(p) <= 32));
-    });
-  return bad ? `${bad} — 예: 192.168.8.50 또는 192.168.8.0/24` : undefined;
-}
+import { Field, Section, Toggle, cidrListError } from "./ui";
 
 export function AdminSection({ d, r }: { d: Device; r: RouterSettings }) {
   void simVersion.value;
@@ -38,7 +27,7 @@ export function AdminSection({ d, r }: { d: Device; r: RouterSettings }) {
             </span>
             <Toggle on={a.ssh} onToggle={() => set({ ssh: !a.ssh })} />
           </label>
-          <Field label="허용 목록" hint="비우면 LAN 전부" error={cidrListError(a.allow)}>
+          <Field label="허용 목록" hint="비우면 LAN 전부" error={cidrListError(a.allow, "192.168.8.50 또는 192.168.8.0/24")}>
             <input class="input mono" value={a.allow} placeholder="192.168.8.50, 192.168.8.0/28" onChange={(e) => set({ allow: e.currentTarget.value })} />
           </Field>
           <label class="toggle-row">

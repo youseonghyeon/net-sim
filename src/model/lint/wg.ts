@@ -3,14 +3,10 @@
 import { DDNS_ZONE_NAME, ddnsHostname, wgPublicKeyOf, type Device } from "../topology";
 import { contains, fmtSubnet, overlaps, subnetOf, validIp } from "./addr";
 import type { LintContext } from "./context";
+import { parseCidr } from "../parse";
 
 /** "10.0.0.2/32" (프리픽스가 없으면 dflt) — netSync 의 parseCidr 와 같은 기준 */
-function cidr(text: string | undefined, dflt: number): { ip: string; prefix: number } | undefined {
-  const m = /^\s*([0-9.]+)\s*(?:\/\s*(\d{1,2}))?\s*$/.exec(text ?? "");
-  if (!m || !validIp(m[1])) return undefined;
-  const prefix = m[2] === undefined ? dflt : Number(m[2]);
-  return prefix >= 0 && prefix <= 32 ? { ip: m[1]!, prefix } : undefined;
-}
+const cidr = parseCidr;
 
 /** AllowedIPs 목록에 이 주소가 드는지 (0.0.0.0/0 포함) */
 function allowedHas(list: string, ip: string): boolean {

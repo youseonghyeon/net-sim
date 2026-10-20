@@ -23,6 +23,7 @@ import type { LintIssue } from "../../model/lint";
 import { portProblem, specOf, type Cable, type HostSettings, devicesInZone, ZONE_TINTS, type Zone } from "../../model/topology";
 import { Icon } from "../Icons";
 import { Field, Section, ipError } from "./ui";
+import { toInt } from "../../model/parse";
 
 export function deviceName(id: string): string {
   return topology.value.devices.find((d) => d.id === id)?.name ?? "?";
@@ -384,7 +385,7 @@ export function MultiPanel({ ids }: { ids: string[] }) {
                     max={32}
                     value={prefix ?? ""}
                     placeholder="여러 값"
-                    onInput={(e) => { if (e.currentTarget.value === "") return; setHosts({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) }); }}
+                    onInput={(e) => { if (e.currentTarget.value === "") return; setHosts({ prefix: toInt(e.currentTarget.value, 0, 32, 0) }); }}
                   />
                 </div>
               </Field>

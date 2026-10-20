@@ -3,8 +3,10 @@ import type { ComponentChildren } from "preact";
 import { ipToInt, prefixToMask, intToIp } from "../../core/addr";
 import { isIpv6, isLinkLocal6 } from "../../core/addr6";
 import { collapsedSections, configGroups, setConfigGroup, toggleSection } from "../../model/store";
+import { badCidrs, isHostname, parseCidr } from "../../model/parse";
 import { type IfaceSettings } from "../../model/topology";
 import { Icon } from "../Icons";
+import { toInt } from "../../model/parse";
 
 /** 제목이 있는 섹션은 접을 수 있다. 접힘 상태는 제목(또는 id)별로 기억한다 */
 export function Section({ title, id, children }: { title?: string; id?: string; children: ComponentChildren }) {
@@ -94,6 +96,27 @@ export function ipError(s: string, required: boolean): string | undefined {
   return validIp(s) ? undefined : "예: 192.168.0.10";
 }
 
+/** 대역 칸 ("a.b.c.d" 또는 "a.b.c.d/p") — 시뮬레이션이 읽는 parseCidr 과 같은 기준 */
+export function cidrError(s: string, required: boolean, example: string): string | undefined {
+  if (!s.trim()) return required ? "필요한 값입니다" : undefined;
+  return parseCidr(s, 32) ? undefined : `예: ${example}`;
+}
+
+/** 쉼표·공백으로 적은 대역 목록 칸: 읽을 수 없는 첫 항목을 짚는다 */
+export function cidrListError(s: string, example: string): string | undefined {
+  const bad = badCidrs(s)[0];
+  return bad ? `${bad} — 예: ${example}` : undefined;
+}
+
+/** 서버 칸: 주소 또는 이름(DDNS) */
+export function hostError(s: string, example: string): string | undefined {
+  const v = s.trim();
+  if (!v) return "필요한 값입니다";
+  if (validIp(v)) return undefined;
+  if (/[a-z]/i.test(v)) return isHostname(v) ? undefined : "예: myhome.glddns.com";
+  return `예: ${example} 또는 myhome.glddns.com`;
+}
+
 /** IPv4 또는 IPv6 주소 칸 (DNS 레코드·업스트림처럼 둘 다 되는 곳) */
 export function anyIpError(s: string, required: boolean): string | undefined {
   const v = typeof s === "string" ? s.trim() : "";
@@ -156,7 +179,7 @@ export function IfaceFields({ value, onChange, gatewayLabel = "게이트웨이",
                 min={0}
                 max={32}
                 value={value.prefix}
-                onInput={(e) => { if (e.currentTarget.value === "") return; onChange({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) }); }}
+                onInput={(e) => { if (e.currentTarget.value === "") return; onChange({ prefix: toInt(e.currentTarget.value, 0, 32, 0) }); }}
               />
               <span class="mono muted">{intToIp(prefixToMask(value.prefix))}</span>
             </div>

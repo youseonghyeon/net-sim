@@ -1,6 +1,6 @@
 // 호스트 설정: IP 설정, 서비스(웹·DHCP 서버·DNS 서버·로드밸런서·프록시), HTTP 프록시 설정, 무선 단말·AP.
 import { HostOvpnFields } from "./ovpn";
-import { prefixToMask, intToIp, sameSubnet } from "../../core/addr";
+import { ipToInt, prefixToMask, intToIp, sameSubnet } from "../../core/addr";
 import { topology, updateDevice } from "../../model/store";
 import {
   DEFAULT_DHCP_SERVER,
@@ -24,6 +24,7 @@ import { linkLocalOf } from "../../core/addr6";
 import { sim, simVersion } from "../../model/sim";
 import { Host } from "../../core/nodes/host";
 import { HostWgFields } from "./wg";
+import { toInt } from "../../model/parse";
 
 export function HostSection({ d, h }: { d: Device; h: HostSettings }) {
   const set = (patch: Partial<HostSettings>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, ...patch } }));
@@ -52,7 +53,7 @@ export function HostSection({ d, h }: { d: Device; h: HostSettings }) {
                 min={0}
                 max={32}
                 value={h.prefix}
-                onInput={(e) => { if (e.currentTarget.value === "") return; set({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) }); }}
+                onInput={(e) => { if (e.currentTarget.value === "") return; set({ prefix: toInt(e.currentTarget.value, 0, 32, 0) }); }}
               />
               <span class="mono muted">{intToIp(prefixToMask(h.prefix))}</span>
             </div>
@@ -115,7 +116,7 @@ export function Ipv6Section({ d, h }: { d: Device; h: HostSettings }) {
                 max={128}
                 value={v.prefix}
                 title="프리픽스 길이 (보통 64)"
-                onInput={(e) => { if (e.currentTarget.value === "") return; set({ prefix: Math.min(128, Math.max(1, Math.round(Number(e.currentTarget.value)) || 64)) }); }}
+                onInput={(e) => { if (e.currentTarget.value === "") return; set({ prefix: toInt(e.currentTarget.value, 1, 128, 64) }); }}
               />
             </div>
           </Field>
@@ -263,10 +264,12 @@ export function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
   const ds = h.dhcpServer ?? DEFAULT_DHCP_SERVER;
   const setDs = (patch: Partial<typeof ds>) => updateDevice(d.id, (x) => ({ ...x, host: { ...x.host!, dhcpServer: { ...(x.host!.dhcpServer ?? DEFAULT_DHCP_SERVER), ...patch } } }));
   const staticIp = h.ipMode === "static" && validIp(h.ip) ? h.ip : undefined;
-  const rangeErr = (v: string) => {
+  const rangeErr = (which: "start" | "end") => {
+    const v = ds[which];
     const base = ipError(v, true);
     if (base) return base;
     if (staticIp && !sameSubnet(v, staticIp, h.prefix)) return `내 서브넷(${staticIp}/${h.prefix}) 밖입니다`;
+    if (which === "end" && validIp(ds.start) && ipToInt(ds.start) > ipToInt(v)) return "시작 주소보다 앞입니다";
     return undefined;
   };
   return (
@@ -319,10 +322,10 @@ export function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
       {ds.enabled && (
         <>
           {!staticIp && <p class="note error-note">DHCP 서버는 자기 주소가 고정돼 있어야 합니다. 위의 IP 설정을 수동으로 바꾸세요.</p>}
-          <Field label="시작 주소" error={rangeErr(ds.start)}>
+          <Field label="시작 주소" error={rangeErr("start")}>
             <input class="input mono" value={ds.start} onInput={(e) => setDs({ start: e.currentTarget.value })} />
           </Field>
-          <Field label="끝 주소" error={rangeErr(ds.end)}>
+          <Field label="끝 주소" error={rangeErr("end")}>
             <input class="input mono" value={ds.end} onInput={(e) => setDs({ end: e.currentTarget.value })} />
           </Field>
           <Field label="기본 게이트웨이" hint="옵션 3" error={ipError(ds.router, false)}>
@@ -347,7 +350,7 @@ export function ServiceSection({ d, h }: { d: Device; h: HostSettings }) {
                   <Icon name="trash" size={15} />
                 </button>
                 <span class="muted">/ 마스크 길이</span>
-                <input class="input mono prefix-in" type="number" min={1} max={32} value={p.prefix} onInput={(e) => setPool({ prefix: Math.min(32, Math.max(1, Number(e.currentTarget.value) || 24)) })} />
+                <input class="input mono prefix-in" type="number" min={1} max={32} value={p.prefix} onInput={(e) => setPool({ prefix: toInt(e.currentTarget.value, 1, 32, 24) })} />
                 <span class="muted">게이트웨이</span>
                 <input class="input mono" value={p.router} placeholder="192.168.2.1" onInput={(e) => setPool({ router: e.currentTarget.value })} />
                 {bad && <div class="error pool-error">{bad}</div>}
@@ -385,7 +388,7 @@ function ProxyFields({ d, h }: { d: Device; h: HostSettings }) {
       {px.enabled && (
         <>
           <Field label="받는 포트">
-            <input class="input mono" type="number" min={1} max={65535} value={px.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 3128)) }); }} />
+            <input class="input mono" type="number" min={1} max={65535} value={px.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: toInt(e.currentTarget.value, 1, 65535, 3128) }); }} />
           </Field>
           {lbClash && <p class="note error-note">포트 {px.port} 는 이 장치의 로드밸런서가 먼저 받아 프록시로 동작하지 않습니다. 프록시 포트를 바꾸세요(보통 3128).</p>}
           {serviceClash && <p class="note">포트 {px.port} 로 온 연결은 프록시가 받아, 같은 포트의 다른 서비스는 쓸 수 없습니다.</p>}
@@ -431,7 +434,7 @@ export function HttpProxySection({ d, h }: { d: Device; h: HostSettings }) {
             <input class="input mono" value={hp.server} placeholder="192.168.0.10" onInput={(e) => set({ server: e.currentTarget.value })} />
           </Field>
           <Field label="포트">
-            <input class="input mono" type="number" min={1} max={65535} value={hp.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 3128)) }); }} />
+            <input class="input mono" type="number" min={1} max={65535} value={hp.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: toInt(e.currentTarget.value, 1, 65535, 3128) }); }} />
           </Field>
           <p class="note">HTTP(80)는 프록시가 대신 받아 오고, HTTPS(443)는 CONNECT 로 대상까지 터널만 열어 달라고 한 뒤 TLS 는 대상과 직접 합니다(프록시는 이름만 알고 내용은 모름). 웹 요청은 대상이 같은 사무실 서버여도 프록시를 거치고, 이름은 프록시가 찾습니다. SSH 등 웹이 아닌 연결과 ping 은 직접 나갑니다.</p>
         </>
@@ -490,7 +493,7 @@ function LbFields({ d, h }: { d: Device; h: HostSettings }) {
       {lb.enabled && (
         <>
           <Field label="받는 포트">
-            <input class="input mono" type="number" min={1} max={65535} value={lb.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 80)) }); }} />
+            <input class="input mono" type="number" min={1} max={65535} value={lb.port} onInput={(e) => { if (e.currentTarget.value !== "") set({ port: toInt(e.currentTarget.value, 1, 65535, 80) }); }} />
           </Field>
           <Field label="방식">
             <div class="segmented" role="radiogroup">
@@ -543,7 +546,7 @@ function LbFields({ d, h }: { d: Device; h: HostSettings }) {
             <div key={i} class="lb-row">
               <input class="input mono" value={b.ip} placeholder="192.168.0.11" onInput={(e) => setBackend(i, { ip: e.currentTarget.value })} />
               <span class="mono muted">:</span>
-              <input class="input mono" type="number" min={1} max={65535} value={b.port} onInput={(e) => { if (e.currentTarget.value !== "") setBackend(i, { port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 80)) }); }} />
+              <input class="input mono" type="number" min={1} max={65535} value={b.port} onInput={(e) => { if (e.currentTarget.value !== "") setBackend(i, { port: toInt(e.currentTarget.value, 1, 65535, 80) }); }} />
               <button class="icon-btn" title="백엔드 삭제" onClick={() => set({ backends: lb.backends.filter((_, k) => k !== i) })}>
                 <Icon name="trash" size={15} />
               </button>

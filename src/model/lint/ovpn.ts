@@ -4,13 +4,9 @@ import { DDNS_ZONE_NAME, ovpnCaOfDevice, ovpnTlsCryptOfDevice, type Device } fro
 import { fmtSubnet, overlaps, subnetOf, validIp } from "./addr";
 import type { LintContext } from "./context";
 import { ddnsOwner, followTarget, frontRouter, routerWanIp } from "./wg";
+import { parseCidr } from "../parse";
 
-function cidr(text: string | undefined, dflt: number): { ip: string; prefix: number } | undefined {
-  const m = /^\s*([0-9.]+)\s*(?:\/\s*(\d{1,2}))?\s*$/.exec(text ?? "");
-  if (!m || !validIp(m[1])) return undefined;
-  const prefix = m[2] === undefined ? dflt : Number(m[2]);
-  return prefix >= 0 && prefix <= 32 ? { ip: m[1]!, prefix } : undefined;
-}
+const cidr = parseCidr;
 
 const isServer = (proto: "udp" | "tcp") => (x: Device, port: number) => !!x.router?.ovpnServer?.enabled && x.router.ovpnServer.proto === proto && x.router.ovpnServer.port === port;
 

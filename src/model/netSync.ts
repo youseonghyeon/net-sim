@@ -19,6 +19,7 @@ import { meshHostname, type MeshConfig } from "../core/nodes/tailscale";
 import { wgPrivateKey, wgPublicKey } from "../core/nodes/wg";
 import { Switch, type PortVlan } from "../core/nodes/switch";
 import { validCidr } from "../core/nodes/firewall";
+import { ip4, parseCidr, parseCidrList } from "./parse";
 import { DEFAULT_LB_SETTINGS, DEFAULT_PROXY_SETTINGS,
   DEFAULT_DHCP_SERVER,
   DEFAULT_DNS_SERVER,
@@ -228,15 +229,7 @@ export class NetworkSync {
 
 }
 
-function validIp(s: string | undefined): string | undefined {
-  if (!s) return undefined;
-  try {
-    ipToInt(s);
-    return s;
-  } catch {
-    return undefined;
-  }
-}
+const validIp = ip4;
 
 /** IPv6 주소 칸: 표준 표기로, 틀리면 없음 */
 const validPort = (n: number) => Number.isInteger(n) && n >= 1 && n <= 65535;
@@ -364,21 +357,7 @@ export function endpointName(text: string | undefined): string | undefined {
 }
 
 /** "10.0.0.2/32" 같은 주소/프리픽스 (프리픽스가 없으면 dflt). 올바르지 않으면 undefined */
-export function parseCidr(text: string | undefined, dflt: number): { ip: string; prefix: number } | undefined {
-  const m = /^\s*([0-9.]+)\s*(?:\/\s*(\d{1,2}))?\s*$/.exec(text ?? "");
-  if (!m || !validIp(m[1])) return undefined;
-  const prefix = m[2] === undefined ? dflt : Number(m[2]);
-  return prefix >= 0 && prefix <= 32 ? { ip: m[1]!, prefix } : undefined;
-}
-
-/** 쉼표로 적은 AllowedIPs: 올바른 것만, 네트워크 주소로 */
-export function parseCidrList(text: string | undefined): { dest: string; prefix: number }[] {
-  return (text ?? "")
-    .split(/[,\s]+/)
-    .map((x) => parseCidr(x, 32))
-    .filter((x): x is { ip: string; prefix: number } => !!x)
-    .map((x) => ({ dest: x.ip, prefix: x.prefix }));
-}
+export { parseCidr, parseCidrList } from "./parse";
 
 /** WireGuard 설정 파일 칸 → 코어 설정 */
 export function effectiveWgFields(w: Partial<import("./topology").WgClientSettings> | undefined, privateKey: string) {

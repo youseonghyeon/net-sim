@@ -6,7 +6,8 @@ import { sim, simVersion } from "../../model/sim";
 import { topology, updateDevice, updateDevices } from "../../model/store";
 import { DEFAULT_OVPN_SERVER_SETTINGS, ddnsHostname, ovpnCaOfDevice, ovpnTlsCryptOfDevice, type Device, type OvpnClientSettings, type RouterOvpnServerSettings, type RouterSettings } from "../../model/topology";
 import { Icon } from "../Icons";
-import { Field, Section, Toggle, validIp } from "./ui";
+import { Field, Section, Toggle, hostError, validIp } from "./ui";
+import { toInt } from "../../model/parse";
 
 const DEFAULT_CLIENT: OvpnClientSettings = { proto: "udp", port: 1194, ca: "", cn: "", certCa: "", tlsCrypt: "" };
 
@@ -14,14 +15,6 @@ function subnetError(s: string): string | undefined {
   const m = /^\s*([0-9.]+)\s*\/\s*(\d{1,2})\s*$/.exec(s);
   if (!m || !validIp(m[1]!) || Number(m[2]) > 30) return "예: 10.8.0.0/24 (/30 보다 작은 대역)";
   return undefined;
-}
-
-function hostError(s: string): string | undefined {
-  const v = s.trim();
-  if (!v) return "필요한 값입니다";
-  if (validIp(v)) return undefined;
-  if (/[a-z]/i.test(v)) return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\.?$/i.test(v) ? undefined : "예: myhome.glddns.com";
-  return "예: 203.0.113.40 또는 myhome.glddns.com";
 }
 
 function PortInput({ value, onChange }: { value: number; onChange: (n: number) => void }) {
@@ -34,7 +27,7 @@ function PortInput({ value, onChange }: { value: number; onChange: (n: number) =
       value={value}
       onInput={(e) => {
         if (e.currentTarget.value === "") return;
-        onChange(Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 1194)));
+        onChange(toInt(e.currentTarget.value, 1, 65535, 1194));
       }}
     />
   );
@@ -211,7 +204,7 @@ export function HostOvpnFields({ d }: { d: Device }) {
           </select>
         </Field>
       )}
-      <Field label="서버 주소" hint="remote · 주소 또는 이름" error={hostError(ra.server)}>
+      <Field label="서버 주소" hint="remote · 주소 또는 이름" error={hostError(ra.server, "203.0.113.40")}>
         <input class="input mono" value={ra.server} placeholder="203.0.113.40 또는 myhome.glddns.com" onInput={(e) => setRa({ server: e.currentTarget.value })} />
       </Field>
       <Field label="전송">

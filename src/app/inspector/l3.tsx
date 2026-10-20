@@ -22,6 +22,7 @@ import {
 import { Icon } from "../Icons";
 import { FirewallSection, ForwardSection, NatTypeSection } from "./rules";
 import { ConfigGroups, Field, IfaceFields, Section, Toggle, ip6Error, ipError, validIp } from "./ui";
+import { toInt } from "../../model/parse";
 
 /** 다른 수동 인터페이스와 서브넷이 겹치면 그 인터페이스 이름 */
 export function subnetClash(l3: L3Settings, names: string[], i: number): string | undefined {
@@ -95,7 +96,7 @@ export function L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
             <span class="muted">목적지</span>
             <input class="input mono" value={r.dest} placeholder="192.168.0.0" title="목적지 네트워크" onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, dest: e.currentTarget.value } : x)))} />
             <span class="mono">/</span>
-            <input class="input mono prefix-in" type="number" min={0} max={32} value={r.prefix} onInput={(e) => { if (e.currentTarget.value === "") return; setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) } : x))); }} />
+            <input class="input mono prefix-in" type="number" min={0} max={32} value={r.prefix} onInput={(e) => { if (e.currentTarget.value === "") return; setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, prefix: toInt(e.currentTarget.value, 0, 32, 0) } : x))); }} />
             <span class="muted">넥스트 홉</span>
             <input class="input mono via" value={r.via} placeholder="연결된 서브넷 안의 주소" title="넥스트 홉 주소 (연결된 서브넷 안)" onInput={(e) => setRoutes(l3.routes.map((x, k) => (k === i ? { ...x, via: e.currentTarget.value } : x)))} />
             <button class="icon-btn" title="경로 삭제" onClick={() => setRoutes(l3.routes.filter((_, k) => k !== i))}>
@@ -189,7 +190,7 @@ function PublishSection({ d, l3 }: { d: Device; l3: L3Settings }) {
   const rules = l3.publish ?? [];
   const onChange = (publish: PublishSettings[]) => updateDevice(d.id, (x) => ({ ...x, l3: { ...(x.l3 ?? defaultL3(x.kind)), publish } }));
   const setRule = (i: number, patch: Partial<PublishSettings>) => onChange(rules.map((r, k) => (k === i ? { ...r, ...patch } : r)));
-  const port = (v: string, fallback: number) => Math.min(65535, Math.max(1, Number(v) || fallback));
+  const port = (v: string, fallback: number) => toInt(v, 1, 65535, fallback);
   // 받을 주소 선택지: 모든 주소 + 이 장비의 수동 주소들 (예: 127.0.0.1 = lo)
   const mine = l3.interfaces.map((f) => (f.ipMode === "static" && validIp(f.ip) ? f.ip : "")).filter((x) => x !== "");
   return (
@@ -274,7 +275,7 @@ export function Ipv6L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
                   min={1}
                   max={128}
                   value={iface(i).prefix}
-                  onInput={(e) => { if (e.currentTarget.value === "") return; setIface(i, { prefix: Math.min(128, Math.max(1, Math.round(Number(e.currentTarget.value)) || 64)) }); }}
+                  onInput={(e) => { if (e.currentTarget.value === "") return; setIface(i, { prefix: toInt(e.currentTarget.value, 1, 128, 64) }); }}
                 />
               </div>
               <label class="toggle-row ra-row">
@@ -310,7 +311,7 @@ export function Ipv6L3Section({ d, l3 }: { d: Device; l3: L3Settings }) {
               <span class="muted">목적지</span>
               <input class="input mono" value={r.dest} placeholder="2001:db8:3::" title="목적지 프리픽스" onInput={(e) => setRoutes(v6.routes.map((x, k) => (k === i ? { ...x, dest: e.currentTarget.value } : x)))} />
               <span class="mono">/</span>
-              <input class="input mono prefix-in" type="number" min={0} max={128} value={r.prefix} onInput={(e) => { if (e.currentTarget.value === "") return; setRoutes(v6.routes.map((x, k) => (k === i ? { ...x, prefix: Math.min(128, Math.max(0, Math.round(Number(e.currentTarget.value)) || 0)) } : x))); }} />
+              <input class="input mono prefix-in" type="number" min={0} max={128} value={r.prefix} onInput={(e) => { if (e.currentTarget.value === "") return; setRoutes(v6.routes.map((x, k) => (k === i ? { ...x, prefix: toInt(e.currentTarget.value, 0, 128, 0) } : x))); }} />
               <span class="muted">넥스트 홉</span>
               <input class="input mono via" value={r.via} placeholder="연결된 프리픽스 안의 주소" title="넥스트 홉 주소 (연결된 프리픽스 안의 글로벌 주소)" onInput={(e) => setRoutes(v6.routes.map((x, k) => (k === i ? { ...x, via: e.currentTarget.value } : x)))} />
               <button class="icon-btn" title="경로 삭제" onClick={() => setRoutes(v6.routes.filter((_, k) => k !== i))}>
@@ -378,7 +379,7 @@ export function VpnSection({ d, l3 }: { d: Device; l3: L3Settings }) {
             <div key={i} class="lb-row">
               <input class="input mono" value={r.dest} placeholder="192.168.2.0" onInput={(e) => setRemote(i, { dest: e.currentTarget.value })} />
               <span class="mono muted">/</span>
-              <input class="input mono" type="number" min={1} max={32} value={r.prefix} onInput={(e) => { if (e.currentTarget.value !== "") setRemote(i, { prefix: Math.min(32, Math.max(1, Number(e.currentTarget.value) || 24)) }); }} />
+              <input class="input mono" type="number" min={1} max={32} value={r.prefix} onInput={(e) => { if (e.currentTarget.value !== "") setRemote(i, { prefix: toInt(e.currentTarget.value, 1, 32, 24) }); }} />
               <button class="icon-btn" title="대역 삭제" onClick={() => set({ remote: vpn.remote.filter((_, k) => k !== i) })}>
                 <Icon name="trash" size={15} />
               </button>
@@ -477,7 +478,7 @@ export function RaServerSection({ d, l3 }: { d: Device; l3: L3Settings }) {
             <div key={i} class="lb-row">
               <input class="input mono" value={r.dest} placeholder="10.50.10.0" onInput={(e) => setRoute(i, { dest: e.currentTarget.value })} />
               <span class="mono muted">/</span>
-              <input class="input mono" type="number" min={1} max={32} value={r.prefix} onInput={(e) => { if (e.currentTarget.value !== "") setRoute(i, { prefix: Math.min(32, Math.max(1, Number(e.currentTarget.value) || 24)) }); }} />
+              <input class="input mono" type="number" min={1} max={32} value={r.prefix} onInput={(e) => { if (e.currentTarget.value !== "") setRoute(i, { prefix: toInt(e.currentTarget.value, 1, 32, 24) }); }} />
               <button class="icon-btn" title="대역 삭제" onClick={() => set({ routes: ra.routes.filter((_, k) => k !== i) })}>
                 <Icon name="trash" size={15} />
               </button>
@@ -523,7 +524,6 @@ export function HaSection({ d, l3 }: { d: Device; l3: L3Settings }) {
       const cur = x.l3 ?? defaultL3(x.kind);
       return { ...x, l3: { ...cur, ha: { ...(cur.ha ?? empty), ...patch } } };
     });
-  const clamp = (v: string, lo: number, hi: number, dflt: number) => Math.min(hi, Math.max(lo, Math.round(Number(v)) || dflt));
   const vipError = (i: number): string | undefined => {
     const v = ha.vips[i] ?? "";
     const base = ipError(v, false);
@@ -550,10 +550,10 @@ export function HaSection({ d, l3 }: { d: Device; l3: L3Settings }) {
       {ha.enabled && (
         <>
           <Field label="그룹 번호 (VRID)">
-            <input class="input mono" type="number" min={1} max={255} value={ha.vrid} onInput={(e) => { if (e.currentTarget.value !== "") set({ vrid: clamp(e.currentTarget.value, 1, 255, 1) }); }} />
+            <input class="input mono" type="number" min={1} max={255} value={ha.vrid} onInput={(e) => { if (e.currentTarget.value !== "") set({ vrid: toInt(e.currentTarget.value, 1, 255, 1) }); }} />
           </Field>
           <Field label="우선순위">
-            <input class="input mono" type="number" min={1} max={254} value={ha.priority} onInput={(e) => { if (e.currentTarget.value !== "") set({ priority: clamp(e.currentTarget.value, 1, 254, 100) }); }} />
+            <input class="input mono" type="number" min={1} max={254} value={ha.priority} onInput={(e) => { if (e.currentTarget.value !== "") set({ priority: toInt(e.currentTarget.value, 1, 254, 100) }); }} />
           </Field>
           <label class="toggle-row">
             <span>
@@ -745,7 +745,7 @@ export function SubIfaceSection({ d, l3 }: { d: Device; l3: L3Settings }) {
               ))}
             </select>
             <span class="muted">. VLAN</span>
-            <input class="input mono port" type="number" min={1} max={4094} value={sIf.vlan} onInput={(e) => { if (e.currentTarget.value === "") return; setSub(i, { vlan: Number(e.currentTarget.value) || 0 }); }} />
+            <input class="input mono port" type="number" min={1} max={4094} value={sIf.vlan} onInput={(e) => { if (e.currentTarget.value === "") return; setSub(i, { vlan: toInt(e.currentTarget.value, 1, 4094, sIf.vlan) }); }} />
             <button class="icon-btn" title="삭제" onClick={() => setSubs(subs.filter((_, k) => k !== i))}>
               <Icon name="trash" size={15} />
             </button>
@@ -753,7 +753,7 @@ export function SubIfaceSection({ d, l3 }: { d: Device; l3: L3Settings }) {
           <div class="fw-line subif-addr">
             <input class="input mono" value={sIf.ip} placeholder="192.168.10.1" onInput={(e) => setSub(i, { ip: e.currentTarget.value })} />
             <span class="mono">/</span>
-            <input class="input mono port" type="number" min={1} max={32} value={sIf.prefix} onInput={(e) => setSub(i, { prefix: Math.min(32, Math.max(1, Number(e.currentTarget.value) || 24)) })} />
+            <input class="input mono port" type="number" min={1} max={32} value={sIf.prefix} onInput={(e) => setSub(i, { prefix: toInt(e.currentTarget.value, 1, 32, 24) })} />
           </div>
           <Field label="DHCP 릴레이" error={undefined}>
             <input class="input mono" value={sIf.relay} placeholder="서버 주소 (비우면 없음)" onInput={(e) => setSub(i, { relay: e.currentTarget.value })} />

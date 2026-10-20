@@ -18,34 +18,16 @@ import {
   type WgClientSettings,
 } from "../../model/topology";
 import { Icon } from "../Icons";
-import { Field, Section, Toggle, ipError, validIp } from "./ui";
+import { Field, Section, Toggle, cidrError, cidrListError, hostError, ipError, validIp } from "./ui";
+import { toInt } from "../../model/parse";
 
 type Role = "server" | "client" | "host";
 
 /** "10.0.0.2/32" 칸 검증 */
-function cidrError(s: string, required: boolean): string | undefined {
-  const v = s.trim();
-  if (!v) return required ? "필요한 값입니다" : undefined;
-  const [ip, p] = v.split("/");
-  if (!validIp(ip!.trim()) || (p !== undefined && !(/^\d{1,2}$/.test(p.trim()) && Number(p) <= 32))) return "예: 10.0.0.2/32";
-  return undefined;
-}
-
 /** AllowedIPs 칸 검증 (쉼표로 여럿) */
 function allowedError(s: string): string | undefined {
-  const parts = s.split(/[,\s]+/).filter(Boolean);
-  if (parts.length === 0) return "터널로 보낼 목적지가 없습니다. 전부면 0.0.0.0/0";
-  const bad = parts.find((x) => cidrError(x, true));
-  return bad ? `${bad} — 예: 0.0.0.0/0 또는 10.0.0.0/24, 192.168.8.0/24` : undefined;
-}
-
-/** 서버 칸: 주소 또는 이름(DDNS) */
-function hostError(s: string): string | undefined {
-  const v = s.trim();
-  if (!v) return "필요한 값입니다";
-  if (validIp(v)) return undefined;
-  if (/[a-z]/i.test(v)) return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\.?$/i.test(v) ? undefined : "예: myhome.glddns.com";
-  return "예: 203.0.113.30 또는 myhome.glddns.com";
+  if (!s.split(/[,\s]+/).some(Boolean)) return "터널로 보낼 목적지가 없습니다. 전부면 0.0.0.0/0";
+  return cidrListError(s, "0.0.0.0/0 또는 10.0.0.0/24, 192.168.8.0/24");
 }
 
 function keyError(s: string): string | undefined {
@@ -81,16 +63,16 @@ function MyKey({ d, role, onRegenerate }: { d: Device; role: Role; onRegenerate:
 function ClientFields({ server, w, setServer, setW }: { server: string; w: WgClientSettings; setServer: (v: string) => void; setW: (p: Partial<WgClientSettings>) => void }) {
   return (
     <>
-      <Field label="서버 주소" hint="Endpoint · 주소 또는 이름" error={hostError(server)}>
+      <Field label="서버 주소" hint="Endpoint · 주소 또는 이름" error={hostError(server, "203.0.113.30")}>
         <input class="input mono" value={server} placeholder="203.0.113.30 또는 myhome.glddns.com" onInput={(e) => setServer(e.currentTarget.value)} />
       </Field>
       <Field label="서버 포트" hint="UDP">
-        <input class="input mono" type="number" min={1} max={65535} value={w.port} onInput={(e) => { if (e.currentTarget.value === "") return; setW({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 51820)) }); }} />
+        <input class="input mono" type="number" min={1} max={65535} value={w.port} onInput={(e) => { if (e.currentTarget.value === "") return; setW({ port: toInt(e.currentTarget.value, 1, 65535, 51820) }); }} />
       </Field>
       <Field label="서버 공개 키" hint="[Peer] PublicKey" error={keyError(w.serverKey)}>
         <input class="input mono" value={w.serverKey} placeholder="서버 화면의 공개 키" onInput={(e) => setW({ serverKey: e.currentTarget.value })} />
       </Field>
-      <Field label="내 터널 주소" hint="[Interface] Address" error={cidrError(w.address, true)}>
+      <Field label="내 터널 주소" hint="[Interface] Address" error={cidrError(w.address, true, "10.0.0.2/32")}>
         <input class="input mono" value={w.address} placeholder="10.0.0.2/32" onInput={(e) => setW({ address: e.currentTarget.value })} />
       </Field>
       <Field label="AllowedIPs" hint="터널로 보낼 목적지" error={allowedError(w.allowedIps)}>
@@ -205,11 +187,11 @@ export function WgServerSection({ d, r }: { d: Device; r: RouterSettings }) {
       {s.enabled && (
         <>
           <MyKey d={d} role="server" onRegenerate={(privateKey) => set({ privateKey })} />
-          <Field label="터널 주소" hint="서버" error={cidrError(s.address, true)}>
+          <Field label="터널 주소" hint="서버" error={cidrError(s.address, true, "10.0.0.2/32")}>
             <input class="input mono" value={s.address} placeholder="10.0.0.1/24" onInput={(e) => set({ address: e.currentTarget.value })} />
           </Field>
           <Field label="포트" hint="UDP">
-            <input class="input mono" type="number" min={1} max={65535} value={s.port} onInput={(e) => { if (e.currentTarget.value === "") return; set({ port: Math.min(65535, Math.max(1, Number(e.currentTarget.value) || 51820)) }); }} />
+            <input class="input mono" type="number" min={1} max={65535} value={s.port} onInput={(e) => { if (e.currentTarget.value === "") return; set({ port: toInt(e.currentTarget.value, 1, 65535, 51820) }); }} />
           </Field>
           <label class="toggle-row">
             <span>

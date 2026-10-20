@@ -25,7 +25,7 @@ import { FirewallSection, ForwardSection, NatTypeSection } from "./rules";
 import { Icon } from "../Icons";
 import { ConfigGroups, Field, IfaceFields, Section, Toggle, ipError, validIp } from "./ui";
 import { WAN_LABEL } from "../../core/nodes/mwan";
-import { parseCidr } from "../../model/netSync";
+import { parseCidr } from "../../model/parse";
 import { staticRouteProblem } from "../../model/lint/glinet";
 import { DdnsSection, WgClientSection, WgServerSection } from "./wg";
 import { OvpnServerSection } from "./ovpn";
@@ -34,6 +34,7 @@ import { IgmpSection } from "./mcast";
 import { SipAlgSection } from "./sip";
 import { AdminSection, BlockSection, CloudSection, DropInSection, SambaSection, TorSection } from "./system";
 import { AdguardSection, DpiSection } from "./apps";
+import { toInt } from "../../model/parse";
 
 /** LAN 주소/서브넷이 바뀔 때, 기존 범위가 옛 서브넷 안에 있었다면 호스트 부분을 유지한 채 새 서브넷으로 옮긴다 */
 export function remapRange(oldIp: string, oldPrefix: number, newIp: string, newPrefix: number, range: { start: string; end: string }): { start: string; end: string } | null {
@@ -76,7 +77,7 @@ export function RouterSection({ d, r }: { d: Device; r: RouterSettings }) {
               min={0}
               max={32}
               value={r.lanPrefix}
-              onInput={(e) => { if (e.currentTarget.value === "") return; setLan(r.lanIp, Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0))); }}
+              onInput={(e) => { if (e.currentTarget.value === "") return; setLan(r.lanIp, toInt(e.currentTarget.value, 0, 32, 0)); }}
             />
             <span class="mono muted">{intToIp(prefixToMask(r.lanPrefix))}</span>
           </div>
@@ -465,7 +466,7 @@ export function WanSection({ d, w }: { d: Device; w: WanSettings }) {
                 min={0}
                 max={32}
                 value={w.prefix}
-                onInput={(e) => { if (e.currentTarget.value === "") return; set({ prefix: Math.min(32, Math.max(0, Number(e.currentTarget.value) || 0)) }); }}
+                onInput={(e) => { if (e.currentTarget.value === "") return; set({ prefix: toInt(e.currentTarget.value, 0, 32, 0) }); }}
               />
               <span class="mono muted">{intToIp(prefixToMask(w.prefix))}</span>
             </div>

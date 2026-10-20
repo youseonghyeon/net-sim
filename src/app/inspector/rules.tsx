@@ -3,6 +3,7 @@ import { validCidr } from "../../core/nodes/firewall";
 import { type FirewallRuleSettings, type FirewallSettings, type NatTypeSetting, type PortForwardSettings } from "../../model/topology";
 import { Icon } from "../Icons";
 import { Field, Section, Toggle, ipError } from "./ui";
+import { toInt } from "../../model/parse";
 
 /** 방화벽 규칙 편집기 (라우터 / 게이트웨이 / NAT 박스 공용). 지나가는 패킷만 검사한다 */
 export function FirewallSection({ value, onChange, uplinkName }: { value: FirewallSettings; onChange: (v: FirewallSettings) => void; uplinkName: string }) {
@@ -143,7 +144,7 @@ export function NatTypeSection({ natType, hairpin, onChange }: { natType: NatTyp
 /** 포트 포워딩 규칙 편집기 (라우터 / NAT 박스 공용) */
 export function ForwardSection({ rules, onChange, lanHint }: { rules: PortForwardSettings[]; onChange: (rules: PortForwardSettings[]) => void; lanHint: string }) {
   const setRule = (i: number, patch: Partial<PortForwardSettings>) => onChange(rules.map((r, k) => (k === i ? { ...r, ...patch } : r)));
-  const port = (v: string, fallback: number) => Math.min(65535, Math.max(1, Number(v) || fallback));
+  const port = (v: string, fallback: number) => toInt(v, 1, 65535, fallback);
   return (
     <Section id="forward-edit" title="포트 포워딩">
       {rules.length === 0 && <p class="note">바깥에서 시작한 연결은 NAT 테이블에 없어 드롭됩니다. 규칙을 추가하면 공인 포트로 온 연결을 안쪽 서버로 들여보냅니다(웹은 TCP, DNS 는 UDP 53). {lanHint}</p>}
