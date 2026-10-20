@@ -1,0 +1,2 @@
+lb served: 192.168.0.12 , 192.168.0.11
+lb-1 section: 1 | backends: 3 | badge: 1

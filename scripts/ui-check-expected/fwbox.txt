@@ -1,0 +1,5 @@
+fw device: 1 | status: 규칙 1개 · 기본 허용
+fw panel sections: 방화벽
+ping srv through fw: 192.168.0.20 실패 · timeout · 응답 없음
+tcp srv through fw: 192.168.0.20:80
+종료됨 · 받음 3000B

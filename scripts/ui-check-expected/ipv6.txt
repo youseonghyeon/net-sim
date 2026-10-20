@@ -1,0 +1,7 @@
+ipv6 tiles: 2001:db8:1::10 | gw-1: if0 연결 없음 / 2001:db8:1::1 · 2001:db8:2::1 | badge: 1
+ping6 same link: 2001:db8:1::11응답 80ms
+traceroute6 hops: 12001:db8:1::1gw-180ms / 22001:db8:2::10srv-1120ms
+picker groups: IPv6 (NDP · NAT 없음)
+gw-1 overview: if0 연결 없음 | 2001:db8:1::1 · 2001:db8:2::1 | IPv6 if1 2001:db8:1::1/64 · if2 2001:db8:2::1/64
+ndp tcpdump: 02:00:00:12:00:04 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 32
+ndp layers: 이더넷 (L2),IPv6 (L3),ICMPv6 · NDP

@@ -1,0 +1,6 @@
+iptime vpn badge: yes
+iptime nas: 192.168.0.20:80 종료됨 · 받음 3000B
+iptime type: L2TP/IPsec | one line: true | dpd hidden: true | status: 연결됨 (L2TP/IPsec) · 집 LAN 주소 192.168.0.50
+iptime server: accounts 1 | connected: me 192.168.0.50
+iptime badge: 1
+iptime table: yes

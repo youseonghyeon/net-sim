@@ -1,0 +1,2 @@
+dpi blocked chips: VPN, 게임
+dpi rows: 10.30.0.100 WireGuard · 차단 VPN 0개 · 0B · 드롭 3개

@@ -1,0 +1,3 @@
+packet hit circles transparent: yes (1)
+packet card: ARP 요청 (192.168.0.11?) | layers: 이더넷 (L2),ARP | route: pc-1 → sw-1
+card closed on play: yes 

@@ -1,0 +1,691 @@
+## 불러오기
+0 rt-1 link.up | lan1 포트 링크 연결됨
+0 ap-1 link.up | eth0 링크 연결됨
+0 ap-2 link.up | eth0 링크 연결됨
+0 laptop-1 link.up | eth0 링크 연결됨 → 유선(eth0) 로 통신 (MAC 02:00:00:00:00:06)
+0 laptop-1 dhcp.discover.sent | DHCP Discover 브로드캐스트 (시도 1/3): "IP 주소를 줄 서버 있나요?" (아직 IP 없음, 출발지 0.0.0.0)
+    > 리눅스 dhclient: DHCPDISCOVER on eth0 to 255.255.255.255 port 67
+0 laptop-1 frame.send | 프레임 송신: DHCP Discover [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+0 laptop-1 link.transmit | 링크 전송: DHCP Discover laptop_06:0 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+0 phone-1 wifi.associate | 무선 연결: ap-1 에 붙음 (거리 202px, 슬롯 1) → DHCP 시작
+0 phone-1 link.up | 링크 연결됨
+0 phone-1 dhcp.discover.sent | DHCP Discover 브로드캐스트 (시도 1/3): "IP 주소를 줄 서버 있나요?" (아직 IP 없음, 출발지 0.0.0.0)
+    > 리눅스 dhclient: DHCPDISCOVER on eth0 to 255.255.255.255 port 67
+0 phone-1 frame.send | 프레임 송신: DHCP Discover [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+0 phone-1 link.transmit | 링크 전송: DHCP Discover phone_05:0 → ap_03:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+0 laptop-1 wifi.associate | 무선 연결: ap-1 에 붙음 (거리 265px, 슬롯 2) → 유선을 쓰는 중이라 대기 (주소는 받지 않음)
+0 laptop-1 link.up | wlan0 연결됨 → 지금 쓰는 유선(eth0) 가 우선이라 대기 (유선이 끊기면 이쪽으로 넘어감)
+10 sw-1 frame.receive | eth3 수신: DHCP Discover [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+10 sw-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:06 → eth3
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/2
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+10 sw-1 switch.flood | 브로드캐스트 → eth3 제외 플러딩 [eth1, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+10 sw-1 link.transmit | 링크 전송: DHCP Discover switch_02:0 → ap_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+10 sw-1 link.transmit | 링크 전송: DHCP Discover switch_02:3 → router_01:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+10 sw-1 link.transmit | 링크 전송: DHCP Discover switch_02:7 → ap_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+20 ap-1 frame.receive | 무선 수신 (SSID office): DHCP Discover [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+20 ap-1 switch.learn | 단말 등록: 02:00:00:00:00:05 → 무선 슬롯 1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:05    DYNAMIC     Gi0/1
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+20 ap-1 wifi.air | 브로드캐스트 → 유선(eth0)과 다른 무선 단말 1대로 중계 — 무선도 같은 브로드캐스트 도메인
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+20 ap-1 link.transmit | 링크 전송: DHCP Discover ap_03:0 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+20 ap-1 link.transmit | 링크 전송: DHCP Discover ap_03:2 → laptop_06:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+20 ap-1 frame.receive | eth0 수신: DHCP Discover [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+20 ap-1 wifi.air | 전파로 송출 (SSID office): 브로드캐스트 → 단말 2대 모두 받음
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+20 ap-1 link.transmit | 링크 전송: DHCP Discover ap_03:1 → phone_05:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+20 ap-1 link.transmit | 링크 전송: DHCP Discover ap_03:2 → laptop_06:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+20 rt-1 frame.receive | lan1 수신: DHCP Discover [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+20 rt-1 switch.learn | 내부 스위치 MAC 테이블 학습: 02:00:00:00:00:06 → lan1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/1
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+20 rt-1 dhcp.discover.received | DHCP Discover 수신 (클라이언트 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+20 rt-1 dhcp.offer.sent | DHCP Offer: 02:00:00:00:00:06 에게 192.168.0.100/24 제안 (기본 게이트웨이 옵션 192.168.0.1) → 클라이언트 MAC 으로 유니캐스트
+20 rt-1 frame.send | 프레임 송신: DHCP Offer (192.168.0.100) [02:00:00:00:00:01 → 02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+20 rt-1 link.transmit | 링크 전송: DHCP Offer (192.168.0.100) router_01:1 → switch_02:3 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+20 ap-2 frame.receive | eth0 수신: DHCP Discover [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+20 ap-2 wifi.air | 연결된 무선 단말이 없음 → 송출할 곳 없음
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+30 sw-1 frame.receive | eth1 수신: DHCP Discover [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+30 sw-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:05 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:05    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+30 sw-1 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth3, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+30 sw-1 link.transmit | 링크 전송: DHCP Discover switch_02:2 → laptop_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+30 sw-1 link.transmit | 링크 전송: DHCP Discover switch_02:3 → router_01:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+30 sw-1 link.transmit | 링크 전송: DHCP Discover switch_02:7 → ap_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+30 sw-1 frame.receive | eth4 수신: DHCP Offer (192.168.0.100) [02:00:00:00:00:01 → 02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+30 sw-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:01 → eth4
+    > 시스코 show mac address-table:    1    02:00:00:00:00:01    DYNAMIC     Gi0/3
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+30 sw-1 switch.forward | MAC 테이블 조회: 02:00:00:00:00:06 → eth3 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+30 sw-1 link.transmit | 링크 전송: DHCP Offer (192.168.0.100) switch_02:2 → laptop_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+40 phone-1 frame.receive | 프레임 수신: DHCP Discover [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+40 phone-1 dhcp.ignore | 다른 호스트의 DHCP discover 브로드캐스트 — 나는 서버가 아니므로 무시
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Discover)
+40 laptop-1 frame.receive | 프레임 수신: DHCP Discover [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+40 laptop-1 dhcp.ignore | 다른 호스트의 DHCP discover 브로드캐스트 — 나는 서버가 아니므로 무시
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+40 rt-1 frame.receive | lan1 수신: DHCP Discover [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+40 rt-1 switch.learn | 내부 스위치 MAC 테이블 학습: 02:00:00:00:00:05 → lan1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:05    DYNAMIC     Gi0/1
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+40 rt-1 dhcp.discover.received | DHCP Discover 수신 (클라이언트 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+40 rt-1 dhcp.offer.sent | DHCP Offer: 02:00:00:00:00:05 에게 192.168.0.101/24 제안 (기본 게이트웨이 옵션 192.168.0.1) → 클라이언트 MAC 으로 유니캐스트
+40 rt-1 frame.send | 프레임 송신: DHCP Offer (192.168.0.101) [02:00:00:00:00:01 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+40 rt-1 link.transmit | 링크 전송: DHCP Offer (192.168.0.101) router_01:1 → switch_02:3 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+40 ap-2 frame.receive | eth0 수신: DHCP Discover [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+40 ap-2 wifi.air | 연결된 무선 단말이 없음 → 송출할 곳 없음
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Discover)
+40 laptop-1 frame.receive | 프레임 수신: DHCP Offer (192.168.0.100) [02:00:00:00:00:01 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+40 laptop-1 dhcp.offer.received | DHCP Offer 수신: 서버 192.168.0.1 가 192.168.0.100/24 제안 (게이트웨이 192.168.0.1)
+    > 리눅스 dhclient: DHCPOFFER of 192.168.0.100 from 192.168.0.1
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+40 laptop-1 dhcp.request.sent | DHCP Request 브로드캐스트: "192.168.0.100 를 서버 192.168.0.1 에게서 받겠습니다"
+    > 리눅스 dhclient: DHCPREQUEST for 192.168.0.100 on eth0 to 255.255.255.255 port 67
+40 laptop-1 frame.send | 프레임 송신: DHCP Request [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+40 laptop-1 link.transmit | 링크 전송: DHCP Request laptop_06:0 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+50 sw-1 frame.receive | eth4 수신: DHCP Offer (192.168.0.101) [02:00:00:00:00:01 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+50 sw-1 switch.forward | MAC 테이블 조회: 02:00:00:00:00:05 → eth1 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+50 sw-1 link.transmit | 링크 전송: DHCP Offer (192.168.0.101) switch_02:0 → ap_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+50 sw-1 frame.receive | eth3 수신: DHCP Request [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+50 sw-1 switch.flood | 브로드캐스트 → eth3 제외 플러딩 [eth1, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+50 sw-1 link.transmit | 링크 전송: DHCP Request switch_02:0 → ap_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+50 sw-1 link.transmit | 링크 전송: DHCP Request switch_02:3 → router_01:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+50 sw-1 link.transmit | 링크 전송: DHCP Request switch_02:7 → ap_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+60 ap-1 frame.receive | eth0 수신: DHCP Offer (192.168.0.101) [02:00:00:00:00:01 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+60 ap-1 wifi.air | 전파로 송출 (SSID office): 02:00:00:00:00:05 단말에게 — 같은 채널의 다른 단말도 전파는 받지만 암호화되어 읽지 못한다
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+60 ap-1 link.transmit | 링크 전송: DHCP Offer (192.168.0.101) ap_03:1 → phone_05:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+60 ap-1 frame.receive | eth0 수신: DHCP Request [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+60 ap-1 wifi.air | 전파로 송출 (SSID office): 브로드캐스트 → 단말 2대 모두 받음
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+60 ap-1 link.transmit | 링크 전송: DHCP Request ap_03:1 → phone_05:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+60 ap-1 link.transmit | 링크 전송: DHCP Request ap_03:2 → laptop_06:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+60 rt-1 frame.receive | lan1 수신: DHCP Request [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+60 rt-1 dhcp.request.received | DHCP Request 수신: 02:00:00:00:00:06 가 192.168.0.100 요청 (서버 192.168.0.1)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+60 rt-1 dhcp.lease | 임대 할당: 192.168.0.100 → 02:00:00:00:00:06
+60 rt-1 dhcp.ack.sent | DHCP Ack: 02:00:00:00:00:06 에게 192.168.0.100/24 확정 (게이트웨이 192.168.0.1, DNS 192.168.0.1)
+60 rt-1 frame.send | 프레임 송신: DHCP Ack (192.168.0.100) [02:00:00:00:00:01 → 02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+60 rt-1 link.transmit | 링크 전송: DHCP Ack (192.168.0.100) router_01:1 → switch_02:3 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+60 ap-2 frame.receive | eth0 수신: DHCP Request [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+60 ap-2 wifi.air | 연결된 무선 단말이 없음 → 송출할 곳 없음
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+70 sw-1 frame.receive | eth4 수신: DHCP Ack (192.168.0.100) [02:00:00:00:00:01 → 02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+70 sw-1 switch.forward | MAC 테이블 조회: 02:00:00:00:00:06 → eth3 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+70 sw-1 link.transmit | 링크 전송: DHCP Ack (192.168.0.100) switch_02:2 → laptop_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+80 phone-1 frame.receive | 프레임 수신: DHCP Offer (192.168.0.101) [02:00:00:00:00:01 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (phone-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+80 phone-1 dhcp.offer.received | DHCP Offer 수신: 서버 192.168.0.1 가 192.168.0.101/24 제안 (게이트웨이 192.168.0.1)
+    > 리눅스 dhclient: DHCPOFFER of 192.168.0.101 from 192.168.0.1
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (phone-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+80 phone-1 dhcp.request.sent | DHCP Request 브로드캐스트: "192.168.0.101 를 서버 192.168.0.1 에게서 받겠습니다"
+    > 리눅스 dhclient: DHCPREQUEST for 192.168.0.101 on eth0 to 255.255.255.255 port 67
+80 phone-1 frame.send | 프레임 송신: DHCP Request [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+80 phone-1 link.transmit | 링크 전송: DHCP Request phone_05:0 → ap_03:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+80 phone-1 frame.receive | 프레임 수신: DHCP Request [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+80 phone-1 dhcp.ignore | 다른 호스트의 DHCP request 브로드캐스트 — 나는 서버가 아니므로 무시
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: Request)
+80 laptop-1 frame.receive | 프레임 수신: DHCP Ack (192.168.0.100) [02:00:00:00:00:01 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+80 laptop-1 dhcp.ack.received | DHCP Ack 수신: 서버 192.168.0.1 가 192.168.0.100 확정
+    > 리눅스 dhclient: DHCPACK of 192.168.0.100 from 192.168.0.1
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:06, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+80 laptop-1 dhcp.bound | IP 획득: 192.168.0.100/24 (서브넷 마스크 255.255.255.0), 게이트웨이 192.168.0.1, DNS 192.168.0.1
+    > 리눅스 dhclient: bound to 192.168.0.100 -- renewal in 43200 seconds.
+80 laptop-1 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.0.100 는 이제 02:00:00:00:00:06" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+80 laptop-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.100?) laptop_06:0 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+90 sw-1 frame.receive | eth3 수신: ARP 요청 (192.168.0.100?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+90 sw-1 switch.flood | 브로드캐스트 → eth3 제외 플러딩 [eth1, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+90 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.100?) switch_02:0 → ap_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+90 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.100?) switch_02:3 → router_01:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+90 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.100?) switch_02:7 → ap_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+100 ap-1 frame.receive | 무선 수신 (SSID office): DHCP Request [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+100 ap-1 wifi.air | 브로드캐스트 → 유선(eth0)과 다른 무선 단말 1대로 중계 — 무선도 같은 브로드캐스트 도메인
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+100 ap-1 link.transmit | 링크 전송: DHCP Request ap_03:0 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+100 ap-1 link.transmit | 링크 전송: DHCP Request ap_03:2 → laptop_06:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+100 ap-1 frame.receive | eth0 수신: ARP 요청 (192.168.0.100?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+100 ap-1 wifi.air | 전파로 송출 (SSID office): 브로드캐스트 → 단말 2대 모두 받음
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+100 ap-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.100?) ap_03:1 → phone_05:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+100 ap-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.100?) ap_03:2 → laptop_06:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+100 rt-1 frame.receive | lan1 수신: ARP 요청 (192.168.0.100?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+100 rt-1 arp.request.received | Gratuitous ARP 수신: 192.168.0.100 는 02:00:00:00:00:06 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+100 ap-2 frame.receive | eth0 수신: ARP 요청 (192.168.0.100?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+100 ap-2 wifi.air | 연결된 무선 단말이 없음 → 송출할 곳 없음
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+110 sw-1 frame.receive | eth1 수신: DHCP Request [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+110 sw-1 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth3, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+110 sw-1 link.transmit | 링크 전송: DHCP Request switch_02:2 → laptop_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+110 sw-1 link.transmit | 링크 전송: DHCP Request switch_02:3 → router_01:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+110 sw-1 link.transmit | 링크 전송: DHCP Request switch_02:7 → ap_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+120 phone-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.100?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+120 phone-1 frame.drop | IP 설정이 없어 ARP 무시
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.100 tell 192.168.0.100, length 28
+120 laptop-1 frame.receive | 프레임 수신: DHCP Request [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+120 laptop-1 dhcp.ignore | 다른 호스트의 DHCP request 브로드캐스트 — 나는 서버가 아니므로 무시
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+120 rt-1 frame.receive | lan1 수신: DHCP Request [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+120 rt-1 dhcp.request.received | DHCP Request 수신: 02:00:00:00:00:05 가 192.168.0.101 요청 (서버 192.168.0.1)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+120 rt-1 dhcp.lease | 임대 할당: 192.168.0.101 → 02:00:00:00:00:05
+120 rt-1 dhcp.ack.sent | DHCP Ack: 02:00:00:00:00:05 에게 192.168.0.101/24 확정 (게이트웨이 192.168.0.1, DNS 192.168.0.1)
+120 rt-1 frame.send | 프레임 송신: DHCP Ack (192.168.0.101) [02:00:00:00:00:01 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+120 rt-1 link.transmit | 링크 전송: DHCP Ack (192.168.0.101) router_01:1 → switch_02:3 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+120 ap-2 frame.receive | eth0 수신: DHCP Request [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+120 ap-2 wifi.air | 연결된 무선 단말이 없음 → 송출할 곳 없음
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: Request)
+130 sw-1 frame.receive | eth4 수신: DHCP Ack (192.168.0.101) [02:00:00:00:00:01 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+130 sw-1 switch.forward | MAC 테이블 조회: 02:00:00:00:00:05 → eth1 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+130 sw-1 link.transmit | 링크 전송: DHCP Ack (192.168.0.101) switch_02:0 → ap_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+140 ap-1 frame.receive | eth0 수신: DHCP Ack (192.168.0.101) [02:00:00:00:00:01 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+140 ap-1 wifi.air | 전파로 송출 (SSID office): 02:00:00:00:00:05 단말에게 — 같은 채널의 다른 단말도 전파는 받지만 암호화되어 읽지 못한다
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+140 ap-1 link.transmit | 링크 전송: DHCP Ack (192.168.0.101) ap_03:1 → phone_05:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+160 phone-1 frame.receive | 프레임 수신: DHCP Ack (192.168.0.101) [02:00:00:00:00:01 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (phone-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+160 phone-1 dhcp.ack.received | DHCP Ack 수신: 서버 192.168.0.1 가 192.168.0.101 확정
+    > 리눅스 dhclient: DHCPACK of 192.168.0.101 from 192.168.0.1
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1.67 > 192.168.0.101.68: BOOTP/DHCP, Reply from 02:00:00:00:00:05, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (phone-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+160 phone-1 dhcp.bound | IP 획득: 192.168.0.101/24 (서브넷 마스크 255.255.255.0), 게이트웨이 192.168.0.1, DNS 192.168.0.1
+    > 리눅스 dhclient: bound to 192.168.0.101 -- renewal in 43200 seconds.
+160 phone-1 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.0.101 는 이제 02:00:00:00:00:05" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+160 phone-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.101?) phone_05:0 → ap_03:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+180 ap-1 frame.receive | 무선 수신 (SSID office): ARP 요청 (192.168.0.101?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+180 ap-1 wifi.air | 브로드캐스트 → 유선(eth0)과 다른 무선 단말 1대로 중계 — 무선도 같은 브로드캐스트 도메인
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+180 ap-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.101?) ap_03:0 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+180 ap-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.101?) ap_03:2 → laptop_06:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+190 sw-1 frame.receive | eth1 수신: ARP 요청 (192.168.0.101?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+190 sw-1 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth3, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+190 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.101?) switch_02:2 → laptop_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+190 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.101?) switch_02:3 → router_01:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+190 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.101?) switch_02:7 → ap_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+200 laptop-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.101?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+200 laptop-1 arp.request.received | Gratuitous ARP 수신: 192.168.0.101 는 02:00:00:00:00:05 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+200 rt-1 frame.receive | lan1 수신: ARP 요청 (192.168.0.101?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+200 rt-1 arp.request.received | Gratuitous ARP 수신: 192.168.0.101 는 02:00:00:00:00:05 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+200 ap-2 frame.receive | eth0 수신: ARP 요청 (192.168.0.101?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+200 ap-2 wifi.air | 연결된 무선 단말이 없음 → 송출할 곳 없음
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.101 tell 192.168.0.101, length 28
+## 30초 뒤
+## laptop-1 → 8.8.8.8
+30200 laptop-1 action | [사용자] ping 8.8.8.8
+30200 laptop-1 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+30200 laptop-1 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.0.1 로 전달
+30200 laptop-1 arp.cache.miss | ARP 캐시에 192.168.0.1 없음 → 패킷 대기열에 보관 (1개)
+30200 laptop-1 arp.request.sent | ARP 요청 브로드캐스트: "192.168.0.1 의 MAC은?" (나는 192.168.0.100 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30200 laptop-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) laptop_06:0 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30210 sw-1 frame.receive | eth3 수신: ARP 요청 (192.168.0.1?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30210 sw-1 switch.flood | 브로드캐스트 → eth3 제외 플러딩 [eth1, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30210 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) switch_02:0 → ap_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30210 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) switch_02:3 → router_01:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30210 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) switch_02:7 → ap_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30220 ap-1 frame.receive | eth0 수신: ARP 요청 (192.168.0.1?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30220 ap-1 wifi.air | 전파로 송출 (SSID office): 브로드캐스트 → 단말 2대 모두 받음
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30220 ap-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) ap_03:1 → phone_05:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30220 ap-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) ap_03:2 → laptop_06:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30220 rt-1 frame.receive | lan1 수신: ARP 요청 (192.168.0.1?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30220 rt-1 arp.request.received | ARP 요청 수신: "192.168.0.1 의 MAC은?" (보낸이 192.168.0.100 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30220 rt-1 arp.cache.update | ARP 캐시 추가: 192.168.0.100 → 02:00:00:00:00:06 (요청의 보낸이 정보에서 학습)
+    > 리눅스 ip neigh: 192.168.0.100 dev eth0 lladdr 02:00:00:00:00:06 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30220 rt-1 arp.reply.sent | ARP 응답 송신: "192.168.0.1 는 02:00:00:00:00:01" → 02:00:00:00:00:06 에게 유니캐스트
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30220 rt-1 link.transmit | 링크 전송: ARP 응답 (192.168.0.1=02:00:00:00:00:01) router_01:1 → switch_02:3 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30220 ap-2 frame.receive | eth0 수신: ARP 요청 (192.168.0.1?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30220 ap-2 wifi.air | 연결된 무선 단말이 없음 → 송출할 곳 없음
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30230 sw-1 frame.receive | eth4 수신: ARP 응답 (192.168.0.1=02:00:00:00:00:01) [02:00:00:00:00:01 → 02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30230 sw-1 switch.forward | MAC 테이블 조회: 02:00:00:00:00:06 → eth3 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30230 sw-1 link.transmit | 링크 전송: ARP 응답 (192.168.0.1=02:00:00:00:00:01) switch_02:2 → laptop_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30240 phone-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.1?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30240 phone-1 arp.request.received | ARP 요청 수신: "192.168.0.1 의 MAC은?" (보낸이 192.168.0.100 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30240 phone-1 frame.drop | 192.168.0.1 는 내 IP(192.168.0.101) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.100, length 28
+30240 laptop-1 frame.receive | 프레임 수신: ARP 응답 (192.168.0.1=02:00:00:00:00:01) [02:00:00:00:00:01 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+30240 laptop-1 arp.reply.received | ARP 응답 수신: 192.168.0.1 는 02:00:00:00:00:01
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+30240 laptop-1 arp.cache.update | ARP 캐시 추가: 192.168.0.1 → 02:00:00:00:00:01 (응답에서 학습)
+    > 리눅스 ip neigh: 192.168.0.1 dev eth0 lladdr 02:00:00:00:00:01 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+30240 laptop-1 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
+30240 laptop-1 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:06 → 02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+30240 laptop-1 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 laptop_06:0 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+30250 sw-1 frame.receive | eth3 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:06 → 02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+30250 sw-1 switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth4 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+30250 sw-1 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_02:3 → router_01:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+30260 rt-1 frame.receive | lan1 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:06 → 02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+30260 rt-1 ip.no-route | 8.8.8.8 는 외부 주소인데 WAN 에 공인 주소가 없음 → 인터넷으로 보낼 수 없음 (WAN 케이블과 DHCP 확인)
+    > 시스코 debug ip packet: IP: s=192.168.0.100, d=8.8.8.8, len 84, unroutable
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+30260 rt-1 icmp.unreachable.sent | 192.168.0.100 에게 ICMP Destination Net Unreachable 통지 (원래 192.168.0.100 → 8.8.8.8) — 그 목적지로 가는 경로가 없음. 보낸 쪽은 timeout 을 기다리지 않고 바로 실패를 안다
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.100 > 8.8.8.8: ICMP echo request, id 4469, seq 1, length 64
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+30260 rt-1 ip.route | 192.168.0.100 는 같은 서브넷 192.168.0.0/24 → 직접 전달 (next hop = 192.168.0.100)
+30260 rt-1 arp.cache.hit | ARP 캐시 적중: 192.168.0.100 → 02:00:00:00:00:06
+30260 rt-1 frame.send | 프레임 송신: ICMP Destination Net Unreachable (원래 192.168.0.100 → 8.8.8.8 Echo seq=1) [02:00:00:00:00:01 → 02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+30260 rt-1 link.transmit | 링크 전송: ICMP Destination Net Unreachable (원래 192.168.0.100 → 8.8.8.8 Echo seq=1) router_01:1 → switch_02:3 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+30270 sw-1 frame.receive | eth4 수신: ICMP Destination Net Unreachable (원래 192.168.0.100 → 8.8.8.8 Echo seq=1) [02:00:00:00:00:01 → 02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+30270 sw-1 switch.forward | MAC 테이블 조회: 02:00:00:00:00:06 → eth3 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+30270 sw-1 link.transmit | 링크 전송: ICMP Destination Net Unreachable (원래 192.168.0.100 → 8.8.8.8 Echo seq=1) switch_02:2 → laptop_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+30280 laptop-1 frame.receive | 프레임 수신: ICMP Destination Net Unreachable (원래 192.168.0.100 → 8.8.8.8 Echo seq=1) [02:00:00:00:00:01 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+30280 laptop-1 icmp.unreachable.received | 192.168.0.1 로부터 ICMP Destination Net Unreachable 수신 (원래 192.168.0.100 → 8.8.8.8 Echo seq=1) → ping 8.8.8.8 실패
+    > ping: From 192.168.0.1 icmp_seq=… Destination Net Unreachable
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.100: ICMP net 8.8.8.8 unreachable, length 36
+30280 laptop-1 icmp.failed | ping 8.8.8.8 실패: Destination Net Unreachable (192.168.0.1)
+## phone-1 → 8.8.8.8
+30280 phone-1 action | [사용자] ping 8.8.8.8
+30280 phone-1 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+30280 phone-1 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.0.1 로 전달
+30280 phone-1 arp.cache.miss | ARP 캐시에 192.168.0.1 없음 → 패킷 대기열에 보관 (1개)
+30280 phone-1 arp.request.sent | ARP 요청 브로드캐스트: "192.168.0.1 의 MAC은?" (나는 192.168.0.101 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30280 phone-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) phone_05:0 → ap_03:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30300 ap-1 frame.receive | 무선 수신 (SSID office): ARP 요청 (192.168.0.1?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30300 ap-1 wifi.air | 브로드캐스트 → 유선(eth0)과 다른 무선 단말 1대로 중계 — 무선도 같은 브로드캐스트 도메인
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30300 ap-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) ap_03:0 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30300 ap-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) ap_03:2 → laptop_06:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30310 sw-1 frame.receive | eth1 수신: ARP 요청 (192.168.0.1?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30310 sw-1 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth3, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30310 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) switch_02:2 → laptop_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30310 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) switch_02:3 → router_01:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30310 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.1?) switch_02:7 → ap_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30320 laptop-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.1?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30320 laptop-1 arp.request.received | ARP 요청 수신: "192.168.0.1 의 MAC은?" (보낸이 192.168.0.101 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30320 laptop-1 frame.drop | 192.168.0.1 는 내 IP(192.168.0.100) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30320 rt-1 frame.receive | lan1 수신: ARP 요청 (192.168.0.1?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30320 rt-1 arp.request.received | ARP 요청 수신: "192.168.0.1 의 MAC은?" (보낸이 192.168.0.101 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30320 rt-1 arp.cache.update | ARP 캐시 추가: 192.168.0.101 → 02:00:00:00:00:05 (요청의 보낸이 정보에서 학습)
+    > 리눅스 ip neigh: 192.168.0.101 dev eth0 lladdr 02:00:00:00:00:05 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30320 rt-1 arp.reply.sent | ARP 응답 송신: "192.168.0.1 는 02:00:00:00:00:01" → 02:00:00:00:00:05 에게 유니캐스트
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30320 rt-1 link.transmit | 링크 전송: ARP 응답 (192.168.0.1=02:00:00:00:00:01) router_01:1 → switch_02:3 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30320 ap-2 frame.receive | eth0 수신: ARP 요청 (192.168.0.1?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30320 ap-2 wifi.air | 연결된 무선 단말이 없음 → 송출할 곳 없음
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.1 tell 192.168.0.101, length 28
+30330 sw-1 frame.receive | eth4 수신: ARP 응답 (192.168.0.1=02:00:00:00:00:01) [02:00:00:00:00:01 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30330 sw-1 switch.forward | MAC 테이블 조회: 02:00:00:00:00:05 → eth1 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30330 sw-1 link.transmit | 링크 전송: ARP 응답 (192.168.0.1=02:00:00:00:00:01) switch_02:0 → ap_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30340 ap-1 frame.receive | eth0 수신: ARP 응답 (192.168.0.1=02:00:00:00:00:01) [02:00:00:00:00:01 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30340 ap-1 wifi.air | 전파로 송출 (SSID office): 02:00:00:00:00:05 단말에게 — 같은 채널의 다른 단말도 전파는 받지만 암호화되어 읽지 못한다
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30340 ap-1 link.transmit | 링크 전송: ARP 응답 (192.168.0.1=02:00:00:00:00:01) ap_03:1 → phone_05:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+30360 phone-1 frame.receive | 프레임 수신: ARP 응답 (192.168.0.1=02:00:00:00:00:01) [02:00:00:00:00:01 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (phone-1 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+30360 phone-1 arp.reply.received | ARP 응답 수신: 192.168.0.1 는 02:00:00:00:00:01
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (phone-1 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+30360 phone-1 arp.cache.update | ARP 캐시 추가: 192.168.0.1 → 02:00:00:00:00:01 (응답에서 학습)
+    > 리눅스 ip neigh: 192.168.0.1 dev eth0 lladdr 02:00:00:00:00:01 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.0.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (phone-1 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+30360 phone-1 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (80ms 대기)
+30360 phone-1 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:05 → 02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+30360 phone-1 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 phone_05:0 → ap_03:1 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+30380 ap-1 frame.receive | 무선 수신 (SSID office): ICMP Echo 요청 seq=1 [02:00:00:00:00:05 → 02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+30380 ap-1 switch.forward | 02:00:00:00:00:01 는 무선 단말이 아님 → 유선(eth0)으로 전달
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+30380 ap-1 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 ap_03:0 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+30390 sw-1 frame.receive | eth1 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:05 → 02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+30390 sw-1 switch.forward | MAC 테이블 조회: 02:00:00:00:00:01 → eth4 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+30390 sw-1 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_02:3 → router_01:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+30400 rt-1 frame.receive | lan1 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:05 → 02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30400 rt-1 ip.no-route | 8.8.8.8 는 외부 주소인데 WAN 에 공인 주소가 없음 → 인터넷으로 보낼 수 없음 (WAN 케이블과 DHCP 확인)
+    > 시스코 debug ip packet: IP: s=192.168.0.101, d=8.8.8.8, len 84, unroutable
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30400 rt-1 icmp.unreachable.sent | 192.168.0.101 에게 ICMP Destination Net Unreachable 통지 (원래 192.168.0.101 → 8.8.8.8) — 그 목적지로 가는 경로가 없음. 보낸 쪽은 timeout 을 기다리지 않고 바로 실패를 안다
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 192.168.0.101 > 8.8.8.8: ICMP echo request, id 4490, seq 1, length 64
+    > tcpdump (rt-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30400 rt-1 ip.route | 192.168.0.101 는 같은 서브넷 192.168.0.0/24 → 직접 전달 (next hop = 192.168.0.101)
+30400 rt-1 arp.cache.hit | ARP 캐시 적중: 192.168.0.101 → 02:00:00:00:00:05
+30400 rt-1 frame.send | 프레임 송신: ICMP Destination Net Unreachable (원래 192.168.0.101 → 8.8.8.8 Echo seq=1) [02:00:00:00:00:01 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30400 rt-1 link.transmit | 링크 전송: ICMP Destination Net Unreachable (원래 192.168.0.101 → 8.8.8.8 Echo seq=1) router_01:1 → switch_02:3 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30410 sw-1 frame.receive | eth4 수신: ICMP Destination Net Unreachable (원래 192.168.0.101 → 8.8.8.8 Echo seq=1) [02:00:00:00:00:01 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30410 sw-1 switch.forward | MAC 테이블 조회: 02:00:00:00:00:05 → eth1 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30410 sw-1 link.transmit | 링크 전송: ICMP Destination Net Unreachable (원래 192.168.0.101 → 8.8.8.8 Echo seq=1) switch_02:0 → ap_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30420 ap-1 frame.receive | eth0 수신: ICMP Destination Net Unreachable (원래 192.168.0.101 → 8.8.8.8 Echo seq=1) [02:00:00:00:00:01 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30420 ap-1 wifi.air | 전파로 송출 (SSID office): 02:00:00:00:00:05 단말에게 — 같은 채널의 다른 단말도 전파는 받지만 암호화되어 읽지 못한다
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30420 ap-1 link.transmit | 링크 전송: ICMP Destination Net Unreachable (원래 192.168.0.101 → 8.8.8.8 Echo seq=1) ap_03:1 → phone_05:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (ap-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30440 phone-1 frame.receive | 프레임 수신: ICMP Destination Net Unreachable (원래 192.168.0.101 → 8.8.8.8 Echo seq=1) [02:00:00:00:00:01 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30440 phone-1 icmp.unreachable.received | 192.168.0.1 로부터 ICMP Destination Net Unreachable 수신 (원래 192.168.0.101 → 8.8.8.8 Echo seq=1) → ping 8.8.8.8 실패
+    > ping: From 192.168.0.1 icmp_seq=… Destination Net Unreachable
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 192.168.0.1 > 192.168.0.101: ICMP net 8.8.8.8 unreachable, length 36
+30440 phone-1 icmp.failed | ping 8.8.8.8 실패: Destination Net Unreachable (192.168.0.1)

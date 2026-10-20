@@ -1,0 +1,7 @@
+slaac tiles: 2001:db8:1::ff:fe00:1 | 2001:db8:1::ff:fe00:2
+slaac pc-1 gateway: fe80::ff:fe11:4 (RA)
+slaac mode on: 1
+ra toggles: 3 | on: 2
+after RA off: RA 없음 · 링크 로컬만
+undo with toggle focused (switch): 2001:db8:1::ff:fe00:1
+slaac periodic ra: gateway before fe80::ff:fe11:4 (RA) | after +40s 없음

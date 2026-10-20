@@ -1,0 +1,2 @@
+pkt detail: 시스코 debug ip nat | 리눅스 conntrack -E | tcpdump -n -e | tcpdump (rt-1 이 내보낸 쪽) | layers: 이더넷 (L2),IPv4 (L3),ICMP,이더넷 (L2),IPv4 (L3),ICMP
+nat debug line: NAT: s=192.168.0.101->203.0.113.2, d=8.8.8.8 [40000]

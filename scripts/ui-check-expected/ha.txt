@@ -1,0 +1,5 @@
+ha initial: A master | B: HA backup
+ha ping via A: 8.8.8.8 응답 300ms
+ha section: 1
+ha failover: B master
+ha ping via B: 8.8.8.8 응답 240ms

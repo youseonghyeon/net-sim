@@ -1,0 +1,6 @@
+proxy example.com: example.com:80 프록시 경유 종료됨 · 받음 3000B · 응답 93.184.216.34
+proxy naver.com: naver.com:80 프록시 경유 HTTP 403 Forbidden
+https button: HTTPS 연결
+proxy https: github.com:443 프록시 경유 종료됨 · 받음 4440B | class: ok
+tls layers: 이더넷 (L2),IPv4 (L3),TCP (L4),TLS 1.3,이더넷 (L2),IPv4 (L3),TCP (L4)
+proxy access.log rows: 3 | first: 192.168.0.100 CONNECT github.com:443 TCP_TUNNEL/200

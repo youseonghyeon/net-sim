@@ -1,0 +1,4 @@
+home6 router overview: WAN 203.0.113.2 | 192.168.0.1/24 | IPv6 LAN 2001:db8:1000:100::1/64 · 위임 2001:db8:1000:100::/56
+home6 ping google.com: google.com (2404:6800:4004:827::200e)응답 160ms
+home6 inet targets: 203.0.113.2 rt-1 WAN | 2001:db8:1000:100:0:ff:fe00:4 pc-1 (IPv6, NAT 없음) | 2001:db8:1000:100:0:ff:fe00:5 laptop-1 (IPv6, NAT 없음) | 2001:db8:1000:100:0:ff:fe00:6 srv-1 (IPv6, NAT 없음)
+home6 inbound blocked: → [2001:db8:1000:100:0:ff:fe00:6]:80실패 · timeout · SYN 에 응답 없음 (재전송 3회)

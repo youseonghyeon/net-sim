@@ -1,0 +1,2 @@
+cable ports: 5-0 | selected: 케이블
+after panel change: 2-0 | options: 8

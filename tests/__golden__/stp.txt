@@ -1,0 +1,891 @@
+## 불러오기
+0 core-1 stp.config | STP 켜짐: 브리지 ID 4096.02:00:00:00:00:01 (우선순위 4096) — 처음엔 내가 루트라고 알리고, 더 작은 ID 를 들으면 따른다
+0 core-1 stp.root | STP: 내가 루트 브리지 (4096.02:00:00:00:00:01) — 더 작은 브리지 ID 를 듣지 못함. 모든 연결 포트가 지정 포트
+0 core-2 stp.config | STP 켜짐: 브리지 ID 8192.02:00:00:00:00:02 (우선순위 8192) — 처음엔 내가 루트라고 알리고, 더 작은 ID 를 들으면 따른다
+0 core-2 stp.root | STP: 내가 루트 브리지 (8192.02:00:00:00:00:02) — 더 작은 브리지 ID 를 듣지 못함. 모든 연결 포트가 지정 포트
+0 access-1 stp.config | STP 켜짐: 브리지 ID 32768.02:00:00:00:00:03 (우선순위 32768) — 처음엔 내가 루트라고 알리고, 더 작은 ID 를 들으면 따른다
+0 access-1 stp.root | STP: 내가 루트 브리지 (32768.02:00:00:00:00:03) — 더 작은 브리지 ID 를 듣지 못함. 모든 연결 포트가 지정 포트
+0 core-1 stp.port | STP: eth8 → 지정 포트 (전달)
+0 core-2 stp.port | STP: eth1 → 지정 포트 (전달)
+0 core-1 stp.port | STP: eth6 → 지정 포트 (전달)
+0 access-1 stp.port | STP: eth2 → 지정 포트 (전달)
+0 core-2 stp.port | STP: eth3 → 지정 포트 (전달)
+0 access-1 stp.port | STP: eth7 → 지정 포트 (전달)
+0 access-1 stp.port | STP: eth4 → 지정 포트 (전달)
+0 pc-1 link.up | 링크 연결됨
+0 pc-1 arp.probe | ARP Probe 브로드캐스트: "192.168.0.11 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+0 pc-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) pc_04:0 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+0 access-1 stp.port | STP: eth5 → 지정 포트 (전달)
+0 pc-2 link.up | 링크 연결됨
+0 pc-2 arp.probe | ARP Probe 브로드캐스트: "192.168.0.12 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+0 pc-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) pc_05:0 → switch_03:4 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+0 core-2 stp.port | STP: eth8 → 지정 포트 (전달)
+0 srv-1 link.up | 링크 연결됨
+0 srv-1 arp.probe | ARP Probe 브로드캐스트: "192.168.0.21 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+0 srv-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) server_06:0 → switch_02:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+0 core-1 stp.port | STP: eth1 → 지정 포트 (전달)
+0 srv-2 link.up | 링크 연결됨
+0 srv-2 arp.probe | ARP Probe 브로드캐스트: "192.168.0.22 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+0 srv-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) server_07:0 → switch_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+0 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 0) switch_01:0 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+0 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) switch_01:5 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+0 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+0 core-2 link.transmit | 링크 전송: STP BPDU (루트 8192.02:00:00:00:00:02, 비용 0, 보낸 스위치 8192.02:00:00:00:00:02 포트 0) switch_02:0 → switch_01:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 2000.02:00:00:00:00:02, root-pathcost 0, message-age 0s)
+0 core-2 link.transmit | 링크 전송: STP BPDU (루트 8192.02:00:00:00:00:02, 비용 0, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 2000.02:00:00:00:00:02, root-pathcost 0, message-age 0s)
+0 core-2 link.transmit | 링크 전송: STP BPDU (루트 8192.02:00:00:00:00:02, 비용 0, 보낸 스위치 8192.02:00:00:00:00:02 포트 7) switch_02:7 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8008, length 35 (root 2000.02:00:00:00:00:02, root-pathcost 0, message-age 0s)
+0 access-1 link.transmit | 링크 전송: STP BPDU (루트 32768.02:00:00:00:00:03, 비용 0, 보낸 스위치 32768.02:00:00:00:00:03 포트 1) switch_03:1 → switch_01:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8002, length 35 (root 8000.02:00:00:00:00:03, root-pathcost 0, message-age 0s)
+0 access-1 link.transmit | 링크 전송: STP BPDU (루트 32768.02:00:00:00:00:03, 비용 0, 보낸 스위치 32768.02:00:00:00:00:03 포트 3) switch_03:3 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8004, length 35 (root 8000.02:00:00:00:00:03, root-pathcost 0, message-age 0s)
+0 access-1 link.transmit | 링크 전송: STP BPDU (루트 32768.02:00:00:00:00:03, 비용 0, 보낸 스위치 32768.02:00:00:00:00:03 포트 4) switch_03:4 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8005, length 35 (root 8000.02:00:00:00:00:03, root-pathcost 0, message-age 0s)
+0 access-1 link.transmit | 링크 전송: STP BPDU (루트 32768.02:00:00:00:00:03, 비용 0, 보낸 스위치 32768.02:00:00:00:00:03 포트 6) switch_03:6 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 8000.02:00:00:00:00:03, root-pathcost 0, message-age 0s)
+10 access-1 frame.receive | eth4 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+10 access-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:04 → eth4
+    > 시스코 show mac address-table:    1    02:00:00:00:00:04    DYNAMIC     Gi0/3
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+10 access-1 switch.flood | 브로드캐스트 → eth4 제외 플러딩 [eth2, eth5, eth7]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+10 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_03:1 → switch_01:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+10 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_03:4 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+10 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_03:6 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+10 access-1 frame.receive | eth5 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+10 access-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:05 → eth5
+    > 시스코 show mac address-table:    1    02:00:00:00:00:05    DYNAMIC     Gi0/4
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+10 access-1 switch.flood | 브로드캐스트 → eth5 제외 플러딩 [eth2, eth4, eth7]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+10 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_03:1 → switch_01:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+10 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_03:3 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+10 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_03:6 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+10 core-2 frame.receive | eth8 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+10 core-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:06 → eth8
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/7
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+10 core-2 switch.flood | 브로드캐스트 → eth8 제외 플러딩 [eth1, eth3]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+10 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_02:0 → switch_01:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+10 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+10 core-1 frame.receive | eth1 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+10 core-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:07 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:07    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+10 core-1 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth6, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+10 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_01:5 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+10 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+10 access-1 frame.receive | eth2 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+10 access-1 stp.bpdu | [eth2] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+10 access-1 stp.root | STP: 루트 브리지 4096.02:00:00:00:00:01, 루트까지 비용 4, 루트 포트 eth2
+10 access-1 stp.port | STP: eth2 → 루트 포트 (전달) (이전 지정 포트 (전달))
+10 access-1 stp.tc | STP 토폴로지 변경 → MAC 테이블 비움 (경로가 바뀌었으니 다시 배운다)
+10 core-2 frame.receive | eth1 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+10 core-2 stp.bpdu | [eth1] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+10 core-2 stp.root | STP: 루트 브리지 4096.02:00:00:00:00:01, 루트까지 비용 4, 루트 포트 eth1
+10 core-2 stp.port | STP: eth1 → 루트 포트 (전달) (이전 지정 포트 (전달))
+10 core-2 stp.tc | STP 토폴로지 변경 → MAC 테이블 비움 (경로가 바뀌었으니 다시 배운다)
+10 core-1 frame.receive | eth8 수신: STP BPDU (루트 8192.02:00:00:00:00:02, 비용 0, 보낸 스위치 8192.02:00:00:00:00:02 포트 0) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 2000.02:00:00:00:00:02, root-pathcost 0, message-age 0s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+10 core-1 stp.bpdu | [eth8] BPDU 수신: 루트 8192.02:00:00:00:00:02, 비용 0, 보낸 스위치 8192.02:00:00:00:00:02
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 2000.02:00:00:00:00:02, root-pathcost 0, message-age 0s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+10 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+10 access-1 frame.receive | eth7 수신: STP BPDU (루트 8192.02:00:00:00:00:02, 비용 0, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 2000.02:00:00:00:00:02, root-pathcost 0, message-age 0s)
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 access-1 stp.bpdu | [eth7] BPDU 수신: 루트 8192.02:00:00:00:00:02, 비용 0, 보낸 스위치 8192.02:00:00:00:00:02
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 2000.02:00:00:00:00:02, root-pathcost 0, message-age 0s)
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 access-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 6) switch_03:6 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 core-1 frame.receive | eth6 수신: STP BPDU (루트 32768.02:00:00:00:00:03, 비용 0, 보낸 스위치 32768.02:00:00:00:00:03 포트 1) [02:00:00:00:00:03 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8002, length 35 (root 8000.02:00:00:00:00:03, root-pathcost 0, message-age 0s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+10 core-1 stp.bpdu | [eth6] BPDU 수신: 루트 32768.02:00:00:00:00:03, 비용 0, 보낸 스위치 32768.02:00:00:00:00:03
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8002, length 35 (root 8000.02:00:00:00:00:03, root-pathcost 0, message-age 0s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+10 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) switch_01:5 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+10 core-2 frame.receive | eth3 수신: STP BPDU (루트 32768.02:00:00:00:00:03, 비용 0, 보낸 스위치 32768.02:00:00:00:00:03 포트 6) [02:00:00:00:00:03 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 8000.02:00:00:00:00:03, root-pathcost 0, message-age 0s)
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 core-2 stp.bpdu | [eth3] BPDU 수신: 루트 32768.02:00:00:00:00:03, 비용 0, 보낸 스위치 32768.02:00:00:00:00:03
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 8000.02:00:00:00:00:03, root-pathcost 0, message-age 0s)
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 access-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 1) switch_03:1 → switch_01:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8002, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 access-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 3) switch_03:3 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8004, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 access-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 4) switch_03:4 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8005, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 access-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 6) switch_03:6 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 0) switch_02:0 → switch_01:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+10 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 7) switch_02:7 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 core-1 frame.receive | eth6 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 core-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:04 → eth6
+    > 시스코 show mac address-table:    1    02:00:00:00:00:04    DYNAMIC     Gi0/5
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 core-1 switch.flood | 브로드캐스트 → eth6 제외 플러딩 [eth1, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_01:0 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 pc-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 pc-2 arp.request.received | ARP 요청 수신: "192.168.0.11 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:04)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 pc-2 frame.drop | 192.168.0.11 는 내 IP(192.168.0.12) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 core-2 frame.receive | eth3 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 core-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:04 → eth3
+    > 시스코 show mac address-table:    1    02:00:00:00:00:04    DYNAMIC     Gi0/2
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 core-2 switch.flood | 브로드캐스트 → eth3 제외 플러딩 [eth1, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_02:0 → switch_01:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_02:7 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+20 core-1 frame.receive | eth6 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 core-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:05 → eth6
+    > 시스코 show mac address-table:    1    02:00:00:00:00:05    DYNAMIC     Gi0/5
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 core-1 switch.flood | 브로드캐스트 → eth6 제외 플러딩 [eth1, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_01:0 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 pc-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 pc-1 arp.request.received | ARP 요청 수신: "192.168.0.12 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 pc-1 frame.drop | 192.168.0.12 는 내 IP(192.168.0.11) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 core-2 frame.receive | eth3 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 core-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:05 → eth3
+    > 시스코 show mac address-table:    1    02:00:00:00:00:05    DYNAMIC     Gi0/2
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 core-2 switch.flood | 브로드캐스트 → eth3 제외 플러딩 [eth1, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_02:0 → switch_01:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_02:7 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+20 core-1 frame.receive | eth8 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+20 core-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:06 → eth8
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/7
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+20 core-1 switch.flood | 브로드캐스트 → eth8 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+20 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_01:0 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+20 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_01:5 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+20 access-1 frame.receive | eth7 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+20 access-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:06 → eth7
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/6
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+20 access-1 switch.flood | 브로드캐스트 → eth7 제외 플러딩 [eth2, eth4, eth5]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+20 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_03:1 → switch_01:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+20 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_03:3 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+20 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_03:4 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+20 access-1 frame.receive | eth2 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+20 access-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:07 → eth2
+    > 시스코 show mac address-table:    1    02:00:00:00:00:07    DYNAMIC     Gi0/1
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+20 access-1 switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth4, eth5, eth7]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+20 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_03:3 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+20 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_03:4 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+20 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_03:6 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+20 core-2 frame.receive | eth1 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+20 core-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:07 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:07    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+20 core-2 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth3, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+20 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+20 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_02:7 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+20 core-2 frame.receive | eth1 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 core-2 stp.bpdu | [eth1] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 core-2 frame.receive | eth3 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 6) [02:00:00:00:00:03 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 core-2 stp.tc | STP 토폴로지 변경 → MAC 테이블 비움 (경로가 바뀌었으니 다시 배운다)
+20 core-2 stp.bpdu | [eth3] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 access-1 frame.receive | eth2 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 access-1 stp.bpdu | [eth2] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 access-1 frame.receive | eth7 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 access-1 stp.tc | STP 토폴로지 변경 → MAC 테이블 비움 (경로가 바뀌었으니 다시 배운다)
+20 access-1 stp.bpdu | [eth7] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 access-1 stp.block | STP: eth7 → 대체 포트 (차단) (이전 지정 포트 (전달)) — 이 링크 건너편이 루트에 더 가까워, 여기를 막아 루프를 끊는다
+20 core-1 frame.receive | eth6 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 1) [02:00:00:00:00:03 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8002, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 core-1 stp.tc | STP 토폴로지 변경 → MAC 테이블 비움 (경로가 바뀌었으니 다시 배운다)
+20 core-1 stp.bpdu | [eth6] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8002, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) switch_01:5 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 core-2 frame.receive | eth3 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 6) [02:00:00:00:00:03 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 core-2 stp.bpdu | [eth3] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 core-1 frame.receive | eth8 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 0) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 core-1 stp.bpdu | [eth8] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 access-1 frame.receive | eth7 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 access-1 stp.bpdu | [eth7] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 0) switch_02:0 → switch_01:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 7) switch_02:7 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 access-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 1) switch_03:1 → switch_01:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8002, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 access-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 3) switch_03:3 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8004, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 access-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 4) switch_03:4 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8005, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 access-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 6) switch_03:6 → switch_02:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+20 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 0) switch_01:0 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) switch_01:5 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+20 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 srv-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+30 srv-2 arp.request.received | ARP 요청 수신: "192.168.0.11 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:04)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+30 srv-2 frame.drop | 192.168.0.11 는 내 IP(192.168.0.22) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+30 core-2 frame.receive | eth1 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+30 core-2 switch.loop | 같은 프레임을 eth1 에서 다시 받음 (처음은 다른 포트) → L2 루프 감지, 드롭. 케이블이 두 경로로 이어져 있음
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+30 core-1 frame.receive | eth8 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+30 core-1 switch.loop | 같은 프레임을 eth8 에서 다시 받음 (처음은 다른 포트) → L2 루프 감지, 드롭. 케이블이 두 경로로 이어져 있음
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+30 srv-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+30 srv-1 arp.request.received | ARP 요청 수신: "192.168.0.11 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:04)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+30 srv-1 frame.drop | 192.168.0.11 는 내 IP(192.168.0.21) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 0.0.0.0, length 28
+30 srv-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+30 srv-2 arp.request.received | ARP 요청 수신: "192.168.0.12 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+30 srv-2 frame.drop | 192.168.0.12 는 내 IP(192.168.0.22) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+30 core-2 frame.receive | eth1 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+30 core-2 switch.loop | 같은 프레임을 eth1 에서 다시 받음 (처음은 다른 포트) → L2 루프 감지, 드롭. 케이블이 두 경로로 이어져 있음
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+30 core-1 frame.receive | eth8 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+30 core-1 switch.loop | 같은 프레임을 eth8 에서 다시 받음 (처음은 다른 포트) → L2 루프 감지, 드롭. 케이블이 두 경로로 이어져 있음
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+30 srv-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+30 srv-1 arp.request.received | ARP 요청 수신: "192.168.0.12 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+30 srv-1 frame.drop | 192.168.0.12 는 내 IP(192.168.0.21) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 0.0.0.0, length 28
+30 srv-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 srv-2 arp.request.received | ARP 요청 수신: "192.168.0.21 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 srv-2 frame.drop | 192.168.0.21 는 내 IP(192.168.0.22) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 access-1 frame.receive | eth2 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 access-1 switch.loop | 같은 프레임을 eth2 에서 다시 받음 (처음은 다른 포트) → L2 루프 감지, 드롭. 케이블이 두 경로로 이어져 있음
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 core-1 frame.receive | eth6 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 core-1 switch.loop | 같은 프레임을 eth6 에서 다시 받음 (처음은 다른 포트) → L2 루프 감지, 드롭. 케이블이 두 경로로 이어져 있음
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 pc-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 pc-1 arp.request.received | ARP 요청 수신: "192.168.0.21 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 pc-1 frame.drop | 192.168.0.21 는 내 IP(192.168.0.11) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 pc-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 pc-2 arp.request.received | ARP 요청 수신: "192.168.0.21 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 pc-2 frame.drop | 192.168.0.21 는 내 IP(192.168.0.12) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 0.0.0.0, length 28
+30 pc-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 pc-1 arp.request.received | ARP 요청 수신: "192.168.0.22 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:07)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 pc-1 frame.drop | 192.168.0.22 는 내 IP(192.168.0.11) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 pc-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 pc-2 arp.request.received | ARP 요청 수신: "192.168.0.22 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:07)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 pc-2 frame.drop | 192.168.0.22 는 내 IP(192.168.0.12) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 core-2 frame.receive | eth3 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 core-2 switch.loop | 같은 프레임을 eth3 에서 다시 받음 (처음은 다른 포트) → L2 루프 감지, 드롭. 케이블이 두 경로로 이어져 있음
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 access-1 frame.receive | eth7 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 access-1 stp.discard | eth7 는 STP 대체 포트(차단) → 데이터 프레임을 받지 않고 버림 (루프 방지)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 srv-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 srv-1 arp.request.received | ARP 요청 수신: "192.168.0.22 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:07)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 srv-1 frame.drop | 192.168.0.22 는 내 IP(192.168.0.21) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 0.0.0.0, length 28
+30 access-1 frame.receive | eth7 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+30 access-1 stp.bpdu | [eth7] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+30 access-1 frame.receive | eth2 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 access-1 stp.bpdu | [eth2] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 access-1 frame.receive | eth7 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+30 access-1 stp.bpdu | [eth7] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+30 core-2 frame.receive | eth1 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-2 stp.bpdu | [eth1] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-1 frame.receive | eth8 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 0) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-1 stp.bpdu | [eth8] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 access-1 frame.receive | eth7 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+30 access-1 stp.bpdu | [eth7] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+30 core-1 frame.receive | eth6 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 1) [02:00:00:00:00:03 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8002, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-1 stp.bpdu | [eth6] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8002, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) switch_01:5 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-2 frame.receive | eth3 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 포트 6) [02:00:00:00:00:03 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+30 core-2 stp.bpdu | [eth3] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 32768.02:00:00:00:00:03 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:03 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 8000.02:00:00:00:00:03.8007, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+30 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+30 access-1 frame.receive | eth2 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 access-1 stp.bpdu | [eth2] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-2 frame.receive | eth1 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-2 stp.bpdu | [eth1] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 0) switch_01:0 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) switch_01:5 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+30 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 0) switch_02:0 → switch_01:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+30 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+30 core-2 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 7) switch_02:7 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+40 core-2 frame.receive | eth1 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+40 core-2 stp.bpdu | [eth1] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+40 access-1 frame.receive | eth2 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+40 access-1 stp.bpdu | [eth2] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+40 access-1 frame.receive | eth7 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+40 access-1 stp.bpdu | [eth7] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+40 access-1 frame.receive | eth2 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 5) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+40 access-1 stp.bpdu | [eth2] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8006, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+40 core-2 frame.receive | eth1 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+40 core-2 stp.bpdu | [eth1] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+40 core-1 frame.receive | eth8 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 0) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+40 core-1 stp.bpdu | [eth8] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8001, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+40 core-1 link.transmit | 링크 전송: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+40 access-1 frame.receive | eth7 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 포트 2) [02:00:00:00:00:02 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+40 access-1 stp.bpdu | [eth7] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 4, 보낸 스위치 8192.02:00:00:00:00:02 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 2000.02:00:00:00:00:02.8003, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 4, message-age 1s)
+50 core-2 frame.receive | eth1 수신: STP BPDU (루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 포트 7) [02:00:00:00:00:01 → 01:80:c2:00:00:00]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+50 core-2 stp.bpdu | [eth1] BPDU 수신: 루트 4096.02:00:00:00:00:01, 비용 0, 보낸 스위치 4096.02:00:00:00:00:01 (전과 같음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 01:80:c2:00:00:00, 802.3, length 60: LLC, dsap STP (0x42) Individual, ssap STP (0x42) Command, ctrl 0x03: STP 802.1d, Config, Flags [none], bridge-id 1000.02:00:00:00:00:01.8008, length 35 (root 1000.02:00:00:00:00:01, root-pathcost 0, message-age 0s)
+200 pc-1 arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.0.11 사용 시작
+200 pc-1 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.0.11 는 이제 02:00:00:00:00:04" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+200 pc-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) pc_04:0 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+200 pc-2 arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.0.12 사용 시작
+200 pc-2 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.0.12 는 이제 02:00:00:00:00:05" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+200 pc-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) pc_05:0 → switch_03:4 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+200 srv-1 arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.0.21 사용 시작
+200 srv-1 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.0.21 는 이제 02:00:00:00:00:06" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+200 srv-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) server_06:0 → switch_02:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+200 srv-2 arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.0.22 사용 시작
+200 srv-2 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.0.22 는 이제 02:00:00:00:00:07" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+200 srv-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) server_07:0 → switch_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+210 access-1 frame.receive | eth4 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+210 access-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:04 → eth4
+    > 시스코 show mac address-table:    1    02:00:00:00:00:04    DYNAMIC     Gi0/3
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+210 access-1 switch.flood | 브로드캐스트 → eth4 제외 플러딩 [eth2, eth5]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+210 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_03:1 → switch_01:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+210 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_03:4 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+210 access-1 frame.receive | eth5 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+210 access-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:05 → eth5
+    > 시스코 show mac address-table:    1    02:00:00:00:00:05    DYNAMIC     Gi0/4
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+210 access-1 switch.flood | 브로드캐스트 → eth5 제외 플러딩 [eth2, eth4]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+210 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_03:1 → switch_01:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+210 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_03:3 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+210 core-2 frame.receive | eth8 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+210 core-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:06 → eth8
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/7
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+210 core-2 switch.flood | 브로드캐스트 → eth8 제외 플러딩 [eth1, eth3]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+210 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_02:0 → switch_01:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+210 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+210 core-1 frame.receive | eth1 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+210 core-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:07 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:07    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+210 core-1 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth6, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+210 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_01:5 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+210 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+220 core-1 frame.receive | eth6 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+220 core-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:04 → eth6
+    > 시스코 show mac address-table:    1    02:00:00:00:00:04    DYNAMIC     Gi0/5
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+220 core-1 switch.flood | 브로드캐스트 → eth6 제외 플러딩 [eth1, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+220 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_01:0 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+220 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+220 pc-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+220 pc-2 arp.request.received | Gratuitous ARP 수신: 192.168.0.11 는 02:00:00:00:00:04 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+220 core-1 frame.receive | eth6 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+220 core-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:05 → eth6
+    > 시스코 show mac address-table:    1    02:00:00:00:00:05    DYNAMIC     Gi0/5
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+220 core-1 switch.flood | 브로드캐스트 → eth6 제외 플러딩 [eth1, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+220 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_01:0 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+220 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_01:7 → switch_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+220 pc-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+220 pc-1 arp.request.received | Gratuitous ARP 수신: 192.168.0.12 는 02:00:00:00:00:05 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+220 core-1 frame.receive | eth8 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+220 core-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:06 → eth8
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/7
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+220 core-1 switch.flood | 브로드캐스트 → eth8 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+220 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_01:0 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+220 core-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_01:5 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (core-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+220 access-1 frame.receive | eth7 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+220 access-1 stp.discard | eth7 는 STP 대체 포트(차단) → 데이터 프레임을 받지 않고 버림 (루프 방지)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+220 access-1 frame.receive | eth2 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+220 access-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:07 → eth2
+    > 시스코 show mac address-table:    1    02:00:00:00:00:07    DYNAMIC     Gi0/1
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+220 access-1 switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth4, eth5]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+220 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_03:3 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+220 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_03:4 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+220 core-2 frame.receive | eth1 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+220 core-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:07 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:07    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+220 core-2 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth3, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+220 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+220 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.22?) switch_02:7 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+230 srv-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+230 srv-2 arp.request.received | Gratuitous ARP 수신: 192.168.0.11 는 02:00:00:00:00:04 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+230 core-2 frame.receive | eth1 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+230 core-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:04 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:04    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+230 core-2 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth3, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+230 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+230 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.11?) switch_02:7 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+230 srv-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+230 srv-2 arp.request.received | Gratuitous ARP 수신: 192.168.0.12 는 02:00:00:00:00:05 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+230 core-2 frame.receive | eth1 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+230 core-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:05 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:05    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+230 core-2 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth3, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+230 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_02:2 → switch_03:6 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+230 core-2 link.transmit | 링크 전송: ARP 요청 (192.168.0.12?) switch_02:7 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+    > tcpdump (core-2 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+230 srv-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+230 srv-2 arp.request.received | Gratuitous ARP 수신: 192.168.0.21 는 02:00:00:00:00:06 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+230 access-1 frame.receive | eth2 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+230 access-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:06 → eth2
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/1
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+230 access-1 switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth4, eth5]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+230 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_03:3 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+230 access-1 link.transmit | 링크 전송: ARP 요청 (192.168.0.21?) switch_03:4 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+    > tcpdump (access-1 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+230 pc-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+230 pc-1 arp.request.received | Gratuitous ARP 수신: 192.168.0.22 는 02:00:00:00:00:07 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+230 pc-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+230 pc-2 arp.request.received | Gratuitous ARP 수신: 192.168.0.22 는 02:00:00:00:00:07 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+230 access-1 frame.receive | eth7 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+230 access-1 stp.discard | eth7 는 STP 대체 포트(차단) → 데이터 프레임을 받지 않고 버림 (루프 방지)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+230 srv-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.22?) [02:00:00:00:00:07 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+230 srv-1 arp.request.received | Gratuitous ARP 수신: 192.168.0.22 는 02:00:00:00:00:07 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.22 tell 192.168.0.22, length 28
+240 access-1 frame.receive | eth7 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+240 access-1 stp.discard | eth7 는 STP 대체 포트(차단) → 데이터 프레임을 받지 않고 버림 (루프 방지)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+240 srv-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.11?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+240 srv-1 arp.request.received | Gratuitous ARP 수신: 192.168.0.11 는 02:00:00:00:00:04 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.11 tell 192.168.0.11, length 28
+240 access-1 frame.receive | eth7 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+240 access-1 stp.discard | eth7 는 STP 대체 포트(차단) → 데이터 프레임을 받지 않고 버림 (루프 방지)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+240 srv-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.12?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+240 srv-1 arp.request.received | Gratuitous ARP 수신: 192.168.0.12 는 02:00:00:00:00:05 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.12 tell 192.168.0.12, length 28
+240 pc-1 frame.receive | 프레임 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+240 pc-1 arp.request.received | Gratuitous ARP 수신: 192.168.0.21 는 02:00:00:00:00:06 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+240 pc-2 frame.receive | 프레임 수신: ARP 요청 (192.168.0.21?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+240 pc-2 arp.request.received | Gratuitous ARP 수신: 192.168.0.21 는 02:00:00:00:00:06 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.0.21 tell 192.168.0.21, length 28
+## 30초 뒤
+## pc-1 → 8.8.8.8
+30240 pc-1 action | [사용자] ping 8.8.8.8
+30240 pc-1 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+30240 pc-1 ip.no-route | 8.8.8.8 는 다른 서브넷인데 게이트웨이 설정 없음 → 드롭
+32240 pc-1 icmp.timeout | ping 8.8.8.8 timeout: 2000ms 동안 응답 없음 (Request timed out)
+## pc-2 → 8.8.8.8
+32240 pc-2 action | [사용자] ping 8.8.8.8
+32240 pc-2 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+32240 pc-2 ip.no-route | 8.8.8.8 는 다른 서브넷인데 게이트웨이 설정 없음 → 드롭
+34240 pc-2 icmp.timeout | ping 8.8.8.8 timeout: 2000ms 동안 응답 없음 (Request timed out)
+## srv-1 → 8.8.8.8
+34240 srv-1 action | [사용자] ping 8.8.8.8
+34240 srv-1 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+34240 srv-1 ip.no-route | 8.8.8.8 는 다른 서브넷인데 게이트웨이 설정 없음 → 드롭
+36240 srv-1 icmp.timeout | ping 8.8.8.8 timeout: 2000ms 동안 응답 없음 (Request timed out)

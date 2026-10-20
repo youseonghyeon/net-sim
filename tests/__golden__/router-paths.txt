@@ -1,0 +1,52 @@
+## LAN (wireguard — 집 NAS → 집 Brume 3)
+기본: CLOSED (정상 종료) · 공유기: nat.translate
+DPI 가 HTTP 차단: FAILED (연결 거부 (RST)) · 공유기: dpi.block
+방화벽 아웃바운드 TCP 80 거부: FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
+기기 차단 (보낸 기기 MAC): FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
+관리 화면 (LAN 주소 :443): CLOSED (정상 종료) · 공유기: fw.allow
+DNS (공유기 LAN 주소에 묻기): ok 93.184.216.34 · 공유기: dns.query.received
+없는 WireGuard 터널 주소 ping: failed (Destination Net Unreachable (192.168.8.1)) · 공유기: ip.no-route
+## 드롭인 (dropin — 아이 PC → Brume 3 (드롭인))
+기본: CLOSED (정상 종료) · 공유기: nat.translate
+DPI 가 HTTP 차단: FAILED (연결 거부 (RST)) · 공유기: dpi.block
+방화벽 아웃바운드 TCP 80 거부: FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
+기기 차단 (보낸 기기 MAC): FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
+관리 화면 (LAN 주소 :443): FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: ip.drop
+DNS (공유기 LAN 주소에 묻기): failed · 공유기: ip.drop
+없는 WireGuard 터널 주소 ping: failed (timeout · 응답 없음) · 공유기: ip.no-route
+## WireGuard 피어 (전체 터널) (mwanvpn — 카페 폰 → 집 Brume 3)
+기본: CLOSED (정상 종료) · 공유기: nat.translate
+DPI 가 HTTP 차단: FAILED (연결 거부 (RST)) · 공유기: dpi.block
+방화벽 아웃바운드 TCP 80 거부: FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
+기기 차단 (보낸 기기 MAC): CLOSED (정상 종료) · 공유기: nat.translate
+관리 화면 (LAN 주소 :443): FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
+DNS (공유기 LAN 주소에 묻기): ok 93.184.216.34 · 공유기: dns.query.received
+없는 WireGuard 터널 주소 ping: failed (Destination Net Unreachable (192.168.8.1)) · 공유기: ip.no-route
+## OpenVPN (redirect-gateway) (openvpn — 카페 노트북 → 집 Brume 3)
+기본: CLOSED (정상 종료) · 공유기: nat.translate
+DPI 가 HTTP 차단: FAILED (연결 거부 (RST)) · 공유기: dpi.block
+방화벽 아웃바운드 TCP 80 거부: FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
+기기 차단 (보낸 기기 MAC): CLOSED (정상 종료) · 공유기: nat.translate
+관리 화면 (LAN 주소 :443): FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
+DNS (공유기 LAN 주소에 묻기): ok 93.184.216.34 · 공유기: dns.query.received
+없는 WireGuard 터널 주소 ping: failed (Destination Net Unreachable (192.168.8.1)) · 공유기: ip.no-route
+## L2TP (전체 터널) (iptime — 출장 노트북 → 집 ipTIME)
+기본: CLOSED (정상 종료) · 공유기: nat.translate
+DPI 가 HTTP 차단: FAILED (연결 거부 (RST)) · 공유기: dpi.block
+방화벽 아웃바운드 TCP 80 거부: FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
+기기 차단 (보낸 기기 MAC): CLOSED (정상 종료) · 공유기: nat.translate
+관리 화면 (LAN 주소 :443): CLOSED (정상 종료) · 공유기: fw.allow
+DNS (공유기 LAN 주소에 묻기): ok 93.184.216.34 · 공유기: dns.query.received
+없는 WireGuard 터널 주소 ping: failed (Destination Net Unreachable (192.168.0.1)) · 공유기: ip.no-route
+## 메시 exit node (tailscale — 카페 노트북 → 집 Brume 3)
+기본: CLOSED (정상 종료) · 공유기: nat.translate
+DPI 가 HTTP 차단: FAILED (연결 거부 (RST)) · 공유기: dpi.block
+방화벽 아웃바운드 TCP 80 거부: FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
+기기 차단 (보낸 기기 MAC): CLOSED (정상 종료) · 공유기: nat.translate
+관리 화면 (LAN 주소 :443): FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny
+DNS (공유기 LAN 주소에 묻기): ok 93.184.216.34 · 공유기: dns.query.received
+없는 WireGuard 터널 주소 ping: failed (Destination Net Unreachable (192.168.8.1)) · 공유기: ip.no-route
+## WAN 인바운드 (wireguard — internet-1 → 집 Brume 3 :8080 → 집 NAS :80)
+기본: CLOSED (정상 종료) · 공유기: -
+DPI 가 HTTP 차단: FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: dpi.block
+방화벽 인바운드 TCP 80 거부: FAILED (timeout · SYN 에 응답 없음 (재전송 3회)) · 공유기: fw.deny

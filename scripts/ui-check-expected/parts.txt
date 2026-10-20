@@ -1,0 +1,9 @@
+parts lint badges: 0
+parts example devices: 9
+pc-1 (DHCP from dhcp-srv) → 192.168.1.100/24
+laptop-1 (DHCP via gateway relay) → 192.168.2.100/24
+badges: [ '웹', 'DNS', 'ISP DHCP', 'NAT+포워딩', 'DHCP 릴레이', 'DHCP', 'DNS', '웹' ]
+nat-1 outside → outside 203.0.113.2
+ping across gateway: 192.168.2.100 응답 160ms
+ping via NAT box: 8.8.8.8 응답 180ms
+ping web.home (LAN DNS record): web.home (192.168.2.20) 응답 120ms

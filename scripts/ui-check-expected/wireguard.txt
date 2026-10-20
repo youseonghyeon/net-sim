@@ -1,0 +1,5 @@
+wg laptop → NAS: 192.168.8.20 응답 180ms
+router config groups: 네트워크 · 인터넷 · VPN · 앱 · 보안 | dots: 1
+wg server peers: 2 | key: 44 chars
+wg client status: 연결됨 · 터널 주소 10.0.0.2 · 서버 203.0.113.10:51820 | kill switch on: 1
+phone vpn type: WireGuard

@@ -1,0 +1,1 @@
+lb health: before 192.168.0.12:80 사용 중 · 헬스 체크 정상 0건 - | after 192.168.0.12:80 DOWN (헬스 체크: 연결 거부 (RST, Layer4 connection problem)) 0건 -

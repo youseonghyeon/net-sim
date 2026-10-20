@@ -1,0 +1,5 @@
+example search '홀 펀칭': 3 match(es)
+p2p registered: "minsu" · 등록됨 (203.0.113.2:40000)
+p2p hyunwoo: "minsu" · hyunwoo 와 연결됨 (직접, 203.0.113.10:40000)
+p2p jiyoung: "minsu" · jiyoung 와 연결됨 (TURN 릴레이, 203.0.113.18:40004)
+router NAT type select: port-restricted | hairpin toggle: 1

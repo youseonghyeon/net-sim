@@ -1,0 +1,3 @@
+stp blocked marks: 1 | root badge: 1
+stp ping: 192.168.0.21 응답 160ms
+stp section: 1

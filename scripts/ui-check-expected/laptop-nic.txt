@@ -1,0 +1,2 @@
+laptop wifi standby: 지금 유선(eth0)으로 통신합니다. 유선  | standby line: 1
+laptop failover: Wi-Fi + VPN 연결됨 | standby lines: 0 | active lines: 1

@@ -1,0 +1,4 @@
+log max: top 45 | topbar bottom 44 | layout ok: yes
+log height persisted: 366 → 366
+log collapsed by drag: yes
+log more: 500 → 1600 | total: 1600

@@ -1,0 +1,15 @@
+gateways example devices: 11 | example note: pc-1 → 192.168.5.10 은 gw-1 이 스
+example note after close: 0
+marquee selected: 2 | multi panel: 장치 2개 선택
+group move dy: 78 78
+lint badges before: 0
+lint badges after bad gateway: 2 | error: 2
+lint badges after fix: 0
+duplicate: 11 → 13 | undo → 11
+redo → 13
+click pc-1 selected: 1 | pc-1 | toast: 
+shift-click selected: 2
+batch ping rows: pc-1 8.8.8.8 응답 260ms / pc-2 8.8.8.8 응답 260ms
+after clear: 0
+after import: 13 | toast: export.json 에서 장치 13개를 불러왔습니다.
+bad import toast: 불러오지 못했습니다: JSON 으로 읽을 수 없습니다. net-sim 에서 내려받은 .json 파일인지 확인하세요

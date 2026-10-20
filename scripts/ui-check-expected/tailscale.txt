@@ -1,0 +1,4 @@
+ts laptop → work-pc: work-pc (100.64.0.3) 응답 120ms
+ts peers: home-brume 100.64.0.1 DERP 192.168.8.0/24, exit node 보냄 0 · 받음 0 | work-pc 100.64.0.3 DERP — 보냄 1 · 받음 1 · 릴레이 1
+ts laptop status: 연결됨 · 100.64.0.2 · 피어 2 (직접 0 · 릴레이 2) | exit options: 2
+ts router toggles on: 3

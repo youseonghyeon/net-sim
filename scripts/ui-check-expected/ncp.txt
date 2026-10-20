@@ -1,0 +1,5 @@
+ncp ssh: 192.168.112.11:22 SSH 세션 열림 연결 해제 | button: SSH 접속
+ncp ssh closed: 192.168.112.11:22 종료됨 · 받음 840B
+ncp ipsec up logged: NO (로그 창이 접혀 있으면 확인 불가)
+ncp vpn mode: IPsec | psk field: 1 | dpd button enabled: true
+ssh toggle: 1 | badge: 1

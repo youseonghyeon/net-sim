@@ -1,0 +1,10 @@
+remote vpn badge: yes
+remote ssh: 10.50.10.20:22 SSH 세션 열림 연결 해제
+remote status: 연결됨 · 가상 주소 10.99.0.10 · 10.50.10.0/24 는 터널로
+remote account: kim
+remote dpd button enabled: true
+remote dpd: ⟨*⟩ms재택 노트북L4원격 접속: 서버 203.0.113.10 가 DPD 에 빈 응답 → 서버가 살아 있고 이 터널을 앎 → 터널 유지
+remote status after dpd: 연결됨 · 가상 주소 10.99.0.10 · 10.50 | button enabled: true
+remote server accounts: 2
+remote server table has kim: yes
+remote periodic dpd: up before 1 | after: 끊김 · DPD 에 서버 응답 없음 (재전송 2번 뒤 timeout) — 서버가 꺼졌거나 

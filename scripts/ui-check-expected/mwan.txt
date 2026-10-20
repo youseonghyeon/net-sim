@@ -1,0 +1,2 @@
+mwan section: WAN1 사용 · WAN1 살아 있음 · WAN2 살아 있음
+after wan1 removed: WAN2 192.168.43.100 | badge: 1

@@ -1,0 +1,1172 @@
+## 불러오기
+0 pc-1 link.up | 링크 연결됨
+0 pc-1 arp.probe | ARP Probe 브로드캐스트: "192.168.1.10 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+0 pc-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.10?) pc_01:0 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+0 pc-1 ndp.dad | DAD: NS 송신 "fe80::ff:fe00:1 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+0 pc-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:1 를 쓰는 장치가 있나?) pc_01:0 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+0 laptop-1 link.up | eth0 링크 연결됨 → 유선(eth0) 로 통신 (MAC 02:00:00:00:00:02)
+0 laptop-1 ndp.dad | DAD: NS 송신 "fe80::ff:fe00:2 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+0 laptop-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:2 를 쓰는 장치가 있나?) laptop_02:0 → switch_03:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+0 gw-1 link.up | if1 링크 연결됨
+0 gw-1 ndp.dad | [if1] DAD: NS 송신 "fe80::ff:fe11:4 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+0 gw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe11:4 를 쓰는 장치가 있나?) gateway_04:1 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+0 gw-1 ndp.dad | [if1] DAD: NS 송신 "2001:db8:1::1 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+0 gw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::1 를 쓰는 장치가 있나?) gateway_04:1 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+0 gw-1 arp.probe | ARP Probe 브로드캐스트: "192.168.1.1 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+0 gw-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.1?) gateway_04:1 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+0 gw-1 link.up | if2 링크 연결됨
+0 gw-1 ndp.dad | [if2] DAD: NS 송신 "fe80::ff:fe12:4 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+0 gw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe12:4 를 쓰는 장치가 있나?) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+0 gw-1 ndp.dad | [if2] DAD: NS 송신 "2001:db8:2::1 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+0 gw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::1 를 쓰는 장치가 있나?) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+0 gw-1 arp.probe | ARP Probe 브로드캐스트: "192.168.2.1 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+0 gw-1 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+0 dns-1 link.up | 링크 연결됨
+0 dns-1 arp.probe | ARP Probe 브로드캐스트: "192.168.2.53 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+0 dns-1 link.transmit | 링크 전송: ARP 요청 (192.168.2.53?) server_06:0 → switch_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+0 dns-1 ndp.dad | DAD: NS 송신 "fe80::ff:fe00:6 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+0 dns-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:6 를 쓰는 장치가 있나?) server_06:0 → switch_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+0 dns-1 ndp.dad | DAD: NS 송신 "2001:db8:2::53 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+0 dns-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::53 를 쓰는 장치가 있나?) server_06:0 → switch_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+0 web-1 link.up | 링크 연결됨
+0 web-1 arp.probe | ARP Probe 브로드캐스트: "192.168.2.10 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+0 web-1 link.transmit | 링크 전송: ARP 요청 (192.168.2.10?) server_07:0 → switch_05:4 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+0 web-1 ndp.dad | DAD: NS 송신 "fe80::ff:fe00:7 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+0 web-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:7 를 쓰는 장치가 있나?) server_07:0 → switch_05:4 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+0 web-1 ndp.dad | DAD: NS 송신 "2001:db8:2::10 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+0 web-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::10 를 쓰는 장치가 있나?) server_07:0 → switch_05:4 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+0 old-1 link.up | 링크 연결됨
+0 old-1 arp.probe | ARP Probe 브로드캐스트: "192.168.2.20 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+0 old-1 link.transmit | 링크 전송: ARP 요청 (192.168.2.20?) server_08:0 → switch_05:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+10 sw-1 frame.receive | eth1 수신: ARP 요청 (192.168.1.10?) [02:00:00:00:00:01 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+10 sw-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:01 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:01    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+10 sw-1 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth4, eth6]
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+10 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.10?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+10 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.10?) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+10 sw-1 frame.receive | eth1 수신: NDP NS — DAD (fe80::ff:fe00:1 를 쓰는 장치가 있나?) [02:00:00:00:00:01 → 33:33:ff:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+10 sw-1 switch.flood | 멀티캐스트 33:33:ff:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4, eth6]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:1 를 쓰는 장치가 있나?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:1 를 쓰는 장치가 있나?) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+10 sw-1 frame.receive | eth6 수신: NDP NS — DAD (fe80::ff:fe00:2 를 쓰는 장치가 있나?) [02:00:00:00:00:02 → 33:33:ff:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+10 sw-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:02 → eth6
+    > 시스코 show mac address-table:    1    02:00:00:00:00:02    DYNAMIC     Gi0/5
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+10 sw-1 switch.flood | 멀티캐스트 33:33:ff:00:00:02 (스누핑 없는 스위치는 브로드캐스트처럼) → eth6 제외 플러딩 [eth1, eth4]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:2 를 쓰는 장치가 있나?) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:2 를 쓰는 장치가 있나?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+10 sw-1 frame.receive | eth4 수신: NDP NS — DAD (fe80::ff:fe11:4 를 쓰는 장치가 있나?) [02:00:00:11:00:04 → 33:33:ff:11:00:04]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+10 sw-1 switch.learn | MAC 테이블 학습: 02:00:00:11:00:04 → eth4
+    > 시스코 show mac address-table:    1    02:00:00:11:00:04    DYNAMIC     Gi0/3
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+10 sw-1 switch.flood | 멀티캐스트 33:33:ff:11:00:04 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe11:4 를 쓰는 장치가 있나?) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe11:4 를 쓰는 장치가 있나?) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+10 sw-1 frame.receive | eth4 수신: NDP NS — DAD (2001:db8:1::1 를 쓰는 장치가 있나?) [02:00:00:11:00:04 → 33:33:ff:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+10 sw-1 switch.flood | 멀티캐스트 33:33:ff:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::1 를 쓰는 장치가 있나?) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::1 를 쓰는 장치가 있나?) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+10 sw-1 frame.receive | eth4 수신: ARP 요청 (192.168.1.1?) [02:00:00:11:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+10 sw-1 switch.flood | 브로드캐스트 → eth4 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+10 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.1?) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+10 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.1?) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+10 sw-2 frame.receive | eth4 수신: NDP NS — DAD (fe80::ff:fe12:4 를 쓰는 장치가 있나?) [02:00:00:12:00:04 → 33:33:ff:12:00:04]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+10 sw-2 switch.learn | MAC 테이블 학습: 02:00:00:12:00:04 → eth4
+    > 시스코 show mac address-table:    1    02:00:00:12:00:04    DYNAMIC     Gi0/3
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+10 sw-2 switch.flood | 멀티캐스트 33:33:ff:12:00:04 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe12:4 를 쓰는 장치가 있나?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe12:4 를 쓰는 장치가 있나?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe12:4 를 쓰는 장치가 있나?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+10 sw-2 frame.receive | eth4 수신: NDP NS — DAD (2001:db8:2::1 를 쓰는 장치가 있나?) [02:00:00:12:00:04 → 33:33:ff:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+10 sw-2 switch.flood | 멀티캐스트 33:33:ff:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::1 를 쓰는 장치가 있나?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::1 를 쓰는 장치가 있나?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::1 를 쓰는 장치가 있나?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+10 sw-2 frame.receive | eth4 수신: ARP 요청 (192.168.2.1?) [02:00:00:12:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+10 sw-2 switch.flood | 브로드캐스트 → eth4 제외 플러딩 [eth1, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+10 sw-2 frame.receive | eth1 수신: ARP 요청 (192.168.2.53?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+10 sw-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:06 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+10 sw-2 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth4, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.53?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.53?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.53?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+10 sw-2 frame.receive | eth1 수신: NDP NS — DAD (fe80::ff:fe00:6 를 쓰는 장치가 있나?) [02:00:00:00:00:06 → 33:33:ff:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+10 sw-2 switch.flood | 멀티캐스트 33:33:ff:00:00:06 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:6 를 쓰는 장치가 있나?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:6 를 쓰는 장치가 있나?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:6 를 쓰는 장치가 있나?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+10 sw-2 frame.receive | eth1 수신: NDP NS — DAD (2001:db8:2::53 를 쓰는 장치가 있나?) [02:00:00:00:00:06 → 33:33:ff:00:00:53]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+10 sw-2 switch.flood | 멀티캐스트 33:33:ff:00:00:53 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::53 를 쓰는 장치가 있나?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::53 를 쓰는 장치가 있나?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::53 를 쓰는 장치가 있나?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:53, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:53: ICMP6, neighbor solicitation, who has 2001:db8:2::53, length 24
+10 sw-2 frame.receive | eth5 수신: ARP 요청 (192.168.2.10?) [02:00:00:00:00:07 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+10 sw-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:07 → eth5
+    > 시스코 show mac address-table:    1    02:00:00:00:00:07    DYNAMIC     Gi0/4
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+10 sw-2 switch.flood | 브로드캐스트 → eth5 제외 플러딩 [eth1, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.10?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.10?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.10?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+10 sw-2 frame.receive | eth5 수신: NDP NS — DAD (fe80::ff:fe00:7 를 쓰는 장치가 있나?) [02:00:00:00:00:07 → 33:33:ff:00:00:07]
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+10 sw-2 switch.flood | 멀티캐스트 33:33:ff:00:00:07 (스누핑 없는 스위치는 브로드캐스트처럼) → eth5 제외 플러딩 [eth1, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:7 를 쓰는 장치가 있나?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:7 를 쓰는 장치가 있나?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:7 를 쓰는 장치가 있나?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:ff:00:00:07, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:7: ICMP6, neighbor solicitation, who has fe80::ff:fe00:7, length 24
+10 sw-2 frame.receive | eth5 수신: NDP NS — DAD (2001:db8:2::10 를 쓰는 장치가 있나?) [02:00:00:00:00:07 → 33:33:ff:00:00:10]
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+10 sw-2 switch.flood | 멀티캐스트 33:33:ff:00:00:10 (스누핑 없는 스위치는 브로드캐스트처럼) → eth5 제외 플러딩 [eth1, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::10 를 쓰는 장치가 있나?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::10 를 쓰는 장치가 있나?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::10 를 쓰는 장치가 있나?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+10 sw-2 frame.receive | eth8 수신: ARP 요청 (192.168.2.20?) [02:00:00:00:00:08 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+10 sw-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:08 → eth8
+    > 시스코 show mac address-table:    1    02:00:00:00:00:08    DYNAMIC     Gi0/7
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+10 sw-2 switch.flood | 브로드캐스트 → eth8 제외 플러딩 [eth1, eth4, eth5]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.20?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.20?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+10 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.20?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+20 gw-1 frame.receive | if1 수신: ARP 요청 (192.168.1.10?) [02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+20 gw-1 arp.request.received | ARP 요청 수신: "192.168.1.10 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:01)
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+20 gw-1 frame.drop | 192.168.1.10 는 내 IP(192.168.1.1) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+20 laptop-1 frame.receive | 프레임 수신: ARP 요청 (192.168.1.10?) [02:00:00:00:00:01 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+20 laptop-1 frame.drop | IP 설정이 없어 ARP 무시
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 0.0.0.0, length 28
+20 gw-1 frame.receive | if1 수신: NDP NS — DAD (fe80::ff:fe00:1 를 쓰는 장치가 있나?) [02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+20 gw-1 frame.drop | [if1] NDP NS (fe80::ff:fe00:1 의 MAC 은?) — 내 주소가 아님 → 응답 안 함 (solicited-node 그룹이 우연히 겹침)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+20 pc-1 frame.receive | 프레임 수신: NDP NS — DAD (2001:db8:1::1 를 쓰는 장치가 있나?) [02:00:00:11:00:04 → 멀티캐스트 33:33:ff:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+20 pc-1 frame.drop | NDP NS (2001:db8:1::1 의 MAC 은?) — 내 주소가 아님 → 응답 안 함 (solicited-node 그룹이 우연히 겹침)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+20 pc-1 frame.receive | 프레임 수신: ARP 요청 (192.168.1.1?) [02:00:00:11:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+20 pc-1 arp.request.received | ARP 요청 수신: "192.168.1.1 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:11:00:04)
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+20 pc-1 frame.drop | 192.168.1.1 는 내 IP(192.168.1.10) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+20 laptop-1 frame.receive | 프레임 수신: ARP 요청 (192.168.1.1?) [02:00:00:11:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+20 laptop-1 frame.drop | IP 설정이 없어 ARP 무시
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 0.0.0.0, length 28
+20 dns-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.1?) [02:00:00:12:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+20 dns-1 arp.request.received | ARP 요청 수신: "192.168.2.1 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:12:00:04)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+20 dns-1 frame.drop | 192.168.2.1 는 내 IP(192.168.2.53) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+20 web-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.1?) [02:00:00:12:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+20 web-1 arp.request.received | ARP 요청 수신: "192.168.2.1 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:12:00:04)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+20 web-1 frame.drop | 192.168.2.1 는 내 IP(192.168.2.10) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+20 old-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.1?) [02:00:00:12:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+20 old-1 arp.request.received | ARP 요청 수신: "192.168.2.1 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:12:00:04)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+20 old-1 frame.drop | 192.168.2.1 는 내 IP(192.168.2.20) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 0.0.0.0, length 28
+20 gw-1 frame.receive | if2 수신: ARP 요청 (192.168.2.53?) [02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+20 gw-1 arp.request.received | ARP 요청 수신: "192.168.2.53 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+20 gw-1 frame.drop | 192.168.2.53 는 내 IP(192.168.2.1) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+20 web-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.53?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+20 web-1 arp.request.received | ARP 요청 수신: "192.168.2.53 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+20 web-1 frame.drop | 192.168.2.53 는 내 IP(192.168.2.10) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+20 old-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.53?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+20 old-1 arp.request.received | ARP 요청 수신: "192.168.2.53 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+20 old-1 frame.drop | 192.168.2.53 는 내 IP(192.168.2.20) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 0.0.0.0, length 28
+20 dns-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.10?) [02:00:00:00:00:07 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+20 dns-1 arp.request.received | ARP 요청 수신: "192.168.2.10 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:07)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+20 dns-1 frame.drop | 192.168.2.10 는 내 IP(192.168.2.53) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+20 gw-1 frame.receive | if2 수신: ARP 요청 (192.168.2.10?) [02:00:00:00:00:07]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+20 gw-1 arp.request.received | ARP 요청 수신: "192.168.2.10 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:07)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+20 gw-1 frame.drop | 192.168.2.10 는 내 IP(192.168.2.1) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+20 old-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.10?) [02:00:00:00:00:07 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+20 old-1 arp.request.received | ARP 요청 수신: "192.168.2.10 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:07)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+20 old-1 frame.drop | 192.168.2.10 는 내 IP(192.168.2.20) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 0.0.0.0, length 28
+20 dns-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.20?) [02:00:00:00:00:08 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+20 dns-1 arp.request.received | ARP 요청 수신: "192.168.2.20 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:08)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+20 dns-1 frame.drop | 192.168.2.20 는 내 IP(192.168.2.53) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+20 gw-1 frame.receive | if2 수신: ARP 요청 (192.168.2.20?) [02:00:00:00:00:08]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+20 gw-1 arp.request.received | ARP 요청 수신: "192.168.2.20 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:08)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+20 gw-1 frame.drop | 192.168.2.20 는 내 IP(192.168.2.1) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+20 web-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.20?) [02:00:00:00:00:08 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+20 web-1 arp.request.received | ARP 요청 수신: "192.168.2.20 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:08)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+20 web-1 frame.drop | 192.168.2.20 는 내 IP(192.168.2.10) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 0.0.0.0, length 28
+200 pc-1 arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.1.10 사용 시작
+200 pc-1 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.1.10 는 이제 02:00:00:00:00:01" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+200 pc-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.10?) pc_01:0 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+200 gw-1 arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.1.1 사용 시작
+200 gw-1 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.1.1 는 이제 02:00:00:11:00:04" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+200 gw-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.1?) gateway_04:1 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+200 gw-1 arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.2.1 사용 시작
+200 gw-1 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.2.1 는 이제 02:00:00:12:00:04" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+200 gw-1 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+200 dns-1 arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.2.53 사용 시작
+200 dns-1 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.2.53 는 이제 02:00:00:00:00:06" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+200 dns-1 link.transmit | 링크 전송: ARP 요청 (192.168.2.53?) server_06:0 → switch_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+200 web-1 arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.2.10 사용 시작
+200 web-1 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.2.10 는 이제 02:00:00:00:00:07" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+200 web-1 link.transmit | 링크 전송: ARP 요청 (192.168.2.10?) server_07:0 → switch_05:4 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+200 old-1 arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.2.20 사용 시작
+200 old-1 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.2.20 는 이제 02:00:00:00:00:08" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+200 old-1 link.transmit | 링크 전송: ARP 요청 (192.168.2.20?) server_08:0 → switch_05:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+210 sw-1 frame.receive | eth1 수신: ARP 요청 (192.168.1.10?) [02:00:00:00:00:01 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+210 sw-1 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth4, eth6]
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+210 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.10?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+210 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.10?) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+210 sw-1 frame.receive | eth4 수신: ARP 요청 (192.168.1.1?) [02:00:00:11:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+210 sw-1 switch.flood | 브로드캐스트 → eth4 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+210 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.1?) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+210 sw-1 link.transmit | 링크 전송: ARP 요청 (192.168.1.1?) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+210 sw-2 frame.receive | eth4 수신: ARP 요청 (192.168.2.1?) [02:00:00:12:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+210 sw-2 switch.flood | 브로드캐스트 → eth4 제외 플러딩 [eth1, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+210 sw-2 frame.receive | eth1 수신: ARP 요청 (192.168.2.53?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+210 sw-2 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth4, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.53?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.53?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.53?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+210 sw-2 frame.receive | eth5 수신: ARP 요청 (192.168.2.10?) [02:00:00:00:00:07 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+210 sw-2 switch.flood | 브로드캐스트 → eth5 제외 플러딩 [eth1, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.10?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.10?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.10?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+210 sw-2 frame.receive | eth8 수신: ARP 요청 (192.168.2.20?) [02:00:00:00:00:08 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+210 sw-2 switch.flood | 브로드캐스트 → eth8 제외 플러딩 [eth1, eth4, eth5]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.20?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.20?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+210 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.20?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+220 gw-1 frame.receive | if1 수신: ARP 요청 (192.168.1.10?) [02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+220 gw-1 arp.request.received | Gratuitous ARP 수신: 192.168.1.10 는 02:00:00:00:00:01 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+220 laptop-1 frame.receive | 프레임 수신: ARP 요청 (192.168.1.10?) [02:00:00:00:00:01 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+220 laptop-1 frame.drop | IP 설정이 없어 ARP 무시
+    > tcpdump -n -e: 02:00:00:00:00:01 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.10 tell 192.168.1.10, length 28
+220 pc-1 frame.receive | 프레임 수신: ARP 요청 (192.168.1.1?) [02:00:00:11:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+220 pc-1 arp.request.received | Gratuitous ARP 수신: 192.168.1.1 는 02:00:00:11:00:04 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+220 laptop-1 frame.receive | 프레임 수신: ARP 요청 (192.168.1.1?) [02:00:00:11:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+220 laptop-1 frame.drop | IP 설정이 없어 ARP 무시
+    > tcpdump -n -e: 02:00:00:11:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.1.1 tell 192.168.1.1, length 28
+220 dns-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.1?) [02:00:00:12:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+220 dns-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.1 는 02:00:00:12:00:04 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+220 web-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.1?) [02:00:00:12:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+220 web-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.1 는 02:00:00:12:00:04 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+220 old-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.1?) [02:00:00:12:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+220 old-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.1 는 02:00:00:12:00:04 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:12:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.1, length 28
+220 gw-1 frame.receive | if2 수신: ARP 요청 (192.168.2.53?) [02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+220 gw-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.53 는 02:00:00:00:00:06 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+220 web-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.53?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+220 web-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.53 는 02:00:00:00:00:06 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+220 old-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.53?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+220 old-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.53 는 02:00:00:00:00:06 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.53 tell 192.168.2.53, length 28
+220 dns-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.10?) [02:00:00:00:00:07 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+220 dns-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.10 는 02:00:00:00:00:07 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+220 gw-1 frame.receive | if2 수신: ARP 요청 (192.168.2.10?) [02:00:00:00:00:07]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+220 gw-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.10 는 02:00:00:00:00:07 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+220 old-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.10?) [02:00:00:00:00:07 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+220 old-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.10 는 02:00:00:00:00:07 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:07 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.10 tell 192.168.2.10, length 28
+220 dns-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.20?) [02:00:00:00:00:08 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+220 dns-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.20 는 02:00:00:00:00:08 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+220 gw-1 frame.receive | if2 수신: ARP 요청 (192.168.2.20?) [02:00:00:00:00:08]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+220 gw-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.20 는 02:00:00:00:00:08 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+220 web-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.20?) [02:00:00:00:00:08 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+220 web-1 arp.request.received | Gratuitous ARP 수신: 192.168.2.20 는 02:00:00:00:00:08 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.20 tell 192.168.2.20, length 28
+1000 pc-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 fe80::ff:fe00:1 를 주장하지 않음 → 링크 로컬 주소 사용 시작
+1000 pc-1 ndp.rs.sent | RS 멀티캐스트 (모든 라우터 ff02::2): "이 링크에 라우터 있나요? RA 를 보내 주세요" (1/3)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+1000 pc-1 link.transmit | 링크 전송: NDP RS (라우터 있나요?) pc_01:0 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+1000 laptop-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 fe80::ff:fe00:2 를 주장하지 않음 → 링크 로컬 주소 사용 시작
+1000 laptop-1 ndp.rs.sent | RS 멀티캐스트 (모든 라우터 ff02::2): "이 링크에 라우터 있나요? RA 를 보내 주세요" (1/3)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+1000 laptop-1 link.transmit | 링크 전송: NDP RS (라우터 있나요?) laptop_02:0 → switch_03:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+1000 gw-1 ndp.dad | [if1] DAD 통과: 1000ms 동안 아무도 fe80::ff:fe11:4 를 주장하지 않음 → 링크 로컬 주소 사용 시작
+1000 gw-1 ndp.ra.sent | [if1] RA 멀티캐스트 (모든 노드 ff02::1): "나(fe80::ff:fe11:4)는 이 링크의 라우터, 프리픽스 2001:db8:1::/64 로 주소를 만드세요(SLAAC), DNS 는 2001:db8:2::53"
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1000 gw-1 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) gateway_04:1 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1000 gw-1 ndp.dad | [if1] DAD 통과: 1000ms 동안 아무도 2001:db8:1::1 를 주장하지 않음 → 주소 사용 시작
+1000 gw-1 ndp.na.sent | [if1] 주소 알림: 요청하지 않은 NA 를 모든 노드(ff02::1)에게 "2001:db8:1::1 는 02:00:00:11:00:04" — 이웃 캐시에 옛 MAC 이 남아 있으면 고치도록 (IPv4 의 Gratuitous ARP)
+1000 gw-1 frame.send | [if1] 프레임 송신: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1000 gw-1 link.transmit | 링크 전송: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) gateway_04:1 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1000 gw-1 ndp.dad | [if2] DAD 통과: 1000ms 동안 아무도 fe80::ff:fe12:4 를 주장하지 않음 → 링크 로컬 주소 사용 시작
+1000 gw-1 ndp.ra.sent | [if2] RA 멀티캐스트 (모든 노드 ff02::1): "나(fe80::ff:fe12:4)는 이 링크의 라우터, 프리픽스 2001:db8:2::/64 로 주소를 만드세요(SLAAC), DNS 는 2001:db8:2::53"
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+1000 gw-1 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:2::/64, DNS 2001:db8:2::53) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+1000 gw-1 ndp.dad | [if2] DAD 통과: 1000ms 동안 아무도 2001:db8:2::1 를 주장하지 않음 → 주소 사용 시작
+1000 gw-1 ndp.na.sent | [if2] 주소 알림: 요청하지 않은 NA 를 모든 노드(ff02::1)에게 "2001:db8:2::1 는 02:00:00:12:00:04" — 이웃 캐시에 옛 MAC 이 남아 있으면 고치도록 (IPv4 의 Gratuitous ARP)
+1000 gw-1 frame.send | [if2] 프레임 송신: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) [02:00:00:12:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1000 gw-1 link.transmit | 링크 전송: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1000 dns-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 fe80::ff:fe00:6 를 주장하지 않음 → 링크 로컬 주소 사용 시작
+1000 dns-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 2001:db8:2::53 를 주장하지 않음 → 주소 사용 시작
+1000 dns-1 ndp.na.sent | 주소 알림: 요청하지 않은 NA 를 모든 노드(ff02::1)에게 "2001:db8:2::53 는 02:00:00:00:00:06" — 이웃 캐시에 옛 MAC 이 남아 있으면 고치도록 (IPv4 의 Gratuitous ARP)
+1000 dns-1 frame.send | 프레임 송신: NDP NA (2001:db8:2::53 = 02:00:00:00:00:06) [02:00:00:00:00:06 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+1000 dns-1 link.transmit | 링크 전송: NDP NA (2001:db8:2::53 = 02:00:00:00:00:06) server_06:0 → switch_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+1000 web-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 fe80::ff:fe00:7 를 주장하지 않음 → 링크 로컬 주소 사용 시작
+1000 web-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 2001:db8:2::10 를 주장하지 않음 → 주소 사용 시작
+1000 web-1 ndp.na.sent | 주소 알림: 요청하지 않은 NA 를 모든 노드(ff02::1)에게 "2001:db8:2::10 는 02:00:00:00:00:07" — 이웃 캐시에 옛 MAC 이 남아 있으면 고치도록 (IPv4 의 Gratuitous ARP)
+1000 web-1 frame.send | 프레임 송신: NDP NA (2001:db8:2::10 = 02:00:00:00:00:07) [02:00:00:00:00:07 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1000 web-1 link.transmit | 링크 전송: NDP NA (2001:db8:2::10 = 02:00:00:00:00:07) server_07:0 → switch_05:4 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1010 sw-1 frame.receive | eth1 수신: NDP RS (라우터 있나요?) [02:00:00:00:00:01 → 33:33:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+1010 sw-1 switch.flood | 멀티캐스트 33:33:00:00:00:02 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4, eth6]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+1010 sw-1 link.transmit | 링크 전송: NDP RS (라우터 있나요?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+1010 sw-1 link.transmit | 링크 전송: NDP RS (라우터 있나요?) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+1010 sw-1 frame.receive | eth6 수신: NDP RS (라우터 있나요?) [02:00:00:00:00:02 → 33:33:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+1010 sw-1 switch.flood | 멀티캐스트 33:33:00:00:00:02 (스누핑 없는 스위치는 브로드캐스트처럼) → eth6 제외 플러딩 [eth1, eth4]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+1010 sw-1 link.transmit | 링크 전송: NDP RS (라우터 있나요?) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+1010 sw-1 link.transmit | 링크 전송: NDP RS (라우터 있나요?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+1010 sw-1 frame.receive | eth4 수신: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) [02:00:00:11:00:04 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1010 sw-1 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1010 sw-1 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1010 sw-1 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1010 sw-1 frame.receive | eth4 수신: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) [02:00:00:11:00:04 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1010 sw-1 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1010 sw-1 link.transmit | 링크 전송: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1010 sw-1 link.transmit | 링크 전송: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1010 sw-2 frame.receive | eth4 수신: NDP RA (프리픽스 2001:db8:2::/64, DNS 2001:db8:2::53) [02:00:00:12:00:04 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+1010 sw-2 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+1010 sw-2 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:2::/64, DNS 2001:db8:2::53) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+1010 sw-2 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:2::/64, DNS 2001:db8:2::53) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+1010 sw-2 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:2::/64, DNS 2001:db8:2::53) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+1010 sw-2 frame.receive | eth4 수신: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) [02:00:00:12:00:04 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1010 sw-2 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1010 sw-2 link.transmit | 링크 전송: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1010 sw-2 link.transmit | 링크 전송: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1010 sw-2 link.transmit | 링크 전송: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1010 sw-2 frame.receive | eth1 수신: NDP NA (2001:db8:2::53 = 02:00:00:00:00:06) [02:00:00:00:00:06 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+1010 sw-2 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+1010 sw-2 link.transmit | 링크 전송: NDP NA (2001:db8:2::53 = 02:00:00:00:00:06) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+1010 sw-2 link.transmit | 링크 전송: NDP NA (2001:db8:2::53 = 02:00:00:00:00:06) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+1010 sw-2 link.transmit | 링크 전송: NDP NA (2001:db8:2::53 = 02:00:00:00:00:06) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+1010 sw-2 frame.receive | eth5 수신: NDP NA (2001:db8:2::10 = 02:00:00:00:00:07) [02:00:00:00:00:07 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1010 sw-2 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth5 제외 플러딩 [eth1, eth4, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1010 sw-2 link.transmit | 링크 전송: NDP NA (2001:db8:2::10 = 02:00:00:00:00:07) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1010 sw-2 link.transmit | 링크 전송: NDP NA (2001:db8:2::10 = 02:00:00:00:00:07) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1010 sw-2 link.transmit | 링크 전송: NDP NA (2001:db8:2::10 = 02:00:00:00:00:07) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1020 gw-1 frame.receive | if1 수신: NDP RS (라우터 있나요?) [02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 gw-1 ndp.rs.received | [if1] RS 수신 (from fe80::ff:fe00:1): 라우터를 찾는 호스트 → 곧바로 RA
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 gw-1 ndp.cache.update | [if1] 이웃 캐시 추가: fe80::ff:fe00:1 → 02:00:00:00:00:01 (RS 의 출발지 링크 계층 주소 옵션에서 학습)
+    > 리눅스 ip -6 neigh: fe80::ff:fe00:1 dev eth0 lladdr 02:00:00:00:00:01 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:1 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 gw-1 ndp.ra.sent | [if1] RA 멀티캐스트 (모든 노드 ff02::1): "나(fe80::ff:fe11:4)는 이 링크의 라우터, 프리픽스 2001:db8:1::/64 로 주소를 만드세요(SLAAC), DNS 는 2001:db8:2::53"
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 gw-1 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) gateway_04:1 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 gw-1 frame.receive | if1 수신: NDP RS (라우터 있나요?) [02:00:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 gw-1 ndp.rs.received | [if1] RS 수신 (from fe80::ff:fe00:2): 라우터를 찾는 호스트 → 곧바로 RA
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 gw-1 ndp.cache.update | [if1] 이웃 캐시 추가: fe80::ff:fe00:2 → 02:00:00:00:00:02 (RS 의 출발지 링크 계층 주소 옵션에서 학습)
+    > 리눅스 ip -6 neigh: fe80::ff:fe00:2 dev eth0 lladdr 02:00:00:00:00:02 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:02, ethertype IPv6 (0x86dd): fe80::ff:fe00:2 > ff02::2: ICMP6, router solicitation, length 16
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 gw-1 ndp.ra.sent | [if1] RA 멀티캐스트 (모든 노드 ff02::1): "나(fe80::ff:fe11:4)는 이 링크의 라우터, 프리픽스 2001:db8:1::/64 로 주소를 만드세요(SLAAC), DNS 는 2001:db8:2::53"
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 gw-1 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) gateway_04:1 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 pc-1 frame.receive | 프레임 수신: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (pc-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1020 pc-1 ndp.ra.received | RA 수신: 라우터 fe80::ff:fe11:4 — 프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (pc-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1020 pc-1 ndp.cache.update | 이웃 캐시 추가: fe80::ff:fe11:4 → 02:00:00:11:00:04 (RA 의 출발지 링크 계층 주소 옵션에서 학습)
+    > 리눅스 ip -6 neigh: fe80::ff:fe11:4 dev eth0 lladdr 02:00:00:11:00:04 REACHABLE
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (pc-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1020 pc-1 slaac.router | 기본 게이트웨이: fe80::ff:fe11:4 — RA 를 보낸 라우터의 링크 로컬 주소 (라우터 수명 1800초)
+    > 리눅스 ip -6 route: default via fe80::ff:fe11:4 dev eth0 proto ra metric 1024 expires 1799sec hoplimit 64 pref medium
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (pc-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1020 pc-1 slaac.addr | SLAAC: 프리픽스 2001:db8:1::/64 + 인터페이스 ID(MAC 02:00:00:00:00:01 의 EUI-64) → 2001:db8:1::ff:fe00:1 생성 → DAD 로 확인 (실제 OS 는 개인정보 때문에 보통 무작위 인터페이스 ID)
+    > 리눅스 ip -6 addr: inet6 2001:db8:1::ff:fe00:1/64 scope global dynamic
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (pc-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1020 pc-1 ndp.dad | DAD: NS 송신 "2001:db8:1::ff:fe00:1 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1020 pc-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::ff:fe00:1 를 쓰는 장치가 있나?) pc_01:0 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1020 pc-1 slaac.router | DNS 서버 2001:db8:2::53 — RA 의 RDNSS 옵션 (DHCPv6 없이 DNS 를 알린다)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (pc-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1020 laptop-1 frame.receive | 프레임 수신: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1020 laptop-1 ndp.ra.received | RA 수신: 라우터 fe80::ff:fe11:4 — 프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1020 laptop-1 ndp.cache.update | 이웃 캐시 추가: fe80::ff:fe11:4 → 02:00:00:11:00:04 (RA 의 출발지 링크 계층 주소 옵션에서 학습)
+    > 리눅스 ip -6 neigh: fe80::ff:fe11:4 dev eth0 lladdr 02:00:00:11:00:04 REACHABLE
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1020 laptop-1 slaac.router | 기본 게이트웨이: fe80::ff:fe11:4 — RA 를 보낸 라우터의 링크 로컬 주소 (라우터 수명 1800초)
+    > 리눅스 ip -6 route: default via fe80::ff:fe11:4 dev eth0 proto ra metric 1024 expires 1799sec hoplimit 64 pref medium
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1020 laptop-1 slaac.addr | SLAAC: 프리픽스 2001:db8:1::/64 + 인터페이스 ID(MAC 02:00:00:00:00:02 의 EUI-64) → 2001:db8:1::ff:fe00:2 생성 → DAD 로 확인 (실제 OS 는 개인정보 때문에 보통 무작위 인터페이스 ID)
+    > 리눅스 ip -6 addr: inet6 2001:db8:1::ff:fe00:2/64 scope global dynamic
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1020 laptop-1 ndp.dad | DAD: NS 송신 "2001:db8:1::ff:fe00:2 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1020 laptop-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::ff:fe00:2 를 쓰는 장치가 있나?) laptop_02:0 → switch_03:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1020 laptop-1 slaac.router | DNS 서버 2001:db8:2::53 — RA 의 RDNSS 옵션 (DHCPv6 없이 DNS 를 알린다)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (laptop-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1020 pc-1 frame.receive | 프레임 수신: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1020 pc-1 ndp.na.received | NDP NA 수신: 2001:db8:1::1 는 02:00:00:11:00:04 (라우터) — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1020 laptop-1 frame.receive | 프레임 수신: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1020 laptop-1 ndp.na.received | NDP NA 수신: 2001:db8:1::1 는 02:00:00:11:00:04 (라우터) — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1020 dns-1 frame.receive | 프레임 수신: NDP RA (프리픽스 2001:db8:2::/64, DNS 2001:db8:2::53) [02:00:00:12:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 dns-1 ndp.ra.received | RA 수신 (from fe80::ff:fe12:4, 프리픽스 2001:db8:2::/64, DNS 2001:db8:2::53) — 수동 설정이라 주소·게이트웨이는 그대로 (자동(SLAAC)으로 두면 이 RA 로 주소를 만든다)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 web-1 frame.receive | 프레임 수신: NDP RA (프리픽스 2001:db8:2::/64, DNS 2001:db8:2::53) [02:00:00:12:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 web-1 ndp.ra.received | RA 수신 (from fe80::ff:fe12:4, 프리픽스 2001:db8:2::/64, DNS 2001:db8:2::53) — 수동 설정이라 주소·게이트웨이는 그대로 (자동(SLAAC)으로 두면 이 RA 로 주소를 만든다)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe12:4 > ff02::1: ICMP6, router advertisement, length 80
+1020 dns-1 frame.receive | 프레임 수신: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) [02:00:00:12:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1020 dns-1 ndp.na.received | NDP NA 수신: 2001:db8:2::1 는 02:00:00:12:00:04 (라우터) — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1020 web-1 frame.receive | 프레임 수신: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) [02:00:00:12:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1020 web-1 ndp.na.received | NDP NA 수신: 2001:db8:2::1 는 02:00:00:12:00:04 (라우터) — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1020 gw-1 frame.receive | if2 수신: NDP NA (2001:db8:2::53 = 02:00:00:00:00:06) [02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+1020 gw-1 ndp.na.received | [if2] NDP NA 수신: 2001:db8:2::53 는 02:00:00:00:00:06 — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+1020 web-1 frame.receive | 프레임 수신: NDP NA (2001:db8:2::53 = 02:00:00:00:00:06) [02:00:00:00:00:06 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+1020 web-1 ndp.na.received | NDP NA 수신: 2001:db8:2::53 는 02:00:00:00:00:06 — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::53 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::53, length 32
+1020 dns-1 frame.receive | 프레임 수신: NDP NA (2001:db8:2::10 = 02:00:00:00:00:07) [02:00:00:00:00:07 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1020 dns-1 ndp.na.received | NDP NA 수신: 2001:db8:2::10 는 02:00:00:00:00:07 — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1020 gw-1 frame.receive | if2 수신: NDP NA (2001:db8:2::10 = 02:00:00:00:00:07) [02:00:00:00:00:07]
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1020 gw-1 ndp.na.received | [if2] NDP NA 수신: 2001:db8:2::10 는 02:00:00:00:00:07 — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:00:00:07 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1030 sw-1 frame.receive | eth4 수신: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) [02:00:00:11:00:04 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1030 sw-1 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1030 sw-1 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1030 sw-1 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1030 sw-1 frame.receive | eth4 수신: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) [02:00:00:11:00:04 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1030 sw-1 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1030 sw-1 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1030 sw-1 link.transmit | 링크 전송: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1030 sw-1 frame.receive | eth1 수신: NDP NS — DAD (2001:db8:1::ff:fe00:1 를 쓰는 장치가 있나?) [02:00:00:00:00:01 → 33:33:ff:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1030 sw-1 switch.flood | 멀티캐스트 33:33:ff:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4, eth6]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1030 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::ff:fe00:1 를 쓰는 장치가 있나?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1030 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::ff:fe00:1 를 쓰는 장치가 있나?) switch_03:5 → laptop_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1030 sw-1 frame.receive | eth6 수신: NDP NS — DAD (2001:db8:1::ff:fe00:2 를 쓰는 장치가 있나?) [02:00:00:00:00:02 → 33:33:ff:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1030 sw-1 switch.flood | 멀티캐스트 33:33:ff:00:00:02 (스누핑 없는 스위치는 브로드캐스트처럼) → eth6 제외 플러딩 [eth1, eth4]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1030 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::ff:fe00:2 를 쓰는 장치가 있나?) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1030 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::ff:fe00:2 를 쓰는 장치가 있나?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:2, length 24
+1040 pc-1 frame.receive | 프레임 수신: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1040 pc-1 ndp.ra.received | RA 수신: 라우터 fe80::ff:fe11:4 — 프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1040 laptop-1 frame.receive | 프레임 수신: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1040 laptop-1 ndp.ra.received | RA 수신: 라우터 fe80::ff:fe11:4 — 프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1040 pc-1 frame.receive | 프레임 수신: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1040 pc-1 ndp.ra.received | RA 수신: 라우터 fe80::ff:fe11:4 — 프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1040 laptop-1 frame.receive | 프레임 수신: NDP RA (프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1040 laptop-1 ndp.ra.received | RA 수신: 라우터 fe80::ff:fe11:4 — 프리픽스 2001:db8:1::/64, DNS 2001:db8:2::53
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): fe80::ff:fe11:4 > ff02::1: ICMP6, router advertisement, length 80
+1040 gw-1 frame.receive | if1 수신: NDP NS — DAD (2001:db8:1::ff:fe00:1 를 쓰는 장치가 있나?) [02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+1040 gw-1 frame.drop | [if1] NDP NS (2001:db8:1::ff:fe00:1 의 MAC 은?) — 내 주소가 아님 → 응답 안 함 (solicited-node 그룹이 우연히 겹침)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::ff:fe00:1, length 24
+2020 pc-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 2001:db8:1::ff:fe00:1 를 주장하지 않음 → SLAAC 주소 사용 시작
+2020 laptop-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 2001:db8:1::ff:fe00:2 를 주장하지 않음 → SLAAC 주소 사용 시작
+## 30초 뒤
+## dns-1 → 8.8.8.8
+32020 dns-1 action | [사용자] ping 8.8.8.8
+32020 dns-1 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+32020 dns-1 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.2.1 로 전달
+32020 dns-1 arp.cache.miss | ARP 캐시에 192.168.2.1 없음 → 패킷 대기열에 보관 (1개)
+32020 dns-1 arp.request.sent | ARP 요청 브로드캐스트: "192.168.2.1 의 MAC은?" (나는 192.168.2.53 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32020 dns-1 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) server_06:0 → switch_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32030 sw-2 frame.receive | eth1 수신: ARP 요청 (192.168.2.1?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32030 sw-2 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth4, eth5, eth8]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32030 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32030 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32030 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32040 gw-1 frame.receive | if2 수신: ARP 요청 (192.168.2.1?) [02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32040 gw-1 arp.request.received | ARP 요청 수신: "192.168.2.1 의 MAC은?" (보낸이 192.168.2.53 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32040 gw-1 arp.cache.update | ARP 캐시 추가: 192.168.2.53 → 02:00:00:00:00:06 (요청의 보낸이 정보에서 학습)
+    > 리눅스 ip neigh: 192.168.2.53 dev eth0 lladdr 02:00:00:00:00:06 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32040 gw-1 arp.reply.sent | ARP 응답 송신: "192.168.2.1 는 02:00:00:12:00:04" → 02:00:00:00:00:06 에게 유니캐스트
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32040 gw-1 link.transmit | 링크 전송: ARP 응답 (192.168.2.1=02:00:00:12:00:04) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32040 web-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.1?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32040 web-1 arp.request.received | ARP 요청 수신: "192.168.2.1 의 MAC은?" (보낸이 192.168.2.53 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32040 web-1 frame.drop | 192.168.2.1 는 내 IP(192.168.2.10) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32040 old-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.1?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32040 old-1 arp.request.received | ARP 요청 수신: "192.168.2.1 의 MAC은?" (보낸이 192.168.2.53 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32040 old-1 frame.drop | 192.168.2.1 는 내 IP(192.168.2.20) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.53, length 28
+32050 sw-2 frame.receive | eth4 수신: ARP 응답 (192.168.2.1=02:00:00:12:00:04) [02:00:00:12:00:04 → 02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32050 sw-2 switch.forward | MAC 테이블 조회: 02:00:00:00:00:06 → eth1 로 전달
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32050 sw-2 link.transmit | 링크 전송: ARP 응답 (192.168.2.1=02:00:00:12:00:04) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32060 dns-1 frame.receive | 프레임 수신: ARP 응답 (192.168.2.1=02:00:00:12:00:04) [02:00:00:12:00:04 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (dns-1 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+32060 dns-1 arp.reply.received | ARP 응답 수신: 192.168.2.1 는 02:00:00:12:00:04
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (dns-1 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+32060 dns-1 arp.cache.update | ARP 캐시 추가: 192.168.2.1 → 02:00:00:12:00:04 (응답에서 학습)
+    > 리눅스 ip neigh: 192.168.2.1 dev eth0 lladdr 02:00:00:12:00:04 REACHABLE
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (dns-1 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+32060 dns-1 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
+32060 dns-1 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:06 → 02:00:00:12:00:04]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+32060 dns-1 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 server_06:0 → switch_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+32070 sw-2 frame.receive | eth1 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:06 → 02:00:00:12:00:04]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+32070 sw-2 switch.forward | MAC 테이블 조회: 02:00:00:12:00:04 → eth4 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+32070 sw-2 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+32080 gw-1 frame.receive | if2 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+32080 gw-1 ip.no-route | No route: 8.8.8.8 로 가는 경로가 없음 (연결된 서브넷·스태틱 라우팅·디폴트 라우트 모두 해당 없음) → 드롭. if0 에 주소가 없음 (케이블과 DHCP, 또는 수동 주소를 확인)
+    > 시스코 debug ip packet: IP: s=192.168.2.53, d=8.8.8.8, len 84, unroutable
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+32080 gw-1 icmp.unreachable.sent | 192.168.2.53 에게 ICMP Destination Net Unreachable 통지 (원래 192.168.2.53 → 8.8.8.8) — 그 목적지로 가는 경로가 없음. 보낸 쪽은 timeout 을 기다리지 않고 바로 실패를 안다
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.53 > 8.8.8.8: ICMP echo request, id 8062, seq 1, length 64
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+32080 gw-1 arp.cache.hit | ARP 캐시 적중: 192.168.2.53 → 02:00:00:00:00:06
+32080 gw-1 frame.send | 프레임 송신: ICMP Destination Net Unreachable (원래 192.168.2.53 → 8.8.8.8 Echo seq=1) [02:00:00:12:00:04 → 02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+32080 gw-1 link.transmit | 링크 전송: ICMP Destination Net Unreachable (원래 192.168.2.53 → 8.8.8.8 Echo seq=1) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+32090 sw-2 frame.receive | eth4 수신: ICMP Destination Net Unreachable (원래 192.168.2.53 → 8.8.8.8 Echo seq=1) [02:00:00:12:00:04 → 02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+32090 sw-2 switch.forward | MAC 테이블 조회: 02:00:00:00:00:06 → eth1 로 전달
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+32090 sw-2 link.transmit | 링크 전송: ICMP Destination Net Unreachable (원래 192.168.2.53 → 8.8.8.8 Echo seq=1) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+32100 dns-1 frame.receive | 프레임 수신: ICMP Destination Net Unreachable (원래 192.168.2.53 → 8.8.8.8 Echo seq=1) [02:00:00:12:00:04 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+32100 dns-1 icmp.unreachable.received | 192.168.2.1 로부터 ICMP Destination Net Unreachable 수신 (원래 192.168.2.53 → 8.8.8.8 Echo seq=1) → ping 8.8.8.8 실패
+    > ping: From 192.168.2.1 icmp_seq=… Destination Net Unreachable
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.53: ICMP net 8.8.8.8 unreachable, length 36
+32100 dns-1 icmp.failed | ping 8.8.8.8 실패: Destination Net Unreachable (192.168.2.1)
+## laptop-1 → 8.8.8.8
+32100 laptop-1 action | [사용자] ping 8.8.8.8
+32100 laptop-1 ip.no-address | ping 8.8.8.8 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)
+## old-1 → 8.8.8.8
+32100 old-1 action | [사용자] ping 8.8.8.8
+32100 old-1 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+32100 old-1 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.2.1 로 전달
+32100 old-1 arp.cache.miss | ARP 캐시에 192.168.2.1 없음 → 패킷 대기열에 보관 (1개)
+32100 old-1 arp.request.sent | ARP 요청 브로드캐스트: "192.168.2.1 의 MAC은?" (나는 192.168.2.20 / 02:00:00:00:00:08)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32100 old-1 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) server_08:0 → switch_05:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32110 sw-2 frame.receive | eth8 수신: ARP 요청 (192.168.2.1?) [02:00:00:00:00:08 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32110 sw-2 switch.flood | 브로드캐스트 → eth8 제외 플러딩 [eth1, eth4, eth5]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32110 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32110 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32110 sw-2 link.transmit | 링크 전송: ARP 요청 (192.168.2.1?) switch_05:4 → server_07:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32120 dns-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.1?) [02:00:00:00:00:08 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32120 dns-1 arp.request.received | ARP 요청 수신: "192.168.2.1 의 MAC은?" (보낸이 192.168.2.20 / 02:00:00:00:00:08)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32120 dns-1 frame.drop | 192.168.2.1 는 내 IP(192.168.2.53) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32120 gw-1 frame.receive | if2 수신: ARP 요청 (192.168.2.1?) [02:00:00:00:00:08]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32120 gw-1 arp.request.received | ARP 요청 수신: "192.168.2.1 의 MAC은?" (보낸이 192.168.2.20 / 02:00:00:00:00:08)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32120 gw-1 arp.cache.update | ARP 캐시 추가: 192.168.2.20 → 02:00:00:00:00:08 (요청의 보낸이 정보에서 학습)
+    > 리눅스 ip neigh: 192.168.2.20 dev eth0 lladdr 02:00:00:00:00:08 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32120 gw-1 arp.reply.sent | ARP 응답 송신: "192.168.2.1 는 02:00:00:12:00:04" → 02:00:00:00:00:08 에게 유니캐스트
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32120 gw-1 link.transmit | 링크 전송: ARP 응답 (192.168.2.1=02:00:00:12:00:04) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32120 web-1 frame.receive | 프레임 수신: ARP 요청 (192.168.2.1?) [02:00:00:00:00:08 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32120 web-1 arp.request.received | ARP 요청 수신: "192.168.2.1 의 MAC은?" (보낸이 192.168.2.20 / 02:00:00:00:00:08)
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32120 web-1 frame.drop | 192.168.2.1 는 내 IP(192.168.2.10) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:08 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.2.1 tell 192.168.2.20, length 28
+32130 sw-2 frame.receive | eth4 수신: ARP 응답 (192.168.2.1=02:00:00:12:00:04) [02:00:00:12:00:04 → 02:00:00:00:00:08]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32130 sw-2 switch.forward | MAC 테이블 조회: 02:00:00:00:00:08 → eth8 로 전달
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32130 sw-2 link.transmit | 링크 전송: ARP 응답 (192.168.2.1=02:00:00:12:00:04) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+32140 old-1 frame.receive | 프레임 수신: ARP 응답 (192.168.2.1=02:00:00:12:00:04) [02:00:00:12:00:04 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (old-1 이 내보낸 쪽): 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+32140 old-1 arp.reply.received | ARP 응답 수신: 192.168.2.1 는 02:00:00:12:00:04
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (old-1 이 내보낸 쪽): 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+32140 old-1 arp.cache.update | ARP 캐시 추가: 192.168.2.1 → 02:00:00:12:00:04 (응답에서 학습)
+    > 리눅스 ip neigh: 192.168.2.1 dev eth0 lladdr 02:00:00:12:00:04 REACHABLE
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype ARP (0x0806): ARP, Reply 192.168.2.1 is-at 02:00:00:12:00:04, length 28
+    > tcpdump (old-1 이 내보낸 쪽): 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+32140 old-1 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
+32140 old-1 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:08 → 02:00:00:12:00:04]
+    > tcpdump -n -e: 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+32140 old-1 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 server_08:0 → switch_05:7 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+32150 sw-2 frame.receive | eth8 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:08 → 02:00:00:12:00:04]
+    > tcpdump -n -e: 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+32150 sw-2 switch.forward | MAC 테이블 조회: 02:00:00:12:00:04 → eth4 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+32150 sw-2 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+32160 gw-1 frame.receive | if2 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:08]
+    > tcpdump -n -e: 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+32160 gw-1 ip.no-route | No route: 8.8.8.8 로 가는 경로가 없음 (연결된 서브넷·스태틱 라우팅·디폴트 라우트 모두 해당 없음) → 드롭. if0 에 주소가 없음 (케이블과 DHCP, 또는 수동 주소를 확인)
+    > 시스코 debug ip packet: IP: s=192.168.2.20, d=8.8.8.8, len 84, unroutable
+    > tcpdump -n -e: 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+32160 gw-1 icmp.unreachable.sent | 192.168.2.20 에게 ICMP Destination Net Unreachable 통지 (원래 192.168.2.20 → 8.8.8.8) — 그 목적지로 가는 경로가 없음. 보낸 쪽은 timeout 을 기다리지 않고 바로 실패를 안다
+    > tcpdump -n -e: 02:00:00:00:00:08 > 02:00:00:12:00:04, ethertype IPv4 (0x0800): IP 192.168.2.20 > 8.8.8.8: ICMP echo request, id 8060, seq 1, length 64
+    > tcpdump (gw-1 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+32160 gw-1 arp.cache.hit | ARP 캐시 적중: 192.168.2.20 → 02:00:00:00:00:08
+32160 gw-1 frame.send | 프레임 송신: ICMP Destination Net Unreachable (원래 192.168.2.20 → 8.8.8.8 Echo seq=1) [02:00:00:12:00:04 → 02:00:00:00:00:08]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+32160 gw-1 link.transmit | 링크 전송: ICMP Destination Net Unreachable (원래 192.168.2.20 → 8.8.8.8 Echo seq=1) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+32170 sw-2 frame.receive | eth4 수신: ICMP Destination Net Unreachable (원래 192.168.2.20 → 8.8.8.8 Echo seq=1) [02:00:00:12:00:04 → 02:00:00:00:00:08]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+32170 sw-2 switch.forward | MAC 테이블 조회: 02:00:00:00:00:08 → eth8 로 전달
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+32170 sw-2 link.transmit | 링크 전송: ICMP Destination Net Unreachable (원래 192.168.2.20 → 8.8.8.8 Echo seq=1) switch_05:7 → server_08:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+32180 old-1 frame.receive | 프레임 수신: ICMP Destination Net Unreachable (원래 192.168.2.20 → 8.8.8.8 Echo seq=1) [02:00:00:12:00:04 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+32180 old-1 icmp.unreachable.received | 192.168.2.1 로부터 ICMP Destination Net Unreachable 수신 (원래 192.168.2.20 → 8.8.8.8 Echo seq=1) → ping 8.8.8.8 실패
+    > ping: From 192.168.2.1 icmp_seq=… Destination Net Unreachable
+    > tcpdump -n -e: 02:00:00:12:00:04 > 02:00:00:00:00:08, ethertype IPv4 (0x0800): IP 192.168.2.1 > 192.168.2.20: ICMP net 8.8.8.8 unreachable, length 36
+32180 old-1 icmp.failed | ping 8.8.8.8 실패: Destination Net Unreachable (192.168.2.1)

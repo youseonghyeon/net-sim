@@ -36,10 +36,17 @@ Packet Tracer 식으로 직접 구성하는 네트워크 학습 시뮬레이터.
 ```
 npm run typecheck   # tsc
 npm test            # vitest (코어)
-npm run ui-check    # Playwright 스모크 — 구간 전부를 워커 4개가 나눠 동시에 (개발 서버 자동 기동, .shots/ 에 스크린샷. 헬퍼 goTab/loadEx/clearUi/waitIdle)
+npm run ui-check    # Playwright 스모크 — 구간 전부를 워커 2개(headless Chrome 2개)가 나눠 동시에 (개발 서버 자동 기동, .shots/ 에 스크린샷. 헬퍼 goTab/loadEx/clearUi/waitIdle)
 npm run ui-check -- mwan lb   # 그 구간만 (이름 = 같거나 "이름-" 으로 시작). --list 목록, --workers=1 차례로(로그 바로 보임)
 npm run perf-check  # 프로덕션 빌드로 예제 전부 + 단말 52대 스트레스를 CPU 4배 감속에서 6초씩: fps·p95·긴 프레임·점유율·라벨 깜빡임. --headed, --throttle N, --only=id, --log(로그 연 채로)
 ```
+**리팩터링 안전망**(2026-10-20, 동작을 바꾸지 않는 정리는 이것들이 그대로여야 한다 — 바뀌면 diff 를 건별로 보고 의도한 것만 갱신):
+- `tests/golden.test.ts` — 예제 전부의 트레이스·실무 출력 골든(`tests/__golden__/<예제>.txt`, 갱신 `npx vitest run tests/golden.test.ts -u`). id 는 시계 고정 + `resetIdSequence()` 로 결정론
+- `tests/router-paths.test.ts` — 공유기 들어오는 길 × 기능 표(`__golden__/router-paths.txt`). 새 길·새 기능은 행·열을 더한다
+- `tests/vpn-conformance.test.ts` — VPN 협상 교란 표(응답 손실·서버 재시작·끈 뒤 늦은 패킷·클라이언트 주소 변경, `__golden__/vpn-conformance.txt`). 새 VPN 종류는 `CASES` 에 한 줄
+- `tests/settings-invariant.test.ts` — 설정 칸 하나를 실행 중에 바꾼 노드 == 처음부터 그 값으로 불러온 노드 (변경 감지 키 누락, 4zl)
+- ui-check 구간 출력 기대값 `scripts/ui-check-expected/<구간>.txt` — 찍는 줄이 다르면 그 구간 실패, 실행마다 달라지는 값은 `⟨*⟩`, 갱신 `npm run ui-check -- <구간> --update`
+
 코어 변경은 `npm test`, UI 변경은 `npm run ui-check` 까지 통과해야 완료. 개발 중엔 고친 기능의 구간만 돌리고(`npm run ui-check -- <구간>`), 완료 전에 전체를 한 번. ui-check 구간 규칙: 새 기능은 `section("이름", async () => { … })` 하나로 추가하고 `loadEx`/`clearUi` 로 시작한다(구간마다 빈 페이지에서 시작, 다른 구간의 상태에 기대지 않음 — 워커가 아무 순서로 나눠 가짐). 고정 대기(`waitForTimeout`)를 새로 늘리지 않는다 — 시뮬레이션이 조용해지길 기다릴 땐 `waitIdle()`, 화면 결과는 `waitForFunction`. 끝에 찍히는 "느린 구간" 이 30초를 넘으면 그 구간의 대기부터 줄인다. 캔버스 매 프레임 코드(PacketLayer·ActiveCables·sim tick)를 건드리면 `npm run perf-check` 도 (개발 서버는 preact 디버그 훅 때문에 느려 측정에 쓰지 않는다).
 
 ## 배포 (porta-hub 와 같은 방식)
@@ -71,10 +78,10 @@ npm run perf-check  # 프로덕션 빌드로 예제 전부 + 단말 52대 스트
 | `docs/features/ui.md` | 캔버스·인스펙터·로그 서랍·영역의 동작 상세 |
 
 ## 점검 항목 (반복된 결함 — 새 기능마다 확인)
-- **새 VPN 협상(종류)을 넣으면** ① 마지막 응답(거절 포함)이 사라질 때 같은 응답을 다시 보내는가 ② 서버가 상태를 잊을 때(설정 변경·재시작·주소를 잃음) 클라이언트가 알게 되는 길이 있는가 ③ 끊은 뒤·종류를 바꾼 뒤 늦게 온 패킷이 Port Unreachable 로 새지 않는가 ④ 구성 검사가 포트 포워딩(공유기 뒤 공유기)을 따라가는가 — 원격 접속 VPN 리뷰에서 나온 것을 L2TP 에서 그대로 되풀이했다(`docs/LESSONS.md` 4u).
+- **새 VPN 협상(종류)을 넣으면** `tests/vpn-conformance.test.ts` 의 `CASES` 에 한 줄 넣고 표를 본다. ① 마지막 응답(거절 포함)이 사라질 때 같은 응답을 다시 보내는가 ② 서버가 상태를 잊을 때(설정 변경·재시작·주소를 잃음) 클라이언트가 알게 되는 길이 있는가 ③ 끊은 뒤·종류를 바꾼 뒤 늦게 온 패킷이 Port Unreachable 로 새지 않는가 ④ 구성 검사가 포트 포워딩(공유기 뒤 공유기)을 따라가는가 — 원격 접속 VPN 리뷰에서 나온 것을 L2TP 에서 그대로 되풀이했다(`docs/LESSONS.md` 4u).
 - **TcpStack 에 앱 흐름(LB·프록시·SSH 같은 고리)을 새로 넣으면** "뒤 서버·대상 = 자기 자신" 루프백 테스트를 반드시 하나 둔다 — 세 번 어겼다(`docs/LESSONS.md` 4h·4k).
 - **주기 동작은 배경 타이머로만** — 일반 타이머로 넣으면 `runToIdle` 이 끝나지 않는다(위 "배경 타이머").
-- **새 들어오는 길(WAN 수신 경로)을 넣으면** 기존 기능(방화벽·포트 포워딩·VPN·DPI·킬 스위치)이 그 길에서도 먼저 적용되는지 하나씩 확인한다(`docs/LESSONS.md` 4zh).
+- **새 들어오는 길(WAN 수신 경로)을 넣으면** 기존 기능(방화벽·포트 포워딩·VPN·DPI·킬 스위치)이 그 길에서도 먼저 적용되는지 하나씩 확인한다(`docs/LESSONS.md` 4zh) — `tests/router-paths.test.ts` 에 그 길의 행을 더한다.
 
 ## 로드맵
 1~14 (편집기·DHCP·NAT·TCP·DNS·방화벽·무선·VLAN·RIP·로드밸런서·프록시·VPN·이중화·STP·IPv6) 모두 완료, 실제 네트워크 연결은 하지 않기로 결정(2026-09-19). GL.iNet Brume 3 계획 1~9단계(WireGuard·DDNS·멀티 WAN·AdGuard·DPI·OpenVPN·메시 VPN·공유기 관리·Samba·IGMP·SIP·Tor) 완료(2026-10-07). 다음 후보·우선순위·결정 이력은 `docs/ROADMAP.md`.

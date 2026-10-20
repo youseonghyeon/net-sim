@@ -1,0 +1,4 @@
+multi cable: 케이블 2개 선택 | canvas selected: 2 (both) | mixed select: 여러 값
+multi cable loss (focus SELECT ): 0.3,0.3 → undo once → 0.1,0 → redo → 0.3,0.3 → undo → 0.1,0 ok
+multi cable delete: 5 → 3 | panel: 네트워크 | undo → 5
+multi cable esc → selected: 0

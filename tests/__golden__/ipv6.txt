@@ -1,0 +1,313 @@
+## 불러오기
+0 pc-1 link.up | 링크 연결됨
+0 pc-1 ndp.dad | DAD: NS 송신 "fe80::ff:fe00:1 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+0 pc-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:1 를 쓰는 장치가 있나?) pc_01:0 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+0 pc-1 ndp.dad | DAD: NS 송신 "2001:db8:1::10 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:1::10, length 24
+0 pc-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::10 를 쓰는 장치가 있나?) pc_01:0 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:1::10, length 24
+0 pc-2 link.up | 링크 연결됨
+0 pc-2 ndp.dad | DAD: NS 송신 "fe80::ff:fe00:2 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+0 pc-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:2 를 쓰는 장치가 있나?) pc_02:0 → switch_03:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+0 pc-2 ndp.dad | DAD: NS 송신 "2001:db8:1::11 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:11, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:11: ICMP6, neighbor solicitation, who has 2001:db8:1::11, length 24
+0 pc-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::11 를 쓰는 장치가 있나?) pc_02:0 → switch_03:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:11, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:11: ICMP6, neighbor solicitation, who has 2001:db8:1::11, length 24
+0 gw-1 link.up | if1 링크 연결됨
+0 gw-1 ndp.dad | [if1] DAD: NS 송신 "fe80::ff:fe11:4 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+0 gw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe11:4 를 쓰는 장치가 있나?) gateway_04:1 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+0 gw-1 ndp.dad | [if1] DAD: NS 송신 "2001:db8:1::1 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+0 gw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::1 를 쓰는 장치가 있나?) gateway_04:1 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+0 gw-1 link.up | if2 링크 연결됨
+0 gw-1 ndp.dad | [if2] DAD: NS 송신 "fe80::ff:fe12:4 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+0 gw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe12:4 를 쓰는 장치가 있나?) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+0 gw-1 ndp.dad | [if2] DAD: NS 송신 "2001:db8:2::1 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+0 gw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::1 를 쓰는 장치가 있나?) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+0 srv-1 link.up | 링크 연결됨
+0 srv-1 ndp.dad | DAD: NS 송신 "fe80::ff:fe00:6 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+0 srv-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:6 를 쓰는 장치가 있나?) server_06:0 → switch_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+0 srv-1 ndp.dad | DAD: NS 송신 "2001:db8:2::10 를 쓰는 장치가 있나요?" (출발지 :: — 아직 이 주소를 쓰지 않음) → 1000ms 동안 NA 가 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+0 srv-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::10 를 쓰는 장치가 있나?) server_06:0 → switch_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+10 sw-1 frame.receive | eth1 수신: NDP NS — DAD (fe80::ff:fe00:1 를 쓰는 장치가 있나?) [02:00:00:00:00:01 → 33:33:ff:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+10 sw-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:01 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:01    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+10 sw-1 switch.flood | 멀티캐스트 33:33:ff:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4, eth6]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:1 를 쓰는 장치가 있나?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:1 를 쓰는 장치가 있나?) switch_03:5 → pc_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+10 sw-1 frame.receive | eth1 수신: NDP NS — DAD (2001:db8:1::10 를 쓰는 장치가 있나?) [02:00:00:00:00:01 → 33:33:ff:00:00:10]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:1::10, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:1::10, length 24
+10 sw-1 switch.flood | 멀티캐스트 33:33:ff:00:00:10 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4, eth6]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:1::10, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:1::10, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::10 를 쓰는 장치가 있나?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:1::10, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:1::10, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::10 를 쓰는 장치가 있나?) switch_03:5 → pc_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:1::10, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:1::10, length 24
+10 sw-1 frame.receive | eth6 수신: NDP NS — DAD (fe80::ff:fe00:2 를 쓰는 장치가 있나?) [02:00:00:00:00:02 → 33:33:ff:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+10 sw-1 switch.learn | MAC 테이블 학습: 02:00:00:00:00:02 → eth6
+    > 시스코 show mac address-table:    1    02:00:00:00:00:02    DYNAMIC     Gi0/5
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+10 sw-1 switch.flood | 멀티캐스트 33:33:ff:00:00:02 (스누핑 없는 스위치는 브로드캐스트처럼) → eth6 제외 플러딩 [eth1, eth4]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:2 를 쓰는 장치가 있나?) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:2 를 쓰는 장치가 있나?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:02, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:2: ICMP6, neighbor solicitation, who has fe80::ff:fe00:2, length 24
+10 sw-1 frame.receive | eth6 수신: NDP NS — DAD (2001:db8:1::11 를 쓰는 장치가 있나?) [02:00:00:00:00:02 → 33:33:ff:00:00:11]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:11, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:11: ICMP6, neighbor solicitation, who has 2001:db8:1::11, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:11, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:11: ICMP6, neighbor solicitation, who has 2001:db8:1::11, length 24
+10 sw-1 switch.flood | 멀티캐스트 33:33:ff:00:00:11 (스누핑 없는 스위치는 브로드캐스트처럼) → eth6 제외 플러딩 [eth1, eth4]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:11, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:11: ICMP6, neighbor solicitation, who has 2001:db8:1::11, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:11, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:11: ICMP6, neighbor solicitation, who has 2001:db8:1::11, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::11 를 쓰는 장치가 있나?) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:11, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:11: ICMP6, neighbor solicitation, who has 2001:db8:1::11, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:11, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:11: ICMP6, neighbor solicitation, who has 2001:db8:1::11, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::11 를 쓰는 장치가 있나?) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:ff:00:00:11, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:11: ICMP6, neighbor solicitation, who has 2001:db8:1::11, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:ff:00:00:11, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:11: ICMP6, neighbor solicitation, who has 2001:db8:1::11, length 24
+10 sw-1 frame.receive | eth4 수신: NDP NS — DAD (fe80::ff:fe11:4 를 쓰는 장치가 있나?) [02:00:00:11:00:04 → 33:33:ff:11:00:04]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+10 sw-1 switch.learn | MAC 테이블 학습: 02:00:00:11:00:04 → eth4
+    > 시스코 show mac address-table:    1    02:00:00:11:00:04    DYNAMIC     Gi0/3
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+10 sw-1 switch.flood | 멀티캐스트 33:33:ff:11:00:04 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe11:4 를 쓰는 장치가 있나?) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe11:4 를 쓰는 장치가 있나?) switch_03:5 → pc_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:11:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff11:4: ICMP6, neighbor solicitation, who has fe80::ff:fe11:4, length 24
+10 sw-1 frame.receive | eth4 수신: NDP NS — DAD (2001:db8:1::1 를 쓰는 장치가 있나?) [02:00:00:11:00:04 → 33:33:ff:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+10 sw-1 switch.flood | 멀티캐스트 33:33:ff:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::1 를 쓰는 장치가 있나?) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+10 sw-1 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:1::1 를 쓰는 장치가 있나?) switch_03:5 → pc_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+10 sw-2 frame.receive | eth4 수신: NDP NS — DAD (fe80::ff:fe12:4 를 쓰는 장치가 있나?) [02:00:00:12:00:04 → 33:33:ff:12:00:04]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+10 sw-2 switch.learn | MAC 테이블 학습: 02:00:00:12:00:04 → eth4
+    > 시스코 show mac address-table:    1    02:00:00:12:00:04    DYNAMIC     Gi0/3
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+10 sw-2 switch.flood | 멀티캐스트 33:33:ff:12:00:04 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe12:4 를 쓰는 장치가 있나?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:12:00:04, ethertype IPv6 (0x86dd): :: > ff02::1:ff12:4: ICMP6, neighbor solicitation, who has fe80::ff:fe12:4, length 24
+10 sw-2 frame.receive | eth4 수신: NDP NS — DAD (2001:db8:2::1 를 쓰는 장치가 있나?) [02:00:00:12:00:04 → 33:33:ff:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+10 sw-2 switch.flood | 멀티캐스트 33:33:ff:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::1 를 쓰는 장치가 있나?) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:2::1, length 24
+10 sw-2 frame.receive | eth1 수신: NDP NS — DAD (fe80::ff:fe00:6 를 쓰는 장치가 있나?) [02:00:00:00:00:06 → 33:33:ff:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+10 sw-2 switch.learn | MAC 테이블 학습: 02:00:00:00:00:06 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+10 sw-2 switch.flood | 멀티캐스트 33:33:ff:00:00:06 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (fe80::ff:fe00:6 를 쓰는 장치가 있나?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:06, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:6: ICMP6, neighbor solicitation, who has fe80::ff:fe00:6, length 24
+10 sw-2 frame.receive | eth1 수신: NDP NS — DAD (2001:db8:2::10 를 쓰는 장치가 있나?) [02:00:00:00:00:06 → 33:33:ff:00:00:10]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+10 sw-2 switch.flood | 멀티캐스트 33:33:ff:00:00:10 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+10 sw-2 link.transmit | 링크 전송: NDP NS — DAD (2001:db8:2::10 를 쓰는 장치가 있나?) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:ff:00:00:10, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:10: ICMP6, neighbor solicitation, who has 2001:db8:2::10, length 24
+20 gw-1 frame.receive | if1 수신: NDP NS — DAD (fe80::ff:fe00:1 를 쓰는 장치가 있나?) [02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+20 gw-1 frame.drop | [if1] NDP NS (fe80::ff:fe00:1 의 MAC 은?) — 내 주소가 아님 → 응답 안 함 (solicited-node 그룹이 우연히 겹침)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has fe80::ff:fe00:1, length 24
+20 pc-1 frame.receive | 프레임 수신: NDP NS — DAD (2001:db8:1::1 를 쓰는 장치가 있나?) [02:00:00:11:00:04 → 멀티캐스트 33:33:ff:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+20 pc-1 frame.drop | NDP NS (2001:db8:1::1 의 MAC 은?) — 내 주소가 아님 → 응답 안 함 (solicited-node 그룹이 우연히 겹침)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:ff:00:00:01, ethertype IPv6 (0x86dd): :: > ff02::1:ff00:1: ICMP6, neighbor solicitation, who has 2001:db8:1::1, length 24
+1000 pc-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 fe80::ff:fe00:1 를 주장하지 않음 → 링크 로컬 주소 사용 시작
+1000 pc-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 2001:db8:1::10 를 주장하지 않음 → 주소 사용 시작
+1000 pc-1 ndp.na.sent | 주소 알림: 요청하지 않은 NA 를 모든 노드(ff02::1)에게 "2001:db8:1::10 는 02:00:00:00:00:01" — 이웃 캐시에 옛 MAC 이 남아 있으면 고치도록 (IPv4 의 Gratuitous ARP)
+1000 pc-1 frame.send | 프레임 송신: NDP NA (2001:db8:1::10 = 02:00:00:00:00:01) [02:00:00:00:00:01 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+1000 pc-1 link.transmit | 링크 전송: NDP NA (2001:db8:1::10 = 02:00:00:00:00:01) pc_01:0 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+1000 pc-2 ndp.dad | DAD 통과: 1000ms 동안 아무도 fe80::ff:fe00:2 를 주장하지 않음 → 링크 로컬 주소 사용 시작
+1000 pc-2 ndp.dad | DAD 통과: 1000ms 동안 아무도 2001:db8:1::11 를 주장하지 않음 → 주소 사용 시작
+1000 pc-2 ndp.na.sent | 주소 알림: 요청하지 않은 NA 를 모든 노드(ff02::1)에게 "2001:db8:1::11 는 02:00:00:00:00:02" — 이웃 캐시에 옛 MAC 이 남아 있으면 고치도록 (IPv4 의 Gratuitous ARP)
+1000 pc-2 frame.send | 프레임 송신: NDP NA (2001:db8:1::11 = 02:00:00:00:00:02) [02:00:00:00:00:02 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+1000 pc-2 link.transmit | 링크 전송: NDP NA (2001:db8:1::11 = 02:00:00:00:00:02) pc_02:0 → switch_03:5 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+1000 gw-1 ndp.dad | [if1] DAD 통과: 1000ms 동안 아무도 fe80::ff:fe11:4 를 주장하지 않음 → 링크 로컬 주소 사용 시작
+1000 gw-1 ndp.dad | [if1] DAD 통과: 1000ms 동안 아무도 2001:db8:1::1 를 주장하지 않음 → 주소 사용 시작
+1000 gw-1 ndp.na.sent | [if1] 주소 알림: 요청하지 않은 NA 를 모든 노드(ff02::1)에게 "2001:db8:1::1 는 02:00:00:11:00:04" — 이웃 캐시에 옛 MAC 이 남아 있으면 고치도록 (IPv4 의 Gratuitous ARP)
+1000 gw-1 frame.send | [if1] 프레임 송신: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1000 gw-1 link.transmit | 링크 전송: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) gateway_04:1 → switch_03:3 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1000 gw-1 ndp.dad | [if2] DAD 통과: 1000ms 동안 아무도 fe80::ff:fe12:4 를 주장하지 않음 → 링크 로컬 주소 사용 시작
+1000 gw-1 ndp.dad | [if2] DAD 통과: 1000ms 동안 아무도 2001:db8:2::1 를 주장하지 않음 → 주소 사용 시작
+1000 gw-1 ndp.na.sent | [if2] 주소 알림: 요청하지 않은 NA 를 모든 노드(ff02::1)에게 "2001:db8:2::1 는 02:00:00:12:00:04" — 이웃 캐시에 옛 MAC 이 남아 있으면 고치도록 (IPv4 의 Gratuitous ARP)
+1000 gw-1 frame.send | [if2] 프레임 송신: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) [02:00:00:12:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1000 gw-1 link.transmit | 링크 전송: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) gateway_04:2 → switch_05:3 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1000 srv-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 fe80::ff:fe00:6 를 주장하지 않음 → 링크 로컬 주소 사용 시작
+1000 srv-1 ndp.dad | DAD 통과: 1000ms 동안 아무도 2001:db8:2::10 를 주장하지 않음 → 주소 사용 시작
+1000 srv-1 ndp.na.sent | 주소 알림: 요청하지 않은 NA 를 모든 노드(ff02::1)에게 "2001:db8:2::10 는 02:00:00:00:00:06" — 이웃 캐시에 옛 MAC 이 남아 있으면 고치도록 (IPv4 의 Gratuitous ARP)
+1000 srv-1 frame.send | 프레임 송신: NDP NA (2001:db8:2::10 = 02:00:00:00:00:06) [02:00:00:00:00:06 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1000 srv-1 link.transmit | 링크 전송: NDP NA (2001:db8:2::10 = 02:00:00:00:00:06) server_06:0 → switch_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1010 sw-1 frame.receive | eth1 수신: NDP NA (2001:db8:1::10 = 02:00:00:00:00:01) [02:00:00:00:00:01 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+1010 sw-1 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4, eth6]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+1010 sw-1 link.transmit | 링크 전송: NDP NA (2001:db8:1::10 = 02:00:00:00:00:01) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+1010 sw-1 link.transmit | 링크 전송: NDP NA (2001:db8:1::10 = 02:00:00:00:00:01) switch_03:5 → pc_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+1010 sw-1 frame.receive | eth6 수신: NDP NA (2001:db8:1::11 = 02:00:00:00:00:02) [02:00:00:00:00:02 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+1010 sw-1 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth6 제외 플러딩 [eth1, eth4]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+1010 sw-1 link.transmit | 링크 전송: NDP NA (2001:db8:1::11 = 02:00:00:00:00:02) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+1010 sw-1 link.transmit | 링크 전송: NDP NA (2001:db8:1::11 = 02:00:00:00:00:02) switch_03:3 → gateway_04:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+1010 sw-1 frame.receive | eth4 수신: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) [02:00:00:11:00:04 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1010 sw-1 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1, eth6]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1010 sw-1 link.transmit | 링크 전송: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) switch_03:0 → pc_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1010 sw-1 link.transmit | 링크 전송: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) switch_03:5 → pc_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+    > tcpdump (sw-1 이 내보낸 쪽): 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1010 sw-2 frame.receive | eth4 수신: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) [02:00:00:12:00:04 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1010 sw-2 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth4 제외 플러딩 [eth1]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1010 sw-2 link.transmit | 링크 전송: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) switch_05:0 → server_06:0 (10ms)
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1010 sw-2 frame.receive | eth1 수신: NDP NA (2001:db8:2::10 = 02:00:00:00:00:06) [02:00:00:00:00:06 → 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1010 sw-2 switch.flood | 멀티캐스트 33:33:00:00:00:01 (스누핑 없는 스위치는 브로드캐스트처럼) → eth1 제외 플러딩 [eth4]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1010 sw-2 link.transmit | 링크 전송: NDP NA (2001:db8:2::10 = 02:00:00:00:00:06) switch_05:3 → gateway_04:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+    > tcpdump (sw-2 이 내보낸 쪽): 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1020 gw-1 frame.receive | if1 수신: NDP NA (2001:db8:1::10 = 02:00:00:00:00:01) [02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+1020 gw-1 ndp.na.received | [if1] NDP NA 수신: 2001:db8:1::10 는 02:00:00:00:00:01 — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+1020 pc-2 frame.receive | 프레임 수신: NDP NA (2001:db8:1::10 = 02:00:00:00:00:01) [02:00:00:00:00:01 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+1020 pc-2 ndp.na.received | NDP NA 수신: 2001:db8:1::10 는 02:00:00:00:00:01 — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:00:00:01 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::10, length 32
+1020 pc-1 frame.receive | 프레임 수신: NDP NA (2001:db8:1::11 = 02:00:00:00:00:02) [02:00:00:00:00:02 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+1020 pc-1 ndp.na.received | NDP NA 수신: 2001:db8:1::11 는 02:00:00:00:00:02 — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+1020 gw-1 frame.receive | if1 수신: NDP NA (2001:db8:1::11 = 02:00:00:00:00:02) [02:00:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+1020 gw-1 ndp.na.received | [if1] NDP NA 수신: 2001:db8:1::11 는 02:00:00:00:00:02 — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:00:00:02 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::11 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::11, length 32
+1020 pc-1 frame.receive | 프레임 수신: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1020 pc-1 ndp.na.received | NDP NA 수신: 2001:db8:1::1 는 02:00:00:11:00:04 (라우터) — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1020 pc-2 frame.receive | 프레임 수신: NDP NA (2001:db8:1::1 = 02:00:00:11:00:04, 라우터) [02:00:00:11:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1020 pc-2 ndp.na.received | NDP NA 수신: 2001:db8:1::1 는 02:00:00:11:00:04 (라우터) — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:11:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:1::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:1::1, length 32
+1020 srv-1 frame.receive | 프레임 수신: NDP NA (2001:db8:2::1 = 02:00:00:12:00:04, 라우터) [02:00:00:12:00:04 → 멀티캐스트 33:33:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1020 srv-1 ndp.na.received | NDP NA 수신: 2001:db8:2::1 는 02:00:00:12:00:04 (라우터) — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:12:00:04 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::1 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::1, length 32
+1020 gw-1 frame.receive | if2 수신: NDP NA (2001:db8:2::10 = 02:00:00:00:00:06) [02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+1020 gw-1 ndp.na.received | [if2] NDP NA 수신: 2001:db8:2::10 는 02:00:00:00:00:06 — 요청하지 않은 알림
+    > tcpdump -n -e: 02:00:00:00:00:06 > 33:33:00:00:00:01, ethertype IPv6 (0x86dd): 2001:db8:2::10 > ff02::1: ICMP6, neighbor advertisement, tgt is 2001:db8:2::10, length 32
+## 30초 뒤
+## pc-1 → 8.8.8.8
+31020 pc-1 action | [사용자] ping 8.8.8.8
+31020 pc-1 ip.no-address | ping 8.8.8.8 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)
+## pc-2 → 8.8.8.8
+31020 pc-2 action | [사용자] ping 8.8.8.8
+31020 pc-2 ip.no-address | ping 8.8.8.8 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)
+## srv-1 → 8.8.8.8
+31020 srv-1 action | [사용자] ping 8.8.8.8
+31020 srv-1 ip.no-address | ping 8.8.8.8 실패: 내 IP 주소가 없음 (DHCP 로 받거나 수동 설정 필요)

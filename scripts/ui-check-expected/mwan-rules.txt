@@ -1,0 +1,5 @@
+mwan-rules phone ping: 8.8.8.8 응답 240ms
+mwan-rules table: [ '1 10.0.0.0/24 WAN2 그 회선으로 1' ]
+mwan-rules rows: 1
+mwan-rules bad src error: 대역이 아닙니다 (예: 10.0.0.0/24, 주소 하나면 192.168.8.50)
+mwan-rules rows after delete: 1

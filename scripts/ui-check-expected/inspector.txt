@@ -1,0 +1,7 @@
+section collapsed: true | fields hidden: true
+no horizontal scroll when collapsed: true
+inspector width: normal 304 → wide 480 → collapsed 40 (canvas 1260 ) → open 304
+dragged width: 400
+drag past min → collapsed: 40
+reopened width: 400
+fit: all tiles inside canvas: true

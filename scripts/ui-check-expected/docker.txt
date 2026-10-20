@@ -1,0 +1,2 @@
+docker mac nat: true | publish rows: 2 | bind: 127.0.0.1
+docker localhost:8080: 127.0.0.1:8080 종료됨 · 받음 3000B

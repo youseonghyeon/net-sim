@@ -1,0 +1,2 @@
+router dhcp dns field: 1 | placeholder: 비우면 공유기 자신 (DNS 포워더)
+fwd row: two lines yes | ip width 94 | proto udp

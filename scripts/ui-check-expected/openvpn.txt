@@ -1,0 +1,4 @@
+ovpn laptop → NAS: 192.168.8.20 응답 140ms
+ovpn laptop type: OpenVPN | status: 연결됨 · 가상 주소 10.8.0.2 · 192.168.8.0/24 는 터널로 · TCP 443
+ovpn server proto: TCP | issued certs: 1
+ovpn status rows: 카페 노트북 203.0.113.2:40000 10.8.0.2 — TCP · 받음 108B · 보냄 108B

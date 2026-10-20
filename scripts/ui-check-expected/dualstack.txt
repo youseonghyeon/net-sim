@@ -1,0 +1,2 @@
+dualstack tcp: 192.168.2.20:80종료됨 · 받음 3000B | [2001:db8:2::10]:80종료됨 · 받음 3000B
+dns records: 3 | errors: 0

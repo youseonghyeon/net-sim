@@ -1,0 +1,847 @@
+## 불러오기
+0 집 Brume 3 link.up | wan 포트 링크 연결됨
+0 집 Brume 3 dhcp.discover.sent | [wan] DHCP Discover 브로드캐스트 (시도 1/3): "IP 주소를 줄 서버 있나요?" (아직 IP 없음, 출발지 0.0.0.0)
+    > 리눅스 dhclient: DHCPDISCOVER on eth0 to 255.255.255.255 port 67
+0 집 Brume 3 frame.send | 프레임 송신: DHCP Discover [02:00:00:01:00:02 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Discover)
+0 집 Brume 3 link.transmit | 링크 전송: DHCP Discover router_02:0 → internet_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Discover)
+0 internet-1 link.up | ISP 회선 연결됨
+0 집 Brume 3 link.up | lan1 포트 링크 연결됨
+0 아빠 PC link.up | 링크 연결됨
+0 아빠 PC dhcp.discover.sent | DHCP Discover 브로드캐스트 (시도 1/3): "IP 주소를 줄 서버 있나요?" (아직 IP 없음, 출발지 0.0.0.0)
+    > 리눅스 dhclient: DHCPDISCOVER on eth0 to 255.255.255.255 port 67
+0 아빠 PC frame.send | 프레임 송신: DHCP Discover [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+0 아빠 PC link.transmit | 링크 전송: DHCP Discover pc_04:0 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+0 스마트 TV link.up | 링크 연결됨
+0 스마트 TV arp.probe | ARP Probe 브로드캐스트: "192.168.8.60 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+0 스마트 TV link.transmit | 링크 전송: ARP 요청 (192.168.8.60?) pc_05:0 → switch_03:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+0 아이 태블릿 wifi.associate | 무선 연결: 집 Brume 3 에 붙음 (거리 203px, 슬롯 5) → DHCP 시작
+0 아이 태블릿 link.up | 링크 연결됨
+0 아이 태블릿 arp.probe | ARP Probe 브로드캐스트: "192.168.8.50 를 쓰는 장비가 있나요?" (보낸이 0.0.0.0 — 아직 이 주소를 쓰지 않음) → 200ms 동안 답이 없으면 사용
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+0 아이 태블릿 link.transmit | 링크 전송: ARP 요청 (192.168.8.50?) phone_06:0 → router_02:5 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+10 internet-1 frame.receive | 프레임 수신: DHCP Discover [02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (internet-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Offer)
+10 internet-1 dhcp.discover.received | DHCP Discover 수신 (클라이언트 02:00:00:01:00:02)
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (internet-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Offer)
+10 internet-1 dhcp.offer.sent | DHCP Offer: 02:00:00:01:00:02 에게 203.0.113.2/29 제안 (기본 게이트웨이 옵션 203.0.113.1 — 가입자마다 대역 /29) → 클라이언트 MAC 으로 유니캐스트
+10 internet-1 frame.send | 프레임 송신: DHCP Offer (203.0.113.2) [02:00:00:00:00:01 → 02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Offer)
+10 internet-1 link.transmit | 링크 전송: DHCP Offer (203.0.113.2) internet_01:0 → router_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Offer)
+10 거실 스위치 frame.receive | eth2 수신: DHCP Discover [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+10 거실 스위치 switch.learn | MAC 테이블 학습: 02:00:00:00:00:04 → eth2
+    > 시스코 show mac address-table:    1    02:00:00:00:00:04    DYNAMIC     Gi0/1
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+10 거실 스위치 switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth1, eth3]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+10 거실 스위치 link.transmit | 링크 전송: DHCP Discover switch_03:0 → router_02:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+10 거실 스위치 link.transmit | 링크 전송: DHCP Discover switch_03:2 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+10 거실 스위치 frame.receive | eth3 수신: ARP 요청 (192.168.8.60?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+10 거실 스위치 switch.learn | MAC 테이블 학습: 02:00:00:00:00:05 → eth3
+    > 시스코 show mac address-table:    1    02:00:00:00:00:05    DYNAMIC     Gi0/2
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+10 거실 스위치 switch.flood | 브로드캐스트 → eth3 제외 플러딩 [eth1, eth2]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+10 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.60?) switch_03:0 → router_02:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+10 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.60?) switch_03:1 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+20 집 Brume 3 frame.receive | 무선 슬롯 1 수신: ARP 요청 (192.168.8.50?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+20 집 Brume 3 switch.learn | 내부 스위치 MAC 테이블 학습: 02:00:00:00:00:06 → 무선 슬롯 1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/5
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+20 집 Brume 3 switch.flood | 브로드캐스트 → 다른 LAN 포트로 플러딩 [lan1]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+20 집 Brume 3 link.transmit | 링크 전송: ARP 요청 (192.168.8.50?) router_02:1 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+20 집 Brume 3 arp.request.received | ARP 요청 수신: "192.168.8.50 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+20 집 Brume 3 frame.drop | 192.168.8.50 는 내 IP(192.168.8.1) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+20 집 Brume 3 frame.receive | wan 수신: DHCP Offer (203.0.113.2) [02:00:00:00:00:01 → 내 WAN MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Request)
+20 집 Brume 3 dhcp.offer.received | [wan] DHCP Offer 수신: 서버 203.0.113.1 가 203.0.113.2/29 제안 (게이트웨이 203.0.113.1)
+    > 리눅스 dhclient: DHCPOFFER of 203.0.113.2 from 203.0.113.1
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Request)
+20 집 Brume 3 dhcp.request.sent | [wan] DHCP Request 브로드캐스트: "203.0.113.2 를 서버 203.0.113.1 에게서 받겠습니다"
+    > 리눅스 dhclient: DHCPREQUEST for 203.0.113.2 on eth0 to 255.255.255.255 port 67
+20 집 Brume 3 frame.send | 프레임 송신: DHCP Request [02:00:00:01:00:02 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Request)
+20 집 Brume 3 link.transmit | 링크 전송: DHCP Request router_02:0 → internet_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Request)
+20 집 Brume 3 frame.receive | lan1 수신: DHCP Discover [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+20 집 Brume 3 switch.learn | 내부 스위치 MAC 테이블 학습: 02:00:00:00:00:04 → lan1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:04    DYNAMIC     Gi0/1
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+20 집 Brume 3 switch.flood | 브로드캐스트 → 다른 LAN 포트로 플러딩 [] + 전파로 무선 단말 1대
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+20 집 Brume 3 link.transmit | 링크 전송: DHCP Discover router_02:5 → phone_06:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+20 집 Brume 3 dhcp.discover.received | DHCP Discover 수신 (클라이언트 02:00:00:00:00:04)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+20 집 Brume 3 dhcp.offer.sent | DHCP Offer: 02:00:00:00:00:04 에게 192.168.8.100/24 제안 (기본 게이트웨이 옵션 192.168.8.1) → 클라이언트 MAC 으로 유니캐스트
+20 집 Brume 3 frame.send | 프레임 송신: DHCP Offer (192.168.8.100) [02:00:00:00:00:02 → 02:00:00:00:00:04]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+20 집 Brume 3 link.transmit | 링크 전송: DHCP Offer (192.168.8.100) router_02:1 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+20 스마트 TV frame.receive | 프레임 수신: DHCP Discover [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+20 스마트 TV dhcp.ignore | 다른 호스트의 DHCP discover 브로드캐스트 — 나는 서버가 아니므로 무시
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+20 집 Brume 3 frame.receive | lan1 수신: ARP 요청 (192.168.8.60?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+20 집 Brume 3 switch.learn | 내부 스위치 MAC 테이블 학습: 02:00:00:00:00:05 → lan1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:05    DYNAMIC     Gi0/1
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+20 집 Brume 3 switch.flood | 브로드캐스트 → 다른 LAN 포트로 플러딩 [] + 전파로 무선 단말 1대
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+20 집 Brume 3 link.transmit | 링크 전송: ARP 요청 (192.168.8.60?) router_02:5 → phone_06:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+20 집 Brume 3 arp.request.received | ARP 요청 수신: "192.168.8.60 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+20 집 Brume 3 frame.drop | 192.168.8.60 는 내 IP(192.168.8.1) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+20 아빠 PC frame.receive | 프레임 수신: ARP 요청 (192.168.8.60?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+20 아빠 PC frame.drop | IP 설정이 없어 ARP 무시
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+30 거실 스위치 frame.receive | eth1 수신: ARP 요청 (192.168.8.50?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+30 거실 스위치 switch.learn | MAC 테이블 학습: 02:00:00:00:00:06 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:06    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+30 거실 스위치 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth2, eth3]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+30 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.50?) switch_03:1 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+30 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.50?) switch_03:2 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+30 internet-1 frame.receive | 프레임 수신: DHCP Request [02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (internet-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: ACK)
+30 internet-1 dhcp.request.received | DHCP Request 수신: 02:00:00:01:00:02 가 203.0.113.2 요청 (서버 203.0.113.1)
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (internet-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: ACK)
+30 internet-1 dhcp.lease | 임대 할당: 203.0.113.2 → 02:00:00:01:00:02
+30 internet-1 dhcp.ack.sent | DHCP Ack: 02:00:00:01:00:02 에게 203.0.113.2/29 확정 (게이트웨이 203.0.113.1, DNS 203.0.113.1)
+30 internet-1 frame.send | 프레임 송신: DHCP Ack (203.0.113.2) [02:00:00:00:00:01 → 02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: ACK)
+30 internet-1 link.transmit | 링크 전송: DHCP Ack (203.0.113.2) internet_01:0 → router_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: ACK)
+30 거실 스위치 frame.receive | eth1 수신: DHCP Offer (192.168.8.100) [02:00:00:00:00:02 → 02:00:00:00:00:04]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+30 거실 스위치 switch.learn | MAC 테이블 학습: 02:00:00:00:00:02 → eth1
+    > 시스코 show mac address-table:    1    02:00:00:00:00:02    DYNAMIC     Gi0/0
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+30 거실 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:04 → eth2 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+30 거실 스위치 link.transmit | 링크 전송: DHCP Offer (192.168.8.100) switch_03:1 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+40 아이 태블릿 frame.receive | 프레임 수신: DHCP Discover [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+40 아이 태블릿 dhcp.ignore | 다른 호스트의 DHCP discover 브로드캐스트 — 나는 서버가 아니므로 무시
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Discover)
+40 아이 태블릿 frame.receive | 프레임 수신: ARP 요청 (192.168.8.60?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+40 아이 태블릿 arp.request.received | ARP 요청 수신: "192.168.8.60 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+40 아이 태블릿 frame.drop | 192.168.8.60 는 내 IP(192.168.8.50) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 0.0.0.0, length 28
+40 아빠 PC frame.receive | 프레임 수신: ARP 요청 (192.168.8.50?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+40 아빠 PC frame.drop | IP 설정이 없어 ARP 무시
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+40 스마트 TV frame.receive | 프레임 수신: ARP 요청 (192.168.8.50?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+40 스마트 TV arp.request.received | ARP 요청 수신: "192.168.8.50 의 MAC은?" (보낸이 0.0.0.0 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+40 스마트 TV frame.drop | 192.168.8.50 는 내 IP(192.168.8.60) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 0.0.0.0, length 28
+40 집 Brume 3 frame.receive | wan 수신: DHCP Ack (203.0.113.2) [02:00:00:00:00:01 → 내 WAN MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.2 tell 203.0.113.2, length 28
+40 집 Brume 3 dhcp.ack.received | [wan] DHCP Ack 수신: 서버 203.0.113.1 가 203.0.113.2 확정
+    > 리눅스 dhclient: DHCPACK of 203.0.113.2 from 203.0.113.1
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 203.0.113.1.67 > 203.0.113.2.68: BOOTP/DHCP, Reply from 02:00:00:01:00:02, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.2 tell 203.0.113.2, length 28
+40 집 Brume 3 dhcp.bound | [wan] IP 획득: 203.0.113.2/29 (서브넷 마스크 255.255.255.248), 게이트웨이 203.0.113.1, DNS 203.0.113.1
+    > 리눅스 dhclient: bound to 203.0.113.2 -- renewal in 43200 seconds.
+40 집 Brume 3 arp.request.sent | Gratuitous ARP 브로드캐스트: "203.0.113.2 는 이제 02:00:00:01:00:02" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.2 tell 203.0.113.2, length 28
+40 집 Brume 3 link.transmit | 링크 전송: ARP 요청 (203.0.113.2?) router_02:0 → internet_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.2 tell 203.0.113.2, length 28
+40 아빠 PC frame.receive | 프레임 수신: DHCP Offer (192.168.8.100) [02:00:00:00:00:02 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (아빠 PC 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+40 아빠 PC dhcp.offer.received | DHCP Offer 수신: 서버 192.168.8.1 가 192.168.8.100/24 제안 (게이트웨이 192.168.8.1)
+    > 리눅스 dhclient: DHCPOFFER of 192.168.8.100 from 192.168.8.1
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Offer)
+    > tcpdump (아빠 PC 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+40 아빠 PC dhcp.request.sent | DHCP Request 브로드캐스트: "192.168.8.100 를 서버 192.168.8.1 에게서 받겠습니다"
+    > 리눅스 dhclient: DHCPREQUEST for 192.168.8.100 on eth0 to 255.255.255.255 port 67
+40 아빠 PC frame.send | 프레임 송신: DHCP Request [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+40 아빠 PC link.transmit | 링크 전송: DHCP Request pc_04:0 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+50 internet-1 frame.receive | 프레임 수신: ARP 요청 (203.0.113.2?) [02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.2 tell 203.0.113.2, length 28
+50 internet-1 arp.request.received | Gratuitous ARP 수신: 203.0.113.2 는 02:00:00:01:00:02 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.2 tell 203.0.113.2, length 28
+50 거실 스위치 frame.receive | eth2 수신: DHCP Request [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+50 거실 스위치 switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth1, eth3]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+50 거실 스위치 link.transmit | 링크 전송: DHCP Request switch_03:0 → router_02:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+50 거실 스위치 link.transmit | 링크 전송: DHCP Request switch_03:2 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+60 집 Brume 3 frame.receive | lan1 수신: DHCP Request [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+60 집 Brume 3 switch.flood | 브로드캐스트 → 다른 LAN 포트로 플러딩 [] + 전파로 무선 단말 1대
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+60 집 Brume 3 link.transmit | 링크 전송: DHCP Request router_02:5 → phone_06:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+60 집 Brume 3 dhcp.request.received | DHCP Request 수신: 02:00:00:00:00:04 가 192.168.8.100 요청 (서버 192.168.8.1)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+60 집 Brume 3 dhcp.lease | 임대 할당: 192.168.8.100 → 02:00:00:00:00:04
+60 집 Brume 3 dhcp.ack.sent | DHCP Ack: 02:00:00:00:00:04 에게 192.168.8.100/24 확정 (게이트웨이 192.168.8.1, DNS 192.168.8.1)
+60 집 Brume 3 frame.send | 프레임 송신: DHCP Ack (192.168.8.100) [02:00:00:00:00:02 → 02:00:00:00:00:04]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: ACK)
+60 집 Brume 3 link.transmit | 링크 전송: DHCP Ack (192.168.8.100) router_02:1 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: ACK)
+60 스마트 TV frame.receive | 프레임 수신: DHCP Request [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+60 스마트 TV dhcp.ignore | 다른 호스트의 DHCP request 브로드캐스트 — 나는 서버가 아니므로 무시
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+70 거실 스위치 frame.receive | eth1 수신: DHCP Ack (192.168.8.100) [02:00:00:00:00:02 → 02:00:00:00:00:04]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: ACK)
+70 거실 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:04 → eth2 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: ACK)
+70 거실 스위치 link.transmit | 링크 전송: DHCP Ack (192.168.8.100) switch_03:1 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: ACK)
+80 아이 태블릿 frame.receive | 프레임 수신: DHCP Request [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+80 아이 태블릿 dhcp.ignore | 다른 호스트의 DHCP request 브로드캐스트 — 나는 서버가 아니므로 무시
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype IPv4 (0x0800): IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: Request)
+80 아빠 PC frame.receive | 프레임 수신: DHCP Ack (192.168.8.100) [02:00:00:00:00:02 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (아빠 PC 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+80 아빠 PC dhcp.ack.received | DHCP Ack 수신: 서버 192.168.8.1 가 192.168.8.100 확정
+    > 리눅스 dhclient: DHCPACK of 192.168.8.100 from 192.168.8.1
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 192.168.8.1.67 > 192.168.8.100.68: BOOTP/DHCP, Reply from 02:00:00:00:00:04, length 300 (DHCP-Message Option 53: ACK)
+    > tcpdump (아빠 PC 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+80 아빠 PC dhcp.bound | IP 획득: 192.168.8.100/24 (서브넷 마스크 255.255.255.0), 게이트웨이 192.168.8.1, DNS 192.168.8.1
+    > 리눅스 dhclient: bound to 192.168.8.100 -- renewal in 43200 seconds.
+80 아빠 PC arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.8.100 는 이제 02:00:00:00:00:04" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+80 아빠 PC link.transmit | 링크 전송: ARP 요청 (192.168.8.100?) pc_04:0 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+90 거실 스위치 frame.receive | eth2 수신: ARP 요청 (192.168.8.100?) [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+90 거실 스위치 switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth1, eth3]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+90 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.100?) switch_03:0 → router_02:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+90 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.100?) switch_03:2 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+100 집 Brume 3 frame.receive | lan1 수신: ARP 요청 (192.168.8.100?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+100 집 Brume 3 switch.flood | 브로드캐스트 → 다른 LAN 포트로 플러딩 [] + 전파로 무선 단말 1대
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+100 집 Brume 3 link.transmit | 링크 전송: ARP 요청 (192.168.8.100?) router_02:5 → phone_06:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+100 집 Brume 3 arp.request.received | Gratuitous ARP 수신: 192.168.8.100 는 02:00:00:00:00:04 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+100 스마트 TV frame.receive | 프레임 수신: ARP 요청 (192.168.8.100?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+100 스마트 TV arp.request.received | Gratuitous ARP 수신: 192.168.8.100 는 02:00:00:00:00:04 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+120 아이 태블릿 frame.receive | 프레임 수신: ARP 요청 (192.168.8.100?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+120 아이 태블릿 arp.request.received | Gratuitous ARP 수신: 192.168.8.100 는 02:00:00:00:00:04 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.100 tell 192.168.8.100, length 28
+200 스마트 TV arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.8.60 사용 시작
+200 스마트 TV arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.8.60 는 이제 02:00:00:00:00:05" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+200 스마트 TV link.transmit | 링크 전송: ARP 요청 (192.168.8.60?) pc_05:0 → switch_03:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+200 아이 태블릿 arp.probe | ARP Probe 에 아무도 답하지 않음 → 192.168.8.50 사용 시작
+200 아이 태블릿 arp.request.sent | Gratuitous ARP 브로드캐스트: "192.168.8.50 는 이제 02:00:00:00:00:06" — 이웃들이 옛 MAC 을 기억하고 있으면 고치도록
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+200 아이 태블릿 link.transmit | 링크 전송: ARP 요청 (192.168.8.50?) phone_06:0 → router_02:5 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+210 거실 스위치 frame.receive | eth3 수신: ARP 요청 (192.168.8.60?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+210 거실 스위치 switch.flood | 브로드캐스트 → eth3 제외 플러딩 [eth1, eth2]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+210 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.60?) switch_03:0 → router_02:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+210 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.60?) switch_03:1 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+220 집 Brume 3 frame.receive | 무선 슬롯 1 수신: ARP 요청 (192.168.8.50?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+220 집 Brume 3 switch.flood | 브로드캐스트 → 다른 LAN 포트로 플러딩 [lan1]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+220 집 Brume 3 link.transmit | 링크 전송: ARP 요청 (192.168.8.50?) router_02:1 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+220 집 Brume 3 arp.request.received | Gratuitous ARP 수신: 192.168.8.50 는 02:00:00:00:00:06 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+220 집 Brume 3 frame.receive | lan1 수신: ARP 요청 (192.168.8.60?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+220 집 Brume 3 switch.flood | 브로드캐스트 → 다른 LAN 포트로 플러딩 [] + 전파로 무선 단말 1대
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+220 집 Brume 3 link.transmit | 링크 전송: ARP 요청 (192.168.8.60?) router_02:5 → phone_06:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+220 집 Brume 3 arp.request.received | Gratuitous ARP 수신: 192.168.8.60 는 02:00:00:00:00:05 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+220 아빠 PC frame.receive | 프레임 수신: ARP 요청 (192.168.8.60?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+220 아빠 PC arp.request.received | Gratuitous ARP 수신: 192.168.8.60 는 02:00:00:00:00:05 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+230 거실 스위치 frame.receive | eth1 수신: ARP 요청 (192.168.8.50?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+230 거실 스위치 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth2, eth3]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+230 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.50?) switch_03:1 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+230 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.50?) switch_03:2 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+240 아이 태블릿 frame.receive | 프레임 수신: ARP 요청 (192.168.8.60?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+240 아이 태블릿 arp.request.received | Gratuitous ARP 수신: 192.168.8.60 는 02:00:00:00:00:05 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.60 tell 192.168.8.60, length 28
+240 아빠 PC frame.receive | 프레임 수신: ARP 요청 (192.168.8.50?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+240 아빠 PC arp.request.received | Gratuitous ARP 수신: 192.168.8.50 는 02:00:00:00:00:06 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+240 스마트 TV frame.receive | 프레임 수신: ARP 요청 (192.168.8.50?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+240 스마트 TV arp.request.received | Gratuitous ARP 수신: 192.168.8.50 는 02:00:00:00:00:06 (내 캐시엔 없음 → 변경 없음)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.50 tell 192.168.8.50, length 28
+## 30초 뒤
+## 스마트 TV → 8.8.8.8
+30240 스마트 TV action | [사용자] ping 8.8.8.8
+30240 스마트 TV icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+30240 스마트 TV ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.8.1 로 전달
+30240 스마트 TV arp.cache.miss | ARP 캐시에 192.168.8.1 없음 → 패킷 대기열에 보관 (1개)
+30240 스마트 TV arp.request.sent | ARP 요청 브로드캐스트: "192.168.8.1 의 MAC은?" (나는 192.168.8.60 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30240 스마트 TV link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) pc_05:0 → switch_03:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30250 거실 스위치 frame.receive | eth3 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:05 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30250 거실 스위치 switch.flood | 브로드캐스트 → eth3 제외 플러딩 [eth1, eth2]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30250 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) switch_03:0 → router_02:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30250 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) switch_03:1 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30260 집 Brume 3 frame.receive | lan1 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30260 집 Brume 3 switch.flood | 브로드캐스트 → 다른 LAN 포트로 플러딩 [] + 전파로 무선 단말 1대
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30260 집 Brume 3 link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) router_02:5 → phone_06:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30260 집 Brume 3 arp.request.received | ARP 요청 수신: "192.168.8.1 의 MAC은?" (보낸이 192.168.8.60 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30260 집 Brume 3 arp.cache.update | ARP 캐시 추가: 192.168.8.60 → 02:00:00:00:00:05 (요청의 보낸이 정보에서 학습)
+    > 리눅스 ip neigh: 192.168.8.60 dev eth0 lladdr 02:00:00:00:00:05 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30260 집 Brume 3 arp.reply.sent | ARP 응답 송신: "192.168.8.1 는 02:00:00:00:00:02" → 02:00:00:00:00:05 에게 유니캐스트
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30260 집 Brume 3 link.transmit | 링크 전송: ARP 응답 (192.168.8.1=02:00:00:00:00:02) router_02:1 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30260 아빠 PC frame.receive | 프레임 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30260 아빠 PC arp.request.received | ARP 요청 수신: "192.168.8.1 의 MAC은?" (보낸이 192.168.8.60 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30260 아빠 PC frame.drop | 192.168.8.1 는 내 IP(192.168.8.100) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30270 거실 스위치 frame.receive | eth1 수신: ARP 응답 (192.168.8.1=02:00:00:00:00:02) [02:00:00:00:00:02 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30270 거실 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:05 → eth3 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30270 거실 스위치 link.transmit | 링크 전송: ARP 응답 (192.168.8.1=02:00:00:00:00:02) switch_03:2 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30280 아이 태블릿 frame.receive | 프레임 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:05 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30280 아이 태블릿 arp.request.received | ARP 요청 수신: "192.168.8.1 의 MAC은?" (보낸이 192.168.8.60 / 02:00:00:00:00:05)
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30280 아이 태블릿 frame.drop | 192.168.8.1 는 내 IP(192.168.8.50) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:05 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.60, length 28
+30280 스마트 TV frame.receive | 프레임 수신: ARP 응답 (192.168.8.1=02:00:00:00:00:02) [02:00:00:00:00:02 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (스마트 TV 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+30280 스마트 TV arp.reply.received | ARP 응답 수신: 192.168.8.1 는 02:00:00:00:00:02
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (스마트 TV 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+30280 스마트 TV arp.cache.update | ARP 캐시 추가: 192.168.8.1 → 02:00:00:00:00:02 (응답에서 학습)
+    > 리눅스 ip neigh: 192.168.8.1 dev eth0 lladdr 02:00:00:00:00:02 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (스마트 TV 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+30280 스마트 TV ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
+30280 스마트 TV frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:05 → 02:00:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+30280 스마트 TV link.transmit | 링크 전송: ICMP Echo 요청 seq=1 pc_05:0 → switch_03:2 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+30290 거실 스위치 frame.receive | eth3 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:05 → 02:00:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+30290 거실 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:02 → eth1 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+30290 거실 스위치 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_03:0 → router_02:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+30300 집 Brume 3 frame.receive | lan1 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:05 → 02:00:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.1 tell 203.0.113.2, length 28
+30300 집 Brume 3 nat.translate | NAT 변환: 192.168.8.60 (ICMP id 5073) → 203.0.113.2 (ICMP id 40000) — 사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.1 tell 203.0.113.2, length 28
+30300 집 Brume 3 ip.forward | 라우팅: 8.8.8.8 는 외부 → WAN 인터페이스로 전달 (TTL 64 → 63)
+    > 시스코 debug ip packet: IP: s=192.168.8.60, d=8.8.8.8 (wan), len 84, forward
+    > tcpdump -n -e: 02:00:00:00:00:05 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.60 > 8.8.8.8: ICMP echo request, id 5073, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.1 tell 203.0.113.2, length 28
+30300 집 Brume 3 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 203.0.113.1 로 전달
+30300 집 Brume 3 arp.cache.miss | ARP 캐시에 203.0.113.1 없음 → 패킷 대기열에 보관 (1개)
+30300 집 Brume 3 arp.request.sent | ARP 요청 브로드캐스트: "203.0.113.1 의 MAC은?" (나는 203.0.113.2 / 02:00:00:01:00:02)
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.1 tell 203.0.113.2, length 28
+30300 집 Brume 3 link.transmit | 링크 전송: ARP 요청 (203.0.113.1?) router_02:0 → internet_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.1 tell 203.0.113.2, length 28
+30310 internet-1 frame.receive | 프레임 수신: ARP 요청 (203.0.113.1?) [02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.1 tell 203.0.113.2, length 28
+    > tcpdump (internet-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype ARP (0x0806): ARP, Reply 203.0.113.1 is-at 02:00:00:00:00:01, length 28
+30310 internet-1 arp.request.received | ARP 요청 수신: "203.0.113.1 의 MAC은?" (보낸이 203.0.113.2 / 02:00:00:01:00:02)
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.1 tell 203.0.113.2, length 28
+    > tcpdump (internet-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype ARP (0x0806): ARP, Reply 203.0.113.1 is-at 02:00:00:00:00:01, length 28
+30310 internet-1 arp.cache.update | ARP 캐시 추가: 203.0.113.2 → 02:00:00:01:00:02 (요청의 보낸이 정보에서 학습)
+    > 리눅스 ip neigh: 203.0.113.2 dev eth0 lladdr 02:00:00:01:00:02 REACHABLE
+    > tcpdump -n -e: 02:00:00:01:00:02 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 203.0.113.1 tell 203.0.113.2, length 28
+    > tcpdump (internet-1 이 내보낸 쪽): 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype ARP (0x0806): ARP, Reply 203.0.113.1 is-at 02:00:00:00:00:01, length 28
+30310 internet-1 arp.reply.sent | ARP 응답 송신: "203.0.113.1 는 02:00:00:00:00:01" → 02:00:00:01:00:02 에게 유니캐스트
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype ARP (0x0806): ARP, Reply 203.0.113.1 is-at 02:00:00:00:00:01, length 28
+30310 internet-1 link.transmit | 링크 전송: ARP 응답 (203.0.113.1=02:00:00:00:00:01) internet_01:0 → router_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype ARP (0x0806): ARP, Reply 203.0.113.1 is-at 02:00:00:00:00:01, length 28
+30320 집 Brume 3 frame.receive | wan 수신: ARP 응답 (203.0.113.1=02:00:00:00:00:01) [02:00:00:00:00:01 → 내 WAN MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype ARP (0x0806): ARP, Reply 203.0.113.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
+30320 집 Brume 3 arp.reply.received | ARP 응답 수신: 203.0.113.1 는 02:00:00:00:00:01
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype ARP (0x0806): ARP, Reply 203.0.113.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
+30320 집 Brume 3 arp.cache.update | ARP 캐시 추가: 203.0.113.1 → 02:00:00:00:00:01 (응답에서 학습)
+    > 리눅스 ip neigh: 203.0.113.1 dev eth0 lladdr 02:00:00:00:00:01 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype ARP (0x0806): ARP, Reply 203.0.113.1 is-at 02:00:00:00:00:01, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
+30320 집 Brume 3 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (20ms 대기)
+30320 집 Brume 3 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:01:00:02 → 02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
+30320 집 Brume 3 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 router_02:0 → internet_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
+30330 internet-1 frame.receive | 프레임 수신: ICMP Echo 요청 seq=1 [02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
+30330 internet-1 inet.forward | 인터넷 경로로 8.8.8.8 (Google DNS) 에 전달 — 중간 라우터들은 생략, 왕복 60ms
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40000, seq 1, length 64
+30390 internet-1 inet.reply | 8.8.8.8 (Google DNS) 가 응답 → 203.0.113.2 로 회신 (TTL 54: 중간 라우터 10개를 지났다고 가정)
+30390 internet-1 ip.route | 203.0.113.2 는 같은 서브넷 203.0.113.0/24 → 직접 전달 (next hop = 203.0.113.2)
+30390 internet-1 arp.cache.hit | ARP 캐시 적중: 203.0.113.2 → 02:00:00:01:00:02
+30390 internet-1 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40000, seq 1, length 64
+30390 internet-1 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 internet_01:0 → router_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40000, seq 1, length 64
+30400 집 Brume 3 frame.receive | wan 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 내 WAN MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40000, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+30400 집 Brume 3 nat.restore | NAT 역변환: 203.0.113.2 (ICMP id 40000) → 192.168.8.60 (id 5073) — 테이블에 기록된 내부 호스트로 되돌림
+    > 시스코 debug ip nat: NAT*: s=8.8.8.8, d=203.0.113.2->192.168.8.60 [40000]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40000, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+30400 집 Brume 3 ip.forward | 라우팅: 192.168.8.60 는 LAN 안 → LAN 인터페이스로 전달 (TTL 54 → 53)
+    > 시스코 debug ip packet: IP: s=8.8.8.8, d=203.0.113.2 (?), len 84, forward
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40000, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+30400 집 Brume 3 ip.route | 192.168.8.60 는 같은 서브넷 192.168.8.0/24 → 직접 전달 (next hop = 192.168.8.60)
+30400 집 Brume 3 arp.cache.hit | ARP 캐시 적중: 192.168.8.60 → 02:00:00:00:00:05
+30400 집 Brume 3 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:02 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+30400 집 Brume 3 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 router_02:1 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+30410 거실 스위치 frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:02 → 02:00:00:00:00:05]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+30410 거실 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:05 → eth3 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+30410 거실 스위치 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_03:2 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+30420 스마트 TV frame.receive | 프레임 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:02 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+30420 스마트 TV icmp.reply.received | ping 성공: 8.8.8.8 seq=1 RTT=180ms
+    > ping: 64 bytes from 8.8.8.8: icmp_seq=1 ttl=53 time=180 ms
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:05, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.60: ICMP echo reply, id 5073, seq 1, length 64
+## 아빠 PC → 8.8.8.8
+30420 아빠 PC action | [사용자] ping 8.8.8.8
+30420 아빠 PC icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+30420 아빠 PC ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.8.1 로 전달
+30420 아빠 PC arp.cache.miss | ARP 캐시에 192.168.8.1 없음 → 패킷 대기열에 보관 (1개)
+30420 아빠 PC arp.request.sent | ARP 요청 브로드캐스트: "192.168.8.1 의 MAC은?" (나는 192.168.8.100 / 02:00:00:00:00:04)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30420 아빠 PC link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) pc_04:0 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30430 거실 스위치 frame.receive | eth2 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:04 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30430 거실 스위치 switch.flood | 브로드캐스트 → eth2 제외 플러딩 [eth1, eth3]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30430 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) switch_03:0 → router_02:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30430 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) switch_03:2 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30440 집 Brume 3 frame.receive | lan1 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30440 집 Brume 3 switch.flood | 브로드캐스트 → 다른 LAN 포트로 플러딩 [] + 전파로 무선 단말 1대
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30440 집 Brume 3 link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) router_02:5 → phone_06:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30440 집 Brume 3 arp.request.received | ARP 요청 수신: "192.168.8.1 의 MAC은?" (보낸이 192.168.8.100 / 02:00:00:00:00:04)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30440 집 Brume 3 arp.cache.update | ARP 캐시 추가: 192.168.8.100 → 02:00:00:00:00:04 (요청의 보낸이 정보에서 학습)
+    > 리눅스 ip neigh: 192.168.8.100 dev eth0 lladdr 02:00:00:00:00:04 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30440 집 Brume 3 arp.reply.sent | ARP 응답 송신: "192.168.8.1 는 02:00:00:00:00:02" → 02:00:00:00:00:04 에게 유니캐스트
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30440 집 Brume 3 link.transmit | 링크 전송: ARP 응답 (192.168.8.1=02:00:00:00:00:02) router_02:1 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30440 스마트 TV frame.receive | 프레임 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30440 스마트 TV arp.request.received | ARP 요청 수신: "192.168.8.1 의 MAC은?" (보낸이 192.168.8.100 / 02:00:00:00:00:04)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30440 스마트 TV frame.drop | 192.168.8.1 는 내 IP(192.168.8.60) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30450 거실 스위치 frame.receive | eth1 수신: ARP 응답 (192.168.8.1=02:00:00:00:00:02) [02:00:00:00:00:02 → 02:00:00:00:00:04]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30450 거실 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:04 → eth2 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30450 거실 스위치 link.transmit | 링크 전송: ARP 응답 (192.168.8.1=02:00:00:00:00:02) switch_03:1 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30460 아이 태블릿 frame.receive | 프레임 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:04 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30460 아이 태블릿 arp.request.received | ARP 요청 수신: "192.168.8.1 의 MAC은?" (보낸이 192.168.8.100 / 02:00:00:00:00:04)
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30460 아이 태블릿 frame.drop | 192.168.8.1 는 내 IP(192.168.8.50) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:04 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.100, length 28
+30460 아빠 PC frame.receive | 프레임 수신: ARP 응답 (192.168.8.1=02:00:00:00:00:02) [02:00:00:00:00:02 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (아빠 PC 이 내보낸 쪽): 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+30460 아빠 PC arp.reply.received | ARP 응답 수신: 192.168.8.1 는 02:00:00:00:00:02
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (아빠 PC 이 내보낸 쪽): 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+30460 아빠 PC arp.cache.update | ARP 캐시 추가: 192.168.8.1 → 02:00:00:00:00:02 (응답에서 학습)
+    > 리눅스 ip neigh: 192.168.8.1 dev eth0 lladdr 02:00:00:00:00:02 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (아빠 PC 이 내보낸 쪽): 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+30460 아빠 PC ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
+30460 아빠 PC frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:04 → 02:00:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+30460 아빠 PC link.transmit | 링크 전송: ICMP Echo 요청 seq=1 pc_04:0 → switch_03:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+30470 거실 스위치 frame.receive | eth2 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:04 → 02:00:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+30470 거실 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:02 → eth1 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+30470 거실 스위치 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 switch_03:0 → router_02:1 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+30480 집 Brume 3 frame.receive | lan1 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:04 → 02:00:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
+30480 집 Brume 3 nat.translate | NAT 변환: 192.168.8.100 (ICMP id 5072) → 203.0.113.2 (ICMP id 40001) — 사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록
+    > 시스코 debug ip nat: NAT: s=192.168.8.100->203.0.113.2, d=8.8.8.8 [40001]
+    > 리눅스 conntrack -E: [NEW] icmp     1 30 src=192.168.8.100 dst=8.8.8.8 type=8 code=0 id=5072 [UNREPLIED] src=8.8.8.8 dst=203.0.113.2 type=0 code=0 id=40001
+    > tcpdump -n -e: 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
+30480 집 Brume 3 ip.forward | 라우팅: 8.8.8.8 는 외부 → WAN 인터페이스로 전달 (TTL 64 → 63)
+    > 시스코 debug ip packet: IP: s=192.168.8.100, d=8.8.8.8 (wan), len 84, forward
+    > tcpdump -n -e: 02:00:00:00:00:04 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.100 > 8.8.8.8: ICMP echo request, id 5072, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
+30480 집 Brume 3 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 203.0.113.1 로 전달
+30480 집 Brume 3 arp.cache.hit | ARP 캐시 적중: 203.0.113.1 → 02:00:00:00:00:01
+30480 집 Brume 3 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:01:00:02 → 02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
+30480 집 Brume 3 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 router_02:0 → internet_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
+30490 internet-1 frame.receive | 프레임 수신: ICMP Echo 요청 seq=1 [02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
+30490 internet-1 inet.forward | 인터넷 경로로 8.8.8.8 (Google DNS) 에 전달 — 중간 라우터들은 생략, 왕복 60ms
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40001, seq 1, length 64
+30550 internet-1 inet.reply | 8.8.8.8 (Google DNS) 가 응답 → 203.0.113.2 로 회신 (TTL 54: 중간 라우터 10개를 지났다고 가정)
+30550 internet-1 ip.route | 203.0.113.2 는 같은 서브넷 203.0.113.0/24 → 직접 전달 (next hop = 203.0.113.2)
+30550 internet-1 arp.cache.hit | ARP 캐시 적중: 203.0.113.2 → 02:00:00:01:00:02
+30550 internet-1 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40001, seq 1, length 64
+30550 internet-1 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 internet_01:0 → router_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40001, seq 1, length 64
+30560 집 Brume 3 frame.receive | wan 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 내 WAN MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40001, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+30560 집 Brume 3 nat.restore | NAT 역변환: 203.0.113.2 (ICMP id 40001) → 192.168.8.100 (id 5072) — 테이블에 기록된 내부 호스트로 되돌림
+    > 시스코 debug ip nat: NAT*: s=8.8.8.8, d=203.0.113.2->192.168.8.100 [40001]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40001, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+30560 집 Brume 3 ip.forward | 라우팅: 192.168.8.100 는 LAN 안 → LAN 인터페이스로 전달 (TTL 54 → 53)
+    > 시스코 debug ip packet: IP: s=8.8.8.8, d=203.0.113.2 (?), len 84, forward
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40001, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+30560 집 Brume 3 ip.route | 192.168.8.100 는 같은 서브넷 192.168.8.0/24 → 직접 전달 (next hop = 192.168.8.100)
+30560 집 Brume 3 arp.cache.hit | ARP 캐시 적중: 192.168.8.100 → 02:00:00:00:00:04
+30560 집 Brume 3 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:02 → 02:00:00:00:00:04]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+30560 집 Brume 3 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 router_02:1 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+30570 거실 스위치 frame.receive | eth1 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:02 → 02:00:00:00:00:04]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+30570 거실 스위치 switch.forward | MAC 테이블 조회: 02:00:00:00:00:04 → eth2 로 전달
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+30570 거실 스위치 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 switch_03:1 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+30580 아빠 PC frame.receive | 프레임 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:02 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+30580 아빠 PC icmp.reply.received | ping 성공: 8.8.8.8 seq=1 RTT=160ms
+    > ping: 64 bytes from 8.8.8.8: icmp_seq=1 ttl=53 time=160 ms
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:04, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.100: ICMP echo reply, id 5072, seq 1, length 64
+## 아이 태블릿 → 8.8.8.8
+30580 아이 태블릿 action | [사용자] ping 8.8.8.8
+30580 아이 태블릿 icmp.echo.sent | ping 8.8.8.8 (seq=1) → ICMP Echo 요청 생성
+30580 아이 태블릿 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 192.168.8.1 로 전달
+30580 아이 태블릿 arp.cache.miss | ARP 캐시에 192.168.8.1 없음 → 패킷 대기열에 보관 (1개)
+30580 아이 태블릿 arp.request.sent | ARP 요청 브로드캐스트: "192.168.8.1 의 MAC은?" (나는 192.168.8.50 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30580 아이 태블릿 link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) phone_06:0 → router_02:5 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30600 집 Brume 3 frame.receive | 무선 슬롯 1 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30600 집 Brume 3 switch.flood | 브로드캐스트 → 다른 LAN 포트로 플러딩 [lan1]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30600 집 Brume 3 link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) router_02:1 → switch_03:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30600 집 Brume 3 arp.request.received | ARP 요청 수신: "192.168.8.1 의 MAC은?" (보낸이 192.168.8.50 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30600 집 Brume 3 arp.cache.update | ARP 캐시 추가: 192.168.8.50 → 02:00:00:00:00:06 (요청의 보낸이 정보에서 학습)
+    > 리눅스 ip neigh: 192.168.8.50 dev eth0 lladdr 02:00:00:00:00:06 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30600 집 Brume 3 arp.reply.sent | ARP 응답 송신: "192.168.8.1 는 02:00:00:00:00:02" → 02:00:00:00:00:06 에게 유니캐스트
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30600 집 Brume 3 link.transmit | 링크 전송: ARP 응답 (192.168.8.1=02:00:00:00:00:02) router_02:5 → phone_06:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+30610 거실 스위치 frame.receive | eth1 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:06 → ff:ff:ff:ff:ff:ff]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30610 거실 스위치 switch.flood | 브로드캐스트 → eth1 제외 플러딩 [eth2, eth3]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30610 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) switch_03:1 → pc_04:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30610 거실 스위치 link.transmit | 링크 전송: ARP 요청 (192.168.8.1?) switch_03:2 → pc_05:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+    > tcpdump (거실 스위치 이 내보낸 쪽): 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30620 아이 태블릿 frame.receive | 프레임 수신: ARP 응답 (192.168.8.1=02:00:00:00:00:02) [02:00:00:00:00:02 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (아이 태블릿 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.50 > 8.8.8.8: ICMP echo request, id 4489, seq 1, length 64
+30620 아이 태블릿 arp.reply.received | ARP 응답 수신: 192.168.8.1 는 02:00:00:00:00:02
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (아이 태블릿 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.50 > 8.8.8.8: ICMP echo request, id 4489, seq 1, length 64
+30620 아이 태블릿 arp.cache.update | ARP 캐시 추가: 192.168.8.1 → 02:00:00:00:00:02 (응답에서 학습)
+    > 리눅스 ip neigh: 192.168.8.1 dev eth0 lladdr 02:00:00:00:00:02 REACHABLE
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype ARP (0x0806): ARP, Reply 192.168.8.1 is-at 02:00:00:00:00:02, length 28
+    > tcpdump (아이 태블릿 이 내보낸 쪽): 02:00:00:00:00:06 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.50 > 8.8.8.8: ICMP echo request, id 4489, seq 1, length 64
+30620 아이 태블릿 ip.dequeue | ARP 해석 완료 → 대기열 패킷 전송 (40ms 대기)
+30620 아이 태블릿 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:00:00:06 → 02:00:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.50 > 8.8.8.8: ICMP echo request, id 4489, seq 1, length 64
+30620 아이 태블릿 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 phone_06:0 → router_02:5 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.50 > 8.8.8.8: ICMP echo request, id 4489, seq 1, length 64
+30620 아빠 PC frame.receive | 프레임 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30620 아빠 PC arp.request.received | ARP 요청 수신: "192.168.8.1 의 MAC은?" (보낸이 192.168.8.50 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30620 아빠 PC frame.drop | 192.168.8.1 는 내 IP(192.168.8.100) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30620 스마트 TV frame.receive | 프레임 수신: ARP 요청 (192.168.8.1?) [02:00:00:00:00:06 → 브로드캐스트]
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30620 스마트 TV arp.request.received | ARP 요청 수신: "192.168.8.1 의 MAC은?" (보낸이 192.168.8.50 / 02:00:00:00:00:06)
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30620 스마트 TV frame.drop | 192.168.8.1 는 내 IP(192.168.8.60) 아님 → 응답 안 함
+    > tcpdump -n -e: 02:00:00:00:00:06 > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806): ARP, Request who-has 192.168.8.1 tell 192.168.8.50, length 28
+30640 집 Brume 3 frame.receive | 무선 슬롯 1 수신: ICMP Echo 요청 seq=1 [02:00:00:00:00:06 → 02:00:00:00:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.50 > 8.8.8.8: ICMP echo request, id 4489, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
+30640 집 Brume 3 nat.translate | NAT 변환: 192.168.8.50 (ICMP id 4489) → 203.0.113.2 (ICMP id 40002) — 사설 주소는 인터넷에서 쓸 수 없으므로 공인 주소로 바꾸고 테이블에 기록
+    > 시스코 debug ip nat: NAT: s=192.168.8.50->203.0.113.2, d=8.8.8.8 [40002]
+    > 리눅스 conntrack -E: [NEW] icmp     1 30 src=192.168.8.50 dst=8.8.8.8 type=8 code=0 id=4489 [UNREPLIED] src=8.8.8.8 dst=203.0.113.2 type=0 code=0 id=40002
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.50 > 8.8.8.8: ICMP echo request, id 4489, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
+30640 집 Brume 3 ip.forward | 라우팅: 8.8.8.8 는 외부 → WAN 인터페이스로 전달 (TTL 64 → 63)
+    > 시스코 debug ip packet: IP: s=192.168.8.50, d=8.8.8.8 (wan), len 84, forward
+    > tcpdump -n -e: 02:00:00:00:00:06 > 02:00:00:00:00:02, ethertype IPv4 (0x0800): IP 192.168.8.50 > 8.8.8.8: ICMP echo request, id 4489, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
+30640 집 Brume 3 ip.route | 8.8.8.8 는 다른 서브넷 → 게이트웨이 203.0.113.1 로 전달
+30640 집 Brume 3 arp.cache.hit | ARP 캐시 적중: 203.0.113.1 → 02:00:00:00:00:01
+30640 집 Brume 3 frame.send | 프레임 송신: ICMP Echo 요청 seq=1 [02:00:00:01:00:02 → 02:00:00:00:00:01]
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
+30640 집 Brume 3 link.transmit | 링크 전송: ICMP Echo 요청 seq=1 router_02:0 → internet_01:0 (10ms)
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
+30650 internet-1 frame.receive | 프레임 수신: ICMP Echo 요청 seq=1 [02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
+30650 internet-1 inet.forward | 인터넷 경로로 8.8.8.8 (Google DNS) 에 전달 — 중간 라우터들은 생략, 왕복 60ms
+    > tcpdump -n -e: 02:00:00:01:00:02 > 02:00:00:00:00:01, ethertype IPv4 (0x0800): IP 203.0.113.2 > 8.8.8.8: ICMP echo request, id 40002, seq 1, length 64
+30710 internet-1 inet.reply | 8.8.8.8 (Google DNS) 가 응답 → 203.0.113.2 로 회신 (TTL 54: 중간 라우터 10개를 지났다고 가정)
+30710 internet-1 ip.route | 203.0.113.2 는 같은 서브넷 203.0.113.0/24 → 직접 전달 (next hop = 203.0.113.2)
+30710 internet-1 arp.cache.hit | ARP 캐시 적중: 203.0.113.2 → 02:00:00:01:00:02
+30710 internet-1 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 02:00:00:01:00:02]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40002, seq 1, length 64
+30710 internet-1 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 internet_01:0 → router_02:0 (10ms)
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40002, seq 1, length 64
+30720 집 Brume 3 frame.receive | wan 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:01 → 내 WAN MAC]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40002, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.50: ICMP echo reply, id 4489, seq 1, length 64
+30720 집 Brume 3 nat.restore | NAT 역변환: 203.0.113.2 (ICMP id 40002) → 192.168.8.50 (id 4489) — 테이블에 기록된 내부 호스트로 되돌림
+    > 시스코 debug ip nat: NAT*: s=8.8.8.8, d=203.0.113.2->192.168.8.50 [40002]
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40002, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.50: ICMP echo reply, id 4489, seq 1, length 64
+30720 집 Brume 3 ip.forward | 라우팅: 192.168.8.50 는 LAN 안 → LAN 인터페이스로 전달 (TTL 54 → 53)
+    > 시스코 debug ip packet: IP: s=8.8.8.8, d=203.0.113.2 (?), len 84, forward
+    > tcpdump -n -e: 02:00:00:00:00:01 > 02:00:00:01:00:02, ethertype IPv4 (0x0800): IP 8.8.8.8 > 203.0.113.2: ICMP echo reply, id 40002, seq 1, length 64
+    > tcpdump (집 Brume 3 이 내보낸 쪽): 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.50: ICMP echo reply, id 4489, seq 1, length 64
+30720 집 Brume 3 ip.route | 192.168.8.50 는 같은 서브넷 192.168.8.0/24 → 직접 전달 (next hop = 192.168.8.50)
+30720 집 Brume 3 arp.cache.hit | ARP 캐시 적중: 192.168.8.50 → 02:00:00:00:00:06
+30720 집 Brume 3 frame.send | 프레임 송신: ICMP Echo 응답 seq=1 [02:00:00:00:00:02 → 02:00:00:00:00:06]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.50: ICMP echo reply, id 4489, seq 1, length 64
+30720 집 Brume 3 link.transmit | 링크 전송: ICMP Echo 응답 seq=1 router_02:5 → phone_06:0 (20ms)
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.50: ICMP echo reply, id 4489, seq 1, length 64
+30740 아이 태블릿 frame.receive | 프레임 수신: ICMP Echo 응답 seq=1 [02:00:00:00:00:02 → 내 MAC]
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.50: ICMP echo reply, id 4489, seq 1, length 64
+30740 아이 태블릿 icmp.reply.received | ping 성공: 8.8.8.8 seq=1 RTT=160ms
+    > ping: 64 bytes from 8.8.8.8: icmp_seq=1 ttl=53 time=160 ms
+    > tcpdump -n -e: 02:00:00:00:00:02 > 02:00:00:00:00:06, ethertype IPv4 (0x0800): IP 8.8.8.8 > 192.168.8.50: ICMP echo reply, id 4489, seq 1, length 64

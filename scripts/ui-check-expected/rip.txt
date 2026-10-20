@@ -1,0 +1,2 @@
+gw-a RIP routes: 3 | badge: 1
+pc-a → 192.168.3.10 via RIP: 192.168.3.10응답 200ms

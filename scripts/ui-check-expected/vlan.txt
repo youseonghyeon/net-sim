@@ -1,0 +1,4 @@
+vlan example devices: 8 | trunk ports: 1 | VLAN badge: true
+ping same VLAN: 192.168.10.11 응답 80ms
+ping across VLAN via gateway: 192.168.20.20 응답 160ms
+ping internet from VLAN 10: google.com (142.250.196.110) 응답 140ms

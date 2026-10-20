@@ -1,0 +1,5 @@
+dropin kid → 8.8.8.8: 8.8.8.8 응답 260ms
+dropin on: 1
+admin toggles: 3 | block rows: 1
+cloud status: 연결됨 · 원격 관리 0번
+cloud manage row: GL-0004 WAN 192.168.0.2 · 기기 0대 원격 관리

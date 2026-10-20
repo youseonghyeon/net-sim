@@ -1,13 +1,16 @@
 // 브라우저 스모크 테스트: 예제를 실제 브라우저에서 열어 편집·진단·설정 화면이 동작하는지 확인한다 (스크린샷은 .shots/).
 // 실행:
-//   npm run ui-check                 구간 전부를 워커 4개가 나눠 동시에 돌린다 (완료 전 필수)
+//   npm run ui-check                 구간 전부를 워커 2개가 나눠 동시에 돌린다 (완료 전 필수). 워커마다 headless Chrome 하나 — CPU 발열 때문에 기본 2개
 //   npm run ui-check -- mwan lb      이름이 같거나 "이름-" 으로 시작하는 구간만 (개발 중엔 고친 기능의 구간만)
 //   npm run ui-check -- --list       구간 이름 목록
-//   --workers=N                      동시 워커 수. 1 이면 한 프로세스에서 차례로 돌며 로그가 바로 보인다
+//   --workers=N                      동시 워커 수(기본 2, 환경 변수 UI_CHECK_WORKERS 로도). 1 이면 한 프로세스에서 차례로 돌며 로그가 바로 보인다
+//   --update                         구간 출력의 기대값(scripts/ui-check-expected/)을 지금 출력으로 다시 쓴다
+// 구간이 찍는 줄(console.log)은 기대값과 같아야 통과한다 — 핑 결과·표·선택 수가 바뀌면 그 구간이 실패한다(출력만 하고 단언하지 않던 확인을 모두 잡는다).
+// 실행마다 달라지는 부분은 기대값 파일에서 ⟨*⟩ 로 바꿔 둔다. 의도한 변화면 diff 를 보고 --update.
 // 구간 규칙: 구간마다 빈 페이지(localStorage 비움, 4배속)에서 시작하고 다른 구간의 상태에 기대지 않는다 — 워커가 아무 순서로 나눠 가진다.
 // 고정 대기(waitForTimeout)를 늘리지 않는다: 시뮬레이션이 조용해질 때까지는 waitIdle(), 화면에 나올 결과는 waitForFunction 으로 기다린다.
 import { fork } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { format } from "node:util";
 import { chromium } from "playwright";
@@ -1951,8 +1954,44 @@ async function runSection(s, url) {
 }
 
 const sec = (ms) => `${(ms / 1000).toFixed(1)}s`;
+
+/** 구간 출력 기대값: 줄마다 같아야 하고 ⟨*⟩ 는 아무 글자 (실행마다 달라지는 값). 없으면 지금 출력을 저장 */
+const EXPECTED_DIR = "scripts/ui-check-expected";
+const UPDATE = process.argv.includes("--update");
+function checkExpected(r, lines) {
+  if (!r.ok) return r;
+  mkdirSync(EXPECTED_DIR, { recursive: true });
+  const file = `${EXPECTED_DIR}/${r.name}.txt`;
+  // waitIdle 의 "조용해지지 않아 그냥 진행" 안내는 기계가 바쁠 때만 끼어드니 비교하지 않는다
+  const actual = lines.join("\n").split("\n").filter((l) => !l.startsWith("(waitIdle:"));
+  const existed = existsSync(file);
+  if (UPDATE || !existed) {
+    // 기대값의 ⟨*⟩ 는 다시 써도 남긴다 (그 줄이 여전히 맞으면 기대값 줄을 그대로)
+    const old = existed ? readFileSync(file, "utf8").replace(/\n$/, "").split("\n") : [];
+    const merged = actual.map((l, i) => (old[i] !== undefined && old[i].includes("⟨*⟩") && lineMatches(old[i], l) ? old[i] : l));
+    writeFileSync(file, merged.join("\n") + "\n");
+    return { ...r, note: `기대 출력 ${existed ? "다시 씀" : "새로 저장"}: ${file}` };
+  }
+  const expected = readFileSync(file, "utf8").replace(/\n$/, "").split("\n");
+  const n = Math.max(expected.length, actual.length);
+  for (let i = 0; i < n; i++) {
+    if (expected[i] !== undefined && actual[i] !== undefined && lineMatches(expected[i], actual[i])) continue;
+    const ctx = (a, k) => (a[k] === undefined ? "(없음)" : a[k]);
+    return {
+      ...r,
+      ok: false,
+      error: `[문제] 출력 ${i + 1}번째 줄이 기대와 다름\n  기대: ${ctx(expected, i)}\n  실제: ${ctx(actual, i)}\n[해결] 회귀면 고치고, 의도한 변화면 npm run ui-check -- ${r.name} --update (실행마다 달라지는 값은 기대값 파일에서 ⟨*⟩ 로)\n[참조] ${file}`,
+    };
+  }
+  return r;
+}
+function lineMatches(expected, actual) {
+  if (!expected.includes("⟨*⟩")) return expected === actual;
+  const re = new RegExp("^" + expected.split("⟨*⟩").map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*?") + "$", "s");
+  return re.test(actual);
+}
 function printResult(r, lines) {
-  console.log(`── ${r.name}  ${r.ok ? "통과" : "실패"} ${sec(r.ms)}`);
+  console.log(`── ${r.name}  ${r.ok ? "통과" : "실패"} ${sec(r.ms)}${r.note ? `  (${r.note})` : ""}`);
   for (const l of lines) console.log("  " + l.replace(/\n/g, "\n  "));
   if (!r.ok) console.log("  [실패] " + r.error.replace(/\n/g, "\n  "));
 }
@@ -1968,8 +2007,9 @@ function runWorker(queue, url, results) {
     };
     child.on("message", (m) => {
       if (m.ready) return next();
-      printResult(m, m.lines);
-      results.push(m);
+      const r = checkExpected(m, m.lines);
+      printResult(r, m.lines);
+      results.push(r);
       next();
     });
     child.on("exit", (code) => {
@@ -2015,7 +2055,8 @@ if (process.argv.includes("--child")) {
   }
   const picked = names.length ? SECTIONS.filter((s) => names.some((n) => match(s, n))) : SECTIONS;
   const w = args.find((a) => a.startsWith("--workers="));
-  const workers = Math.max(1, Math.min(w ? Number(w.split("=")[1]) || 1 : 4, picked.length));
+  // 워커마다 headless Chrome 하나 — 기본 2개 (4개는 노트북 CPU 를 100도 넘게 달군다)
+  const workers = Math.max(1, Math.min(w ? Number(w.split("=")[1]) || 1 : Number(process.env.UI_CHECK_WORKERS) || 2, picked.length));
   const server = await createServer({ server: { port: 5199 }, logLevel: "silent" });
   await server.listen();
   const url = server.resolvedUrls.local[0];
@@ -2023,9 +2064,16 @@ if (process.argv.includes("--child")) {
   const results = [];
   if (workers === 1) {
     const browser = await openPage();
+    const log = console.log;
     for (const s of picked) {
-      console.log(`── ${s.name} …`);
-      const r = await runSection(s, url);
+      log(`── ${s.name} …`);
+      const lines = [];
+      console.log = (...a) => {
+        lines.push(format(...a));
+        log(...a);
+      };
+      const r = checkExpected(await runSection(s, url), lines);
+      console.log = log;
       results.push(r);
       printResult(r, []);
     }

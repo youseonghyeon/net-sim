@@ -1,0 +1,4 @@
+adguard ping ad: doubleclick.net 실패 · DNS 가 막은 이름 (0.0.0.0)
+adguard stats: 질의 1 · 차단 1 (100%) | kid rows: 1
+adguard rules: ["ads.example.com","track.example.net"]
+adguard log rows: 1

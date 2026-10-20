@@ -1,0 +1,3 @@
+vpn ping: 192.168.2.10응답 240ms
+vpn section: 2 | remote rows: 1 | badge: 1
+vpn packet card: 이더넷 (L2) > IPv4 (L3) > UDP (L4) > VPN (WireGuard 식) > 터널 안 · IPv4 (L3) > 터널 안 · ICMP

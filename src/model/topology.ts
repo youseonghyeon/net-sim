@@ -1152,6 +1152,11 @@ export function newId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${idSeq.toString(36)}`;
 }
 
+/** 골든 트레이스 테스트용: id 순번을 처음부터 (Date.now 를 고정해 두면 예제마다 같은 id — 키·포트·xid 가 id 해시에서 나온다) */
+export function resetIdSequence(): void {
+  idSeq = 0;
+}
+
 /** 같은 종류 중 비어 있는 가장 작은 번호로 이름을 만든다 (pc-1, pc-2 …) */
 export function nextName(kind: DeviceKind, devices: Device[]): string {
   const prefix = DEVICE_SPECS[kind].namePrefix;

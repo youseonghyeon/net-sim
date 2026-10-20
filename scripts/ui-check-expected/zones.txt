@@ -1,0 +1,8 @@
+zones (예제 3 + 새로 1): 3 | panel: 영역 | members: 영역 · 안의 장치 3개
+zone label: 컨테이너들
+zone drag moved web by (영역만 이동이라 0): 0
+zones after draw: 4 | tool back to select: 선택
+zones after delete: 3 | devices intact: 12
+pasted zone selected: 1 | moved with devices: yes
+rail width: 40 | button gap right: 6
+dblclick opens inspector: yes | web서버
