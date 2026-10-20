@@ -367,6 +367,7 @@ function PingRunSummary({ node }: { node: Host }) {
 
 /** P2P 연결: 상대 이름(다른 장치의 P2P 앱 이름)으로 연결하고 지금 상태를 한 줄로 */
 function P2pDiag({ d, node, peer, setPeer }: { d: Device; node: Host; peer: string; setPeer: (v: string) => void }) {
+  void simVersion.value; // 부모와 props 가 같아도 연결 상태가 바뀌면 다시 그린다 (LESSONS 4zi)
   const names = topology.value.devices
     .filter((x) => x.id !== d.id && x.host?.p2p?.enabled)
     .map((x) => x.host!.p2p!.name?.trim() || x.name)
