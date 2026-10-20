@@ -73,7 +73,7 @@
 - **설정 적용기 맵** — 장치마다 effective 객체 하나에서 변경 감지 키와 적용을 함께: `Appliers<C, N> = { [K in keyof Required<C>]: (n, v, ctx) => void }` 로 필드를 빠뜨리면 컴파일 오류. (M) — 불변식 테스트(2-3)와 짝. — **함**: 호스트 서비스 11칸은 `HOST_SERVICES`(칸마다 정리한 값 `of` + 적용 `apply` — 변경 감지 키도 같은 목록에서, 4zl 같은 키 누락이 구조적으로 불가), 게이트웨이는 `Appliers<L3Node, L3Config>`(칸이 빠지면 컴파일 오류). 공유기·호스트·게이트웨이 모두 만든 직후에도 같은 목록 전체를 적용(개별 setter 5줄 제거) — 골든 불변
 - **불러오기 정리 조합기** — `bool/port/text/list/obj` 로 설정 종류마다 완전한 값을 돌려주는 정리, 기본값도 같은 정의에서. 엉뚱한 입력으로 parse → sync → lint 예외 없음 테스트 (위 JSON 결함 수정). (M)
 - **파싱 한 모듈 `model/parse.ts`** — ip4·ip6·cidr4·cidrList·port·intIn·hostname, UI 오류 문구도 같은 파서에서. 포트 범위 검사 약 35곳. (S)
-- **구성 검사 AddrIndex** — `owners(ip)`·`publicTarget(ip, port, proto)`(공유기·게이트웨이 포워딩·포트 공개를 같은 방식으로)·`isLeased(key)`. routerWanIp 두 벌, 포워딩 따라가기 두 벌, 섞인 체인에서 침묵하는 문제 해소. 예제 공인 주소 범용 테스트도 여기서. (M)
+- **구성 검사 AddrIndex** — `owners(ip)`·`publicTarget(ip, port, proto)`(공유기·게이트웨이 포워딩·포트 공개를 같은 방식으로)·`isLeased(key)`. routerWanIp 두 벌, 포워딩 따라가기 두 벌, 섞인 체인에서 침묵하는 문제 해소. 예제 공인 주소 범용 테스트도 여기서. (M) — **중복만 정리**: `lint/reach.ts`(공유기 수동 WAN 주소·포트 포워딩 따라가기·DDNS 주인·앞 공유기)로 모으고 L2TP 규칙의 따로 쓴 따라가기 루프·`routerWanIp` 두 번째 벌을 없앰(검사 결과 불변). **보류**: 게이트웨이(L3)의 포트 포워딩·포트 공개까지 같은 따라가기로 넓히는 것 — 지금 침묵하는 섞인 체인에서 새 경고가 생기는 동작 변화라 오탐 여부를 예제별로 따로 봐야 한다
 - **packetView 의 타입 있는 details** — 요약문 문자열 매칭 약 20곳, `detail()` 131곳 → 화면이 읽는 약 30개 종류만 `DetailsOf<K>` + reason 코드, 포맷터를 프로토콜별 레지스트리로. (M)
 - **topology.ts 분할** — specs·기능별 settings(타입·기본값·정리 한곳)·file·geometry·cables·wireless, topology.ts 는 다시 내보내기만. (S~M) — **함** (`model/topo/` 7개, settings 의 정리 함수는 `normalizeTopology` 가 쓰므로 export, 기존 import 그대로)
 - **store·sim** — 동기화 예외 처리(알림 + 다시 만들기), 임대 재계산은 DHCP 트레이스가 있을 때만. (S)

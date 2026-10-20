@@ -2,6 +2,7 @@
 import { natOn, type Device } from "../topology";
 import { contains, fmtSubnet, ipInt, overlaps, subnetOf, validIp, type Subnet } from "./addr";
 import type { LintContext } from "./context";
+import { followTarget, routerWanIp } from "./reach";
 
 /** WireGuard 기본 포트 (코어 packet.ts 의 VPN_PORT 와 같은 값 — lint 는 코어에 의존하지 않는다) */
 const VPN_PORT = 51820;
@@ -207,11 +208,6 @@ export function remoteAccessRules({ t, m, add }: LintContext): void {
   }
 }
 
-/** 공유기의 수동 WAN 주소 (자동이면 모름 — 판단하지 않는다) */
-function routerWanIp(x: Device): string | undefined {
-  return x.router?.wan?.ipMode === "static" ? validIp(x.router.wan.ip) : undefined;
-}
-
 /** 공유기의 UDP 포워딩 규칙 (그 공인 포트) */
 function udpForward(x: Device, port: number) {
   return x.router?.forwards?.find((f) => f.proto === "udp" && f.publicPort === port);
@@ -261,14 +257,8 @@ function l2tpClientRules(d: Device, server: string, devices: Device[], add: Lint
     add({ deviceId: d.id, severity: "error", code: "ra.type-mismatch", message: `${ikev2.name} 는 회사 원격 접속 VPN(IKEv2) 서버인데 이 클라이언트는 L2TP/IPsec 으로 접속 → 서버가 IKEv1 에 답하지 않아 접속 실패`, fix: `${d.name} 의 VPN → 종류를 IKEv2 로`, related: [ikev2.id] });
     return;
   }
-  let srv = devices.find((x) => x !== d && routerWanIp(x) === server);
   // 공유기 뒤 공유기: 앞 공유기가 VPN 서버를 켜지 않고 UDP 500 을 안쪽으로 포워딩하면 그 대상(수동 WAN 주소의 공유기)이 서버. 대상을 모르면 침묵
-  for (let hop = 0; srv && !srv.router?.vpnServer?.enabled && hop < 4; hop++) {
-    const fwd = udpForward(srv, IKE_PORT);
-    if (!fwd) break;
-    const lan = validIp(fwd.lanIp);
-    srv = lan ? devices.find((x) => x !== d && routerWanIp(x) === lan) : undefined;
-  }
+  const srv = followTarget(devices, d, devices.find((x) => x !== d && routerWanIp(x) === server), IKE_PORT, "udp", (x) => !!x.router?.vpnServer?.enabled)?.srv;
   if (!srv) return;
   const v = srv.router!.vpnServer;
   if (!v?.enabled) {

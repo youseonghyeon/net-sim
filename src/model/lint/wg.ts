@@ -3,6 +3,7 @@
 import { DDNS_ZONE_NAME, ddnsHostname, wgPublicKeyOf, type Device } from "../topology";
 import { contains, fmtSubnet, overlaps, subnetOf, validIp } from "./addr";
 import type { LintContext } from "./context";
+import { ddnsOwner, followTarget, frontRouter, routerWanIp } from "./reach";
 import { parseCidr } from "../parse";
 
 /** "10.0.0.2/32" (프리픽스가 없으면 dflt) — netSync 의 parseCidr 와 같은 기준 */
@@ -41,11 +42,6 @@ function clientsOf(devices: Device[]): Client[] {
   return out;
 }
 
-/** 공유기의 수동 WAN 주소 (자동이면 모름 — 판단하지 않는다) */
-export function routerWanIp(x: Device): string | undefined {
-  return x.router?.wan?.ipMode === "static" ? validIp(x.router.wan.ip) : undefined;
-}
-
 /**
  * 엔드포인트(주소:포트)를 받는 공유기를 찾는다: WAN 주소가 그 주소인 공유기. 그 공유기가 WireGuard 서버를 켜지 않고
  * 그 UDP 포트를 안쪽으로 포워딩하면 포워딩 대상(수동 WAN 주소의 공유기)으로 따라간다 (공유기 뒤 Brume). 모르면 undefined (침묵)
@@ -57,27 +53,6 @@ function serverAt(devices: Device[], self: Device, ip: string, port: number): { 
 /** 그 장비가 서버를 켜지 않고 그 UDP 포트를 안쪽으로 포워딩하면 대상(수동 WAN 주소의 공유기)으로 따라간다 */
 function followFrom(devices: Device[], self: Device, start: Device | undefined, port: number): { srv: Device; port: number; via?: Device } | undefined {
   return followTarget(devices, self, start, port, "udp", (x, p) => !!x.router?.wgServer?.enabled && x.router.wgServer.port === p);
-}
-
-/** 그 장비가 서버(isServer)가 아니고 그 포트(proto)를 안쪽으로 포워딩하면 대상(수동 WAN 주소의 공유기)으로 따라간다 */
-export function followTarget(devices: Device[], self: Device, start: Device | undefined, port: number, proto: "udp" | "tcp", isServer: (x: Device, port: number) => boolean): { srv: Device; port: number; via?: Device } | undefined {
-  let srv = start;
-  let p = port;
-  let via: Device | undefined;
-  for (let hop = 0; srv && !isServer(srv, p) && hop < 4; hop++) {
-    const fwd = srv.router?.forwards?.find((f) => (f.proto ?? "tcp") === proto && f.publicPort === p);
-    if (!fwd) break;
-    const lan = validIp(fwd.lanIp);
-    via = srv;
-    p = fwd.lanPort;
-    srv = lan ? devices.find((x) => x !== self && routerWanIp(x) === lan) : undefined;
-  }
-  return srv ? { srv, port: p, ...(via ? { via } : {}) } : undefined;
-}
-
-/** 이 DDNS 이름을 켜 둔 공유기 */
-export function ddnsOwner(devices: Device[], name: string): Device | undefined {
-  return devices.find((x) => x.router?.ddns?.enabled && ddnsHostname(x.router.ddns.name) === name);
 }
 
 // 규칙 20d: DDNS — 이름이 비었거나 쓸 수 없음, 두 공유기가 같은 이름
@@ -98,13 +73,6 @@ export function ddnsRules({ t, add }: LintContext): void {
     }
     seen.set(name, d);
   }
-}
-
-/** 공유기 WAN 이 다른 공유기의 LAN 에 붙어 있으면 그 앞 공유기 (밖에서는 앞 공유기의 공인 주소로 보인다) */
-export function frontRouter(m: LintContext["m"], d: Device): Device | undefined {
-  const seg = m.ids.get(`${d.id}:0`);
-  if (seg === undefined) return undefined;
-  return m.allGws.find((g) => g.device !== d && g.gwKind === "router" && m.ids.get(g.key) === seg)?.device;
 }
 
 // 규칙 20c: WireGuard

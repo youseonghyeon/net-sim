@@ -3,7 +3,7 @@
 import { DDNS_ZONE_NAME, ovpnCaOfDevice, ovpnTlsCryptOfDevice, type Device } from "../topology";
 import { fmtSubnet, overlaps, subnetOf, validIp } from "./addr";
 import type { LintContext } from "./context";
-import { ddnsOwner, followTarget, frontRouter, routerWanIp } from "./wg";
+import { ddnsOwner, followTarget, frontRouter, routerWanIp } from "./reach";
 import { parseCidr } from "../parse";
 
 const cidr = parseCidr;
