@@ -38,7 +38,7 @@ npm run ui-check # 브라우저 스모크 테스트 (.shots/ 에 스크린샷)
 
 ## 배포
 - `main` 에 push 하면 GitHub Actions 가 `tsc` + vitest 게이트를 지난 뒤 이미지를 `ghcr.io/youseonghyeon/net-sim:<sha>` 로 올리고 `deploy/values.yaml` 의 태그를 봇 커밋으로 갱신합니다. ArgoCD(`argocd/application.yaml`, 한 번만 `kubectl apply`)가 `deploy/` Helm 차트를 `app` 네임스페이스에 자동 sync 합니다.
-- 이미지는 `vite build` 결과를 nginx(비특권, 8080)로 서빙하는 정적 SPA 입니다. 인그레스는 Tailscale + Funnel → `https://net-sim.<tailnet>.ts.net`.
+- 이미지는 `vite build` 결과를 nginx(비특권, 8080)로 서빙하는 정적 SPA 입니다. 주소는 `https://net-sim.121-190-32-143.sslip.io` — 라우팅·TLS 는 서버 쪽 설정(저장소 밖). 차트에는 Ingress 가 없다(Tailscale 은 쓰지 않음, 2026-10-27).
 - 로컬에서 차트만 확인: `helm lint deploy && helm template net-sim deploy`.
 
 ## 문제가 생기면

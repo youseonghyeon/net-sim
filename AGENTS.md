@@ -54,7 +54,7 @@ npm run perf-check  # 프로덕션 빌드로 예제 전부 + 단말 52대 스트
 ## 배포 (porta-hub 와 같은 방식)
 - `Dockerfile`: node:24-alpine 에서 `vite build` → `nginxinc/nginx-unprivileged`(8080, uid 101) 가 `dist/` 서빙. 설정은 `deploy/nginx.conf`(`/healthz`, `/assets/` 영구 캐시, 나머지는 `index.html` 폴백).
 - `.github/workflows/docker-image.yml`: main push → `npm run typecheck` + `npm test` 게이트 → ghcr 푸시(`<sha>`, `latest`) → `deploy/values.yaml` 의 `image.tag` 를 sed 로 갱신해 봇 커밋(그사이 main 에 새 커밋이 올라와도 최신 main 위에서 다시 써서 push — 연달아 push 해도 실행이 실패하지 않는다, 실행은 concurrency 로 차례대로). GITHUB_TOKEN 푸시는 워크플로를 다시 트리거하지 않는다.
-- `deploy/`: Helm 차트(Deployment 는 readOnlyRootFilesystem + `/tmp` emptyDir, Service, Ingress 는 tailscale 클래스 + funnel). `argocd/application.yaml`: namespace `app`, automated prune/selfHeal. 시크릿 없음.
+- `deploy/`: Helm 차트(Deployment 는 readOnlyRootFilesystem + `/tmp` emptyDir, Service. Ingress 없음 — 주소 `https://net-sim.121-190-32-143.sslip.io` — 라우팅·TLS 는 서버 쪽 설정(저장소 밖). 차트에는 Ingress 가 없다(Tailscale 은 쓰지 않음, 2026-10-27)). `argocd/application.yaml`: namespace `app`, automated prune/selfHeal. 시크릿 없음.
 - 차트를 고치면 `helm lint deploy && helm template net-sim deploy` 로 렌더를 확인한다. 브라우저 스모크(`ui-check`)는 CI 에서 돌리지 않는다.
 
 ## 시뮬레이션 연결 방식
