@@ -6,6 +6,8 @@ metadata:
     app: net-sim
 spec:
   replicas: 1
+  # 롤백용으로 남기는 옛 ReplicaSet 수 (기본 10)
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   selector:
     matchLabels:
       app: net-sim
